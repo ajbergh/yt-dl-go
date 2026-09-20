@@ -2,6 +2,7 @@ package main
 
 import (
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -22,11 +23,19 @@ func TestPersistentHistoryAndQueueResume(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s.engine = fixtureClient(1)
-	queued := createJob(t, s, testVideo)
-	if err := s.store.saveAppSettings(AppSettings{DefaultQuality: "720"}); err != nil {
+	s.settings.DownloadLocation = filepath.Join(root, "published")
+	if err := s.store.saveAppSettings(s.settings); err != nil {
+		s.stop()
 		t.Fatal(err)
 	}
+	s.engine = fixtureClient(1)
+	queued := createJob(t, s, testVideo)
+	settings := s.settings
+	settings.DefaultQuality = "720"
+	if err := s.store.saveAppSettings(settings); err != nil {
+		t.Fatal(err)
+	}
+	s.settings = settings
 	s.stop()
 
 	resumed, err := newServer(c)

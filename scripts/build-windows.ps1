@@ -80,6 +80,10 @@ try {
     Push-Location (Join-Path $repoRoot 'src\server')
     try {
         $env:CGO_ENABLED = '0'
+        if ([string]::IsNullOrWhiteSpace($env:GOCACHE)) {
+            # Keep the default build cache in a user-writable temp location.
+            $env:GOCACHE = Join-Path ([IO.Path]::GetTempPath()) 'yt-dl-go-go-build-cache'
+        }
         Write-Host 'Downloading Go dependencies...' -ForegroundColor Cyan
         Invoke-Native 'go' @('mod', 'download')
 
