@@ -1,0 +1,121 @@
+# Native Go download service
+
+This directory contains the local HTTP service compiled into `youtube-downloader.exe`. The executable serves both this API and the embedded React UI from one origin; the UI connects automatically and reads/writes its job history and preferences through the service. The server validates requests, manages download jobs, and streams finalized files. It uses `github.com/kkdai/youtube/v2` for metadata and compatible direct streams, `chromedp` for browser-assisted adaptive video delivery, and `gomedia` to remux MP4 tracks.
+
+This is a YouTube-only, local/single-user downloader. Download only content you own or are authorized to save. It does not import credentials or cookies from your normal browser profile, perform DRM decryption or paywall bypasses, or record live/HLS/DASH streams. Adaptive capture uses a temporary browser session that YouTube may authorize for that run.
+
+## Run and build
+
+The bundled UI is embedded from `dist/` in this directory. For development, run:
+
+~~~
+go mod download
+go test ./...
+go run .
+~~~
+
+To build the Windows executable after refreshing the frontend assets:
+
+~~~
+$env:CGO_ENABLED = '0'
+go build -buildvcs=false -trimpath -ldflags='-s -w' -o ..\..\dist\youtube-downloader.exe .
+~~~
+
+Go 1.26 or newer is required. The process listens on `127.0.0.1:8080` by default, serves the SPA at `/`, and asks the operating system to open that address in the default browser. `ADDR` changes the listener and browser URL. If automatic browser launch is blocked, visit the configured address manually. The built-in UI uses the same origin, so it also follows a custom `ADDR`.
+
+## Format selection and automatic 1080p path
+
+`best`, `1080`, `720`, and `480` are maximum heights. The selector prefers a compatible adaptive H.264 video plus AAC audio track when it improves on an available progressive stream; otherwise it uses the best compatible progressive MP4 or WebM stream within the requested ceiling.
+
+For adaptive video, the service creates a temporary, headless Chrome-compatible session. The browser obtains its own short-lived authorization while loading YouTube, and the service captures the selected H.264 SABR/UMP media fragments through the declared final fragment. It verifies the selected itag and completion boundary, obtains audio, and remuxes an MP4 without FFmpeg.
+
+Chrome, Chromium, or Edge must be installed for this path. Discovery is automatic, or set `CHROME_PATH` to the executable. The temporary profile is not the user's normal profile and is discarded at the end of the job; the downloader does not import or persist the user's account credentials. This is distinct from the optional Go API bearer token documented below.
+
+If browser capture or adaptive byte-range delivery fails, the service uses the highest verified progressive MP4 when one is available and adds a fallback explanation to the job note. A finished lower-resolution fallback is preferable to a corrupt partial HD file. Some videos cannot expose an eligible compatible track; their item fails explicitly.
+
+## Configuration
+
+| Variable | Default | Validation / effect |
+| --- | --- | --- |
+| `ADDR` | `127.0.0.1:8080` | Valid `host:port`; non-loopback requires a token and explicit hosts |
+| `DATA_DIR` | `./downloads` | Private real directory; each job receives a random subdirectory |
+| `API_TOKEN` | unset | Bearer token for protected API routes; non-loopback bindings require at least 32 non-whitespace characters. The bundled UI does not send a token, so leave unset when using it. |
+| `ALLOWED_ORIGINS` | local Vite and service origins | Exact comma-separated HTTP(S) origins; no wildcards or trailing slash |
+| `ALLOWED_HOSTS` | loopback authorities at listener port | Additional exact `host[:port]` authorities |
+| `MAX_JOBS` | `32` | 1 through 1000 retained, queued, and active jobs combined |
+| `MAX_JOB_BYTES` | `10737418240` | Positive per-job media byte budget (10 GiB by default) |
+| `JOB_TIMEOUT` | `6h` | Whole-job deadline; at least one second |
+| `RETENTION` | `24h` | Terminal-job retention; at least five minutes |
+| `CHROME_PATH` | unset | Chrome/Chromium/Edge executable for adaptive capture |
+
+The service has one sequential downloader worker. It writes exclusive temporary files, checks byte limits and declared stream sizes, then atomically finalizes files only after successful completion. Job configuration, history, finalized-file metadata, user preferences, and resumable item state are stored in the pure-Go SQLite database at `DATA_DIR/state.db`; bearer tokens and signed media URLs are never stored. A restart re-queues interrupted jobs, leaves explicitly paused jobs paused, skips validated finalized playlist items, and resumes completed adaptive byte ranges when the source still permits them. Service shutdown preserves a safe adaptive source part, while explicit user cancellation removes partial output but keeps files finalized earlier in the same job.
+
+Ticket links last five minutes. Individual-file transfers support one byte range; ZIP downloads stream finalized files without building a duplicate archive in memory. Completed jobs are removed after retention unless an active transfer or unexpired ticket still holds them.
+
+## API
+
+Control-plane API responses and errors return JSON. `GET /api/downloads/{ticket}` instead streams a file or ZIP. When `API_TOKEN` is configured, send `Authorization: Bearer TOKEN` except for `GET /api/health`, approved CORS preflight requests, and ticket download links. API JSON bodies must be one object no larger than 4096 bytes and cannot include unknown fields. The bundled UI sends no bearer token; if one is configured, use a token-capable external client or leave the token unset for the built-in UI.
+
+| Endpoint | Purpose |
+| --- | --- |
+| `GET /api/health` | Reports the native engine and capabilities |
+| `POST /api/inspect` | Inspects a video or playlist and returns metadata plus supported quality ceilings |
+| `GET /api/settings` | Reads persisted UI preferences |
+| `PUT /api/settings` | Saves validated preferences to SQLite |
+| `POST /api/jobs` | Creates a download job; returns `202` and the job |
+| `GET /api/jobs` | Lists jobs, newest first |
+| `GET /api/jobs/{id}` | Returns one job |
+| `POST /api/jobs/{id}/pause` | Pauses a queued or active job |
+| `POST /api/jobs/{id}/resume` | Resumes a paused job |
+| `POST /api/jobs/{id}/cancel` | Cancels a queued or active job |
+| `POST /api/jobs/{id}/retry` | Creates a fresh job from a failed, partial, or cancelled job |
+| `DELETE /api/jobs/{id}` | Removes a stopped job, its history, and its private output files |
+| `POST /api/jobs/{id}/ticket` | Creates a five-minute link for a job ZIP or one file |
+| `GET /api/downloads/{ticket}` | Streams the ticket's archive or file |
+
+Create a job with:
+
+~~~json
+{
+  "url": "https://www.youtube.com/watch?v=VIDEO_ID",
+  "quality": "1080",
+  "rightsConfirmed": true
+}
+~~~
+
+Valid qualities are `best`, `1080`, `720`, and `480`. The URL must be an HTTPS YouTube or `youtu.be` video, shorts, live, or playlist URL with valid IDs. A watch URL containing `list=` is treated as a playlist. Playlists process every position the upstream library exposes, in order; inaccessible or hidden entries cannot be independently counted and are disclosed in the job note.
+
+Inspect a link with `POST /api/inspect` and `{"url":"https://www.youtube.com/watch?v=VIDEO_ID"}`. Video inspection returns title, channel, duration, safe thumbnail URL, publish date, and only the quality ceilings for which the native selector found a compatible stream. Playlist inspection returns its exposed item count and up to ten preview entries; it does not download or expose signed media URLs. Preferences currently support `defaultQuality` (`best`, `1080`, `720`, or `480`) and are stored in the SQLite `app_settings` table. The service output root remains controlled by `DATA_DIR` at startup.
+
+Pause and resume use `POST` with `{}`. A paused active job keeps finalized files; an interrupted progressive item may restart on resume, while supported adaptive byte ranges can resume. Retry requires `{"rightsConfirmed":true}` and creates a new job so the original result and error history remain inspectable. `DELETE /api/jobs/{id}` is allowed only after the worker stops and no file transfer is active; it removes both the job record and its private job directory.
+
+A job includes `id`, `url`, `kind`, `quality`, `status`, `title`, `progress`, `currentItem`, `completedCount`, `totalCount`, `files`, `error`, `createdAt`, `note`, and `failures`. File objects include `id`, `name`, `size`, `height`, and `mimeType`, plus available title, author, duration, thumbnail, and publish-date metadata persisted with the file record. `progress` measures the current file, not an estimated percentage for a whole playlist. Per-item `failures` use one-based indexes.
+
+Create a ticket with `{}` for a ZIP or `{"fileId":"FILE_ID"}` for a single finalized file. The response is `{"path":"/api/downloads/TICKET"}`. Open that path relative to the service origin without adding the bearer token to the URL.
+
+## Operational guidance
+
+Keep the listener on loopback where possible. The default bundled UI is intended for this local, tokenless mode. A network-visible deployment needs TLS, a long random token, exact origin and host allowlists, firewall/rate controls, and disk quotas; use an external API client that can send the bearer token because the bundled UI has no token field. Do not treat it as a public download service or run it under an account that exposes unrelated private files.
+
+The native client permits public HTTPS media access and validates destination addresses and redirects before dialing. That is an application safeguard, not a replacement for operating-system or network egress policy.
+
+## Tests
+
+~~~
+go test ./...
+go vet ./...
+~~~
+
+The unit suite uses fake metadata and streams to cover format selection, download completion, limits, cancellation, playlist handling, API validation, tickets, ranges, retention, and browser-assisted fallback logic.
+
+The live test is opt-in, downloads real media, and requires working internet access plus a Chrome-compatible browser for the adaptive-HD case. Replace the sample URL with an accessible video you are authorized to download:
+
+~~~
+$env:YTDL_LIVE_DOWNLOAD_URL = 'https://youtu.be/y0KRrtfy2pY?si=ERBKJkjkY-SoPC4I'
+$env:YTDL_LIVE_MIN_HEIGHT = '1080'
+go test -run TestLiveDownload -count=1 -v
+~~~
+
+Live behavior depends on YouTube's current service and can change; a successful run does not guarantee future availability or a particular resolution.
+
+See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) before distributing a build.

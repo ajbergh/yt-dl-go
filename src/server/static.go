@@ -1,0 +1,96 @@
+// static.go serves the React SPA and hashed assets embedded in the executable.
+package main
+
+import (
+	"embed"
+	"io/fs"
+	"mime"
+	"net/http"
+	"path"
+	"strings"
+)
+
+//go:embed dist
+var embeddedAssets embed.FS
+
+func getMimeType(filePath string) string {
+	ext := strings.ToLower(path.Ext(filePath))
+	switch ext {
+	case ".html", ".htm":
+		return "text/html; charset=utf-8"
+	case ".js", ".mjs":
+		return "application/javascript; charset=utf-8"
+	case ".css":
+		return "text/css; charset=utf-8"
+	case ".json":
+		return "application/json"
+	case ".svg":
+		return "image/svg+xml"
+	case ".png":
+		return "image/png"
+	case ".jpg", ".jpeg":
+		return "image/jpeg"
+	case ".webp":
+		return "image/webp"
+	case ".ico":
+		return "image/x-icon"
+	case ".woff":
+		return "font/woff"
+	case ".woff2":
+		return "font/woff2"
+	case ".ttf":
+		return "font/ttf"
+	default:
+		if t := mime.TypeByExtension(ext); t != "" {
+			return t
+		}
+		return "application/octet-stream"
+	}
+}
+
+// serveStatic serves only GET/HEAD requests, prefers embedded files, assigns
+// long immutable caching to assets, and falls back to index.html for SPA paths.
+// It returns false for unsupported methods or when the embedded index is absent.
+func (s *server) serveStatic(w http.ResponseWriter, r *http.Request) bool {
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		return false
+	}
+
+	distFS, err := fs.Sub(embeddedAssets, "dist")
+	if err != nil {
+		return false
+	}
+
+	reqPath := path.Clean(r.URL.Path)
+	if reqPath == "/" || reqPath == "." {
+		reqPath = "index.html"
+	} else {
+		reqPath = strings.TrimPrefix(reqPath, "/")
+	}
+
+	// Try serving the exact file if it exists and is not a directory.
+	file, err := distFS.Open(reqPath)
+	if err == nil {
+		defer file.Close()
+		stat, err := file.Stat()
+		if err == nil && !stat.IsDir() {
+			w.Header().Set("Content-Type", getMimeType(reqPath))
+			if strings.HasPrefix(reqPath, "assets/") {
+				w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+			}
+			http.FileServer(http.FS(distFS)).ServeHTTP(w, r)
+			return true
+		}
+	}
+
+	// Fall back to the SPA entry point for any unresolved path.
+	if indexFile, err := distFS.Open("index.html"); err == nil {
+		_ = indexFile.Close()
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		r.URL.Path = "/"
+		http.FileServer(http.FS(distFS)).ServeHTTP(w, r)
+		return true
+	}
+
+	return false
+}

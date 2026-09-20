@@ -1,0 +1,11 @@
+node_modules/
+dist/
+.vite-cache/
+.env*.local
+*.log
+.browser-errors.log
+.browser-errors.seq
+
+# Keep application source tracked if an inherited ignore rule matches `lib/`.
+!src/lib/
+!src/lib/**

@@ -1,0 +1,454 @@
+// store.go persists jobs, finalized-file metadata, preferences, and resumable
+// transfer state in the pure-Go SQLite database under DATA_DIR.
+package main
+
+import (
+	"database/sql"
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"sort"
+	"time"
+
+	_ "modernc.org/sqlite"
+)
+
+// jobStore is the durable source of truth for job history, completed items,
+// preferences, and resume state; live queue and cancellation handles stay in RAM.
+type jobStore struct {
+	db *sql.DB
+}
+
+type AppSettings struct {
+	DefaultQuality string `json:"defaultQuality"`
+}
+
+type storedJob struct {
+	job       Job
+	dir       string
+	done      time.Time
+	items     map[int]mediaFile
+	resuming  bool
+	cancelled bool
+}
+
+// openJobStore opens DATA_DIR/state.db, applies SQLite runtime pragmas, creates
+// missing tables, and runs schema migrations before any jobs are loaded.
+func openJobStore(root string) (*jobStore, error) {
+	db, err := sql.Open("sqlite", filepath.Join(root, "state.db"))
+	if err != nil {
+		return nil, fmt.Errorf("open state database: %w", err)
+	}
+	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
+	store := &jobStore{db: db}
+	for _, statement := range []string{
+		`PRAGMA busy_timeout = 5000`,
+		`PRAGMA journal_mode = WAL`,
+		`PRAGMA foreign_keys = ON`,
+		`CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY)`,
+		`CREATE TABLE IF NOT EXISTS config (
+			key TEXT PRIMARY KEY,
+			value TEXT NOT NULL,
+			updated_at INTEGER NOT NULL
+		)`,
+		`CREATE TABLE IF NOT EXISTS jobs (
+			id TEXT PRIMARY KEY,
+			url TEXT NOT NULL,
+			kind TEXT NOT NULL,
+			quality TEXT NOT NULL,
+			status TEXT NOT NULL,
+			title TEXT NOT NULL,
+			progress REAL,
+			current_item TEXT NOT NULL,
+			completed_count INTEGER NOT NULL,
+			total_count INTEGER,
+			error TEXT NOT NULL,
+			created_at TEXT NOT NULL,
+			note TEXT NOT NULL,
+			dir TEXT NOT NULL,
+			cancel_requested INTEGER NOT NULL DEFAULT 0,
+			done_at INTEGER,
+			updated_at INTEGER NOT NULL
+		)`,
+		`CREATE TABLE IF NOT EXISTS job_files (
+			job_id TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+			item_index INTEGER NOT NULL,
+			file_id TEXT NOT NULL,
+			name TEXT NOT NULL,
+			size INTEGER NOT NULL,
+			height INTEGER NOT NULL,
+			mime_type TEXT NOT NULL,
+			PRIMARY KEY (job_id, item_index),
+			UNIQUE (job_id, file_id)
+		)`,
+		`CREATE TABLE IF NOT EXISTS download_parts (
+			job_id TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+			item_index INTEGER NOT NULL,
+			path TEXT NOT NULL,
+			completed_bytes INTEGER NOT NULL,
+			expected_bytes INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL,
+			PRIMARY KEY (job_id, item_index)
+		)`,
+		`CREATE TABLE IF NOT EXISTS job_failures (
+			job_id TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+			item_index INTEGER NOT NULL,
+			error TEXT NOT NULL,
+			PRIMARY KEY (job_id, item_index)
+		)`,
+	} {
+		if _, err := db.Exec(statement); err != nil {
+			_ = db.Close()
+			return nil, fmt.Errorf("initialize state database: %w", err)
+		}
+	}
+	if _, err := db.Exec(`INSERT OR IGNORE INTO schema_migrations(version) VALUES (1)`); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("record state database migration: %w", err)
+	}
+	if err := store.migrateV2(); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("migrate state database: %w", err)
+	}
+	return store, nil
+}
+
+// migrateV2 atomically adds persisted file metadata and the singleton UI
+// preferences row to databases at schema version 1.
+func (s *jobStore) migrateV2() error {
+	var version int
+	if err := s.db.QueryRow(`SELECT COALESCE(MAX(version), 0) FROM schema_migrations`).Scan(&version); err != nil {
+		return err
+	}
+	if version >= 2 {
+		return nil
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	for _, statement := range []string{
+		`ALTER TABLE job_files ADD COLUMN title TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE job_files ADD COLUMN author TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE job_files ADD COLUMN duration_seconds INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE job_files ADD COLUMN thumbnail_url TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE job_files ADD COLUMN publish_date TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE job_files ADD COLUMN category TEXT NOT NULL DEFAULT ''`,
+		`CREATE TABLE app_settings (
+			id INTEGER PRIMARY KEY CHECK(id = 1),
+			default_quality TEXT NOT NULL,
+			updated_at INTEGER NOT NULL
+		)`,
+		`INSERT INTO app_settings(id, default_quality, updated_at) VALUES(1, 'best', 0)`,
+		`INSERT INTO schema_migrations(version) VALUES (2)`,
+	} {
+		if _, err := tx.Exec(statement); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+func (s *jobStore) close() error {
+	if s == nil || s.db == nil {
+		return nil
+	}
+	return s.db.Close()
+}
+
+func (s *jobStore) saveConfig(c config) error {
+	values := map[string]string{
+		"addr":          c.addr,
+		"data_dir":      c.root,
+		"max_jobs":      fmt.Sprint(c.maxJobs),
+		"max_job_bytes": fmt.Sprint(c.maxBytes),
+		"job_timeout":   c.timeout.String(),
+		"retention":     c.retain.String(),
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	for key, value := range values {
+		if _, err := tx.Exec(`INSERT INTO config(key,value,updated_at) VALUES(?,?,?)
+			ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at`, key, value, time.Now().UnixNano()); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+func (s *jobStore) loadAppSettings() (AppSettings, error) {
+	settings := AppSettings{DefaultQuality: "best"}
+	if err := s.db.QueryRow(`SELECT default_quality FROM app_settings WHERE id=1`).Scan(&settings.DefaultQuality); err != nil {
+		return settings, err
+	}
+	return settings, nil
+}
+
+func (s *jobStore) saveAppSettings(settings AppSettings) error {
+	_, err := s.db.Exec(`UPDATE app_settings SET default_quality=?, updated_at=? WHERE id=1`, settings.DefaultQuality, time.Now().UnixNano())
+	return err
+}
+
+func (s *jobStore) saveJob(j *jobState) error {
+	if s == nil {
+		return nil
+	}
+	var progress any
+	if j.Progress != nil {
+		progress = *j.Progress
+	}
+	var total any
+	if j.TotalCount != nil {
+		total = *j.TotalCount
+	}
+	var done any
+	if !j.done.IsZero() {
+		done = j.done.UnixNano()
+	}
+	cancelRequested := 0
+	if j.cancelRequested {
+		cancelRequested = 1
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	_, err = tx.Exec(`INSERT INTO jobs
+		(id,url,kind,quality,status,title,progress,current_item,completed_count,total_count,error,created_at,note,dir,cancel_requested,done_at,updated_at)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+		ON CONFLICT(id) DO UPDATE SET url=excluded.url,kind=excluded.kind,quality=excluded.quality,
+		status=excluded.status,title=excluded.title,progress=excluded.progress,current_item=excluded.current_item,
+		completed_count=excluded.completed_count,total_count=excluded.total_count,error=excluded.error,
+		created_at=excluded.created_at,note=excluded.note,dir=excluded.dir,cancel_requested=excluded.cancel_requested,
+		done_at=excluded.done_at,updated_at=excluded.updated_at`,
+		j.ID, j.URL, j.Kind, j.Quality, j.Status, j.Title, progress, j.CurrentItem, j.CompletedCount, total,
+		j.Error, j.CreatedAt, j.Note, j.dir, cancelRequested, done, time.Now().UnixNano())
+	if err != nil {
+		return err
+	}
+	if _, err = tx.Exec(`DELETE FROM job_files WHERE job_id=?`, j.ID); err != nil {
+		return err
+	}
+	for index, file := range j.Files {
+		itemIndex := index + 1
+		for index, saved := range j.fileItems {
+			if saved.ID == file.ID {
+				itemIndex = index
+				break
+			}
+		}
+		if _, err = tx.Exec(`INSERT INTO job_files(job_id,item_index,file_id,name,size,height,mime_type,title,author,duration_seconds,thumbnail_url,publish_date,category) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+			j.ID, itemIndex, file.ID, file.Name, file.Size, file.Height, file.MimeType, file.Title, file.Author,
+			file.DurationSeconds, file.ThumbnailURL, file.PublishDate, file.Category); err != nil {
+			return err
+		}
+	}
+	if _, err = tx.Exec(`DELETE FROM job_failures WHERE job_id=?`, j.ID); err != nil {
+		return err
+	}
+	for _, failure := range j.Failures {
+		if _, err = tx.Exec(`INSERT INTO job_failures(job_id,item_index,error) VALUES(?,?,?)`, j.ID, failure.Index, failure.Error); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+func (s *jobStore) savePart(jobID string, itemIndex int, path string, completed, expected int64) {
+	if s == nil {
+		return
+	}
+	_, _ = s.db.Exec(`INSERT INTO download_parts(job_id,item_index,path,completed_bytes,expected_bytes,updated_at)
+		VALUES(?,?,?,?,?,?) ON CONFLICT(job_id,item_index) DO UPDATE SET path=excluded.path,
+		completed_bytes=excluded.completed_bytes,expected_bytes=excluded.expected_bytes,updated_at=excluded.updated_at`,
+		jobID, itemIndex, path, completed, expected, time.Now().UnixNano())
+}
+
+func (s *jobStore) deletePart(jobID string, itemIndex int) {
+	if s == nil {
+		return
+	}
+	_, _ = s.db.Exec(`DELETE FROM download_parts WHERE job_id=? AND item_index=?`, jobID, itemIndex)
+}
+
+func (s *jobStore) deletePartsForJob(jobID string) error {
+	if s == nil {
+		return nil
+	}
+	_, err := s.db.Exec(`DELETE FROM download_parts WHERE job_id=?`, jobID)
+	return err
+}
+
+func (s *jobStore) deleteJob(jobID string) error {
+	if s == nil {
+		return nil
+	}
+	_, err := s.db.Exec(`DELETE FROM jobs WHERE id=?`, jobID)
+	return err
+}
+
+func (s *jobStore) loadJobs(root string) ([]*storedJob, error) {
+	rows, err := s.db.Query(`SELECT id,url,kind,quality,status,title,progress,current_item,completed_count,total_count,error,created_at,note,dir,cancel_requested,done_at FROM jobs ORDER BY created_at ASC`)
+	if err != nil {
+		return nil, err
+	}
+	type jobRow struct {
+		job             Job
+		dir             string
+		cancelRequested int
+		doneAt          sql.NullInt64
+	}
+	var savedRows []jobRow
+	for rows.Next() {
+		var j Job
+		var progress sql.NullFloat64
+		var totalCount sql.NullInt64
+		var dir string
+		var cancelRequested int
+		var doneAt sql.NullInt64
+		if err := rows.Scan(&j.ID, &j.URL, &j.Kind, &j.Quality, &j.Status, &j.Title, &progress, &j.CurrentItem,
+			&j.CompletedCount, &totalCount, &j.Error, &j.CreatedAt, &j.Note, &dir, &cancelRequested, &doneAt); err != nil {
+			return nil, err
+		}
+		if progress.Valid {
+			value := progress.Float64
+			j.Progress = &value
+		}
+		if totalCount.Valid {
+			value := int(totalCount.Int64)
+			j.TotalCount = &value
+		}
+		savedRows = append(savedRows, jobRow{job: j, dir: dir, cancelRequested: cancelRequested, doneAt: doneAt})
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return nil, err
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	var result []*storedJob
+	for _, saved := range savedRows {
+		j := saved.job
+		dir := saved.dir
+		if filepath.Base(j.ID) != j.ID || j.ID == "." || j.ID == ".." {
+			return nil, errors.New("state database contains an unsafe job id")
+		}
+		loaded := &storedJob{job: j, dir: filepath.Join(root, j.ID), items: map[int]mediaFile{}, cancelled: saved.cancelRequested != 0}
+		loaded.job.Files = []mediaFile{}
+		loaded.job.Failures = []itemFailure{}
+		if saved.doneAt.Valid {
+			loaded.done = time.Unix(0, saved.doneAt.Int64)
+		}
+		if !filepath.IsAbs(dir) || filepath.Clean(dir) != filepath.Join(root, j.ID) {
+			return nil, errors.New("state database contains an unsafe job directory")
+		}
+		if j.Status != "paused" && !terminal(j.Status) {
+			loaded.resuming = true
+			loaded.cancelled = false
+			loaded.job.Status = "queued"
+			loaded.job.Error = ""
+			loaded.job.Progress = nil
+			loaded.done = time.Time{}
+			if err := ensureJobDir(loaded.dir); err != nil {
+				return nil, err
+			}
+		}
+		files, err := s.db.Query(`SELECT item_index,file_id,name,size,height,mime_type,title,author,duration_seconds,thumbnail_url,publish_date,category FROM job_files WHERE job_id=? ORDER BY item_index`, j.ID)
+		if err != nil {
+			return nil, err
+		}
+		for files.Next() {
+			var index int
+			var file mediaFile
+			if err := files.Scan(&index, &file.ID, &file.Name, &file.Size, &file.Height, &file.MimeType, &file.Title, &file.Author,
+				&file.DurationSeconds, &file.ThumbnailURL, &file.PublishDate, &file.Category); err != nil {
+				_ = files.Close()
+				return nil, err
+			}
+			loaded.items[index] = file
+			loaded.job.Files = append(loaded.job.Files, file)
+		}
+		if err := files.Err(); err != nil {
+			_ = files.Close()
+			return nil, err
+		}
+		_ = files.Close()
+		failures, err := s.db.Query(`SELECT item_index,error FROM job_failures WHERE job_id=? ORDER BY item_index`, j.ID)
+		if err != nil {
+			return nil, err
+		}
+		for failures.Next() {
+			var failure itemFailure
+			if err := failures.Scan(&failure.Index, &failure.Error); err != nil {
+				_ = failures.Close()
+				return nil, err
+			}
+			loaded.job.Failures = append(loaded.job.Failures, failure)
+		}
+		if err := failures.Err(); err != nil {
+			_ = failures.Close()
+			return nil, err
+		}
+		_ = failures.Close()
+		if loaded.resuming {
+			if err := s.normalizeResumingJob(loaded); err != nil {
+				return nil, err
+			}
+		}
+		result = append(result, loaded)
+	}
+	return result, nil
+}
+
+func (s *jobStore) normalizeResumingJob(loaded *storedJob) error {
+	validFiles := make([]mediaFile, 0, len(loaded.items))
+	indexes := make([]int, 0, len(loaded.items))
+	for index := range loaded.items {
+		indexes = append(indexes, index)
+	}
+	sort.Ints(indexes)
+	for _, index := range indexes {
+		file := loaded.items[index]
+		info, err := openFinal(loaded.dir, file.Name)
+		if err != nil {
+			delete(loaded.items, index)
+			continue
+		}
+		stat, statErr := info.Stat()
+		_ = info.Close()
+		if statErr != nil || stat.Size() != file.Size {
+			delete(loaded.items, index)
+			continue
+		}
+		validFiles = append(validFiles, file)
+	}
+	loaded.job.Files = validFiles
+	loaded.job.CompletedCount = len(validFiles)
+	if err := s.saveJob(&jobState{Job: loaded.job, dir: loaded.dir, fileItems: fileIndexes(loaded.items)}); err != nil {
+		return err
+	}
+	return nil
+}
+
+func fileIndexes(items map[int]mediaFile) map[int]mediaFile {
+	result := make(map[int]mediaFile, len(items))
+	for index, file := range items {
+		result[index] = file
+	}
+	return result
+}
+
+func ensureJobDir(path string) error {
+	if err := os.MkdirAll(path, 0700); err != nil {
+		return fmt.Errorf("create job directory: %w", err)
+	}
+	return nil
+}

@@ -1,0 +1,6 @@
+{
+  "name": "YouTube Downloader",
+  "description": "A sleek, dark-themed YouTube video and audio batch downloader with format selection, channel subfolder sorting, and visual thumbnail library.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
