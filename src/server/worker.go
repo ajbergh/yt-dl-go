@@ -799,9 +799,15 @@ func (s *server) processItem(ctx context.Context, j *jobState, entry *youtube.Pl
 		return err
 	}
 	applyVideoMetadata(&file, video)
+	file.Category = j.Category
+	if err := s.publishOutput(j, &file); err != nil {
+		_ = os.Remove(filepath.Join(j.dir, file.Name))
+		return errStorage
+	}
 	leaseOpen = false
 	if err := tracker.release(budget, file.Size); err != nil {
 		_ = os.Remove(filepath.Join(j.dir, file.Name))
+		_ = os.Remove(file.OutputPath)
 		return err
 	}
 	s.mu.Lock()
@@ -977,7 +983,14 @@ func (s *server) validCompletedFile(j *jobState, file mediaFile) bool {
 	}
 	info, err := f.Stat()
 	_ = f.Close()
-	return err == nil && info.Size() == file.Size
+	if err != nil || info.Size() != file.Size {
+		return false
+	}
+	if file.OutputPath != "" {
+		output, statErr := os.Lstat(file.OutputPath)
+		return statErr == nil && output.Mode().IsRegular() && output.Size() == file.Size
+	}
+	return true
 }
 
 func (s *server) keepPartial(j *jobState) bool {
@@ -1596,7 +1609,7 @@ func (s *server) prune(now time.Time) {
 	for _, id := range s.order {
 		j := s.jobs[id]
 		if terminal(j.Status) && j.readers == 0 && !held[id] && now.Sub(j.done) >= s.cfg.retain {
-			if os.RemoveAll(j.dir) == nil && s.store.deleteJob(id) == nil {
+			if removeOutputCopies(j) == nil && os.RemoveAll(j.dir) == nil && s.store.deleteJob(id) == nil {
 				delete(s.jobs, id)
 				continue
 			}

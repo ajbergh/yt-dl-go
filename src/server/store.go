@@ -22,8 +22,13 @@ type jobStore struct {
 }
 
 type AppSettings struct {
-	DefaultQuality         string `json:"defaultQuality"`
-	MaxConcurrentDownloads int    `json:"maxConcurrentDownloads"`
+	DefaultQuality         string   `json:"defaultQuality"`
+	MaxConcurrentDownloads int      `json:"maxConcurrentDownloads"`
+	DownloadLocation       string   `json:"downloadLocation"`
+	NamingPattern          string   `json:"namingPattern"`
+	SubfolderSorting       string   `json:"subfolderSorting"`
+	DefaultCategory        string   `json:"defaultCategory"`
+	UserCategories         []string `json:"userCategories"`
 }
 
 type storedJob struct {
@@ -122,7 +127,48 @@ func openJobStore(root string) (*jobStore, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("migrate state database: %w", err)
 	}
+	if err := store.migrateV5(); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("migrate state database: %w", err)
+	}
 	return store, nil
+}
+
+// migrateV5 persists output preferences, each job's captured preferences, and
+// the user-visible destination for every finalized media file.
+func (s *jobStore) migrateV5() error {
+	var version int
+	if err := s.db.QueryRow(`SELECT COALESCE(MAX(version), 0) FROM schema_migrations`).Scan(&version); err != nil {
+		return err
+	}
+	if version >= 5 {
+		return nil
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	for _, statement := range []string{
+		`ALTER TABLE jobs ADD COLUMN output_location TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE jobs ADD COLUMN naming_pattern TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE jobs ADD COLUMN subfolder_sorting TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE jobs ADD COLUMN category TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE job_files ADD COLUMN output_name TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE job_files ADD COLUMN output_path TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE job_files ADD COLUMN output_relative_path TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE app_settings ADD COLUMN download_location TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE app_settings ADD COLUMN naming_pattern TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE app_settings ADD COLUMN subfolder_sorting TEXT NOT NULL DEFAULT 'channel'`,
+		`ALTER TABLE app_settings ADD COLUMN default_category TEXT NOT NULL DEFAULT 'General'`,
+		`ALTER TABLE app_settings ADD COLUMN user_categories TEXT NOT NULL DEFAULT '["Tech","Science","Coding","Music","Education","Gaming","Podcasts","Archival","General"]'`,
+		`INSERT INTO schema_migrations(version) VALUES (5)`,
+	} {
+		if _, err := tx.Exec(statement); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 // migrateV4 persists the playlist entries shown as individual queue rows.
@@ -245,18 +291,32 @@ func (s *jobStore) saveConfig(c config) error {
 }
 
 func (s *jobStore) loadAppSettings() (AppSettings, error) {
-	settings := AppSettings{DefaultQuality: "best", MaxConcurrentDownloads: 3}
-	if err := s.db.QueryRow(`SELECT default_quality,max_concurrent_downloads FROM app_settings WHERE id=1`).Scan(&settings.DefaultQuality, &settings.MaxConcurrentDownloads); err != nil {
+	settings := defaultAppSettings()
+	var categories string
+	if err := s.db.QueryRow(`SELECT default_quality,max_concurrent_downloads,download_location,naming_pattern,subfolder_sorting,default_category,user_categories FROM app_settings WHERE id=1`).Scan(
+		&settings.DefaultQuality, &settings.MaxConcurrentDownloads, &settings.DownloadLocation, &settings.NamingPattern,
+		&settings.SubfolderSorting, &settings.DefaultCategory, &categories); err != nil {
 		return settings, err
 	}
+	if err := json.Unmarshal([]byte(categories), &settings.UserCategories); err != nil {
+		return settings, fmt.Errorf("decode saved categories: %w", err)
+	}
+	settings = mergeAppSettings(defaultAppSettings(), settings)
 	return settings, nil
 }
 
 func (s *jobStore) saveAppSettings(settings AppSettings) error {
+	settings = mergeAppSettings(defaultAppSettings(), settings)
 	if settings.MaxConcurrentDownloads == 0 {
 		settings.MaxConcurrentDownloads = 3
 	}
-	_, err := s.db.Exec(`UPDATE app_settings SET default_quality=?,max_concurrent_downloads=?,updated_at=? WHERE id=1`, settings.DefaultQuality, settings.MaxConcurrentDownloads, time.Now().UnixNano())
+	categories, err := json.Marshal(settings.UserCategories)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.Exec(`UPDATE app_settings SET default_quality=?,max_concurrent_downloads=?,download_location=?,naming_pattern=?,subfolder_sorting=?,default_category=?,user_categories=?,updated_at=? WHERE id=1`,
+		settings.DefaultQuality, settings.MaxConcurrentDownloads, settings.DownloadLocation, settings.NamingPattern,
+		settings.SubfolderSorting, settings.DefaultCategory, string(categories), time.Now().UnixNano())
 	return err
 }
 
@@ -290,16 +350,18 @@ func (s *jobStore) saveJob(j *jobState) error {
 	}
 	defer func() { _ = tx.Rollback() }()
 	_, err = tx.Exec(`INSERT INTO jobs
-		(id,url,kind,quality,media_type,audio_bitrate,status,title,progress,current_item,completed_count,total_count,error,created_at,note,dir,cancel_requested,done_at,updated_at,queue_items)
-		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+		(id,url,kind,quality,media_type,audio_bitrate,status,title,progress,current_item,completed_count,total_count,error,created_at,note,dir,cancel_requested,done_at,updated_at,queue_items,output_location,naming_pattern,subfolder_sorting,category)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 		ON CONFLICT(id) DO UPDATE SET url=excluded.url,kind=excluded.kind,quality=excluded.quality,
 		media_type=excluded.media_type,audio_bitrate=excluded.audio_bitrate,
 		status=excluded.status,title=excluded.title,progress=excluded.progress,current_item=excluded.current_item,
 		completed_count=excluded.completed_count,total_count=excluded.total_count,error=excluded.error,
 		created_at=excluded.created_at,note=excluded.note,dir=excluded.dir,cancel_requested=excluded.cancel_requested,
-		done_at=excluded.done_at,updated_at=excluded.updated_at,queue_items=excluded.queue_items`,
+		done_at=excluded.done_at,updated_at=excluded.updated_at,queue_items=excluded.queue_items,
+		output_location=excluded.output_location,naming_pattern=excluded.naming_pattern,subfolder_sorting=excluded.subfolder_sorting,category=excluded.category`,
 		j.ID, j.URL, j.Kind, j.Quality, j.MediaType, j.AudioBitrate, j.Status, j.Title, progress, j.CurrentItem, j.CompletedCount, total,
-		j.Error, j.CreatedAt, j.Note, j.dir, cancelRequested, done, time.Now().UnixNano(), string(queueItems))
+		j.Error, j.CreatedAt, j.Note, j.dir, cancelRequested, done, time.Now().UnixNano(), string(queueItems),
+		j.DownloadLocation, j.NamingPattern, j.SubfolderSorting, j.Category)
 	if err != nil {
 		return err
 	}
@@ -314,9 +376,9 @@ func (s *jobStore) saveJob(j *jobState) error {
 				break
 			}
 		}
-		if _, err = tx.Exec(`INSERT INTO job_files(job_id,item_index,file_id,name,size,height,mime_type,title,author,duration_seconds,thumbnail_url,publish_date,category) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		if _, err = tx.Exec(`INSERT INTO job_files(job_id,item_index,file_id,name,size,height,mime_type,title,author,duration_seconds,thumbnail_url,publish_date,category,output_name,output_path,output_relative_path) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 			j.ID, itemIndex, file.ID, file.Name, file.Size, file.Height, file.MimeType, file.Title, file.Author,
-			file.DurationSeconds, file.ThumbnailURL, file.PublishDate, file.Category); err != nil {
+			file.DurationSeconds, file.ThumbnailURL, file.PublishDate, file.Category, file.OutputName, file.OutputPath, file.OutputRelativePath); err != nil {
 			return err
 		}
 	}
@@ -365,7 +427,11 @@ func (s *jobStore) deleteJob(jobID string) error {
 }
 
 func (s *jobStore) loadJobs(root string) ([]*storedJob, error) {
-	rows, err := s.db.Query(`SELECT id,url,kind,quality,media_type,audio_bitrate,status,title,progress,current_item,completed_count,total_count,error,created_at,note,dir,cancel_requested,done_at,queue_items FROM jobs ORDER BY created_at ASC`)
+	currentSettings, err := s.loadAppSettings()
+	if err != nil {
+		return nil, err
+	}
+	rows, err := s.db.Query(`SELECT id,url,kind,quality,media_type,audio_bitrate,status,title,progress,current_item,completed_count,total_count,error,created_at,note,dir,cancel_requested,done_at,queue_items,output_location,naming_pattern,subfolder_sorting,category FROM jobs ORDER BY created_at ASC`)
 	if err != nil {
 		return nil, err
 	}
@@ -386,11 +452,24 @@ func (s *jobStore) loadJobs(root string) ([]*storedJob, error) {
 		var doneAt sql.NullInt64
 		var queueItems string
 		if err := rows.Scan(&j.ID, &j.URL, &j.Kind, &j.Quality, &j.MediaType, &j.AudioBitrate, &j.Status, &j.Title, &progress, &j.CurrentItem,
-			&j.CompletedCount, &totalCount, &j.Error, &j.CreatedAt, &j.Note, &dir, &cancelRequested, &doneAt, &queueItems); err != nil {
+			&j.CompletedCount, &totalCount, &j.Error, &j.CreatedAt, &j.Note, &dir, &cancelRequested, &doneAt, &queueItems,
+			&j.DownloadLocation, &j.NamingPattern, &j.SubfolderSorting, &j.Category); err != nil {
 			return nil, err
 		}
 		if err := json.Unmarshal([]byte(queueItems), &j.Items); err != nil {
 			return nil, fmt.Errorf("decode saved queue entries: %w", err)
+		}
+		if j.DownloadLocation == "" {
+			j.DownloadLocation = currentSettings.DownloadLocation
+		}
+		if j.NamingPattern == "" {
+			j.NamingPattern = currentSettings.NamingPattern
+		}
+		if j.SubfolderSorting == "" {
+			j.SubfolderSorting = currentSettings.SubfolderSorting
+		}
+		if j.Category == "" {
+			j.Category = currentSettings.DefaultCategory
 		}
 		if progress.Valid {
 			value := progress.Float64
@@ -436,7 +515,7 @@ func (s *jobStore) loadJobs(root string) ([]*storedJob, error) {
 				return nil, err
 			}
 		}
-		files, err := s.db.Query(`SELECT item_index,file_id,name,size,height,mime_type,title,author,duration_seconds,thumbnail_url,publish_date,category FROM job_files WHERE job_id=? ORDER BY item_index`, j.ID)
+		files, err := s.db.Query(`SELECT item_index,file_id,name,size,height,mime_type,title,author,duration_seconds,thumbnail_url,publish_date,category,output_name,output_path,output_relative_path FROM job_files WHERE job_id=? ORDER BY item_index`, j.ID)
 		if err != nil {
 			return nil, err
 		}
@@ -444,7 +523,7 @@ func (s *jobStore) loadJobs(root string) ([]*storedJob, error) {
 			var index int
 			var file mediaFile
 			if err := files.Scan(&index, &file.ID, &file.Name, &file.Size, &file.Height, &file.MimeType, &file.Title, &file.Author,
-				&file.DurationSeconds, &file.ThumbnailURL, &file.PublishDate, &file.Category); err != nil {
+				&file.DurationSeconds, &file.ThumbnailURL, &file.PublishDate, &file.Category, &file.OutputName, &file.OutputPath, &file.OutputRelativePath); err != nil {
 				_ = files.Close()
 				return nil, err
 			}

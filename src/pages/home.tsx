@@ -5,8 +5,8 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   Activity, AlertCircle, ArrowDownToLine, Check, ChevronDown, CircleHelp, Clock3,
-  DownloadCloud, Film, Gauge, HardDrive, Layers, ListVideo, LoaderCircle,
-  Pause, Play, Plus, RefreshCw, Search, Settings, ShieldCheck, Trash2, X,
+  DownloadCloud, FileText, Film, Folder, FolderTree, Gauge, HardDrive, Layers, ListVideo, LoaderCircle,
+  Pause, Play, Plus, RefreshCw, Search, Settings, ShieldCheck, Sparkles, Trash2, X,
 } from "lucide-react";
 import {
   api, formatBytes, isActive, parseYouTubeURL,
@@ -130,7 +130,12 @@ export function HomePage() {
   const [connection] = useState<ServiceConnection>(builtInServiceConnection);
   const [serviceReady, setServiceReady] = useState(false);
   const [jobs, setJobs] = useState<DownloadJob[]>([]);
-  const [settings, setSettings] = useState<AppSettings>({ defaultQuality: "best", maxConcurrentDownloads: 3 });
+  const [settings, setSettings] = useState<AppSettings>({
+    defaultQuality: "best", maxConcurrentDownloads: 3, downloadLocation: "",
+    namingPattern: "{channel} - {title} [{resolution}]", subfolderSorting: "channel",
+    defaultCategory: "General", userCategories: ["Tech", "Science", "Coding", "Music", "Education", "Gaming", "Podcasts", "Archival", "General"],
+  });
+  const [newCategoryInput, setNewCategoryInput] = useState("");
   const [mp3Supported, setMp3Supported] = useState(false);
   const [serviceError, setServiceError] = useState("");
   const [savingSettings, setSavingSettings] = useState(false);
@@ -206,7 +211,14 @@ export function HomePage() {
         ]);
         if (controller.signal.aborted) return;
         setJobs(jobResult.jobs);
-        setSettings({ ...settingResult.settings, maxConcurrentDownloads: settingResult.settings.maxConcurrentDownloads || 3 });
+        setSettings({
+          ...settingResult.settings,
+          maxConcurrentDownloads: settingResult.settings.maxConcurrentDownloads || 3,
+          namingPattern: settingResult.settings.namingPattern || "{channel} - {title} [{resolution}]",
+          subfolderSorting: settingResult.settings.subfolderSorting || "channel",
+          defaultCategory: settingResult.settings.defaultCategory || "General",
+          userCategories: settingResult.settings.userCategories?.length ? settingResult.settings.userCategories : ["Tech", "Science", "Coding", "Music", "Education", "Gaming", "Podcasts", "Archival", "General"],
+        });
         setServiceError("");
         setServiceReady(true);
       } catch (error) {
@@ -330,6 +342,30 @@ export function HomePage() {
     finally { setSavingSettings(false); }
   }
 
+  function changeSetting<K extends keyof AppSettings>(key: K, value: AppSettings[K]) {
+    setSettings(previous => ({ ...previous, [key]: value }));
+    setSettingsSaved(false);
+  }
+
+  function addCategory() {
+    const category = newCategoryInput.trim();
+    if (!category || settings.userCategories.some(value => value.toLowerCase() === category.toLowerCase())) return;
+    if (settings.userCategories.length >= 50) { setServiceError("You can save up to 50 categories."); return; }
+    changeSetting("userCategories", [...settings.userCategories, category]);
+    setNewCategoryInput("");
+  }
+
+  function removeCategory(category: string) {
+    if (settings.userCategories.length <= 1) return;
+    const remaining = settings.userCategories.filter(value => value !== category);
+    setSettings(previous => ({
+      ...previous,
+      userCategories: remaining,
+      defaultCategory: previous.defaultCategory === category ? (remaining[0] ?? "General") : previous.defaultCategory,
+    }));
+    setSettingsSaved(false);
+  }
+
   async function jobAction(job: DownloadJob, action: "pause" | "resume" | "cancel" | "retry" | "remove") {
     if (!serviceReady) return;
     if (action === "retry" && !window.confirm("Retry this URL? Confirm that you own the content or have permission to download it.")) return;
@@ -340,7 +376,7 @@ export function HomePage() {
       if (action === "remove") {
         await api<void>(connection, `/api/jobs/${encodeURIComponent(job.id)}`, { method: "DELETE", signal: AbortSignal.timeout(15000) });
         setJobs(previous => previous.filter(item => item.id !== job.id));
-        setNotice("Job history and private output files removed.");
+        setNotice("Job history and tracked output files removed.");
       } else {
         const result = await api<DownloadJob>(connection, `/api/jobs/${encodeURIComponent(job.id)}/${action}`, {
           method: "POST",
@@ -616,7 +652,7 @@ export function HomePage() {
                 <div className="space-y-2 p-3">
                   {job.files.map(file => <div key={file.id} className="flex items-center gap-3 rounded-xl border border-neutral-800/80 bg-neutral-950/70 p-2.5">
                     {file.thumbnailUrl ? <img src={file.thumbnailUrl} alt="" referrerPolicy="no-referrer" className="aspect-video w-24 rounded-md bg-neutral-900 object-cover" /> : <div className="grid aspect-video w-24 shrink-0 place-items-center rounded-md bg-neutral-900 text-neutral-600">{job.mediaType === "audio" ? <Activity className="size-5" aria-hidden="true" /> : <Film className="size-5" aria-hidden="true" />}</div>}
-                    <div className="min-w-0 flex-1"><h4 className="truncate text-xs font-semibold text-neutral-200" title={file.title || file.name}>{file.title || file.name}</h4><p className="mt-1 truncate text-[10px] text-neutral-500">{file.author || file.name}</p><p className="mt-1 text-[10px] text-neutral-600">{file.height ? `${file.height}p · ` : ""}{formatBytes(file.size)}{file.durationSeconds ? ` · ${durationLabel(file.durationSeconds)}` : ""}</p></div>
+                    <div className="min-w-0 flex-1"><h4 className="truncate text-xs font-semibold text-neutral-200" title={file.title || file.outputName || file.name}>{file.title || file.outputName || file.name}</h4><p className="mt-1 truncate font-mono text-[10px] text-neutral-500" title={file.outputRelativePath || file.author || file.name}>{file.outputRelativePath || file.author || file.name}</p><p className="mt-1 text-[10px] text-neutral-600">{file.height ? `${file.height}p · ` : ""}{formatBytes(file.size)}{file.durationSeconds ? ` · ${durationLabel(file.durationSeconds)}` : ""}</p></div>
                     <button type="button" className={button} disabled={busyAction === `${job.id}:${file.id}`} onClick={() => void saveFile(job, file.id)} aria-label={`Save ${file.title || file.name}`}><ArrowDownToLine className="size-3.5" aria-hidden="true" /><span className="hidden sm:inline">Save</span></button>
                   </div>)}
                 </div>
@@ -640,24 +676,80 @@ export function HomePage() {
             {!serviceReady && <p className="mt-2 text-[10px] text-neutral-500">The app retries the local service automatically while it starts.</p>}
           </section>
 
-          <form onSubmit={savePreferences} className={`${panel} space-y-4 p-5 sm:p-6`}>
-            <div><h3 className="text-sm font-bold">Download defaults</h3><p className="mt-1 text-xs text-neutral-400">Preferences are stored by the service in its state.db file.</p></div>
-            <label className="block max-w-md text-xs font-medium text-neutral-300">Default maximum video quality
-              <select className={`${field} mt-1.5`} value={settings.defaultQuality} onChange={event => { setSettings({ ...settings, defaultQuality: event.target.value as Quality }); setSettingsSaved(false); }}>
-                {(Object.entries(qualityLabels) as [Quality, string][]).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
-              </select>
-            </label>
-            <label className="block max-w-md text-xs font-medium text-neutral-300">Maximum concurrent downloads <span className="float-right font-mono text-rose-300">{settings.maxConcurrentDownloads}</span>
-              <input aria-label="Maximum concurrent downloads" type="range" min="1" max="6" step="1" value={settings.maxConcurrentDownloads} onChange={event => { setSettings({ ...settings, maxConcurrentDownloads: Number(event.target.value) }); setSettingsSaved(false); }} className="mt-2 w-full accent-rose-600" />
-              <span className="mt-1 flex justify-between text-[10px] text-neutral-500"><span>1 stream</span><span>6 streams</span></span>
-            </label>
-            <div className="flex flex-wrap items-center justify-between gap-3 border-t border-neutral-800 pt-4">
-              <p className="max-w-lg text-[10px] leading-relaxed text-neutral-500">The output directory is controlled with DATA_DIR when the Go service starts. {mp3Supported ? "Built-in Go MP3 conversion is ready." : "This backend does not support MP3 conversion."}</p>
-              <button type="submit" className={primaryButton} disabled={!serviceReady || savingSettings}>{savingSettings && <LoaderCircle className="size-4 animate-spin" aria-hidden="true" />}{settingsSaved ? <Check className="size-4" aria-hidden="true" /> : null}{savingSettings ? "Saving…" : settingsSaved ? "Saved to SQLite" : "Save preferences"}</button>
-            </div>
+          <form onSubmit={savePreferences} className="space-y-5">
+            <section className={`${panel} space-y-4 p-5 sm:p-6`}>
+              <div className="flex flex-wrap items-start justify-between gap-3 border-b border-neutral-800 pb-4">
+                <div><h3 className="text-sm font-bold">Preferences & output configuration</h3><p className="mt-1 text-xs text-neutral-400">Choose where finished files go, how they are named, and how folders are organized.</p></div>
+                <button type="submit" className={primaryButton} disabled={!serviceReady || savingSettings}>{savingSettings && <LoaderCircle className="size-4 animate-spin" aria-hidden="true" />}{settingsSaved ? <Check className="size-4" aria-hidden="true" /> : null}{savingSettings ? "Saving…" : settingsSaved ? "Saved" : "Save preferences"}</button>
+              </div>
+
+              <div className="rounded-xl border border-neutral-800 bg-neutral-950/60 p-4">
+                <div className="mb-3 flex items-center gap-3"><span className="grid size-9 place-items-center rounded-lg border border-amber-700/40 bg-amber-950/30 text-amber-300"><Folder className="size-4" aria-hidden="true" /></span><div><h4 className="text-xs font-bold">Download directory location</h4><p className="mt-0.5 text-[11px] text-neutral-400">Finished media is copied to this local or external folder.</p></div></div>
+                <label className="block text-[11px] font-medium text-neutral-300" htmlFor="download-location">Absolute folder path</label>
+                <div className="mt-1 flex gap-2"><input id="download-location" type="text" autoComplete="off" className={`${field} font-mono text-xs`} value={settings.downloadLocation} onChange={event => changeSetting("downloadLocation", event.target.value)} placeholder="C:\\Users\\you\\Downloads\\YouTube_Vault" /><button type="button" className={button} onClick={() => document.getElementById("download-location")?.focus()} title="Focus the path field for editing">Edit path</button></div>
+                <p className="mt-2 text-[10px] text-neutral-500">Enter an absolute path. The app creates the folder when the first download finishes. Existing files stay in their original locations.</p>
+                <div className="mt-3 flex flex-wrap items-center gap-1.5 text-[10px]">
+                  <span className="mr-1 text-neutral-500">Quick paths:</span>
+                  {["YouTube_Vault", "Media", "YouTube"].map(name => {
+                    const path = settings.downloadLocation;
+                    const lastSlash = Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\"));
+                    const separator = path.includes("\\") ? "\\" : "/";
+                    const parent = lastSlash >= 0 ? path.slice(0, lastSlash) : path;
+                    const preset = `${parent}${parent.endsWith(separator) || !parent ? "" : separator}${name}`;
+                    return <button key={name} type="button" onClick={() => changeSetting("downloadLocation", preset)} className="rounded-md border border-neutral-800 bg-neutral-900 px-2.5 py-1 font-mono text-neutral-300 hover:border-neutral-600">{name}</button>;
+                  })}
+                </div>
+              </div>
+
+              <div className="rounded-xl border border-neutral-800 bg-neutral-950/60 p-4">
+                <div className="mb-3 flex items-center gap-3"><span className="grid size-9 place-items-center rounded-lg border border-blue-700/40 bg-blue-950/30 text-blue-300"><FileText className="size-4" aria-hidden="true" /></span><div><h4 className="text-xs font-bold">File naming format preferences</h4><p className="mt-0.5 text-[11px] text-neutral-400">Use tokens to build the saved filename.</p></div></div>
+                <label className="block text-[11px] font-medium text-neutral-300" htmlFor="naming-pattern">Naming pattern template</label>
+                <input id="naming-pattern" type="text" className={`${field} mt-1 font-mono text-xs`} value={settings.namingPattern} onChange={event => changeSetting("namingPattern", event.target.value)} />
+                <div className="mt-2 flex flex-wrap items-center gap-1.5 text-[10px]"><span className="mr-1 text-neutral-500">Insert token:</span>{["{channel}", "{title}", "{resolution}", "{category}"].map(token => <button key={token} type="button" onClick={() => changeSetting("namingPattern", `${settings.namingPattern}${settings.namingPattern ? " " : ""}${token}`)} className="rounded-md border border-neutral-800 bg-neutral-900 px-2.5 py-1 font-mono text-neutral-300 hover:border-neutral-600"><Plus className="mr-1 inline size-3 text-rose-400" aria-hidden="true" />{token}</button>)}</div>
+                <div className="mt-3 rounded-lg border border-neutral-800 bg-neutral-900/70 p-3"><div className="flex items-center gap-1.5 text-[10px] font-semibold text-neutral-300"><Sparkles className="size-3.5 text-amber-300" aria-hidden="true" />Live file generation preview</div>
+                  {(() => {
+                    const sample = settings.namingPattern.replaceAll("{channel}", "Marques Brownlee").replaceAll("{title}", "M3 Max MacBook Pro Deep Dive").replaceAll("{resolution}", "1080p").replaceAll("{category}", settings.defaultCategory || "General");
+                    const safePreview = sample || "Untitled";
+                    const separator = settings.downloadLocation.includes("\\") ? "\\" : "/";
+                    const subfolder = settings.subfolderSorting === "channel" ? "Marques Brownlee" : settings.subfolderSorting === "category" ? settings.defaultCategory : "";
+                    return <><p className="mt-1 break-all font-mono text-xs text-emerald-300">{safePreview}.mp4</p><p className="mt-1 break-all font-mono text-[10px] text-neutral-400">{settings.downloadLocation}{subfolder ? `${separator}${subfolder}` : ""}{separator}{safePreview}.mp4</p></>;
+                  })()}
+                </div>
+              </div>
+
+              <div className="rounded-xl border border-neutral-800 bg-neutral-950/60 p-4">
+                <div className="mb-3 flex items-center gap-3"><span className="grid size-9 place-items-center rounded-lg border border-purple-700/40 bg-purple-950/30 text-purple-300"><FolderTree className="size-4" aria-hidden="true" /></span><div><h4 className="text-xs font-bold">Subfolder sorting organization</h4><p className="mt-0.5 text-[11px] text-neutral-400">Organize finished downloads into structured folders.</p></div></div>
+                <div className="grid gap-2 sm:grid-cols-3">
+                  {([ ["channel", "Sort by YouTube channel"], ["category", "Sort by category"], ["flat", "No subfolders"] ] as const).map(([value, label]) => <label key={value} className={`cursor-pointer rounded-lg border p-3 ${settings.subfolderSorting === value ? "border-rose-600/70 bg-rose-950/20" : "border-neutral-800 bg-neutral-900/50"}`}><span className="flex items-center justify-between text-[11px] font-semibold text-neutral-200">{label}<input type="radio" name="subfolder-sorting" checked={settings.subfolderSorting === value} onChange={() => changeSetting("subfolderSorting", value)} className="accent-rose-600" /></span><span className="mt-1 block text-[10px] text-neutral-500">{value === "channel" ? "Files grouped by creator." : value === "category" ? "Files grouped by your selected category." : "Save directly in the destination."}</span></label>)}
+                </div>
+                <label className="mt-3 block max-w-sm text-[11px] font-medium text-neutral-300">Default category for new downloads
+                  <select className={`${field} mt-1.5 text-xs`} value={settings.defaultCategory} onChange={event => changeSetting("defaultCategory", event.target.value)}>{settings.userCategories.map(category => <option key={category} value={category}>{category}</option>)}</select>
+                </label>
+                <div className="mt-3 rounded-lg border border-neutral-800 bg-neutral-900/50 p-3">
+                  <div className="flex items-center justify-between text-[11px]"><span className="font-semibold text-neutral-300">User-defined categories</span><span className="text-neutral-500">{settings.userCategories.length} active</span></div>
+                  <div className="mt-2 flex flex-wrap gap-1.5">{settings.userCategories.map(category => <span key={category} className="inline-flex items-center gap-1 rounded-md border border-neutral-800 bg-neutral-950 px-2 py-1 text-[10px] text-neutral-200">{category}<button type="button" onClick={() => removeCategory(category)} disabled={settings.userCategories.length <= 1} aria-label={`Remove ${category}`} className="text-neutral-500 hover:text-rose-300 disabled:opacity-40"><X className="size-3" aria-hidden="true" /></button></span>)}</div>
+                  <div className="mt-2 flex gap-2"><input type="text" aria-label="New category" maxLength={40} value={newCategoryInput} onChange={event => setNewCategoryInput(event.target.value)} onKeyDown={event => { if (event.key === "Enter") { event.preventDefault(); addCategory(); } }} placeholder="Add a category" className={`${field} py-2 text-xs`} /><button type="button" onClick={addCategory} className={button}><Plus className="size-3.5" aria-hidden="true" />Add</button></div>
+                </div>
+              </div>
+
+              <div className="grid gap-4 border-t border-neutral-800 pt-4 sm:grid-cols-2">
+                <label className="block text-xs font-medium text-neutral-300">Default maximum video quality
+                  <select className={`${field} mt-1.5`} value={settings.defaultQuality} onChange={event => changeSetting("defaultQuality", event.target.value as Quality)}>{(Object.entries(qualityLabels) as [Quality, string][]).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select>
+                </label>
+                <label className="block text-xs font-medium text-neutral-300">Maximum concurrent downloads <span className="float-right font-mono text-rose-300">{settings.maxConcurrentDownloads}</span>
+                  <input aria-label="Maximum concurrent downloads" type="range" min="1" max="6" step="1" value={settings.maxConcurrentDownloads} onChange={event => changeSetting("maxConcurrentDownloads", Number(event.target.value))} className="mt-2 w-full accent-rose-600" />
+                  <span className="mt-1 flex justify-between text-[10px] text-neutral-500"><span>1 stream</span><span>6 streams</span></span>
+                </label>
+              </div>
+              {serviceError && <p role="alert" className="text-xs text-red-300">{serviceError}</p>}
+              <div className="flex flex-wrap items-center justify-between gap-3 border-t border-neutral-800 pt-4">
+                <p className="max-w-lg text-[10px] leading-relaxed text-neutral-500">Settings apply to new jobs. Each download also stays in private app storage for the library and secure save links. {mp3Supported ? "Built-in Go MP3 conversion is ready." : "This backend does not support MP3 conversion."}</p>
+                <button type="submit" className={primaryButton} disabled={!serviceReady || savingSettings}>{savingSettings && <LoaderCircle className="size-4 animate-spin" aria-hidden="true" />}{settingsSaved ? <Check className="size-4" aria-hidden="true" /> : null}{savingSettings ? "Saving…" : settingsSaved ? "Saved to SQLite" : "Save preferences"}</button>
+              </div>
+            </section>
           </form>
 
-            <section className={`${panel} p-5`}><div className="flex items-start gap-3"><div className="grid size-9 shrink-0 place-items-center rounded-xl border border-blue-800/50 bg-blue-950/30 text-blue-300"><Gauge className="size-4" aria-hidden="true" /></div><div><h3 className="text-xs font-bold">What this backend supports</h3><ul className="mt-2 space-y-1.5 text-[11px] leading-relaxed text-neutral-400"><li>Video and playlist downloads, including adaptive MP4 remuxing and pure-Go MP3 conversion for AAC audio.</li><li>Up to six concurrent jobs, multi-routine stream transfers, pause/resume, retries, and live speed and ETA.</li><li>Quality ceilings: best, 1080p, 720p, or 480p. Actual output quality is reported after completion.</li><li>Private DATA_DIR storage, scoped file/ZIP tickets, and SQLite-backed library history.</li></ul>{!mp3Supported && <p className="mt-3 flex items-start gap-1.5 text-[10px] leading-relaxed text-amber-300"><ShieldCheck className="mt-0.5 size-3 shrink-0" aria-hidden="true" />This backend does not support MP3 conversion.</p>}</div></div></section>
+            <section className={`${panel} p-5`}><div className="flex items-start gap-3"><div className="grid size-9 shrink-0 place-items-center rounded-xl border border-blue-800/50 bg-blue-950/30 text-blue-300"><Gauge className="size-4" aria-hidden="true" /></div><div><h3 className="text-xs font-bold">What this backend supports</h3><ul className="mt-2 space-y-1.5 text-[11px] leading-relaxed text-neutral-400"><li>Video and playlist downloads, including adaptive MP4 remuxing and pure-Go MP3 conversion for AAC audio.</li><li>Up to six concurrent jobs, multi-routine stream transfers, pause/resume, retries, and live speed and ETA.</li><li>Quality ceilings: best, 1080p, 720p, or 480p. Actual output quality is reported after completion.</li><li>Files are copied to the selected destination and remain available in the private SQLite-backed library.</li></ul>{!mp3Supported && <p className="mt-3 flex items-start gap-1.5 text-[10px] leading-relaxed text-amber-300"><ShieldCheck className="mt-0.5 size-3 shrink-0" aria-hidden="true" />This backend does not support MP3 conversion.</p>}</div></div></section>
         </div>}
       </main>
       <footer className="mx-auto flex max-w-7xl items-center justify-between gap-3 px-4 pb-8 text-[10px] text-neutral-600 sm:px-6"><span className="flex items-center gap-1.5"><Clock3 className="size-3" aria-hidden="true" />Live job updates from the Go service</span><span className="flex items-center gap-1.5"><HardDrive className="size-3" aria-hidden="true" />SQLite-backed history</span></footer>

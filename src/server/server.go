@@ -22,18 +22,21 @@ import (
 )
 
 type mediaFile struct {
-	ID              string `json:"id"`
-	Name            string `json:"name"`
-	Size            int64  `json:"size"`
-	Height          int    `json:"height"`
-	MimeType        string `json:"mimeType"`
-	Title           string `json:"title,omitempty"`
-	Author          string `json:"author,omitempty"`
-	DurationSeconds int64  `json:"durationSeconds,omitempty"`
-	ThumbnailURL    string `json:"thumbnailUrl,omitempty"`
-	PublishDate     string `json:"publishDate,omitempty"`
-	Category        string `json:"category,omitempty"`
-	MediaType       string `json:"mediaType,omitempty"`
+	ID                 string `json:"id"`
+	Name               string `json:"name"`
+	Size               int64  `json:"size"`
+	Height             int    `json:"height"`
+	MimeType           string `json:"mimeType"`
+	Title              string `json:"title,omitempty"`
+	Author             string `json:"author,omitempty"`
+	DurationSeconds    int64  `json:"durationSeconds,omitempty"`
+	ThumbnailURL       string `json:"thumbnailUrl,omitempty"`
+	PublishDate        string `json:"publishDate,omitempty"`
+	Category           string `json:"category,omitempty"`
+	MediaType          string `json:"mediaType,omitempty"`
+	OutputName         string `json:"outputName,omitempty"`
+	OutputPath         string `json:"-"`
+	OutputRelativePath string `json:"outputRelativePath,omitempty"`
 }
 
 type itemFailure struct {
@@ -82,6 +85,10 @@ type Job struct {
 	SpeedBytesPerSec int64         `json:"speedBytesPerSec"`
 	ETASeconds       int64         `json:"etaSeconds"`
 	ActiveItemCount  int           `json:"activeItemCount"`
+	DownloadLocation string        `json:"-"`
+	NamingPattern    string        `json:"-"`
+	SubfolderSorting string        `json:"-"`
+	Category         string        `json:"-"`
 }
 
 type jobState struct {
@@ -361,6 +368,10 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			fail(w, 409, "This job has an active file transfer")
 			return
 		}
+		if err := removeOutputCopies(j); err != nil {
+			fail(w, 500, "Could not remove the job's files from the configured download directory")
+			return
+		}
 		if err := os.RemoveAll(j.dir); err != nil {
 			fail(w, 500, "Could not remove the job's private files")
 			return
@@ -448,34 +459,66 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// handleSettings reads preferences or validates and persists the supported
-// default-quality setting in SQLite.
+// handleSettings reads preferences or validates and persists output settings.
 func (s *server) handleSettings(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
 		s.mu.Lock()
-		settings := s.settings
+		settings := mergeAppSettings(defaultAppSettings(), s.settings)
 		s.mu.Unlock()
 		reply(w, 200, map[string]AppSettings{"settings": settings})
 	case http.MethodPut:
-		var settings AppSettings
-		if !decode(w, r, &settings) {
+		var patch struct {
+			DefaultQuality         *string   `json:"defaultQuality"`
+			MaxConcurrentDownloads *int      `json:"maxConcurrentDownloads"`
+			DownloadLocation       *string   `json:"downloadLocation"`
+			NamingPattern          *string   `json:"namingPattern"`
+			SubfolderSorting       *string   `json:"subfolderSorting"`
+			DefaultCategory        *string   `json:"defaultCategory"`
+			UserCategories         *[]string `json:"userCategories"`
+		}
+		if !decode(w, r, &patch) {
 			return
 		}
-		if settings.MaxConcurrentDownloads == 0 {
-			s.mu.Lock()
-			settings.MaxConcurrentDownloads = s.settings.MaxConcurrentDownloads
-			s.mu.Unlock()
+		s.mu.Lock()
+		settings := mergeAppSettings(defaultAppSettings(), s.settings)
+		if patch.DefaultQuality != nil {
+			settings.DefaultQuality = *patch.DefaultQuality
 		}
+		if patch.MaxConcurrentDownloads != nil {
+			settings.MaxConcurrentDownloads = *patch.MaxConcurrentDownloads
+		}
+		if patch.DownloadLocation != nil {
+			settings.DownloadLocation = *patch.DownloadLocation
+		}
+		if patch.NamingPattern != nil {
+			settings.NamingPattern = *patch.NamingPattern
+		}
+		if patch.SubfolderSorting != nil {
+			settings.SubfolderSorting = *patch.SubfolderSorting
+		}
+		if patch.DefaultCategory != nil {
+			settings.DefaultCategory = *patch.DefaultCategory
+		}
+		if patch.UserCategories != nil {
+			settings.UserCategories = *patch.UserCategories
+		}
+		settings.DownloadLocation = filepath.Clean(strings.TrimSpace(settings.DownloadLocation))
 		if settings.DefaultQuality != "best" && settings.DefaultQuality != "1080" && settings.DefaultQuality != "720" && settings.DefaultQuality != "480" {
+			s.mu.Unlock()
 			fail(w, 400, "defaultQuality must be best, 1080, 720, or 480")
 			return
 		}
 		if settings.MaxConcurrentDownloads < 1 || settings.MaxConcurrentDownloads > 6 {
+			s.mu.Unlock()
 			fail(w, 400, "maxConcurrentDownloads must be between 1 and 6")
 			return
 		}
-		s.mu.Lock()
+		if err := validateAppSettings(settings); err != nil {
+			s.mu.Unlock()
+			fail(w, 400, err.Error())
+			return
+		}
 		if err := s.store.saveAppSettings(settings); err != nil {
 			s.mu.Unlock()
 			fail(w, 500, "Could not save preferences")
@@ -588,7 +631,13 @@ func (s *server) enqueueJob(w http.ResponseWriter, u, kind, quality, mediaType, 
 			items = append(items, item)
 		}
 	}
-	j := &jobState{Job: Job{ID: randomID(16), URL: u, Kind: kind, Quality: quality, MediaType: mediaType, AudioBitrate: audioBitrate, Status: "queued", Title: "YouTube " + kind, Files: []mediaFile{}, Items: items, Failures: []itemFailure{}, Note: formatNote, CreatedAt: time.Now().UTC().Format(time.RFC3339Nano)}, fileItems: map[int]mediaFile{}}
+	outputSettings := mergeAppSettings(defaultAppSettings(), s.settings)
+	j := &jobState{Job: Job{
+		ID: randomID(16), URL: u, Kind: kind, Quality: quality, MediaType: mediaType, AudioBitrate: audioBitrate,
+		Status: "queued", Title: "YouTube " + kind, Files: []mediaFile{}, Items: items, Failures: []itemFailure{},
+		Note: formatNote, CreatedAt: time.Now().UTC().Format(time.RFC3339Nano), DownloadLocation: outputSettings.DownloadLocation,
+		NamingPattern: outputSettings.NamingPattern, SubfolderSorting: outputSettings.SubfolderSorting, Category: outputSettings.DefaultCategory,
+	}, fileItems: map[int]mediaFile{}}
 	if kind == "playlist" {
 		j.Note += " " + playlistNote
 		if len(j.Items) > 0 {

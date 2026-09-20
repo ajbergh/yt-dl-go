@@ -18,6 +18,8 @@ export interface DownloadFile {
   publishDate?: string;
   category?: string;
   mediaType?: "video" | "audio";
+  outputName?: string;
+  outputRelativePath?: string;
 }
 export interface QueueItem {
   index: number;
@@ -80,6 +82,11 @@ export interface ServiceConnection {
 export interface AppSettings {
   defaultQuality: Quality;
   maxConcurrentDownloads: number;
+  downloadLocation: string;
+  namingPattern: string;
+  subfolderSorting: "channel" | "category" | "flat";
+  defaultCategory: string;
+  userCategories: string[];
 }
 
 export interface InspectedQuality {

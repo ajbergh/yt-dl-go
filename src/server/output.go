@@ -1,0 +1,243 @@
+package main
+
+import (
+	"errors"
+	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+	"strings"
+	"unicode"
+)
+
+const defaultNamingPattern = "{channel} - {title} [{resolution}]"
+
+var defaultUserCategories = []string{
+	"Tech", "Science", "Coding", "Music", "Education", "Gaming", "Podcasts", "Archival", "General",
+}
+
+func defaultAppSettings() AppSettings {
+	home, err := os.UserHomeDir()
+	if err != nil || strings.TrimSpace(home) == "" {
+		home = os.TempDir()
+	}
+	return AppSettings{
+		DefaultQuality: "best", MaxConcurrentDownloads: 3,
+		DownloadLocation: filepath.Join(home, "Downloads", "YouTube_Vault"),
+		NamingPattern:    defaultNamingPattern, SubfolderSorting: "channel",
+		DefaultCategory: "General", UserCategories: append([]string(nil), defaultUserCategories...),
+	}
+}
+
+// mergeAppSettings supplies defaults for fields omitted by older clients or
+// databases while retaining explicit user values.
+func mergeAppSettings(defaults, settings AppSettings) AppSettings {
+	if settings.DefaultQuality == "" {
+		settings.DefaultQuality = defaults.DefaultQuality
+	}
+	if settings.MaxConcurrentDownloads == 0 {
+		settings.MaxConcurrentDownloads = defaults.MaxConcurrentDownloads
+	}
+	if settings.DownloadLocation == "" {
+		settings.DownloadLocation = defaults.DownloadLocation
+	}
+	if settings.NamingPattern == "" {
+		settings.NamingPattern = defaults.NamingPattern
+	}
+	if settings.SubfolderSorting == "" {
+		settings.SubfolderSorting = defaults.SubfolderSorting
+	}
+	if settings.DefaultCategory == "" {
+		settings.DefaultCategory = defaults.DefaultCategory
+	}
+	if settings.UserCategories == nil {
+		settings.UserCategories = append([]string(nil), defaults.UserCategories...)
+	}
+	return settings
+}
+
+func validateAppSettings(settings AppSettings) error {
+	location := strings.TrimSpace(settings.DownloadLocation)
+	if location == "" || len(location) > 32760 || strings.ContainsRune(location, '\x00') || !filepath.IsAbs(location) {
+		return errors.New("downloadLocation must be an absolute path")
+	}
+	cleanLocation := filepath.Clean(location)
+	if filepath.Dir(cleanLocation) == cleanLocation {
+		return errors.New("downloadLocation cannot be a drive or filesystem root")
+	}
+	if len(settings.NamingPattern) == 0 || len(settings.NamingPattern) > 240 || strings.ContainsAny(settings.NamingPattern, `/\\`) {
+		return errors.New("namingPattern must be 1–240 characters and cannot contain path separators")
+	}
+	template := settings.NamingPattern
+	for _, token := range []string{"{channel}", "{title}", "{resolution}", "{category}"} {
+		template = strings.ReplaceAll(template, token, "value")
+	}
+	if strings.ContainsAny(template, "{}") {
+		return errors.New("namingPattern contains an unsupported token")
+	}
+	if settings.SubfolderSorting != "channel" && settings.SubfolderSorting != "category" && settings.SubfolderSorting != "flat" {
+		return errors.New("subfolderSorting must be channel, category, or flat")
+	}
+	if len(settings.UserCategories) == 0 || len(settings.UserCategories) > 50 {
+		return errors.New("userCategories must contain between 1 and 50 categories")
+	}
+	seen := map[string]struct{}{}
+	defaultCategoryExists := false
+	for _, category := range settings.UserCategories {
+		category = strings.TrimSpace(category)
+		if category == "" || len([]rune(category)) > 40 || strings.ContainsAny(category, `/\\`) {
+			return errors.New("each user category must be 1–40 characters and cannot contain path separators")
+		}
+		key := strings.ToLower(category)
+		if _, exists := seen[key]; exists {
+			return errors.New("userCategories cannot contain duplicates")
+		}
+		seen[key] = struct{}{}
+		if strings.EqualFold(category, strings.TrimSpace(settings.DefaultCategory)) {
+			defaultCategoryExists = true
+		}
+	}
+	if !defaultCategoryExists {
+		return errors.New("defaultCategory must match an active user category")
+	}
+	return nil
+}
+
+func (s *server) publishOutput(j *jobState, file *mediaFile) error {
+	if j.DownloadLocation == "" || j.NamingPattern == "" {
+		return errors.New("job has no captured output preferences")
+	}
+	if !filepath.IsAbs(j.DownloadLocation) || filepath.Clean(j.DownloadLocation) != j.DownloadLocation {
+		return errors.New("job contains an invalid output directory")
+	}
+	extension := filepath.Ext(file.Name)
+	if extension != ".mp4" && extension != ".webm" && extension != ".mp3" {
+		return errors.New("download has an unsupported output type")
+	}
+	channel := file.Author
+	if strings.TrimSpace(channel) == "" {
+		channel = "Unknown Channel"
+	}
+	title := file.Title
+	if strings.TrimSpace(title) == "" {
+		title = "Untitled"
+	}
+	category := j.Category
+	if strings.TrimSpace(category) == "" {
+		category = "General"
+	}
+	resolution := "audio"
+	if file.Height > 0 {
+		resolution = fmt.Sprintf("%dp", file.Height)
+	}
+	baseName := j.NamingPattern
+	for token, value := range map[string]string{
+		"{channel}": channel, "{title}": title, "{resolution}": resolution, "{category}": category,
+	} {
+		baseName = strings.ReplaceAll(baseName, token, value)
+	}
+	baseName = sanitizePathComponent(baseName)
+	if baseName == "" {
+		baseName = "Untitled"
+	}
+	if len([]rune(baseName)) > 170 {
+		baseName = string([]rune(baseName)[:170])
+	}
+	folder := j.DownloadLocation
+	switch j.SubfolderSorting {
+	case "channel":
+		folder = filepath.Join(folder, sanitizePathComponent(channel))
+	case "category":
+		folder = filepath.Join(folder, sanitizePathComponent(category))
+	case "flat":
+	default:
+		return errors.New("job contains an unsupported folder sorting rule")
+	}
+	if err := os.MkdirAll(folder, 0700); err != nil {
+		return fmt.Errorf("create download destination: %w", err)
+	}
+	source, err := openFinal(j.dir, file.Name)
+	if err != nil {
+		return err
+	}
+	defer source.Close()
+
+	for suffix := 0; suffix < 10000; suffix++ {
+		name := baseName + extension
+		if suffix > 0 {
+			name = fmt.Sprintf("%s (%d)%s", baseName, suffix+1, extension)
+		}
+		destination := filepath.Join(folder, name)
+		out, err := os.OpenFile(destination, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+		if errors.Is(err, os.ErrExist) {
+			continue
+		}
+		if err != nil {
+			return fmt.Errorf("create download output: %w", err)
+		}
+		copied, copyErr := io.Copy(out, source)
+		syncErr := out.Sync()
+		closeErr := out.Close()
+		if copyErr != nil || copied != file.Size || syncErr != nil || closeErr != nil {
+			_ = os.Remove(destination)
+			return errors.New("could not write download output")
+		}
+		file.OutputName = name
+		file.OutputPath = destination
+		file.OutputRelativePath = filepath.ToSlash(filepath.Join(filepath.Base(folder), name))
+		if j.SubfolderSorting == "flat" {
+			file.OutputRelativePath = name
+		}
+		return nil
+	}
+	return errors.New("could not choose an unused output filename")
+}
+
+func sanitizePathComponent(value string) string {
+	var builder strings.Builder
+	lastDash := false
+	for _, r := range strings.TrimSpace(value) {
+		if unicode.IsControl(r) || strings.ContainsRune(`<>:"/\\|?*`, r) {
+			if !lastDash {
+				builder.WriteByte('-')
+			}
+			lastDash = true
+			continue
+		}
+		builder.WriteRune(r)
+		lastDash = r == '-'
+	}
+	clean := strings.Trim(builder.String(), " .")
+	if clean == "." || clean == ".." {
+		return ""
+	}
+	device := strings.ToUpper(strings.SplitN(clean, ".", 2)[0])
+	if device == "CON" || device == "PRN" || device == "AUX" || device == "NUL" ||
+		(len(device) == 4 && (strings.HasPrefix(device, "COM") || strings.HasPrefix(device, "LPT")) && device[3] >= '1' && device[3] <= '9') {
+		clean = "_" + clean
+	}
+	return clean
+}
+
+func removeOutputCopies(j *jobState) error {
+	for _, file := range j.Files {
+		if file.OutputPath == "" {
+			continue
+		}
+		if file.OutputName == "" || file.OutputRelativePath == "" || !filepath.IsAbs(j.DownloadLocation) {
+			return errors.New("job contains invalid output metadata")
+		}
+		relative := filepath.FromSlash(file.OutputRelativePath)
+		if filepath.IsAbs(relative) || filepath.Clean(relative) != relative || relative == "." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+			return errors.New("job contains an unsafe output path")
+		}
+		expected := filepath.Join(j.DownloadLocation, relative)
+		if filepath.Clean(file.OutputPath) != expected || filepath.Base(file.OutputPath) != file.OutputName {
+			return errors.New("job output path does not match its recorded destination")
+		}
+		if err := os.Remove(file.OutputPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+	}
+	return nil
+}
