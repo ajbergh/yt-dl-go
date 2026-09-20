@@ -18,5 +18,5 @@ func newNativeClient(timeout time.Duration) *youtube.Client {
 	configureYouTubeClientOnce.Do(func() {
 		youtube.DefaultClient = youtube.AndroidClient
 	})
-	return &youtube.Client{HTTPClient: nativeHTTPClient(timeout), MaxRoutines: 1, ChunkSize: 1024 * 1024}
+	return &youtube.Client{HTTPClient: nativeHTTPClient(timeout), MaxRoutines: 4, ChunkSize: 1024 * 1024}
 }

@@ -10,13 +10,15 @@ import {
 } from "lucide-react";
 import {
   api, formatBytes, isActive, parseYouTubeURL,
-  type AppSettings, type DownloadJob, type Inspection, type Quality,
+  type AppSettings, type DownloadJob, type Inspection, type QueueItem, type Quality,
   type ServiceConnection, type ServiceHealth,
 } from "../lib/downloader";
 
 type Tab = "queue" | "library" | "settings";
-type Draft = Inspection & { selectedQuality: Quality };
-type QueueFilter = "all" | "active" | "queued" | "paused" | "attention";
+type Draft = Inspection & { selectedQuality: Quality; mediaType: "video" | "audio"; audioBitrate: string };
+type QueueFilter = "all" | "active" | "queued" | "completed";
+type LibraryFilter = "all" | "video" | "audio";
+type QueueRow = { job: DownloadJob; item: QueueItem };
 
 const qualityLabels: Record<Quality, string> = {
   best: "Best available",
@@ -27,6 +29,7 @@ const qualityLabels: Record<Quality, string> = {
 const statusLabels: Record<DownloadJob["status"], string> = {
   queued: "Queued",
   downloading: "Downloading",
+  processing: "Converting to MP3",
   paused: "Paused",
   completed: "Completed",
   partial: "Partial",
@@ -62,7 +65,7 @@ function dateLabel(value?: string): string {
 
 function statusClass(status: DownloadJob["status"]): string {
   if (status === "completed") return "border-emerald-700/60 bg-emerald-950/50 text-emerald-300";
-  if (status === "downloading") return "border-rose-700/60 bg-rose-950/50 text-rose-300";
+  if (status === "downloading" || status === "processing") return "border-rose-700/60 bg-rose-950/50 text-rose-300";
   if (status === "paused") return "border-amber-700/60 bg-amber-950/50 text-amber-300";
   if (status === "failed" || status === "partial") return "border-red-800/60 bg-red-950/40 text-red-300";
   return "border-neutral-700 bg-neutral-800 text-neutral-300";
@@ -71,6 +74,45 @@ function statusClass(status: DownloadJob["status"]): string {
 function durationMetric(job: DownloadJob): string {
   if (job.totalCount === null) return `${job.completedCount} finished`;
   return `${job.completedCount} / ${job.totalCount} files`;
+}
+
+function queueItemsFor(job: DownloadJob): QueueItem[] {
+  if (job.items?.length) return job.items;
+  if (job.kind === "playlist" && job.files.length) {
+    return job.files.map((file, index) => ({
+      index: Number(/^([0-9]+)-/.exec(file.name)?.[1]) || index + 1,
+      videoId: "",
+      title: file.title || file.name,
+      author: file.author,
+      durationSeconds: file.durationSeconds,
+      thumbnailUrl: file.thumbnailUrl,
+      status: "completed",
+      progress: 100,
+      downloadedBytes: file.size,
+      totalBytes: file.size,
+      speedBytesPerSec: 0,
+      etaSeconds: 0,
+      fileId: file.id,
+    }));
+  }
+  return [{
+    index: 1,
+    title: job.currentItem || job.title,
+    status: job.status,
+    progress: job.progress,
+    downloadedBytes: job.downloadedBytes,
+    totalBytes: job.totalBytes,
+    speedBytesPerSec: job.speedBytesPerSec,
+    etaSeconds: job.etaSeconds,
+    error: job.error,
+    fileId: job.files.length === 1 ? job.files[0].id : undefined,
+  }];
+}
+
+function etaLabel(seconds: number): string {
+  if (seconds <= 0) return "Estimating…";
+  const minutes = Math.floor(seconds / 60);
+  return minutes > 0 ? `${minutes}m ${seconds % 60}s left` : `${seconds}s left`;
 }
 
 function builtInServiceConnection(): ServiceConnection {
@@ -88,7 +130,8 @@ export function HomePage() {
   const [connection] = useState<ServiceConnection>(builtInServiceConnection);
   const [serviceReady, setServiceReady] = useState(false);
   const [jobs, setJobs] = useState<DownloadJob[]>([]);
-  const [settings, setSettings] = useState<AppSettings>({ defaultQuality: "best" });
+  const [settings, setSettings] = useState<AppSettings>({ defaultQuality: "best", maxConcurrentDownloads: 3 });
+  const [mp3Supported, setMp3Supported] = useState(false);
   const [serviceError, setServiceError] = useState("");
   const [savingSettings, setSavingSettings] = useState(false);
   const [settingsSaved, setSettingsSaved] = useState(false);
@@ -105,17 +148,32 @@ export function HomePage() {
   const [actionError, setActionError] = useState("");
   const [queueFilter, setQueueFilter] = useState<QueueFilter>("all");
   const [search, setSearch] = useState("");
+  const [libraryFilter, setLibraryFilter] = useState<LibraryFilter>("all");
+  const [librarySearch, setLibrarySearch] = useState("");
+  const [libraryLayout, setLibraryLayout] = useState<"grid" | "list">("grid");
 
-  const activeCount = jobs.filter(isActive).length;
+  const queueRows = useMemo<QueueRow[]>(
+    () => jobs.flatMap(job => queueItemsFor(job).map(item => ({ job, item }))),
+    [jobs],
+  );
+  const activeCount = queueRows.filter(({ item }) => item.status === "downloading" || item.status === "processing").length;
+  const queuedCount = queueRows.filter(({ item }) => item.status === "queued").length;
+  const completedQueueCount = queueRows.filter(({ item }) => item.status === "completed").length;
   const finishedFiles = jobs.reduce((sum, job) => sum + job.files.length, 0);
+  const totalCurrentSpeed = queueRows.reduce((sum, { item }) => sum + ((item.status === "downloading" || item.status === "processing") ? item.speedBytesPerSec : 0), 0);
   const queueJobs = useMemo(
-    () => jobs.filter(job => job.status === "queued" || job.status === "downloading" || job.status === "paused" || ((job.status === "failed" || job.status === "cancelled") && job.files.length === 0)),
+    () => jobs.filter(job => job.status === "queued" || job.status === "downloading" || job.status === "processing" || job.status === "paused" || ((job.status === "failed" || job.status === "cancelled") && job.files.length === 0)),
     [jobs],
   );
   const libraryJobs = useMemo(
     () => jobs.filter(job => ["completed", "partial", "failed", "cancelled"].includes(job.status) && job.files.length > 0),
     [jobs],
   );
+  const visibleLibraryJobs = useMemo(() => libraryJobs.filter(job => {
+    const query = librarySearch.trim().toLowerCase();
+    const text = `${job.title} ${job.url} ${job.files.map(file => `${file.title ?? ""} ${file.author ?? ""} ${file.name}`).join(" ")}`.toLowerCase();
+    return (!query || text.includes(query)) && (libraryFilter === "all" || (job.mediaType ?? "video") === libraryFilter);
+  }), [libraryJobs, libraryFilter, librarySearch]);
 
   useEffect(() => {
     // Check the bundled Go service first, then hydrate the page from its
@@ -137,6 +195,7 @@ export function HomePage() {
             ? `The Go service is not ready: ${health.missing.join(", ")}.`
             : "The Go service is starting up.");
         }
+        setMp3Supported(health.capabilities?.mp3AudioSupported === true);
         const [jobResult, settingResult] = await Promise.all([
           api<{ jobs: DownloadJob[] }>(connection, "/api/jobs", {
             signal: AbortSignal.any([controller.signal, AbortSignal.timeout(10000)]),
@@ -147,7 +206,7 @@ export function HomePage() {
         ]);
         if (controller.signal.aborted) return;
         setJobs(jobResult.jobs);
-        setSettings(settingResult.settings);
+        setSettings({ ...settingResult.settings, maxConcurrentDownloads: settingResult.settings.maxConcurrentDownloads || 3 });
         setServiceError("");
         setServiceReady(true);
       } catch (error) {
@@ -214,7 +273,7 @@ export function HomePage() {
         const selectedQuality = qualities.some(option => option.value === settings.defaultQuality)
           ? settings.defaultQuality
           : qualities[0]?.value ?? settings.defaultQuality;
-        return { ...result, selectedQuality };
+        return { ...result, selectedQuality, mediaType: "video" as const, audioBitrate: "192k" };
       }));
       setDrafts(results);
       if (results.length === 1 && results[0].kind === "video") setNotice("Video metadata and supported qualities loaded from YouTube.");
@@ -235,14 +294,14 @@ export function HomePage() {
       for (const draft of drafts) {
         const job = await api<DownloadJob>(connection, "/api/jobs", {
           method: "POST",
-          body: JSON.stringify({ url: draft.url, quality: draft.selectedQuality, rightsConfirmed: true }),
+          body: JSON.stringify({ url: draft.url, quality: draft.selectedQuality, mediaType: draft.mediaType, audioBitrate: draft.audioBitrate, rightsConfirmed: true, ...(draft.kind === "playlist" && draft.entries?.length ? { items: draft.entries } : {}) }),
           signal: AbortSignal.timeout(15000),
         });
         added.push(job);
       }
       setJobs(previous => [...added, ...previous.filter(item => !added.some(value => value.id === item.id))]);
       setNotice(added.length === 1 && added[0].kind === "playlist"
-        ? "The entire playlist was added to the queue."
+        ? "Playlist added. Every exposed video will appear as an individual queue item; pause and resume control the playlist batch."
         : `${added.length} download${added.length === 1 ? "" : "s"} added to the queue.`);
       setUrl("");
       setDrafts([]);
@@ -321,18 +380,17 @@ export function HomePage() {
 
   async function batchAction(action: "pause" | "resume") {
     const eligible = jobs.filter(job => action === "pause"
-      ? job.status === "queued" || job.status === "downloading"
+      ? job.status === "queued" || job.status === "downloading" || job.status === "processing"
       : job.status === "paused");
     for (const job of eligible) await jobAction(job, action);
   }
 
-  const filteredQueue = queueJobs.filter(job => {
+  const filteredQueue = queueRows.filter(({ job, item }) => {
     const query = search.trim().toLowerCase();
-    if (query && !`${job.title} ${job.currentItem} ${job.url}`.toLowerCase().includes(query)) return false;
-    if (queueFilter === "active") return job.status === "downloading";
-    if (queueFilter === "queued") return job.status === "queued";
-    if (queueFilter === "paused") return job.status === "paused";
-    if (queueFilter === "attention") return job.status === "failed" || job.status === "cancelled";
+    if (query && !`${item.title} ${item.author ?? ""} ${job.title} ${job.url}`.toLowerCase().includes(query)) return false;
+    if (queueFilter === "active") return item.status === "downloading" || item.status === "processing";
+    if (queueFilter === "queued") return item.status === "queued";
+    if (queueFilter === "completed") return item.status === "completed";
     return true;
   });
 
@@ -358,7 +416,7 @@ export function HomePage() {
               <button key={value} type="button" onClick={() => setTab(value)} aria-current={tab === value ? "page" : undefined}
                 className={`flex flex-1 items-center justify-center gap-2 rounded-lg px-3 py-2 text-xs font-semibold transition-colors sm:flex-none ${tab === value ? "bg-neutral-800 text-white shadow-sm" : "text-neutral-400 hover:text-neutral-200"}`}>
                 <Icon className="size-3.5 text-rose-400" aria-hidden="true" />{label}
-                {value === "queue" && queueJobs.length > 0 && <span className="rounded-full bg-rose-600 px-1.5 text-[10px] text-white">{queueJobs.length}</span>}
+                {value === "queue" && queueRows.length > 0 && <span className="rounded-full bg-rose-600 px-1.5 text-[10px] text-white">{queueRows.length}</span>}
                 {value === "library" && libraryJobs.length > 0 && <span className="rounded-full bg-neutral-700 px-1.5 text-[10px] text-neutral-200">{libraryJobs.length}</span>}
               </button>
             ))}
@@ -429,13 +487,25 @@ export function HomePage() {
                         <p className="mt-1 text-[11px] text-neutral-500">{draft.kind === "playlist" ? `${draft.itemCount ?? 0} exposed entries` : durationLabel(draft.durationSeconds)}</p>
                         {draft.note && <p className="mt-1 text-[10px] leading-relaxed text-amber-300/80">{draft.note}</p>}
                       </div>
-                      <label className="text-[11px] font-medium text-neutral-400">Maximum quality
-                        <select aria-label={`Quality for ${draft.title || `item ${index + 1}`}`} value={draft.selectedQuality} onChange={event => setDrafts(previous => previous.map((item, itemIndex) => itemIndex === index ? { ...item, selectedQuality: event.target.value as Quality } : item))} className={`${field} mt-1.5 py-2 text-xs`}>
-                          {(draft.availableQualities ?? (draft.kind === "playlist"
-                            ? (Object.entries(qualityLabels) as [Quality, string][]).map(([value, label]) => ({ value, label, height: 0 }))
-                            : [{ value: "best" as const, label: "Best available", height: 0 }])).map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
-                        </select>
-                      </label>
+                      <div className="space-y-2">
+                        <label className="block text-[11px] font-medium text-neutral-400">Download as
+                          <select aria-label={`Media type for ${draft.title || `item ${index + 1}`}`} value={draft.mediaType} onChange={event => setDrafts(previous => previous.map((item, itemIndex) => itemIndex === index ? { ...item, mediaType: event.target.value as Draft["mediaType"] } : item))} className={`${field} mt-1.5 py-2 text-xs`}>
+                            <option value="video">Video</option>
+                            <option value="audio" disabled={!mp3Supported || !draft.audioOnlyAvailable}>Audio only · MP3{!mp3Supported ? " (unsupported)" : !draft.audioOnlyAvailable ? " (unavailable)" : ""}</option>
+                          </select>
+                        </label>
+                        {draft.mediaType === "audio" ? <label className="block text-[11px] font-medium text-neutral-400">MP3 bitrate
+                          <select aria-label={`MP3 bitrate for ${draft.title || `item ${index + 1}`}`} value={draft.audioBitrate} onChange={event => setDrafts(previous => previous.map((item, itemIndex) => itemIndex === index ? { ...item, audioBitrate: event.target.value } : item))} className={`${field} mt-1.5 py-2 text-xs`}>
+                            {["128k", "192k", "256k", "320k"].map(value => <option key={value} value={value}>{value}</option>)}
+                          </select>
+                        </label> : <label className="block text-[11px] font-medium text-neutral-400">Maximum quality
+                          <select aria-label={`Quality for ${draft.title || `item ${index + 1}`}`} value={draft.selectedQuality} onChange={event => setDrafts(previous => previous.map((item, itemIndex) => itemIndex === index ? { ...item, selectedQuality: event.target.value as Quality } : item))} className={`${field} mt-1.5 py-2 text-xs`}>
+                            {(draft.availableQualities ?? (draft.kind === "playlist"
+                              ? (Object.entries(qualityLabels) as [Quality, string][]).map(([value, label]) => ({ value, label, height: 0 }))
+                              : [{ value: "best" as const, label: "Best available", height: 0 }])).map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
+                          </select>
+                        </label>}
+                      </div>
                     </article>)}
                     <label className="flex cursor-pointer items-start gap-2.5 border-t border-neutral-800 pt-3 text-xs text-neutral-300">
                       <input type="checkbox" checked={rightsConfirmed} onChange={event => setRightsConfirmed(event.target.checked)} className="mt-0.5 size-4 shrink-0 accent-rose-600" />
@@ -455,58 +525,74 @@ export function HomePage() {
 
             <section aria-labelledby="queue-heading" className="space-y-3">
               <div className="flex flex-wrap items-end justify-between gap-3">
-                <div><p className="mb-1 text-[11px] font-bold uppercase tracking-[0.16em] text-neutral-500">Downloads</p><h2 id="queue-heading" className="text-xl font-bold">Queue & recent jobs <span className="ml-1 text-sm font-medium text-neutral-500">{queueJobs.length}</span></h2></div>
+                <div><p className="mb-1 text-[11px] font-bold uppercase tracking-[0.16em] text-neutral-500">Downloads</p><h2 id="queue-heading" className="text-xl font-bold">Active downloads & batch queue <span className="ml-1 text-sm font-medium text-neutral-500">({queueRows.length})</span></h2><p className="mt-1 text-[11px] text-neutral-500">{activeCount} / {settings.maxConcurrentDownloads} active · {formatBytes(totalCurrentSpeed)}/s combined</p></div>
                 <div className="flex gap-2">
-                  <button type="button" className={button} onClick={() => void batchAction("pause")} disabled={!serviceReady || !jobs.some(job => job.status === "queued" || job.status === "downloading")}><Pause className="size-3.5" aria-hidden="true" />Pause all</button>
+                  <button type="button" className={button} onClick={() => void batchAction("pause")} disabled={!serviceReady || !jobs.some(job => job.status === "queued" || job.status === "downloading" || job.status === "processing")}><Pause className="size-3.5" aria-hidden="true" />Pause all</button>
                   <button type="button" className={button} onClick={() => void batchAction("resume")} disabled={!serviceReady || !jobs.some(job => job.status === "paused")}><Play className="size-3.5" aria-hidden="true" />Resume all</button>
                 </div>
               </div>
 
+              <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-rose-900/50 bg-rose-950/20 px-4 py-3 text-xs">
+                <div className="flex items-center gap-2 text-neutral-300"><span className={`size-2 rounded-full ${activeCount > 0 ? "animate-pulse bg-rose-500" : "bg-neutral-600"}`} /><span className="font-semibold">{activeCount > 0 ? "Batch in progress" : queuedCount > 0 ? "Queue ready" : "Queue idle"}</span><span className="text-neutral-500">{activeCount} active · {queuedCount} queued</span></div>
+                <div className="flex items-center gap-4 font-mono text-[11px]"><span className="text-emerald-300">{formatBytes(totalCurrentSpeed)}/s</span><span className="text-neutral-500">Max parallel: {settings.maxConcurrentDownloads}</span></div>
+              </div>
+
               <div className={`${panel} flex flex-wrap items-center justify-between gap-3 p-3`}>
                 <div className="flex flex-wrap gap-1 rounded-lg border border-neutral-800 bg-neutral-950 p-1">
-                  {(["all", "active", "queued", "paused", "attention"] as const).map(value => <button key={value} type="button" onClick={() => setQueueFilter(value)} className={`rounded-md px-2.5 py-1.5 text-[11px] font-semibold capitalize ${queueFilter === value ? "bg-neutral-800 text-white" : "text-neutral-400 hover:text-neutral-200"}`}>{value === "attention" ? "Needs attention" : value}</button>)}
+                  {(["all", "active", "queued", "completed"] as const).map(value => {
+                    const count = value === "all" ? queueRows.length : value === "active" ? activeCount : value === "queued" ? queuedCount : completedQueueCount;
+                    return <button key={value} type="button" aria-pressed={queueFilter === value} onClick={() => setQueueFilter(value)} className={`rounded-md px-2.5 py-1.5 text-[11px] font-semibold capitalize ${queueFilter === value ? "bg-neutral-800 text-white" : "text-neutral-400 hover:text-neutral-200"}`}>{value} ({count})</button>;
+                  })}
                 </div>
-                <label className="relative min-w-48 flex-1 sm:max-w-xs"><Search className="absolute left-3 top-1/2 size-3.5 -translate-y-1/2 text-neutral-500" aria-hidden="true" /><input aria-label="Search jobs" className={`${field} py-2 pl-9 text-xs`} value={search} onChange={event => setSearch(event.target.value)} placeholder="Search title or URL" /></label>
+                <label className="relative min-w-48 flex-1 sm:max-w-xs"><Search className="absolute left-3 top-1/2 size-3.5 -translate-y-1/2 text-neutral-500" aria-hidden="true" /><input aria-label="Search queue" className={`${field} py-2 pl-9 text-xs`} value={search} onChange={event => setSearch(event.target.value)} placeholder="Search queue…" /></label>
               </div>
 
               {filteredQueue.length === 0 ? <div className={`${panel} px-5 py-12 text-center`}>
                 <div className="mx-auto mb-3 grid size-12 place-items-center rounded-2xl bg-neutral-800 text-neutral-500"><Layers className="size-5" aria-hidden="true" /></div>
-                <h3 className="text-sm font-semibold text-neutral-200">{queueJobs.length === 0 ? "No downloads yet" : "No jobs match this filter"}</h3>
+                <h3 className="text-sm font-semibold text-neutral-200">{queueRows.length === 0 ? "No downloads yet" : "No videos match this filter"}</h3>
                 <p className="mx-auto mt-1 max-w-md text-xs leading-relaxed text-neutral-500">{serviceReady ? "Inspect a YouTube URL above to add a real download job. Progress and status are reported by the Go worker." : "The app will load your SQLite-backed history and enable downloads as soon as its built-in Go service is ready."}</p>
-                {jobs.length === 0 && <p className="mt-2 text-[10px] text-neutral-600">The native service downloads compatible streams without yt-dlp, Python, or FFmpeg.</p>}
+                {jobs.length === 0 && <p className="mt-2 text-[10px] text-neutral-600">Video downloads and AAC-to-MP3 audio conversion use the native Go service.</p>}
               </div> : <div className="space-y-2.5">
-                {filteredQueue.map(job => <article key={job.id} className={`${panel} p-4 sm:p-5`}>
-                  <div className="flex flex-wrap items-start justify-between gap-3">
-                    <div className="flex min-w-0 flex-1 gap-3">
-                      {job.files[0]?.thumbnailUrl ? <img src={job.files[0].thumbnailUrl} alt="" referrerPolicy="no-referrer" className="hidden aspect-video w-28 rounded-lg bg-neutral-950 object-cover sm:block" />
-                        : <div className="hidden aspect-video w-28 shrink-0 place-items-center rounded-lg bg-neutral-950 text-neutral-600 sm:grid">{job.kind === "playlist" ? <ListVideo className="size-6" aria-hidden="true" /> : <Film className="size-6" aria-hidden="true" />}</div>}
+                {filteredQueue.map(({ job, item }) => {
+                  const itemActive = item.status === "downloading" || item.status === "processing";
+                  const batchControls = job.kind === "playlist" && item.index === 1;
+                  const itemError = item.error || ((job.kind === "video" || !job.items?.length) ? job.error : "");
+                  const label = job.mediaType === "audio" ? `MP3 ${job.audioBitrate ?? "192k"}` : qualityLabels[job.quality];
+                  return <article key={`${job.id}:${item.index}`} className={`rounded-2xl border bg-neutral-900/80 p-4 sm:p-5 ${itemActive ? "border-rose-800/70" : "border-neutral-800"}`}>
+                    <div className="flex flex-wrap items-center gap-4">
+                      {item.thumbnailUrl ? <img src={item.thumbnailUrl} alt="" referrerPolicy="no-referrer" className="hidden aspect-video w-40 shrink-0 rounded-lg bg-neutral-950 object-cover sm:block" />
+                        : <div className="hidden aspect-video w-40 shrink-0 place-items-center rounded-lg bg-neutral-950 text-neutral-600 sm:grid"><Film className="size-6" aria-hidden="true" /></div>}
                       <div className="min-w-0 flex-1">
                         <div className="mb-1.5 flex flex-wrap items-center gap-2">
-                          <span className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold ${statusClass(job.status)}`}>{statusLabels[job.status]}</span>
-                          <span className="text-[10px] text-neutral-500">{job.kind === "playlist" ? "Playlist" : "Video"} · {qualityLabels[job.quality]}</span>
+                          <span className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold ${statusClass(item.status)}`}>{statusLabels[item.status]}</span>
+                          <span className="text-[10px] text-rose-300">{item.author || "YouTube"}</span>
+                          <span className="rounded bg-neutral-800 px-2 py-0.5 text-[10px] text-neutral-400">{label}</span>
                         </div>
-                        <h3 className="truncate text-sm font-semibold text-white" title={job.currentItem || job.title}>{job.currentItem || job.title}</h3>
-                        {job.kind === "playlist" && <p className="mt-1 text-[11px] text-neutral-400">{durationMetric(job)}{job.totalCount === null ? " · playlist is being enumerated" : ""}</p>}
-                        <p className="mt-1 truncate text-[10px] text-neutral-600" title={job.url}>{job.url}</p>
+                        <h3 className="truncate text-sm font-semibold text-white" title={item.title}>{item.title}</h3>
+                        <p className="mt-1 truncate text-[10px] text-neutral-500" title={job.url}>{job.kind === "playlist" ? `${job.title} · Video ${item.index}${job.totalCount ? ` of ${job.totalCount}` : ""}` : job.url}</p>
+                        <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-[10px]">
+                          <span className={item.status === "failed" ? "text-red-300" : item.status === "completed" ? "text-emerald-300" : "text-rose-300"}>{item.status === "processing" ? "Converting audio to MP3" : item.status === "downloading" ? `Downloading${item.progress === null ? "" : ` ${item.progress.toFixed(0)}%`}` : statusLabels[item.status]}</span>
+                          <span className="font-mono text-neutral-400">{item.speedBytesPerSec > 0 ? `${formatBytes(item.speedBytesPerSec)}/s · ETA ${etaLabel(item.etaSeconds)}` : item.downloadedBytes > 0 ? `${formatBytes(item.downloadedBytes)}${item.totalBytes ? ` / ${formatBytes(item.totalBytes)}` : ""}` : item.status === "queued" ? "Waiting for an available slot" : item.status === "completed" ? "Ready to save" : ""}</span>
+                        </div>
+                        {(itemActive || item.status === "paused" || item.status === "completed") && <div className="mt-2 h-2 overflow-hidden rounded-full bg-neutral-800"><div className={`h-full rounded-full transition-[width] ${item.status === "completed" ? "bg-emerald-500" : "bg-rose-500"} ${itemActive && item.progress === null ? "w-1/3 animate-pulse" : ""}`} style={itemActive && item.progress === null ? undefined : { width: `${Math.max(0, Math.min(100, item.progress ?? 0))}%` }} /></div>}
+                      </div>
+                      <div className="flex shrink-0 items-center gap-1.5">
+                        {job.kind === "video" && (job.status === "downloading" || job.status === "processing" || job.status === "queued") && <button type="button" className={button} disabled={busyAction === job.id} onClick={() => void jobAction(job, "pause")} aria-label={`Pause ${item.title}`}><Pause className="size-3.5" aria-hidden="true" /><span className="hidden md:inline">Pause</span></button>}
+                        {job.kind === "video" && job.status === "paused" && <button type="button" className={button} disabled={busyAction === job.id} onClick={() => void jobAction(job, "resume")} aria-label={`Resume ${item.title}`}><Play className="size-3.5" aria-hidden="true" /><span className="hidden md:inline">Resume</span></button>}
+                        {job.kind === "video" && (isActive(job) || job.status === "paused") && <button type="button" className={button} disabled={busyAction === job.id} onClick={() => void jobAction(job, "cancel")} aria-label={`Cancel ${item.title}`}><X className="size-3.5" aria-hidden="true" /></button>}
+                        {batchControls && (isActive(job) || job.status === "queued") && <button type="button" className={button} disabled={busyAction === job.id} onClick={() => void jobAction(job, "pause")} aria-label={`Pause playlist ${job.title}`}><Pause className="size-3.5" aria-hidden="true" /><span className="hidden md:inline">Pause batch</span></button>}
+                        {batchControls && job.status === "paused" && <button type="button" className={button} disabled={busyAction === job.id} onClick={() => void jobAction(job, "resume")} aria-label={`Resume playlist ${job.title}`}><Play className="size-3.5" aria-hidden="true" /><span className="hidden md:inline">Resume batch</span></button>}
+                        {batchControls && (isActive(job) || job.status === "paused" || job.status === "queued") && <button type="button" className={button} disabled={busyAction === job.id} onClick={() => void jobAction(job, "cancel")} aria-label={`Cancel playlist ${job.title}`}><X className="size-3.5" aria-hidden="true" /></button>}
+                        {item.status === "completed" && item.fileId && <button type="button" className={button} disabled={busyAction === `${job.id}:${item.fileId}`} onClick={() => void saveFile(job, item.fileId)} aria-label={`Save ${item.title}`}><ArrowDownToLine className="size-3.5" aria-hidden="true" /><span className="hidden md:inline">Save</span></button>}
+                        {job.kind === "video" && (job.status === "failed" || job.status === "cancelled") && <button type="button" className={button} disabled={busyAction === job.id} onClick={() => void jobAction(job, "retry")} aria-label={`Retry ${item.title}`}><RefreshCw className="size-3.5" aria-hidden="true" /></button>}
+                        {batchControls && (job.status === "failed" || job.status === "partial" || job.status === "cancelled") && <button type="button" className={button} disabled={busyAction === job.id} onClick={() => void jobAction(job, "retry")} aria-label={`Retry playlist ${job.title}`}><RefreshCw className="size-3.5" aria-hidden="true" /><span className="hidden md:inline">Retry batch</span></button>}
+                        {item.status === "failed" && job.kind === "video" && <button type="button" className={button} disabled={busyAction === job.id} onClick={() => void jobAction(job, "remove")} aria-label={`Remove ${item.title}`}><Trash2 className="size-3.5" aria-hidden="true" /></button>}
                       </div>
                     </div>
-                    <div className="flex flex-wrap items-center gap-1.5">
-                      {job.status === "downloading" || job.status === "queued" ? <button type="button" className={button} disabled={busyAction === job.id} onClick={() => void jobAction(job, "pause")}><Pause className="size-3.5" aria-hidden="true" />Pause</button> : null}
-                      {job.status === "paused" && <button type="button" className={button} disabled={busyAction === job.id} onClick={() => void jobAction(job, "resume")}><Play className="size-3.5" aria-hidden="true" />Resume</button>}
-                      {isActive(job) || job.status === "paused" ? <button type="button" className={button} disabled={busyAction === job.id} onClick={() => void jobAction(job, "cancel")}><X className="size-3.5" aria-hidden="true" />Cancel</button> : null}
-                      {(job.status === "failed" || job.status === "cancelled") && <button type="button" className={button} disabled={busyAction === job.id} onClick={() => void jobAction(job, "retry")}><RefreshCw className="size-3.5" aria-hidden="true" />Retry</button>}
-                      {!isActive(job) && job.status !== "paused" && <button type="button" className={button} disabled={busyAction === job.id} onClick={() => void jobAction(job, "remove")}><Trash2 className="size-3.5" aria-hidden="true" />Remove</button>}
-                    </div>
-                  </div>
-                  {(job.status === "downloading" || job.status === "paused") && <div className="mt-4">
-                    {job.progress === null ? <div className="h-1.5 overflow-hidden rounded-full bg-neutral-800"><div className="h-full w-1/3 animate-pulse rounded-full bg-rose-500" /></div>
-                      : <div className="h-1.5 overflow-hidden rounded-full bg-neutral-800"><div className="h-full rounded-full bg-rose-500 transition-[width]" style={{ width: `${Math.max(0, Math.min(100, job.progress))}%` }} /></div>}
-                    <div className="mt-1.5 flex justify-between text-[10px] text-neutral-500"><span>{job.progress === null ? job.currentItem || "Waiting for stream progress" : `${job.progress.toFixed(1)}% of current file`}</span><span>{job.completedCount} completed</span></div>
-                  </div>}
-                  {job.note && <p className="mt-3 text-[10px] leading-relaxed text-amber-300/80">{job.note}</p>}
-                  {job.error && job.status !== "cancelled" && <p className="mt-2 flex items-start gap-1.5 text-[11px] text-red-300"><AlertCircle className="mt-0.5 size-3 shrink-0" aria-hidden="true" />{job.error}</p>}
-                  {(job.failures?.length ?? 0) > 0 && <details className="mt-3 text-[11px] text-neutral-400"><summary className="cursor-pointer">Item failures ({job.failures?.length})</summary><ul className="mt-2 space-y-1">{job.failures?.map(failure => <li key={`${failure.index}-${failure.error}`}>Item {failure.index}: {failure.error}</li>)}</ul></details>}
-                </article>)}
+                    {itemError && item.status === "failed" && <p className="mt-3 flex items-start gap-1.5 text-[11px] text-red-300"><AlertCircle className="mt-0.5 size-3 shrink-0" aria-hidden="true" />{itemError}</p>}
+                    {job.note && item.index === 1 && <p className="mt-3 text-[10px] leading-relaxed text-amber-300/80">{job.note}</p>}
+                  </article>;
+                })}
               </div>}
             </section>
           </>
@@ -514,16 +600,22 @@ export function HomePage() {
 
         {tab === "library" && <section aria-labelledby="library-heading" className="space-y-4">
           <div className="flex flex-wrap items-end justify-between gap-3"><div><p className="mb-1 text-[11px] font-bold uppercase tracking-[0.16em] text-neutral-500">Saved output</p><h2 id="library-heading" className="text-2xl font-bold">Download library</h2><p className="mt-1 text-xs text-neutral-400">Finalized files are served through short-lived, file- or job-scoped download tickets.</p></div><div className="flex items-center gap-2 rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-xs text-neutral-400"><HardDrive className="size-3.5 text-amber-400" aria-hidden="true" />{finishedFiles} finalized file{finishedFiles === 1 ? "" : "s"}</div></div>
+          <div className={`${panel} flex flex-wrap items-center justify-between gap-3 p-3`}>
+            <div className="flex gap-1 rounded-lg border border-neutral-800 bg-neutral-950 p-1">{(["all", "video", "audio"] as const).map(value => <button key={value} type="button" aria-pressed={libraryFilter === value} onClick={() => setLibraryFilter(value)} className={`rounded-md px-2.5 py-1.5 text-[11px] font-semibold capitalize ${libraryFilter === value ? "bg-neutral-800 text-white" : "text-neutral-400 hover:text-neutral-200"}`}>{value}</button>)}</div>
+            <label className="relative min-w-48 flex-1 sm:max-w-xs"><Search className="absolute left-3 top-1/2 size-3.5 -translate-y-1/2 text-neutral-500" aria-hidden="true" /><input aria-label="Search library" className={`${field} py-2 pl-9 text-xs`} value={librarySearch} onChange={event => setLibrarySearch(event.target.value)} placeholder="Search titles or channels" /></label>
+            <div className="flex gap-1 rounded-lg border border-neutral-800 bg-neutral-950 p-1"><button type="button" aria-pressed={libraryLayout === "grid"} onClick={() => setLibraryLayout("grid")} className={`rounded-md px-2.5 py-1.5 text-[11px] font-semibold ${libraryLayout === "grid" ? "bg-neutral-800 text-white" : "text-neutral-400"}`}>Grid</button><button type="button" aria-pressed={libraryLayout === "list"} onClick={() => setLibraryLayout("list")} className={`rounded-md px-2.5 py-1.5 text-[11px] font-semibold ${libraryLayout === "list" ? "bg-neutral-800 text-white" : "text-neutral-400"}`}>List</button></div>
+          </div>
           {libraryJobs.length === 0 ? <div className={`${panel} px-5 py-14 text-center`}><Film className="mx-auto mb-3 size-8 text-neutral-600" aria-hidden="true" /><h3 className="text-sm font-semibold text-neutral-200">Your library is empty</h3><p className="mt-1 text-xs text-neutral-500">Finalized downloads will appear here, with metadata and secure save links.</p></div>
-            : <div className="grid gap-4 md:grid-cols-2">
-              {libraryJobs.map(job => <article key={job.id} className={`${panel} overflow-hidden`}>
+            : visibleLibraryJobs.length === 0 ? <div className={`${panel} px-5 py-12 text-center text-xs text-neutral-400`}>No saved downloads match this search and media filter.</div>
+            : <div className={`grid gap-4 ${libraryLayout === "grid" ? "md:grid-cols-2" : "grid-cols-1"}`}>
+              {visibleLibraryJobs.map(job => <article key={job.id} className={`${panel} overflow-hidden`}>
                 <div className="flex items-start justify-between gap-3 border-b border-neutral-800 p-4">
                   <div className="min-w-0"><div className="mb-1.5 flex flex-wrap gap-2"><span className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold ${statusClass(job.status)}`}>{statusLabels[job.status]}</span><span className="text-[10px] text-neutral-500">{job.kind} · {qualityLabels[job.quality]}</span></div><h3 className="truncate text-sm font-bold text-white">{job.title}</h3><p className="mt-1 text-[10px] text-neutral-500">{dateLabel(job.createdAt)} · {job.files.length} file{job.files.length === 1 ? "" : "s"}</p></div>
                   <button type="button" className={button} disabled={busyAction === job.id} onClick={() => void jobAction(job, "remove")} title="Delete downloaded files and history"><Trash2 className="size-3.5" aria-hidden="true" /><span className="hidden sm:inline">Delete</span></button>
                 </div>
                 <div className="space-y-2 p-3">
                   {job.files.map(file => <div key={file.id} className="flex items-center gap-3 rounded-xl border border-neutral-800/80 bg-neutral-950/70 p-2.5">
-                    {file.thumbnailUrl ? <img src={file.thumbnailUrl} alt="" referrerPolicy="no-referrer" className="aspect-video w-24 rounded-md bg-neutral-900 object-cover" /> : <div className="grid aspect-video w-24 shrink-0 place-items-center rounded-md bg-neutral-900 text-neutral-600"><Film className="size-5" aria-hidden="true" /></div>}
+                    {file.thumbnailUrl ? <img src={file.thumbnailUrl} alt="" referrerPolicy="no-referrer" className="aspect-video w-24 rounded-md bg-neutral-900 object-cover" /> : <div className="grid aspect-video w-24 shrink-0 place-items-center rounded-md bg-neutral-900 text-neutral-600">{job.mediaType === "audio" ? <Activity className="size-5" aria-hidden="true" /> : <Film className="size-5" aria-hidden="true" />}</div>}
                     <div className="min-w-0 flex-1"><h4 className="truncate text-xs font-semibold text-neutral-200" title={file.title || file.name}>{file.title || file.name}</h4><p className="mt-1 truncate text-[10px] text-neutral-500">{file.author || file.name}</p><p className="mt-1 text-[10px] text-neutral-600">{file.height ? `${file.height}p · ` : ""}{formatBytes(file.size)}{file.durationSeconds ? ` · ${durationLabel(file.durationSeconds)}` : ""}</p></div>
                     <button type="button" className={button} disabled={busyAction === `${job.id}:${file.id}`} onClick={() => void saveFile(job, file.id)} aria-label={`Save ${file.title || file.name}`}><ArrowDownToLine className="size-3.5" aria-hidden="true" /><span className="hidden sm:inline">Save</span></button>
                   </div>)}
@@ -551,17 +643,21 @@ export function HomePage() {
           <form onSubmit={savePreferences} className={`${panel} space-y-4 p-5 sm:p-6`}>
             <div><h3 className="text-sm font-bold">Download defaults</h3><p className="mt-1 text-xs text-neutral-400">Preferences are stored by the service in its state.db file.</p></div>
             <label className="block max-w-md text-xs font-medium text-neutral-300">Default maximum video quality
-              <select className={`${field} mt-1.5`} value={settings.defaultQuality} onChange={event => { setSettings({ defaultQuality: event.target.value as Quality }); setSettingsSaved(false); }}>
+              <select className={`${field} mt-1.5`} value={settings.defaultQuality} onChange={event => { setSettings({ ...settings, defaultQuality: event.target.value as Quality }); setSettingsSaved(false); }}>
                 {(Object.entries(qualityLabels) as [Quality, string][]).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
               </select>
             </label>
+            <label className="block max-w-md text-xs font-medium text-neutral-300">Maximum concurrent downloads <span className="float-right font-mono text-rose-300">{settings.maxConcurrentDownloads}</span>
+              <input aria-label="Maximum concurrent downloads" type="range" min="1" max="6" step="1" value={settings.maxConcurrentDownloads} onChange={event => { setSettings({ ...settings, maxConcurrentDownloads: Number(event.target.value) }); setSettingsSaved(false); }} className="mt-2 w-full accent-rose-600" />
+              <span className="mt-1 flex justify-between text-[10px] text-neutral-500"><span>1 stream</span><span>6 streams</span></span>
+            </label>
             <div className="flex flex-wrap items-center justify-between gap-3 border-t border-neutral-800 pt-4">
-              <p className="max-w-lg text-[10px] leading-relaxed text-neutral-500">The service uses one sequential worker. Output location is controlled with DATA_DIR when the Go service starts; a browser folder picker cannot safely change local paths.</p>
+              <p className="max-w-lg text-[10px] leading-relaxed text-neutral-500">The output directory is controlled with DATA_DIR when the Go service starts. {mp3Supported ? "Built-in Go MP3 conversion is ready." : "This backend does not support MP3 conversion."}</p>
               <button type="submit" className={primaryButton} disabled={!serviceReady || savingSettings}>{savingSettings && <LoaderCircle className="size-4 animate-spin" aria-hidden="true" />}{settingsSaved ? <Check className="size-4" aria-hidden="true" /> : null}{savingSettings ? "Saving…" : settingsSaved ? "Saved to SQLite" : "Save preferences"}</button>
             </div>
           </form>
 
-          <section className={`${panel} p-5`}><div className="flex items-start gap-3"><div className="grid size-9 shrink-0 place-items-center rounded-xl border border-blue-800/50 bg-blue-950/30 text-blue-300"><Gauge className="size-4" aria-hidden="true" /></div><div><h3 className="text-xs font-bold">What this backend supports</h3><ul className="mt-2 space-y-1.5 text-[11px] leading-relaxed text-neutral-400"><li>Native video/playlist downloads with verified file progress and finalized-file history.</li><li>Pause/resume, cancellation, retries as new jobs, per-file or ZIP tickets, and removal of stopped jobs.</li><li>Quality ceilings: best, 1080p, 720p, or 480p. Actual output quality is reported after completion.</li></ul><p className="mt-3 flex items-start gap-1.5 text-[10px] leading-relaxed text-neutral-600"><ShieldCheck className="mt-0.5 size-3 shrink-0" aria-hidden="true" />Audio conversion, caption/thumbnail embedding, arbitrary naming rules, and filesystem browsing are not implemented by the service and are intentionally not presented as working settings.</p></div></div></section>
+            <section className={`${panel} p-5`}><div className="flex items-start gap-3"><div className="grid size-9 shrink-0 place-items-center rounded-xl border border-blue-800/50 bg-blue-950/30 text-blue-300"><Gauge className="size-4" aria-hidden="true" /></div><div><h3 className="text-xs font-bold">What this backend supports</h3><ul className="mt-2 space-y-1.5 text-[11px] leading-relaxed text-neutral-400"><li>Video and playlist downloads, including adaptive MP4 remuxing and pure-Go MP3 conversion for AAC audio.</li><li>Up to six concurrent jobs, multi-routine stream transfers, pause/resume, retries, and live speed and ETA.</li><li>Quality ceilings: best, 1080p, 720p, or 480p. Actual output quality is reported after completion.</li><li>Private DATA_DIR storage, scoped file/ZIP tickets, and SQLite-backed library history.</li></ul>{!mp3Supported && <p className="mt-3 flex items-start gap-1.5 text-[10px] leading-relaxed text-amber-300"><ShieldCheck className="mt-0.5 size-3 shrink-0" aria-hidden="true" />This backend does not support MP3 conversion.</p>}</div></div></section>
         </div>}
       </main>
       <footer className="mx-auto flex max-w-7xl items-center justify-between gap-3 px-4 pb-8 text-[10px] text-neutral-600 sm:px-6"><span className="flex items-center gap-1.5"><Clock3 className="size-3" aria-hidden="true" />Live job updates from the Go service</span><span className="flex items-center gap-1.5"><HardDrive className="size-3" aria-hidden="true" />SQLite-backed history</span></footer>

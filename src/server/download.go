@@ -16,7 +16,7 @@ import (
 	"time"
 )
 
-var outputName = regexp.MustCompile(`^[0-9]{6,}-[A-Za-z0-9_-]{11}\.(mp4|webm)$`)
+var outputName = regexp.MustCompile(`^[0-9]{6,}-[A-Za-z0-9_-]{11}\.(mp4|webm|mp3)$`)
 
 // openFinal opens a finalized filename only if it is a safe child of the job
 // directory and is a regular file rather than a symlink or other file type.
@@ -133,7 +133,11 @@ func (s *server) download(w http.ResponseWriter, r *http.Request) {
 			fail(w, 416, "Only one valid byte range is supported")
 			return
 		}
-		w.Header().Set("Content-Type", "application/octet-stream")
+		contentType := files[0].MimeType
+		if contentType == "" {
+			contentType = "application/octet-stream"
+		}
+		w.Header().Set("Content-Type", contentType)
 		w.Header().Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": files[0].Name}))
 		http.ServeContent(w, r, files[0].Name, time.Time{}, f)
 		return

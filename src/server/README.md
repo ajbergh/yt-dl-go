@@ -1,6 +1,6 @@
 # Native Go download service
 
-This directory contains the local HTTP service compiled into `youtube-downloader.exe`. The executable serves both this API and the embedded React UI from one origin; the UI connects automatically and reads/writes its job history and preferences through the service. The server validates requests, manages download jobs, and streams finalized files. It uses `github.com/kkdai/youtube/v2` for metadata and compatible direct streams, `chromedp` for browser-assisted adaptive video delivery, and `gomedia` to remux MP4 tracks.
+This directory contains the local HTTP service compiled into `youtube-downloader.exe`. The executable serves both this API and the embedded React UI from one origin; the UI connects automatically and reads/writes its job history and preferences through the service. The server validates requests, manages download jobs, and streams finalized files. It uses `github.com/kkdai/youtube/v2` for metadata and compatible direct streams, `chromedp` for browser-assisted adaptive video delivery, and `gomedia` to remux MP4 tracks. Audio-only jobs demux and decode AAC, then encode MP3 entirely in Go; no FFmpeg or other audio executable is required.
 
 This is a YouTube-only, local/single-user downloader. Download only content you own or are authorized to save. It does not import credentials or cookies from your normal browser profile, perform DRM decryption or paywall bypasses, or record live/HLS/DASH streams. Adaptive capture uses a temporary browser session that YouTube may authorize for that run.
 
@@ -25,7 +25,7 @@ Go 1.26 or newer is required. The process listens on `127.0.0.1:8080` by default
 
 ## Format selection and automatic 1080p path
 
-`best`, `1080`, `720`, and `480` are maximum heights. The selector prefers a compatible adaptive H.264 video plus AAC audio track when it improves on an available progressive stream; otherwise it uses the best compatible progressive MP4 or WebM stream within the requested ceiling.
+`best`, `1080`, `720`, and `480` are maximum heights. The selector prefers a compatible adaptive H.264 video plus AAC audio track when it improves on an available progressive stream; otherwise it uses the best compatible progressive MP4 or WebM stream within the requested ceiling. Audio-only jobs select a compatible AAC-in-MP4 stream and convert it to MP3 at the requested bitrate using the in-process Go AAC decoder and MP3 encoder. Other source audio codecs are not currently selected for MP3 conversion.
 
 For adaptive video, the service creates a temporary, headless Chrome-compatible session. The browser obtains its own short-lived authorization while loading YouTube, and the service captures the selected H.264 SABR/UMP media fragments through the declared final fragment. It verifies the selected itag and completion boundary, obtains audio, and remuxes an MP4 without FFmpeg.
 
@@ -48,7 +48,9 @@ If browser capture or adaptive byte-range delivery fails, the service uses the h
 | `RETENTION` | `24h` | Terminal-job retention; at least five minutes |
 | `CHROME_PATH` | unset | Chrome/Chromium/Edge executable for adaptive capture |
 
-The service has one sequential downloader worker. It writes exclusive temporary files, checks byte limits and declared stream sizes, then atomically finalizes files only after successful completion. Job configuration, history, finalized-file metadata, user preferences, and resumable item state are stored in the pure-Go SQLite database at `DATA_DIR/state.db`; bearer tokens and signed media URLs are never stored. A restart re-queues interrupted jobs, leaves explicitly paused jobs paused, skips validated finalized playlist items, and resumes completed adaptive byte ranges when the source still permits them. Service shutdown preserves a safe adaptive source part, while explicit user cancellation removes partial output but keeps files finalized earlier in the same job.
+The scheduler defaults to three concurrent media items and allows a persisted `maxConcurrentDownloads` preference from 1 to 6. Playlist entries use the same shared limit as separate jobs, so one playlist can download multiple entries at once. Progress reports the combined active transfers, and finalized files and failures remain ordered by playlist position. Each native stream can use up to four transfer routines. It writes exclusive temporary files, checks byte limits and declared stream sizes, then atomically finalizes files only after successful completion. Job configuration, history, finalized-file metadata, user preferences, and resumable item state are stored in the pure-Go SQLite database at `DATA_DIR/state.db`; bearer tokens and signed media URLs are never stored. A restart re-queues interrupted jobs, leaves explicitly paused jobs paused, skips validated finalized playlist items, and resumes completed adaptive byte ranges when the source still permits them. Service shutdown preserves a safe adaptive source part, while explicit user cancellation removes partial output but keeps files finalized earlier in the same job.
+
+The MP3 encoder emits constant-bitrate audio without ID3 tags. Its quality and compression efficiency differ from LAME; available bitrates are 128, 192, 256, and 320 kb/s. The API health response reports `mp3AudioSupported` and `pureGoAudioConversion` when this built-in path is available.
 
 Ticket links last five minutes. Individual-file transfers support one byte range; ZIP downloads stream finalized files without building a duplicate archive in memory. Completed jobs are removed after retention unless an active transfer or unexpired ticket still holds them.
 
@@ -73,7 +75,7 @@ Control-plane API responses and errors return JSON. `GET /api/downloads/{ticket}
 | `POST /api/jobs/{id}/ticket` | Creates a five-minute link for a job ZIP or one file |
 | `GET /api/downloads/{ticket}` | Streams the ticket's archive or file |
 
-Create a job with:
+Create a video job with:
 
 ~~~json
 {
@@ -83,13 +85,15 @@ Create a job with:
 }
 ~~~
 
-Valid qualities are `best`, `1080`, `720`, and `480`. The URL must be an HTTPS YouTube or `youtu.be` video, shorts, live, or playlist URL with valid IDs. A watch URL containing `list=` is treated as a playlist. Playlists process every position the upstream library exposes, in order; inaccessible or hidden entries cannot be independently counted and are disclosed in the job note.
+For audio-only output, include `"mediaType":"audio"` and optionally choose an MP3 bitrate, for example `"audioBitrate":"256k"`. The service reports built-in pure-Go MP3 capability through `GET /api/health`.
 
-Inspect a link with `POST /api/inspect` and `{"url":"https://www.youtube.com/watch?v=VIDEO_ID"}`. Video inspection returns title, channel, duration, safe thumbnail URL, publish date, and only the quality ceilings for which the native selector found a compatible stream. Playlist inspection returns its exposed item count and up to ten preview entries; it does not download or expose signed media URLs. Preferences currently support `defaultQuality` (`best`, `1080`, `720`, or `480`) and are stored in the SQLite `app_settings` table. The service output root remains controlled by `DATA_DIR` at startup.
+Valid qualities are `best`, `1080`, `720`, and `480`. `mediaType` is optional and defaults to `video`; set it to `audio` for MP3 output. `audioBitrate` is optional and defaults to `192k`; accepted values are `128k`, `192k`, `256k`, and `320k`. The URL must be an HTTPS YouTube or `youtu.be` video, shorts, live, or playlist URL with valid IDs. A watch URL containing `list=` is treated as a playlist. Playlists process every position the upstream library exposes, in order; inaccessible or hidden entries cannot be independently counted and are disclosed in the job note.
+
+Inspect a link with `POST /api/inspect` and `{"url":"https://www.youtube.com/watch?v=VIDEO_ID"}`. Video inspection returns title, channel, duration, safe thumbnail URL, publish date, supported quality ceilings, and whether a standalone audio stream is available. Playlist inspection returns its exposed item count and up to ten preview entries; it does not download or expose signed media URLs. Preferences support `defaultQuality` (`best`, `1080`, `720`, or `480`) and `maxConcurrentDownloads` (1–6); they are stored in the SQLite `app_settings` table. The service output root remains controlled by `DATA_DIR` at startup.
 
 Pause and resume use `POST` with `{}`. A paused active job keeps finalized files; an interrupted progressive item may restart on resume, while supported adaptive byte ranges can resume. Retry requires `{"rightsConfirmed":true}` and creates a new job so the original result and error history remain inspectable. `DELETE /api/jobs/{id}` is allowed only after the worker stops and no file transfer is active; it removes both the job record and its private job directory.
 
-A job includes `id`, `url`, `kind`, `quality`, `status`, `title`, `progress`, `currentItem`, `completedCount`, `totalCount`, `files`, `error`, `createdAt`, `note`, and `failures`. File objects include `id`, `name`, `size`, `height`, and `mimeType`, plus available title, author, duration, thumbnail, and publish-date metadata persisted with the file record. `progress` measures the current file, not an estimated percentage for a whole playlist. Per-item `failures` use one-based indexes.
+A job includes `id`, `url`, `kind`, `quality`, `mediaType` (`video` or `audio`), `audioBitrate`, `status`, `title`, `progress`, byte counts, transfer speed, ETA, `currentItem`, `activeItemCount`, playlist counts, `files`, `error`, `createdAt`, `note`, and `failures`. For parallel transfers, progress and byte counts aggregate the active items; `currentItem` shows an active title and how many more are running. Audio jobs produce `.mp3` files. File objects include `id`, `name`, `size`, `height`, and `mimeType`, plus available title, author, duration, thumbnail, and publish-date metadata persisted with the file record. Per-item `failures` use one-based indexes.
 
 Create a ticket with `{}` for a ZIP or `{"fileId":"FILE_ID"}` for a single finalized file. The response is `{"path":"/api/downloads/TICKET"}`. Open that path relative to the service origin without adding the bearer token to the URL.
 
@@ -118,4 +122,4 @@ go test -run TestLiveDownload -count=1 -v
 
 Live behavior depends on YouTube's current service and can change; a successful run does not guarantee future availability or a particular resolution.
 
-See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) before distributing a build.
+See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) before distributing a build. AAC decoding uses an LGPL-2.1-or-later Go module; include its license and satisfy the applicable source and relinking terms when distributing binaries.

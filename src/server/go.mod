@@ -6,6 +6,8 @@ require (
 	github.com/chromedp/cdproto v0.0.0-20250724212937-08a3db8b4327
 	github.com/chromedp/chromedp v0.14.1
 	github.com/kkdai/youtube/v2 v2.10.6
+	github.com/tphakala/go-m4a v0.5.0
+	github.com/tphakala/go-mp3 v0.1.0
 	github.com/yapingcat/gomedia v0.0.0-20240906162731-17feea57090c
 	modernc.org/sqlite v1.59.0
 )
@@ -26,6 +28,8 @@ require (
 	github.com/mattn/go-isatty v0.0.24 // indirect
 	github.com/ncruces/go-strftime v1.0.0 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
+	github.com/tphakala/go-aac v0.7.0 // indirect
+	github.com/tphakala/simd v1.9.0 // indirect
 	golang.org/x/sys v0.47.0 // indirect
 	golang.org/x/text v0.35.0 // indirect
 	modernc.org/libc v1.75.7 // indirect

@@ -257,6 +257,9 @@ func TestCancellationQueueAndTimeout(t *testing.T) {
 		return io.NopCloser(strings.NewReader(fixtureData)), int64(len(fixtureData)), nil
 	}
 	s := testServer(t, fake, func(c *config) { c.maxJobs = 2 })
+	if response := request(s, "PUT", "/api/settings", `{"defaultQuality":"best","maxConcurrentDownloads":1}`, nil); response.Code != 200 {
+		t.Fatalf("limit concurrent downloads for cancellation fixture: %d %s", response.Code, response.Body.String())
+	}
 	first := createJob(t, s, testPlaylist)
 	select {
 	case <-stream.entered:

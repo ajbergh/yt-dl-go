@@ -9,3 +9,4 @@ dist/
 # Keep application source tracked if an inherited ignore rule matches `lib/`.
 !src/lib/
 !src/lib/**
+downloads/

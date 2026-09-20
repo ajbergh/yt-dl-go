@@ -116,8 +116,8 @@ describe("Downloader UI and Go API integration", () => {
     await click(container.querySelector('input[type="checkbox"]'));
     await click(button("Add 1 to queue"));
     const create = requests.find(item => item.path === "/api/jobs" && item.method === "POST");
-    expect(JSON.parse(create.body)).toEqual({ url: inspection.url, quality: "best", rightsConfirmed: true });
-    expect(container.textContent).toContain("The entire playlist was added to the queue.");
+    expect(JSON.parse(create.body)).toEqual({ url: inspection.url, quality: "best", mediaType: "video", audioBitrate: "192k", rightsConfirmed: true });
+    expect(container.textContent).toContain("Every exposed video will appear as an individual queue item");
   });
   test("persists only a supported preference through the service API", async () => {
     await click(button("Settings"));
@@ -128,7 +128,7 @@ describe("Downloader UI and Go API integration", () => {
     });
     await click(button("Save preferences"));
     const save = requests.find(item => item.path === "/api/settings" && item.method === "PUT");
-    expect(JSON.parse(save.body)).toEqual({ defaultQuality: "720" });
+    expect(JSON.parse(save.body)).toEqual({ defaultQuality: "720", maxConcurrentDownloads: 3 });
     expect(container.textContent).toContain("Saved to SQLite");
   });
   test("pauses a running job through the backend", async () => {

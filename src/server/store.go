@@ -4,6 +4,7 @@ package main
 
 import (
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -21,7 +22,8 @@ type jobStore struct {
 }
 
 type AppSettings struct {
-	DefaultQuality string `json:"defaultQuality"`
+	DefaultQuality         string `json:"defaultQuality"`
+	MaxConcurrentDownloads int    `json:"maxConcurrentDownloads"`
 }
 
 type storedJob struct {
@@ -112,7 +114,67 @@ func openJobStore(root string) (*jobStore, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("migrate state database: %w", err)
 	}
+	if err := store.migrateV3(); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("migrate state database: %w", err)
+	}
+	if err := store.migrateV4(); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("migrate state database: %w", err)
+	}
 	return store, nil
+}
+
+// migrateV4 persists the playlist entries shown as individual queue rows.
+func (s *jobStore) migrateV4() error {
+	var version int
+	if err := s.db.QueryRow(`SELECT COALESCE(MAX(version), 0) FROM schema_migrations`).Scan(&version); err != nil {
+		return err
+	}
+	if version >= 4 {
+		return nil
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	for _, statement := range []string{
+		`ALTER TABLE jobs ADD COLUMN queue_items TEXT NOT NULL DEFAULT '[]'`,
+		`INSERT INTO schema_migrations(version) VALUES (4)`,
+	} {
+		if _, err := tx.Exec(statement); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+// migrateV3 stores each job's media selection and the user's bounded scheduler limit.
+func (s *jobStore) migrateV3() error {
+	var version int
+	if err := s.db.QueryRow(`SELECT COALESCE(MAX(version), 0) FROM schema_migrations`).Scan(&version); err != nil {
+		return err
+	}
+	if version >= 3 {
+		return nil
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	for _, statement := range []string{
+		`ALTER TABLE jobs ADD COLUMN media_type TEXT NOT NULL DEFAULT 'video'`,
+		`ALTER TABLE jobs ADD COLUMN audio_bitrate TEXT NOT NULL DEFAULT '192k'`,
+		`ALTER TABLE app_settings ADD COLUMN max_concurrent_downloads INTEGER NOT NULL DEFAULT 3`,
+		`INSERT INTO schema_migrations(version) VALUES (3)`,
+	} {
+		if _, err := tx.Exec(statement); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 // migrateV2 atomically adds persisted file metadata and the singleton UI
@@ -183,15 +245,18 @@ func (s *jobStore) saveConfig(c config) error {
 }
 
 func (s *jobStore) loadAppSettings() (AppSettings, error) {
-	settings := AppSettings{DefaultQuality: "best"}
-	if err := s.db.QueryRow(`SELECT default_quality FROM app_settings WHERE id=1`).Scan(&settings.DefaultQuality); err != nil {
+	settings := AppSettings{DefaultQuality: "best", MaxConcurrentDownloads: 3}
+	if err := s.db.QueryRow(`SELECT default_quality,max_concurrent_downloads FROM app_settings WHERE id=1`).Scan(&settings.DefaultQuality, &settings.MaxConcurrentDownloads); err != nil {
 		return settings, err
 	}
 	return settings, nil
 }
 
 func (s *jobStore) saveAppSettings(settings AppSettings) error {
-	_, err := s.db.Exec(`UPDATE app_settings SET default_quality=?, updated_at=? WHERE id=1`, settings.DefaultQuality, time.Now().UnixNano())
+	if settings.MaxConcurrentDownloads == 0 {
+		settings.MaxConcurrentDownloads = 3
+	}
+	_, err := s.db.Exec(`UPDATE app_settings SET default_quality=?,max_concurrent_downloads=?,updated_at=? WHERE id=1`, settings.DefaultQuality, settings.MaxConcurrentDownloads, time.Now().UnixNano())
 	return err
 }
 
@@ -215,21 +280,26 @@ func (s *jobStore) saveJob(j *jobState) error {
 	if j.cancelRequested {
 		cancelRequested = 1
 	}
+	queueItems, err := json.Marshal(j.Items)
+	if err != nil {
+		return err
+	}
 	tx, err := s.db.Begin()
 	if err != nil {
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
 	_, err = tx.Exec(`INSERT INTO jobs
-		(id,url,kind,quality,status,title,progress,current_item,completed_count,total_count,error,created_at,note,dir,cancel_requested,done_at,updated_at)
-		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+		(id,url,kind,quality,media_type,audio_bitrate,status,title,progress,current_item,completed_count,total_count,error,created_at,note,dir,cancel_requested,done_at,updated_at,queue_items)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 		ON CONFLICT(id) DO UPDATE SET url=excluded.url,kind=excluded.kind,quality=excluded.quality,
+		media_type=excluded.media_type,audio_bitrate=excluded.audio_bitrate,
 		status=excluded.status,title=excluded.title,progress=excluded.progress,current_item=excluded.current_item,
 		completed_count=excluded.completed_count,total_count=excluded.total_count,error=excluded.error,
 		created_at=excluded.created_at,note=excluded.note,dir=excluded.dir,cancel_requested=excluded.cancel_requested,
-		done_at=excluded.done_at,updated_at=excluded.updated_at`,
-		j.ID, j.URL, j.Kind, j.Quality, j.Status, j.Title, progress, j.CurrentItem, j.CompletedCount, total,
-		j.Error, j.CreatedAt, j.Note, j.dir, cancelRequested, done, time.Now().UnixNano())
+		done_at=excluded.done_at,updated_at=excluded.updated_at,queue_items=excluded.queue_items`,
+		j.ID, j.URL, j.Kind, j.Quality, j.MediaType, j.AudioBitrate, j.Status, j.Title, progress, j.CurrentItem, j.CompletedCount, total,
+		j.Error, j.CreatedAt, j.Note, j.dir, cancelRequested, done, time.Now().UnixNano(), string(queueItems))
 	if err != nil {
 		return err
 	}
@@ -295,7 +365,7 @@ func (s *jobStore) deleteJob(jobID string) error {
 }
 
 func (s *jobStore) loadJobs(root string) ([]*storedJob, error) {
-	rows, err := s.db.Query(`SELECT id,url,kind,quality,status,title,progress,current_item,completed_count,total_count,error,created_at,note,dir,cancel_requested,done_at FROM jobs ORDER BY created_at ASC`)
+	rows, err := s.db.Query(`SELECT id,url,kind,quality,media_type,audio_bitrate,status,title,progress,current_item,completed_count,total_count,error,created_at,note,dir,cancel_requested,done_at,queue_items FROM jobs ORDER BY created_at ASC`)
 	if err != nil {
 		return nil, err
 	}
@@ -304,6 +374,7 @@ func (s *jobStore) loadJobs(root string) ([]*storedJob, error) {
 		dir             string
 		cancelRequested int
 		doneAt          sql.NullInt64
+		queueItems      string
 	}
 	var savedRows []jobRow
 	for rows.Next() {
@@ -313,9 +384,13 @@ func (s *jobStore) loadJobs(root string) ([]*storedJob, error) {
 		var dir string
 		var cancelRequested int
 		var doneAt sql.NullInt64
-		if err := rows.Scan(&j.ID, &j.URL, &j.Kind, &j.Quality, &j.Status, &j.Title, &progress, &j.CurrentItem,
-			&j.CompletedCount, &totalCount, &j.Error, &j.CreatedAt, &j.Note, &dir, &cancelRequested, &doneAt); err != nil {
+		var queueItems string
+		if err := rows.Scan(&j.ID, &j.URL, &j.Kind, &j.Quality, &j.MediaType, &j.AudioBitrate, &j.Status, &j.Title, &progress, &j.CurrentItem,
+			&j.CompletedCount, &totalCount, &j.Error, &j.CreatedAt, &j.Note, &dir, &cancelRequested, &doneAt, &queueItems); err != nil {
 			return nil, err
+		}
+		if err := json.Unmarshal([]byte(queueItems), &j.Items); err != nil {
+			return nil, fmt.Errorf("decode saved queue entries: %w", err)
 		}
 		if progress.Valid {
 			value := progress.Float64

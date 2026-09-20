@@ -1,5 +1,5 @@
 // server.go implements request validation, API routing, in-memory job control,
-// and coordination with the SQLite store and sequential download worker.
+// and coordination with the SQLite store and concurrent download scheduler.
 package main
 
 import (
@@ -15,6 +15,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -32,6 +33,7 @@ type mediaFile struct {
 	ThumbnailURL    string `json:"thumbnailUrl,omitempty"`
 	PublishDate     string `json:"publishDate,omitempty"`
 	Category        string `json:"category,omitempty"`
+	MediaType       string `json:"mediaType,omitempty"`
 }
 
 type itemFailure struct {
@@ -39,22 +41,47 @@ type itemFailure struct {
 	Error string `json:"error"`
 }
 
+type queueItem struct {
+	Index            int      `json:"index"`
+	VideoID          string   `json:"videoId,omitempty"`
+	Title            string   `json:"title"`
+	Author           string   `json:"author,omitempty"`
+	DurationSeconds  int64    `json:"durationSeconds,omitempty"`
+	ThumbnailURL     string   `json:"thumbnailUrl,omitempty"`
+	Status           string   `json:"status"`
+	Progress         *float64 `json:"progress"`
+	DownloadedBytes  int64    `json:"downloadedBytes"`
+	TotalBytes       int64    `json:"totalBytes"`
+	SpeedBytesPerSec int64    `json:"speedBytesPerSec"`
+	ETASeconds       int64    `json:"etaSeconds"`
+	Error            string   `json:"error,omitempty"`
+	FileID           string   `json:"fileId,omitempty"`
+}
+
 type Job struct {
-	ID             string        `json:"id"`
-	URL            string        `json:"url"`
-	Kind           string        `json:"kind"`
-	Quality        string        `json:"quality"`
-	Status         string        `json:"status"`
-	Title          string        `json:"title"`
-	Progress       *float64      `json:"progress"`
-	CurrentItem    string        `json:"currentItem"`
-	CompletedCount int           `json:"completedCount"`
-	TotalCount     *int          `json:"totalCount"`
-	Files          []mediaFile   `json:"files"`
-	Error          string        `json:"error"`
-	CreatedAt      string        `json:"createdAt"`
-	Note           string        `json:"note"`
-	Failures       []itemFailure `json:"failures"`
+	ID               string        `json:"id"`
+	URL              string        `json:"url"`
+	Kind             string        `json:"kind"`
+	Quality          string        `json:"quality"`
+	MediaType        string        `json:"mediaType"`
+	AudioBitrate     string        `json:"audioBitrate,omitempty"`
+	Status           string        `json:"status"`
+	Title            string        `json:"title"`
+	Progress         *float64      `json:"progress"`
+	CurrentItem      string        `json:"currentItem"`
+	CompletedCount   int           `json:"completedCount"`
+	TotalCount       *int          `json:"totalCount"`
+	Files            []mediaFile   `json:"files"`
+	Items            []queueItem   `json:"items"`
+	Error            string        `json:"error"`
+	CreatedAt        string        `json:"createdAt"`
+	Note             string        `json:"note"`
+	Failures         []itemFailure `json:"failures"`
+	DownloadedBytes  int64         `json:"downloadedBytes"`
+	TotalBytes       int64         `json:"totalBytes"`
+	SpeedBytesPerSec int64         `json:"speedBytesPerSec"`
+	ETASeconds       int64         `json:"etaSeconds"`
+	ActiveItemCount  int           `json:"activeItemCount"`
 }
 
 type jobState struct {
@@ -66,6 +93,8 @@ type jobState struct {
 	pauseRequested  bool
 	done            time.Time
 	readers         int
+	itemProgress    map[int]*itemProgress
+	processingItems int
 }
 
 type ticket struct {
@@ -74,30 +103,48 @@ type ticket struct {
 }
 
 type server struct {
-	cfg            config
-	settings       AppSettings
-	mu             sync.Mutex
-	jobs           map[string]*jobState
-	order          []string
-	tickets        map[string]ticket
-	queue          chan string
-	slots          chan struct{}
-	ctx            context.Context
-	stop           context.CancelFunc
-	wg             sync.WaitGroup
-	engine         nativeClient
-	browserFactory browserProviderFactory
-	store          *jobStore
+	cfg             config
+	settings        AppSettings
+	mu              sync.Mutex
+	jobs            map[string]*jobState
+	order           []string
+	tickets         map[string]ticket
+	queue           chan string
+	slots           chan struct{}
+	scheduleChanged chan struct{}
+	activeDownloads int
+	activeItems     int
+	engineMu        sync.Mutex
+	ctx             context.Context
+	stop            context.CancelFunc
+	wg              sync.WaitGroup
+	engine          nativeClient
+	browserFactory  browserProviderFactory
+	store           *jobStore
 }
 
 func terminal(status string) bool {
 	return status == "completed" || status == "partial" || status == "failed" || status == "cancelled"
 }
 
+func (s *server) notifySchedulerLocked() {
+	if s.scheduleChanged != nil {
+		close(s.scheduleChanged)
+	}
+	s.scheduleChanged = make(chan struct{})
+}
+
 func snapshot(j *jobState) Job {
 	copy := j.Job
 	copy.Files = append([]mediaFile{}, j.Files...)
 	copy.Failures = append([]itemFailure{}, j.Failures...)
+	copy.Items = append([]queueItem{}, j.Items...)
+	for i := range copy.Items {
+		if copy.Items[i].Progress != nil {
+			progress := *copy.Items[i].Progress
+			copy.Items[i].Progress = &progress
+		}
+	}
 	return copy
 }
 
@@ -120,22 +167,26 @@ func fail(w http.ResponseWriter, code int, message string) {
 // decode accepts exactly one JSON object (maximum 4096 bytes), rejects unknown
 // fields, and writes the appropriate JSON error before returning false.
 func decode(w http.ResponseWriter, r *http.Request, dst any) bool {
+	return decodeWithLimit(w, r, dst, 4096, "4096 bytes")
+}
+
+func decodeWithLimit(w http.ResponseWriter, r *http.Request, dst any, limit int64, label string) bool {
 	contentType, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
 	if err != nil || contentType != "application/json" {
 		fail(w, 415, "Content-Type must be application/json")
 		return false
 	}
-	r.Body = http.MaxBytesReader(w, r.Body, 4096)
+	r.Body = http.MaxBytesReader(w, r.Body, limit)
 	body, err := io.ReadAll(r.Body)
 	body = bytes.TrimSpace(body)
 	if err != nil || len(body) == 0 || body[0] != '{' {
-		fail(w, 400, "A JSON object of at most 4096 bytes is required")
+		fail(w, 400, "A JSON object of at most "+label+" is required")
 		return false
 	}
 	d := json.NewDecoder(bytes.NewReader(body))
 	d.DisallowUnknownFields()
 	if err = d.Decode(dst); err != nil {
-		fail(w, 400, "Invalid JSON body, unknown field, or body exceeds 4096 bytes")
+		fail(w, 400, "Invalid JSON body, unknown field, or body exceeds "+label)
 		return false
 	}
 	if d.Decode(new(any)) != io.EOF {
@@ -226,7 +277,8 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Path == "/api/health" && r.Method == http.MethodGet {
 		reply(w, 200, map[string]any{
 			"ready": s.engine != nil, "missing": []string{}, "engine": "native-go",
-			"capabilities": map[string]bool{"combinedStreamsOnly": false, "adaptiveStreamsSupported": true, "externalBinariesRequired": false},
+			"capabilities": map[string]bool{"combinedStreamsOnly": false, "adaptiveStreamsSupported": true, "externalBinariesRequired": false,
+				"mp3AudioSupported": true, "pureGoAudioConversion": true},
 		})
 		return
 	}
@@ -333,9 +385,10 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case len(parts) == 2 && parts[1] == "pause" && r.Method == http.MethodPost:
 		if j.Status == "queued" {
 			j.Status, j.Error = "paused", ""
-		} else if j.Status == "downloading" {
+			s.notifySchedulerLocked()
+		} else if j.Status == "downloading" || j.Status == "processing" {
 			j.pauseRequested = true
-			j.Error = "Pausing after the current stream stops"
+			j.Error = "Pausing after the current download or conversion stops"
 			if j.cancel != nil {
 				j.cancel()
 			}
@@ -343,6 +396,7 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			fail(w, 409, "Only queued or downloading jobs can be paused")
 			return
 		}
+		s.refreshAllQueueItemsLocked(j)
 		s.persistJobLocked(j)
 		reply(w, 200, snapshot(j))
 	case len(parts) == 2 && parts[1] == "resume" && r.Method == http.MethodPost:
@@ -355,7 +409,9 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			j.pauseRequested = false
 			j.cancelRequested = false
 			j.Status, j.Error, j.done = "queued", "", time.Time{}
+			s.refreshAllQueueItemsLocked(j)
 			s.persistJobLocked(j)
+			s.notifySchedulerLocked()
 			reply(w, 200, snapshot(j))
 		default:
 			fail(w, 429, "Download queue is full; try resuming again shortly")
@@ -380,6 +436,8 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			} else {
 				j.Status, j.Error, j.done = "cancelled", "Cancelled before download started", time.Now()
 			}
+			s.refreshAllQueueItemsLocked(j)
+			s.notifySchedulerLocked()
 			s.persistJobLocked(j)
 		}
 		reply(w, 200, snapshot(j))
@@ -404,8 +462,17 @@ func (s *server) handleSettings(w http.ResponseWriter, r *http.Request) {
 		if !decode(w, r, &settings) {
 			return
 		}
+		if settings.MaxConcurrentDownloads == 0 {
+			s.mu.Lock()
+			settings.MaxConcurrentDownloads = s.settings.MaxConcurrentDownloads
+			s.mu.Unlock()
+		}
 		if settings.DefaultQuality != "best" && settings.DefaultQuality != "1080" && settings.DefaultQuality != "720" && settings.DefaultQuality != "480" {
 			fail(w, 400, "defaultQuality must be best, 1080, 720, or 480")
+			return
+		}
+		if settings.MaxConcurrentDownloads < 1 || settings.MaxConcurrentDownloads > 6 {
+			fail(w, 400, "maxConcurrentDownloads must be between 1 and 6")
 			return
 		}
 		s.mu.Lock()
@@ -415,6 +482,7 @@ func (s *server) handleSettings(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.settings = settings
+		s.notifySchedulerLocked()
 		s.mu.Unlock()
 		reply(w, 200, map[string]AppSettings{"settings": settings})
 	default:
@@ -439,11 +507,14 @@ func discardPausedParts(j *jobState) error {
 
 func (s *server) create(w http.ResponseWriter, r *http.Request) {
 	var request struct {
-		URL             string `json:"url"`
-		Quality         string `json:"quality"`
-		RightsConfirmed bool   `json:"rightsConfirmed"`
+		URL             string          `json:"url"`
+		Quality         string          `json:"quality"`
+		MediaType       string          `json:"mediaType"`
+		AudioBitrate    string          `json:"audioBitrate"`
+		RightsConfirmed bool            `json:"rightsConfirmed"`
+		Items           []inspectedItem `json:"items"`
 	}
-	if !decode(w, r, &request) {
+	if !decodeWithLimit(w, r, &request, 8<<20, "8 MiB") {
 		return
 	}
 	u, kind, err := canonicalURL(request.URL)
@@ -455,16 +526,34 @@ func (s *server) create(w http.ResponseWriter, r *http.Request) {
 		fail(w, 400, "Confirm that you own the content or have permission to download it")
 		return
 	}
+	if len(request.Items) > 10000 {
+		fail(w, 400, "A playlist may contain at most 10000 displayed entries")
+		return
+	}
 	if request.Quality != "best" && request.Quality != "1080" && request.Quality != "720" && request.Quality != "480" {
 		fail(w, 400, "Quality must be best, 1080, 720, or 480")
 		return
 	}
-	s.enqueueJob(w, u, kind, request.Quality)
+	if request.MediaType == "" {
+		request.MediaType = "video"
+	}
+	if request.MediaType != "video" && request.MediaType != "audio" {
+		fail(w, 400, "mediaType must be video or audio")
+		return
+	}
+	if request.AudioBitrate == "" {
+		request.AudioBitrate = "192k"
+	}
+	if request.AudioBitrate != "128k" && request.AudioBitrate != "192k" && request.AudioBitrate != "256k" && request.AudioBitrate != "320k" {
+		fail(w, 400, "audioBitrate must be 128k, 192k, 256k, or 320k")
+		return
+	}
+	s.enqueueJob(w, u, kind, request.Quality, request.MediaType, request.AudioBitrate, request.Items)
 }
 
 // enqueueJob allocates private per-job storage, persists a queued job, and
 // returns 202 only after the job has entered the bounded worker queue.
-func (s *server) enqueueJob(w http.ResponseWriter, u, kind, quality string) {
+func (s *server) enqueueJob(w http.ResponseWriter, u, kind, quality, mediaType, audioBitrate string, inspectedItems ...[]inspectedItem) {
 	if s.engine == nil {
 		fail(w, 503, "Native download engine is not initialized")
 		return
@@ -479,9 +568,33 @@ func (s *server) enqueueJob(w http.ResponseWriter, u, kind, quality string) {
 		fail(w, 429, "Job capacity reached; wait for retained jobs to expire")
 		return
 	}
-	j := &jobState{Job: Job{ID: randomID(16), URL: u, Kind: kind, Quality: quality, Status: "queued", Title: "YouTube " + kind, Files: []mediaFile{}, Failures: []itemFailure{}, Note: formatNote, CreatedAt: time.Now().UTC().Format(time.RFC3339Nano)}, fileItems: map[int]mediaFile{}}
+	items := []queueItem{}
+	if kind == "video" {
+		items = append(items, queueItem{Index: 1, VideoID: strings.TrimPrefix(u, "https://www.youtube.com/watch?v="), Title: "YouTube video", Status: "queued"})
+	} else if kind == "playlist" && len(inspectedItems) > 0 {
+		for index, inspected := range inspectedItems[0] {
+			title := inspected.Title
+			if title == "" {
+				title = "Item " + strconv.Itoa(index+1)
+			}
+			item := queueItem{
+				Index: index + 1, Title: title, Author: inspected.Author,
+				DurationSeconds: max(int64(0), inspected.DurationSeconds),
+				ThumbnailURL:    safeInspectedThumbnailURL(inspected.ThumbnailURL), Status: "queued",
+			}
+			if videoID.MatchString(inspected.ID) {
+				item.VideoID = inspected.ID
+			}
+			items = append(items, item)
+		}
+	}
+	j := &jobState{Job: Job{ID: randomID(16), URL: u, Kind: kind, Quality: quality, MediaType: mediaType, AudioBitrate: audioBitrate, Status: "queued", Title: "YouTube " + kind, Files: []mediaFile{}, Items: items, Failures: []itemFailure{}, Note: formatNote, CreatedAt: time.Now().UTC().Format(time.RFC3339Nano)}, fileItems: map[int]mediaFile{}}
 	if kind == "playlist" {
 		j.Note += " " + playlistNote
+		if len(j.Items) > 0 {
+			total := len(j.Items)
+			j.TotalCount = &total
+		}
 	}
 	j.dir = filepath.Join(s.cfg.root, j.ID)
 	if err := os.Mkdir(j.dir, 0700); err != nil {
@@ -496,6 +609,7 @@ func (s *server) enqueueJob(w http.ResponseWriter, u, kind, quality string) {
 	select {
 	case s.queue <- j.ID:
 		s.jobs[j.ID], s.order = j, append(s.order, j.ID)
+		s.notifySchedulerLocked()
 		if err := s.store.saveJob(j); err != nil {
 			delete(s.jobs, j.ID)
 			s.order = s.order[:len(s.order)-1]

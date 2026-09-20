@@ -47,6 +47,10 @@ try {
             throw "Required project file is missing: $path"
         }
     }
+    $viteCLI = Join-Path $repoRoot 'node_modules\vite\bin\vite.js'
+    if (-not (Test-Path -LiteralPath $viteCLI -PathType Leaf)) {
+        throw "Frontend dependencies are missing. Run 'npm ci' after closing any running app or Vite dev server, then rerun this build."
+    }
 
     if ([string]::IsNullOrWhiteSpace($OutputPath)) {
         $OutputPath = Join-Path $repoRoot 'dist\youtube-downloader.exe'
@@ -57,31 +61,20 @@ try {
     $outputDirectory = Split-Path -Parent $OutputPath
 
     Set-Location $repoRoot
-    Write-Host 'Installing frontend dependencies...' -ForegroundColor Cyan
-    Invoke-Native 'npm' @('ci')
-
-    Write-Host 'Building frontend...' -ForegroundColor Cyan
-    Invoke-Native 'npm' @('run', 'build')
-
-    $webDist = Join-Path $repoRoot 'dist'
-    $webEntry = Join-Path $webDist 'index.html'
-    if (-not (Test-Path -LiteralPath $webEntry -PathType Leaf)) {
-        throw "Frontend build did not produce $webEntry"
-    }
-
     $serverDist = Join-Path $repoRoot 'src\server\dist'
     if (Test-Path -LiteralPath $serverDist) {
         $serverDistItem = Get-Item -LiteralPath $serverDist
         if ($serverDistItem.LinkType) {
             throw "Refusing to write through symlink: $serverDist"
         }
-        Get-ChildItem -LiteralPath $serverDist -Force | Remove-Item -Recurse -Force
     } else {
         New-Item -ItemType Directory -Path $serverDist -Force | Out-Null
     }
-    Copy-Item -Path (Join-Path $webDist '*') -Destination $serverDist -Recurse -Force
+
+    Write-Host 'Building frontend...' -ForegroundColor Cyan
+    Invoke-Native 'npm' @('run', 'build', '--', '--outDir', $serverDist)
     if (-not (Test-Path -LiteralPath (Join-Path $serverDist 'index.html') -PathType Leaf)) {
-        throw "Failed to copy frontend assets into $serverDist"
+        throw "Frontend build did not produce $(Join-Path $serverDist 'index.html')"
     }
 
     Push-Location (Join-Path $repoRoot 'src\server')

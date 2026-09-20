@@ -6,6 +6,7 @@ import (
 	"context"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -19,6 +20,7 @@ type inspectedQuality struct {
 }
 
 type inspectedItem struct {
+	Index           int    `json:"index,omitempty"`
 	ID              string `json:"id"`
 	Title           string `json:"title"`
 	Author          string `json:"author,omitempty"`
@@ -27,17 +29,19 @@ type inspectedItem struct {
 }
 
 type inspection struct {
-	URL              string             `json:"url"`
-	Kind             string             `json:"kind"`
-	Title            string             `json:"title"`
-	Author           string             `json:"author,omitempty"`
-	DurationSeconds  int64              `json:"durationSeconds,omitempty"`
-	ThumbnailURL     string             `json:"thumbnailUrl,omitempty"`
-	PublishDate      string             `json:"publishDate,omitempty"`
-	AvailableQuality []inspectedQuality `json:"availableQualities,omitempty"`
-	ItemCount        int                `json:"itemCount,omitempty"`
-	Items            []inspectedItem    `json:"items,omitempty"`
-	Note             string             `json:"note,omitempty"`
+	URL                string             `json:"url"`
+	Kind               string             `json:"kind"`
+	Title              string             `json:"title"`
+	Author             string             `json:"author,omitempty"`
+	DurationSeconds    int64              `json:"durationSeconds,omitempty"`
+	ThumbnailURL       string             `json:"thumbnailUrl,omitempty"`
+	PublishDate        string             `json:"publishDate,omitempty"`
+	AvailableQuality   []inspectedQuality `json:"availableQualities,omitempty"`
+	AudioOnlyAvailable bool               `json:"audioOnlyAvailable"`
+	ItemCount          int                `json:"itemCount,omitempty"`
+	Items              []inspectedItem    `json:"items,omitempty"`
+	Entries            []inspectedItem    `json:"entries,omitempty"`
+	Note               string             `json:"note,omitempty"`
 }
 
 // inspect validates a link and returns video quality options or playlist
@@ -61,9 +65,10 @@ func (s *server) inspect(w http.ResponseWriter, r *http.Request) {
 	timeout := min(s.cfg.timeout, 25*time.Second)
 	ctx, cancel := context.WithTimeout(s.ctx, timeout)
 	defer cancel()
+	engine := s.operationEngine()
 
 	if kind == "video" {
-		video, err := s.engine.GetVideoContext(ctx, canonical)
+		video, err := engine.GetVideoContext(ctx, canonical)
 		if err != nil || video == nil {
 			fail(w, 422, "Video metadata is unavailable or the video cannot be inspected")
 			return
@@ -77,6 +82,8 @@ func (s *server) inspect(w http.ResponseWriter, r *http.Request) {
 			URL: canonical, Kind: kind, Title: video.Title, Author: video.Author,
 			DurationSeconds: int64(video.Duration.Seconds()), ThumbnailURL: safeThumbnailURL(video.Thumbnails),
 		}
+		_, _, audioErr := selectAudioFormat(video)
+		result.AudioOnlyAvailable = audioErr == nil
 		if !video.PublishDate.IsZero() {
 			result.PublishDate = video.PublishDate.UTC().Format("2006-01-02")
 		}
@@ -88,7 +95,7 @@ func (s *server) inspect(w http.ResponseWriter, r *http.Request) {
 				result.AvailableQuality = append(result.AvailableQuality, inspectedQuality{Value: option.value, Label: option.label, Height: option.height})
 			}
 		}
-		if len(result.AvailableQuality) == 0 {
+		if len(result.AvailableQuality) == 0 && !result.AudioOnlyAvailable {
 			fail(w, 422, "No supported MP4 or WebM video stream is available")
 			return
 		}
@@ -96,27 +103,33 @@ func (s *server) inspect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	playlist, err := s.engine.GetPlaylistContext(ctx, canonical)
+	playlist, err := engine.GetPlaylistContext(ctx, canonical)
 	if err != nil || playlist == nil {
 		fail(w, 422, "Playlist metadata is unavailable or the playlist cannot be inspected")
 		return
 	}
 	result := inspection{
 		URL: canonical, Kind: kind, Title: playlist.Title, Author: playlist.Author,
-		ItemCount: len(playlist.Videos), Items: []inspectedItem{},
+		ItemCount: len(playlist.Videos), Items: []inspectedItem{}, Entries: []inspectedItem{}, AudioOnlyAvailable: len(playlist.Videos) > 0,
 		Note: "The downloader processes every playlist entry exposed by YouTube. Hidden or inaccessible entries cannot be counted.",
 	}
 	for index, entry := range playlist.Videos {
-		if index == 10 {
-			break
+		item := inspectedItem{Index: index + 1, Title: "Unavailable playlist item"}
+		if entry != nil {
+			item.ID = entry.ID
+			if entry.Title != "" {
+				item.Title = entry.Title
+			} else {
+				item.Title = "Item " + strconv.Itoa(index+1)
+			}
+			item.Author = entry.Author
+			item.DurationSeconds = int64(entry.Duration.Seconds())
+			item.ThumbnailURL = safeThumbnailURL(entry.Thumbnails)
 		}
-		if entry == nil || !videoID.MatchString(entry.ID) {
-			continue
+		result.Entries = append(result.Entries, item)
+		if index < 10 && entry != nil && videoID.MatchString(entry.ID) {
+			result.Items = append(result.Items, item)
 		}
-		result.Items = append(result.Items, inspectedItem{
-			ID: entry.ID, Title: entry.Title, Author: entry.Author,
-			DurationSeconds: int64(entry.Duration.Seconds()), ThumbnailURL: safeThumbnailURL(entry.Thumbnails),
-		})
 	}
 	reply(w, 200, result)
 }
@@ -146,14 +159,14 @@ func (s *server) retry(w http.ResponseWriter, r *http.Request, id string) {
 		fail(w, 409, "Only failed, partial, or cancelled jobs can be retried")
 		return
 	}
-	jobURL, quality := original.URL, original.Quality
+	jobURL, quality, mediaType, audioBitrate := original.URL, original.Quality, original.MediaType, original.AudioBitrate
 	s.mu.Unlock()
 	canonical, kind, err := canonicalURL(jobURL)
 	if err != nil {
 		fail(w, 409, "The saved job URL is no longer valid")
 		return
 	}
-	s.enqueueJob(w, canonical, kind, quality)
+	s.enqueueJob(w, canonical, kind, quality, mediaType, audioBitrate)
 }
 
 // safeThumbnailURL returns the last HTTPS thumbnail hosted on an approved
@@ -168,6 +181,18 @@ func safeThumbnailURL(thumbnails youtube.Thumbnails) string {
 		if host == "ytimg.com" || strings.HasSuffix(host, ".ytimg.com") || host == "ggpht.com" || strings.HasSuffix(host, ".ggpht.com") {
 			return parsed.String()
 		}
+	}
+	return ""
+}
+
+func safeInspectedThumbnailURL(raw string) string {
+	parsed, err := url.Parse(raw)
+	if err != nil || parsed.Scheme != "https" || parsed.User != nil || parsed.Port() != "" {
+		return ""
+	}
+	host := strings.ToLower(parsed.Hostname())
+	if host == "ytimg.com" || strings.HasSuffix(host, ".ytimg.com") || host == "ggpht.com" || strings.HasSuffix(host, ".ggpht.com") {
+		return parsed.String()
 	}
 	return ""
 }

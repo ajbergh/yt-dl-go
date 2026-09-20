@@ -4,7 +4,7 @@
  * page bootstrap, not in this client module.
  */
 export type Quality = "best" | "1080" | "720" | "480";
-export type JobStatus = "queued" | "downloading" | "paused" | "completed" | "partial" | "failed" | "cancelled";
+export type JobStatus = "queued" | "downloading" | "processing" | "paused" | "completed" | "partial" | "failed" | "cancelled";
 export interface DownloadFile {
   id: string;
   name: string;
@@ -17,12 +17,31 @@ export interface DownloadFile {
   thumbnailUrl?: string;
   publishDate?: string;
   category?: string;
+  mediaType?: "video" | "audio";
+}
+export interface QueueItem {
+  index: number;
+  videoId?: string;
+  title: string;
+  author?: string;
+  durationSeconds?: number;
+  thumbnailUrl?: string;
+  status: JobStatus;
+  progress: number | null;
+  downloadedBytes: number;
+  totalBytes: number;
+  speedBytesPerSec: number;
+  etaSeconds: number;
+  error?: string;
+  fileId?: string;
 }
 export interface DownloadJob {
   id: string;
   url: string;
   kind: "video" | "playlist";
   quality: Quality;
+  mediaType: "video" | "audio";
+  audioBitrate?: string;
   status: JobStatus;
   title: string;
   progress: number | null;
@@ -30,10 +49,16 @@ export interface DownloadJob {
   completedCount: number;
   totalCount: number | null;
   files: DownloadFile[];
+  items?: QueueItem[];
   error: string;
   createdAt: string;
   note?: string;
   failures?: { index: number; error: string }[];
+  downloadedBytes: number;
+  totalBytes: number;
+  speedBytesPerSec: number;
+  etaSeconds: number;
+  activeItemCount?: number;
 }
 export interface ServiceHealth {
   ready: boolean;
@@ -43,6 +68,8 @@ export interface ServiceHealth {
     combinedStreamsOnly: boolean;
     adaptiveStreamsSupported?: boolean;
     externalBinariesRequired: boolean;
+    mp3AudioSupported?: boolean;
+    maxConcurrentDownloads?: number;
   };
 }
 export interface ServiceConnection {
@@ -52,6 +79,7 @@ export interface ServiceConnection {
 
 export interface AppSettings {
   defaultQuality: Quality;
+  maxConcurrentDownloads: number;
 }
 
 export interface InspectedQuality {
@@ -61,6 +89,7 @@ export interface InspectedQuality {
 }
 
 export interface InspectedItem {
+  index?: number;
   id: string;
   title: string;
   author?: string;
@@ -77,8 +106,10 @@ export interface Inspection {
   thumbnailUrl?: string;
   publishDate?: string;
   availableQualities?: InspectedQuality[];
+  audioOnlyAvailable?: boolean;
   itemCount?: number;
   items?: InspectedItem[];
+  entries?: InspectedItem[];
   note?: string;
 }
 
@@ -151,7 +182,7 @@ export async function api<T>(connection: ServiceConnection, path: string, init: 
 }
 
 export function isActive(job: DownloadJob): boolean {
-  return job.status === "queued" || job.status === "downloading";
+  return job.status === "queued" || job.status === "downloading" || job.status === "processing";
 }
 
 export function formatBytes(bytes: number): string {

@@ -5,10 +5,11 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
+    "dev:all": "powershell -ExecutionPolicy Bypass -File ./scripts/start-dev.ps1",
+    "build": "vite build --configLoader runner",
     "check": "bun run --parallel typecheck build:check lint",
     "typecheck": "tsc -p tsconfig.app.json --noEmit",
-    "build:check": "VITE_CHECK_MODE=true vite build",
+    "build:check": "node scripts/build-check.mjs",
     "lint": "eslint .",
     "preview": "vite preview"
   },

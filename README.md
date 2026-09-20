@@ -39,7 +39,7 @@ The checked build workflow is also available as:
 .\scripts\build-windows.ps1
 ~~~
 
-It validates the toolchain, installs frontend dependencies, rebuilds and embeds the UI, runs the Go tests with CGO disabled, and verifies the resulting executable. Pass `-OutputPath` to choose a different executable destination.
+It validates the toolchain and installed frontend dependencies, rebuilds the UI directly into the Go embed directory, runs the Go tests with CGO disabled, and verifies the resulting executable. It does not replace `node_modules`, so a running dev server will not lock files needed by the build. If dependencies are missing, close the app or Vite dev server, run `npm ci`, then retry. The workflow leaves other files in root `dist` intact. Pass `-OutputPath` to choose a different executable destination.
 
 ~~~
 npm ci
