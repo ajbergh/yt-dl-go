@@ -19,6 +19,11 @@ type Draft = Inspection & { selectedQuality: Quality; mediaType: "video" | "audi
 type QueueFilter = "all" | "active" | "queued" | "completed";
 type LibraryFilter = "all" | "video" | "audio";
 type QueueRow = { job: DownloadJob; item: QueueItem };
+const clearedQueueItemsKey = "yt-dl-go:cleared-completed-queue-items";
+
+function queueItemKey({ job, item }: QueueRow): string {
+  return `${job.id}:${item.index}`;
+}
 
 const qualityLabels: Record<Quality, string> = {
   best: "Best available",
@@ -156,14 +161,25 @@ export function HomePage() {
   const [libraryFilter, setLibraryFilter] = useState<LibraryFilter>("all");
   const [librarySearch, setLibrarySearch] = useState("");
   const [libraryLayout, setLibraryLayout] = useState<"grid" | "list">("grid");
+  const [clearedQueueItems, setClearedQueueItems] = useState<string[]>(() => {
+    try {
+      const stored = window.localStorage.getItem(clearedQueueItemsKey);
+      const parsed: unknown = stored ? JSON.parse(stored) : [];
+      return Array.isArray(parsed) && parsed.every(item => typeof item === "string") ? parsed : [];
+    } catch { return []; }
+  });
 
   const queueRows = useMemo<QueueRow[]>(
     () => jobs.flatMap(job => queueItemsFor(job).map(item => ({ job, item }))),
     [jobs],
   );
-  const activeCount = queueRows.filter(({ item }) => item.status === "downloading" || item.status === "processing").length;
-  const queuedCount = queueRows.filter(({ item }) => item.status === "queued").length;
-  const completedQueueCount = queueRows.filter(({ item }) => item.status === "completed").length;
+  const visibleQueueRows = useMemo(
+    () => queueRows.filter(row => row.item.status !== "completed" || !clearedQueueItems.includes(queueItemKey(row))),
+    [queueRows, clearedQueueItems],
+  );
+  const activeCount = visibleQueueRows.filter(({ item }) => item.status === "downloading" || item.status === "processing").length;
+  const queuedCount = visibleQueueRows.filter(({ item }) => item.status === "queued").length;
+  const completedQueueCount = visibleQueueRows.filter(({ item }) => item.status === "completed").length;
   const finishedFiles = jobs.reduce((sum, job) => sum + job.files.length, 0);
   const totalCurrentSpeed = queueRows.reduce((sum, { item }) => sum + ((item.status === "downloading" || item.status === "processing") ? item.speedBytesPerSec : 0), 0);
   const queueJobs = useMemo(
@@ -421,7 +437,16 @@ export function HomePage() {
     for (const job of eligible) await jobAction(job, action);
   }
 
-  const filteredQueue = queueRows.filter(({ job, item }) => {
+  function clearCompleted() {
+    const completedItems = visibleQueueRows.filter(row => row.item.status === "completed").map(queueItemKey);
+    if (!serviceReady || completedItems.length === 0) return;
+    const updated = [...new Set([...clearedQueueItems, ...completedItems])];
+    setClearedQueueItems(updated);
+    try { window.localStorage.setItem(clearedQueueItemsKey, JSON.stringify(updated)); } catch { /* Keep the current queue cleared for this session. */ }
+    setNotice("Completed downloads cleared from the queue. Your files remain in the library.");
+  }
+
+  const filteredQueue = visibleQueueRows.filter(({ job, item }) => {
     const query = search.trim().toLowerCase();
     if (query && !`${item.title} ${item.author ?? ""} ${job.title} ${job.url}`.toLowerCase().includes(query)) return false;
     if (queueFilter === "active") return item.status === "downloading" || item.status === "processing";
@@ -452,7 +477,7 @@ export function HomePage() {
               <button key={value} type="button" onClick={() => setTab(value)} aria-current={tab === value ? "page" : undefined}
                 className={`flex flex-1 items-center justify-center gap-2 rounded-lg px-3 py-2 text-xs font-semibold transition-colors sm:flex-none ${tab === value ? "bg-neutral-800 text-white shadow-sm" : "text-neutral-400 hover:text-neutral-200"}`}>
                 <Icon className="size-3.5 text-rose-400" aria-hidden="true" />{label}
-                {value === "queue" && queueRows.length > 0 && <span className="rounded-full bg-rose-600 px-1.5 text-[10px] text-white">{queueRows.length}</span>}
+                {value === "queue" && visibleQueueRows.length > 0 && <span className="rounded-full bg-rose-600 px-1.5 text-[10px] text-white">{visibleQueueRows.length}</span>}
                 {value === "library" && libraryJobs.length > 0 && <span className="rounded-full bg-neutral-700 px-1.5 text-[10px] text-neutral-200">{libraryJobs.length}</span>}
               </button>
             ))}
@@ -561,10 +586,11 @@ export function HomePage() {
 
             <section aria-labelledby="queue-heading" className="space-y-3">
               <div className="flex flex-wrap items-end justify-between gap-3">
-                <div><p className="mb-1 text-[11px] font-bold uppercase tracking-[0.16em] text-neutral-500">Downloads</p><h2 id="queue-heading" className="text-xl font-bold">Active downloads & batch queue <span className="ml-1 text-sm font-medium text-neutral-500">({queueRows.length})</span></h2><p className="mt-1 text-[11px] text-neutral-500">{activeCount} / {settings.maxConcurrentDownloads} active · {formatBytes(totalCurrentSpeed)}/s combined</p></div>
-                <div className="flex gap-2">
+                <div><p className="mb-1 text-[11px] font-bold uppercase tracking-[0.16em] text-neutral-500">Downloads</p><h2 id="queue-heading" className="text-xl font-bold">Active downloads & batch queue <span className="ml-1 text-sm font-medium text-neutral-500">({visibleQueueRows.length})</span></h2><p className="mt-1 text-[11px] text-neutral-500">{activeCount} / {settings.maxConcurrentDownloads} active · {formatBytes(totalCurrentSpeed)}/s combined</p></div>
+                <div className="flex flex-wrap gap-2">
                   <button type="button" className={button} onClick={() => void batchAction("pause")} disabled={!serviceReady || !jobs.some(job => job.status === "queued" || job.status === "downloading" || job.status === "processing")}><Pause className="size-3.5" aria-hidden="true" />Pause all</button>
                   <button type="button" className={button} onClick={() => void batchAction("resume")} disabled={!serviceReady || !jobs.some(job => job.status === "paused")}><Play className="size-3.5" aria-hidden="true" />Resume all</button>
+                  <button type="button" className={button} onClick={clearCompleted} disabled={!serviceReady || completedQueueCount === 0}><Trash2 className="size-3.5" aria-hidden="true" />Clear completed{completedQueueCount > 0 ? ` (${completedQueueCount})` : ""}</button>
                 </div>
               </div>
 
@@ -576,7 +602,7 @@ export function HomePage() {
               <div className={`${panel} flex flex-wrap items-center justify-between gap-3 p-3`}>
                 <div className="flex flex-wrap gap-1 rounded-lg border border-neutral-800 bg-neutral-950 p-1">
                   {(["all", "active", "queued", "completed"] as const).map(value => {
-                    const count = value === "all" ? queueRows.length : value === "active" ? activeCount : value === "queued" ? queuedCount : completedQueueCount;
+                    const count = value === "all" ? visibleQueueRows.length : value === "active" ? activeCount : value === "queued" ? queuedCount : completedQueueCount;
                     return <button key={value} type="button" aria-pressed={queueFilter === value} onClick={() => setQueueFilter(value)} className={`rounded-md px-2.5 py-1.5 text-[11px] font-semibold capitalize ${queueFilter === value ? "bg-neutral-800 text-white" : "text-neutral-400 hover:text-neutral-200"}`}>{value} ({count})</button>;
                   })}
                 </div>
@@ -585,8 +611,8 @@ export function HomePage() {
 
               {filteredQueue.length === 0 ? <div className={`${panel} px-5 py-12 text-center`}>
                 <div className="mx-auto mb-3 grid size-12 place-items-center rounded-2xl bg-neutral-800 text-neutral-500"><Layers className="size-5" aria-hidden="true" /></div>
-                <h3 className="text-sm font-semibold text-neutral-200">{queueRows.length === 0 ? "No downloads yet" : "No videos match this filter"}</h3>
-                <p className="mx-auto mt-1 max-w-md text-xs leading-relaxed text-neutral-500">{serviceReady ? "Inspect a YouTube URL above to add a real download job. Progress and status are reported by the Go worker." : "The app will load your SQLite-backed history and enable downloads as soon as its built-in Go service is ready."}</p>
+                <h3 className="text-sm font-semibold text-neutral-200">{jobs.length === 0 ? "No downloads yet" : visibleQueueRows.length === 0 ? "Queue is clear" : "No videos match this filter"}</h3>
+                <p className="mx-auto mt-1 max-w-md text-xs leading-relaxed text-neutral-500">{visibleQueueRows.length === 0 && jobs.length > 0 ? "Cleared downloads remain available in your library. Inspect a YouTube URL above to add another download." : serviceReady ? "Inspect a YouTube URL above to add a real download job. Progress and status are reported by the Go worker." : "The app will load your SQLite-backed history and enable downloads as soon as its built-in Go service is ready."}</p>
                 {jobs.length === 0 && <p className="mt-2 text-[10px] text-neutral-600">Video downloads and AAC-to-MP3 audio conversion use the native Go service.</p>}
               </div> : <div className="space-y-2.5">
                 {filteredQueue.map(({ job, item }) => {
