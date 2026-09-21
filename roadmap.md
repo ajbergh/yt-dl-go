@@ -455,7 +455,7 @@ Do not expose codec complexity until format selection and compatibility checks a
 
 ## P1.12 Decompose `src/pages/home.tsx`
 
-**Status:** [T] Implemented; CI validation in progress
+**Status:** [x] Implemented
 
 The production page previously owned service initialization, polling, queue state, inspection, settings, library state, job actions, and nearly all rendering in one ~1,479-line file.
 
@@ -488,7 +488,7 @@ src/
 
 #### Validation
 
-- Branch CI is running for the completed structural refactor. Mark this item **[x]** only after frontend type-check/build/tests, Go tests/vet, and the Windows production build all pass.
+- CI run `35565686299` passed frontend type-check/build, Bun integration tests, Go tests, Go vet, the Windows production build, and Windows artifact upload.
 
 ## P1.13 Frontend dependency cleanup
 
