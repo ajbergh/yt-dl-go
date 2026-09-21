@@ -1,11 +1,14 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/kkdai/youtube/v2"
 )
 
 func persistentTestConfig(root string) config {
@@ -33,6 +36,14 @@ func TestPlaylistSelectionPersistsInQueueItems(t *testing.T) {
 	if response.Code != 202 || json.Unmarshal(response.Body.Bytes(), &created) != nil {
 		t.Fatalf("create persisted selection: %d %s", response.Code, response.Body.String())
 	}
+	reorder := request(s, "PUT", "/api/jobs/"+created.ID+"/items", `{"playlistIndexes":[4,2]}`, nil)
+	var reordered Job
+	if reorder.Code != 200 || json.Unmarshal(reorder.Body.Bytes(), &reordered) != nil {
+		t.Fatalf("reorder persisted selection: %d %s", reorder.Code, reorder.Body.String())
+	}
+	if reordered.Items[0].PlaylistIndex != 4 || reordered.Items[0].Index != 1 || reordered.Items[1].PlaylistIndex != 2 || reordered.Items[1].Index != 2 {
+		t.Fatalf("playlist items were not reordered contiguously: %+v", reordered.Items)
+	}
 	s.stop()
 
 	reloaded, err := newServer(c)
@@ -41,8 +52,63 @@ func TestPlaylistSelectionPersistsInQueueItems(t *testing.T) {
 	}
 	defer reloaded.stop()
 	stored := reloaded.jobs[created.ID]
-	if stored == nil || len(stored.Items) != 2 || stored.Items[0].PlaylistIndex != 2 || stored.Items[1].PlaylistIndex != 4 {
+	if stored == nil || len(stored.Items) != 2 || stored.Items[0].PlaylistIndex != 4 || stored.Items[1].PlaylistIndex != 2 {
 		t.Fatalf("playlist selection did not persist through queue_items JSON: %+v", stored)
+	}
+}
+
+func TestPersistentQueueOrderControlsSchedulerPriority(t *testing.T) {
+	root := t.TempDir()
+	if err := os.Chmod(root, 0700); err != nil {
+		t.Fatal(err)
+	}
+	c := persistentTestConfig(root)
+	s, err := newServer(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fake := fixtureClient(1)
+	started := make(chan string, 3)
+	fake.videoFn = func(_ context.Context, id string) (*youtube.Video, error) {
+		started <- id
+		return fixtureVideo(id), nil
+	}
+	s.engine = fake
+	s.settings.MaxConcurrentDownloads = 1
+	s.settings.StorageMode = "managed-only"
+
+	first := createJob(t, s, "https://www.youtube.com/watch?v=00000000001")
+	second := createJob(t, s, "https://www.youtube.com/watch?v=00000000002")
+	third := createJob(t, s, "https://www.youtube.com/watch?v=00000000003")
+	response := request(s, "PUT", "/api/queue/order", marshalQueueOrder([]string{third.ID, first.ID, second.ID}), nil)
+	if response.Code != 200 {
+		t.Fatalf("reorder queued jobs: %d %s", response.Code, response.Body.String())
+	}
+	if request(s, "POST", "/api/jobs/"+first.ID+"/next", `{}`, nil).Code != 200 {
+		t.Fatal("download-next action failed")
+	}
+	// Download-next moves first ahead of the prior explicit order.
+	s.start()
+	for _, id := range []string{first.ID, second.ID, third.ID} {
+		waitTerminal(t, s, id)
+	}
+	got := []string{<-started, <-started, <-started}
+	want := []string{"00000000001", "00000000003", "00000000002"}
+	for index := range want {
+		if got[index] != want[index] {
+			t.Fatalf("execution order = %v, want %v", got, want)
+		}
+	}
+	s.stop()
+
+	reloaded, err := newServer(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reloaded.stop()
+	if reloaded.jobs[first.ID].QueuePosition != 1 || reloaded.jobs[third.ID].QueuePosition != 2 || reloaded.jobs[second.ID].QueuePosition != 3 {
+		t.Fatalf("queue order did not persist: first=%d third=%d second=%d",
+			reloaded.jobs[first.ID].QueuePosition, reloaded.jobs[third.ID].QueuePosition, reloaded.jobs[second.ID].QueuePosition)
 	}
 }
 
