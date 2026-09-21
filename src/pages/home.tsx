@@ -886,7 +886,7 @@ export function HomePage() {
                       </div>}
                     </article>)}
                     <label className="flex cursor-pointer items-start gap-2.5 border-t border-neutral-800 pt-3 text-xs text-neutral-300">
-                      <input type="checkbox" checked={rightsConfirmed} onChange={event => setRightsConfirmed(event.target.checked)} className="mt-0.5 size-4 shrink-0 accent-rose-600" />
+                      <input type="checkbox" aria-label="Confirm download rights" checked={rightsConfirmed} onChange={event => setRightsConfirmed(event.target.checked)} className="mt-0.5 size-4 shrink-0 accent-rose-600" />
                       <span>I own this content or have permission to download it.</span>
                     </label>
                     <div className="flex flex-wrap items-center justify-between gap-3">
