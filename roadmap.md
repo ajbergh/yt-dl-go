@@ -61,7 +61,7 @@ Goal: make the frontend and output-management experience catch up with the exist
 
 ### P0.1 Per-download category selection
 
-**Status:** [~] In progress
+**Status:** [T] Implemented; runtime/test execution pending
 
 Users can already create categories and use `{category}` in naming patterns and category-based subfolders, but new jobs currently capture only the global default category.
 
@@ -85,7 +85,7 @@ Users can already create categories and use `{category}` in naming patterns and 
 
 ### P0.2 Batch “apply to all” controls
 
-**Status:** [ ] Planned
+**Status:** [~] In progress
 
 For multi-URL inspection and playlist workflows, add batch controls that can apply common settings without editing every card individually.
 
@@ -502,16 +502,25 @@ These are not current roadmap commitments:
 
 ### P0.1 Per-download category selection
 
+**Status:** [T] Implemented; runtime/test execution pending
+
+Implemented:
+
+1. Extended frontend inspection draft state with `category`.
+2. Added a category selector to each inspection result.
+3. Added `category` to `POST /api/jobs`.
+4. Added optional per-job category handling to the Go API.
+5. Added canonical category validation against persisted `userCategories`.
+6. Preserved backward compatibility by falling back to `defaultCategory` when the field is omitted.
+7. Captured the selected category with the job so output filename expansion and category subfolders use the per-job value.
+8. Exposed category in the job API response and frontend job type.
+9. Preserved category when retrying failed/partial/cancelled jobs.
+10. Updated backend and frontend tests plus the server API documentation.
+
+Validation note: source and tests were reviewed, but the test suite has not been executed in this session. Keep [T] until CI/local execution confirms the branch.
+
+### P0.2 Batch “apply to all” controls
+
 **Status:** [~] In progress
 
-Planned implementation sequence:
-
-1. Extend frontend inspection draft state with `category`.
-2. Add a category selector to each inspection result.
-3. Send `category` in `POST /api/jobs`.
-4. Extend the create-job request contract with optional `category`.
-5. Validate category against persisted configured categories.
-6. Use default category when omitted for backward compatibility.
-7. Capture category on the job before output publication.
-8. Update backend/API/frontend tests.
-9. Update docs and this roadmap.
+Implementation started after P0.1. The first pass will add inspection-level batch controls for media type, quality, MP3 bitrate, and category while preserving individual overrides afterward.
