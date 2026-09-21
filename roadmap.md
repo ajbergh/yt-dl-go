@@ -2,9 +2,9 @@
 
 > Durable roadmap for the `yt-dl-go` product. This file is the source of truth for roadmap scope, sequencing, implementation status, acceptance criteria, and follow-up work.
 >
-> **Branch:** `roadmap/frontend-decomposition-v1`
+> **Branch:** `roadmap/cross-platform-packaging-v1`
 >
-> **Last updated:** 2026-09-20
+> **Last updated:** 2026-09-21
 
 ## Product direction
 
@@ -538,17 +538,24 @@ Validation note: CI run `35597381317` passed frontend type-check/build, Bun inte
 
 ## P2.6 Cross-platform packaging
 
-**Status:** [ ] Planned
+**Status:** [T] Implemented; expanded CI validation in progress
 
-The Go architecture is suitable for expansion beyond Windows.
+The CGO-free Go architecture now has reproducible packaging paths for Windows, Linux, and macOS.
 
-Investigate:
+Implemented:
 
-- macOS build and browser discovery
-- Linux build and browser discovery
-- filesystem reveal/open semantics
-- release packaging
-- code signing/notarization
+1. Added `scripts/build-unix.sh` to rebuild the embedded React UI, run native-host Go tests/vet, cross-build a requested Linux/macOS architecture with `CGO_ENABLED=0`, and create a tar.gz + SHA-256 checksum.
+2. Added `scripts/package-windows.ps1` to package the checked Windows executable with README/third-party notices and produce a ZIP + SHA-256 checksum.
+3. Expanded CI packaging to Windows plus Linux `amd64`/`arm64` and macOS `amd64`/`arm64` artifacts.
+4. Kept Chrome/Chromium external: browser-assisted HD uses chromedp platform discovery or the existing explicit `CHROME_PATH` override.
+5. Refactored browser-launch, native-folder-picker, and reveal/open command selection into testable platform helpers.
+6. Added platform-independent tests covering Windows, macOS, and Linux command semantics.
+7. Documented Linux's intentional reveal fallback: `xdg-open` opens the containing folder because freedesktop environments do not provide one portable file-selection command.
+8. Documented Linux's `zenity` dependency for the native **Browse** button; manual absolute-path entry remains available without it.
+9. Added `docs/PACKAGING.md` covering package contents, architectures, runtime integration, release promotion, and signing/notarization requirements.
+10. Defined signing as a protected release-stage concern rather than ordinary branch CI: Windows Authenticode and macOS Developer ID/notarization require credentials that must not be stored in the repository.
+
+Acceptance: mark **[x]** after the expanded CI matrix builds/tests/packages all configured platform targets successfully.
 
 ---
 
