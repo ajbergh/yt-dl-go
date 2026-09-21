@@ -50,6 +50,7 @@ type itemFailure struct {
 
 type queueItem struct {
 	Index            int      `json:"index"`
+	PlaylistIndex    int      `json:"playlistIndex,omitempty"`
 	VideoID          string   `json:"videoId,omitempty"`
 	Title            string   `json:"title"`
 	Author           string   `json:"author,omitempty"`
@@ -108,6 +109,7 @@ type jobState struct {
 	readers         int
 	itemProgress    map[int]*itemProgress
 	processingItems int
+	playlistItemCount int
 }
 
 type ticket struct {
@@ -666,8 +668,26 @@ func (s *server) create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if len(request.Items) > 10000 {
-		fail(w, 400, "A playlist may contain at most 10000 displayed entries")
+		fail(w, 400, "A playlist may contain at most 10000 selected entries")
 		return
+	}
+	if kind != "playlist" && len(request.Items) > 0 {
+		fail(w, 400, "items may be supplied only for playlist jobs")
+		return
+	}
+	if kind == "playlist" && len(request.Items) > 0 {
+		seenIndexes := make(map[int]struct{}, len(request.Items))
+		for _, item := range request.Items {
+			if item.Index < 1 || item.Index > 10000 || !videoID.MatchString(item.ID) {
+				fail(w, 400, "playlist items must include a valid original index and video ID")
+				return
+			}
+			if _, exists := seenIndexes[item.Index]; exists {
+				fail(w, 400, "playlist item indexes must be unique")
+				return
+			}
+			seenIndexes[item.Index] = struct{}{}
+		}
 	}
 	if request.Quality != "best" && request.Quality != "1080" && request.Quality != "720" && request.Quality != "480" {
 		fail(w, 400, "Quality must be best, 1080, 720, or 480")
@@ -733,17 +753,14 @@ func (s *server) enqueueJob(w http.ResponseWriter, u, kind, quality, mediaType, 
 		for index, inspected := range inspectedItems[0] {
 			title := inspected.Title
 			if title == "" {
-				title = "Item " + strconv.Itoa(index+1)
+				title = "Playlist item " + strconv.Itoa(inspected.Index)
 			}
-			item := queueItem{
-				Index: index + 1, Title: title, Author: inspected.Author,
+			items = append(items, queueItem{
+				Index: index + 1, PlaylistIndex: inspected.Index, VideoID: inspected.ID,
+				Title: title, Author: inspected.Author,
 				DurationSeconds: max(int64(0), inspected.DurationSeconds),
-				ThumbnailURL:    safeInspectedThumbnailURL(inspected.ThumbnailURL), Status: "queued",
-			}
-			if videoID.MatchString(inspected.ID) {
-				item.VideoID = inspected.ID
-			}
-			items = append(items, item)
+				ThumbnailURL: safeInspectedThumbnailURL(inspected.ThumbnailURL), Status: "queued",
+			})
 		}
 	}
 	outputSettings := mergeAppSettings(defaultAppSettings(), s.settings)
