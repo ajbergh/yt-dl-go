@@ -3,7 +3,8 @@ import {
 } from "lucide-react";
 import type { DownloadFile, DownloadJob, ServiceConnection } from "../lib/downloader";
 import {
-  LibraryThumbnail, button, dateLabel, formatBytes, panel, type LibraryFilter,
+  LibraryThumbnail, button, dateLabel, durationLabel, field, formatBytes, panel, primaryButton,
+  qualityLabels, statusClass, statusLabels, type LibraryFilter,
 } from "../components/downloader/view-model";
 
 type LibraryStats = {
@@ -13,9 +14,10 @@ type LibraryStats = {
   publishedBytes: number;
 };
 
-type LibraryJobAction = "remove" | "delete-managed" | "delete-published" | "delete-all";
+type LibraryJobAction = "retry" | "remove" | "delete-managed" | "delete-published" | "delete-all";
 
 type LibraryPageProps = {
+  libraryJobs: DownloadJob[];
   visibleLibraryJobs: DownloadJob[];
   librarySearch: string;
   setLibrarySearch: (value: string) => void;
@@ -39,7 +41,7 @@ type LibraryPageProps = {
 };
 
 export function LibraryPage({
-  visibleLibraryJobs, librarySearch, setLibrarySearch, libraryFilter, setLibraryFilter,
+  libraryJobs, visibleLibraryJobs, librarySearch, setLibrarySearch, libraryFilter, setLibraryFilter,
   libraryCategory, setLibraryCategory, libraryChannel, setLibraryChannel, libraryCategories,
   libraryChannels, libraryLayout, setLibraryLayout, libraryStats, connection, busyAction,
   previewFile, saveFile, filesystemAction, jobAction,
