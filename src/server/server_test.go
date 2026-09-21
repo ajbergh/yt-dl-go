@@ -89,6 +89,9 @@ func testServer(t *testing.T, engine nativeClient, change func(*config)) *server
 		t.Fatal(err)
 	}
 	s.engine = engine
+	s.thumbnailFetcher = func(context.Context, string, string) (string, error) {
+		return "", errors.New("thumbnail capture disabled in generic fixture")
+	}
 	s.start()
 	t.Cleanup(func() {
 		s.stop()
