@@ -247,18 +247,24 @@ Provide lightweight playback from finalized local media.
 
 ## P1.6 Playlist item selection before queueing
 
-**Status:** [ ] Planned
+**Status:** [T] Implemented; CI validation pending
 
-Playlist inspection should allow users to choose which exposed items are queued.
+Playlist inspection now allows users to choose which exposed items are queued.
 
-#### Scope
+#### Implemented
 
-- Expandable playlist inspection.
-- Select all / clear all.
-- Per-item checkboxes.
-- Selected item count.
-- Approximate aggregate size when estimates are available.
-- Preserve original playlist index for output naming and metadata.
+- Expandable playlist inspection with all valid exposed entries selected by default.
+- Select all / clear all controls and per-item checkboxes.
+- Selected-item counts and disabled queue submission when a playlist selection is empty.
+- Approximate aggregate MP3 output size when selected durations and bitrate make an estimate meaningful.
+- Selected entries are submitted with their original one-based playlist index and video ID.
+- The worker re-fetches playlist metadata and rejects stale/tampered selections before media transfer.
+- Scheduler queue indexes remain contiguous while `playlistIndex` preserves original position.
+- Original playlist position is retained in managed filenames and MP3 track numbers; MP3 track totals retain the full exposed playlist count.
+- Selection state persists through SQLite/restart using the existing queue-item JSON and is preserved by whole-job Retry.
+- Queue labels distinguish selection order from original playlist position.
+- Backend coverage includes input validation, subset processing, original-position naming, stale-selection rejection, retry preservation, and SQLite persistence.
+- Frontend coverage includes Select all/Clear all, per-item selection, request shaping, selected count, and MP3 aggregate estimates.
 
 ### P1.7 Queue reordering and priority
 
@@ -700,3 +706,10 @@ Implemented:
 10. Updated API documentation.
 
 Published-only jobs intentionally do not stream their user-owned output back through the app preview API; those files remain available through native Open/Reveal actions, while in-app preview requires a managed copy.
+
+
+### P1.6 Playlist item selection before queueing
+
+**Status:** [T] Implemented; CI validation pending
+
+Implemented the playlist subset contract end to end: inspection selection UX, original-index persistence, fresh-metadata revalidation, contiguous scheduler indexes, original-position output naming/MP3 track metadata, retry/restart durability, and regression coverage. No new schema migration was required because queue items are already stored as JSON.
