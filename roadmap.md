@@ -454,6 +454,12 @@ Before self-update can be enabled, require:
 
 Until those conditions are satisfied, an available update opens the validated GitHub Release for manual installation rather than modifying the running executable.
 
+#### Validation
+
+CI run `35659497292` passed frontend type-check/build, Bun integration tests, Go tests, Go vet, real-browser E2E, Windows production build/package/upload, Linux amd64 + arm64 packages, and macOS amd64 + arm64 packages. This run includes the release-metadata linker injection path on every platform build script.
+
+The tag-only `.github/workflows/release.yml` is intentionally not executed by branch CI; it reuses the same validated build scripts and adds stable-tag validation, package checksum verification, GitHub OIDC provenance attestations, canonical `SHA256SUMS.txt`, and GitHub Release publication.
+
 ---
 
 # Milestone 5 — Format expansion
