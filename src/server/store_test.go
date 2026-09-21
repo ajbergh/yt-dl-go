@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"os"
 	"strings"
 	"testing"
@@ -12,6 +13,36 @@ func persistentTestConfig(root string) config {
 		addr: "127.0.0.1:8080", root: root, token: strings.Repeat("a", 32),
 		origins: map[string]bool{"http://localhost:5173": true}, hosts: map[string]bool{"127.0.0.1:8080": true},
 		maxJobs: 8, maxBytes: 1024 * 1024, timeout: 10 * time.Second, retain: 10 * time.Minute,
+	}
+}
+
+func TestPlaylistSelectionPersistsInQueueItems(t *testing.T) {
+	root := t.TempDir()
+	if err := os.Chmod(root, 0700); err != nil {
+		t.Fatal(err)
+	}
+	c := persistentTestConfig(root)
+	s, err := newServer(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.engine = fixtureClient(4)
+	body := `{"url":"` + testPlaylist + `","quality":"best","rightsConfirmed":true,"items":[{"index":2,"id":"00000000002","title":"Item 2"},{"index":4,"id":"00000000004","title":"Item 4"}]}`
+	response := request(s, "POST", "/api/jobs", body, nil)
+	var created Job
+	if response.Code != 202 || json.Unmarshal(response.Body.Bytes(), &created) != nil {
+		t.Fatalf("create persisted selection: %d %s", response.Code, response.Body.String())
+	}
+	s.stop()
+
+	reloaded, err := newServer(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reloaded.stop()
+	stored := reloaded.jobs[created.ID]
+	if stored == nil || len(stored.Items) != 2 || stored.Items[0].PlaylistIndex != 2 || stored.Items[1].PlaylistIndex != 4 {
+		t.Fatalf("playlist selection did not persist through queue_items JSON: %+v", stored)
 	}
 }
 
