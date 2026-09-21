@@ -7,6 +7,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"log"
 	"net"
 	"net/http"
@@ -28,6 +29,37 @@ type config struct {
 	maxJobs           int
 	maxBytes          int64
 	timeout, retain   time.Duration
+}
+
+type runtimeOptions struct {
+	noBrowser bool
+	help      bool
+}
+
+func runtimeUsage() string {
+	return "Usage: youtube-downloader [--background|--no-browser]\n\n" +
+		"  --background  Run the local service without opening the UI automatically.\n" +
+		"  --no-browser  Alias for --background; useful for scripts and CI.\n" +
+		"  -h, --help    Show this help text.\n"
+}
+
+func parseRuntimeOptions(args []string) (runtimeOptions, error) {
+	var options runtimeOptions
+	for _, arg := range args {
+		switch arg {
+		case "--background", "--no-browser":
+			options.noBrowser = true
+		case "-h", "--help":
+			options.help = true
+		default:
+			return runtimeOptions{}, fmt.Errorf("unknown argument %q", arg)
+		}
+	}
+	return options, nil
+}
+
+func automaticBrowserEnabled(options runtimeOptions, noBrowserEnv string) bool {
+	return !options.noBrowser && noBrowserEnv != "1"
 }
 
 func env(key, fallback string) string {
@@ -193,6 +225,16 @@ func newServer(c config) (*server, error) {
 // main owns listener lifetime and shutdown. The UI is opened only after the
 // configured listener is bound; `ADDR` determines the browser URL.
 func main() {
+	options, err := parseRuntimeOptions(os.Args[1:])
+	if err != nil {
+		log.Printf("%v\n%s", err, runtimeUsage())
+		os.Exit(2)
+	}
+	if options.help {
+		fmt.Print(runtimeUsage())
+		return
+	}
+
 	c, err := loadConfig()
 	if err != nil {
 		log.Fatal(err)
@@ -214,7 +256,7 @@ func main() {
 	result := make(chan error, 1)
 	go func() { result <- h.Serve(listener) }()
 	log.Printf("Downloader API listening on %s", c.addr)
-	if os.Getenv("NO_BROWSER") != "1" {
+	if automaticBrowserEnabled(options, os.Getenv("NO_BROWSER")) {
 		if err := openBrowser(browserURL(c.addr)); err != nil {
 			log.Printf("Could not open web UI automatically: %v", err)
 		}
