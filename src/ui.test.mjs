@@ -40,6 +40,7 @@ beforeEach(async () => {
     requests.push({ url: String(url), path, ...init });
     if (path === "/api/health") return Response.json({ ready: missing.length === 0, missing, engine: healthEngine, capabilities: { combinedStreamsOnly: false, adaptiveStreamsSupported: true, externalBinariesRequired: false } });
     if (path === "/api/settings" && init.method === "PUT") return Response.json({ settings: JSON.parse(init.body) });
+    if (path === "/api/folders/select" && init.method === "POST") return Response.json({ path: "C:\\\\Media\\\\YouTube" });
     if (path === "/api/settings") return Response.json({ settings: { defaultQuality: "best", defaultCategory: "General", userCategories: ["General", "Music"], storageMode: "managed-published" } });
     if (path === "/api/inspect") return Response.json(inspection);
     if (path === "/api/jobs" && init.method === "POST") return Response.json(job, { status: 202 });
@@ -175,6 +176,13 @@ describe("Downloader UI and Go API integration", () => {
     const save = requests.find(item => item.path === "/api/settings" && item.method === "PUT");
     expect(JSON.parse(save.body)).toEqual({ defaultQuality: "720", maxConcurrentDownloads: 3, namingPattern: "{channel} - {title} [{resolution}]", subfolderSorting: "channel", defaultCategory: "General", userCategories: ["General", "Music"], storageMode: "managed-published" });
     expect(container.textContent).toContain("Saved to SQLite");
+  });
+  test("uses the native folder picker for download location", async () => {
+    await click(button("Settings"));
+    await click(button("Browse"));
+    expect(requests.some(item => item.path === "/api/folders/select" && item.method === "POST")).toBe(true);
+    expect(container.querySelector("#download-location").value).toBe("C:\\Media\\YouTube");
+    expect(container.textContent).toContain("Download folder selected");
   });
   test("persists the selected storage policy for new jobs", async () => {
     await click(button("Settings"));
