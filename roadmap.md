@@ -314,16 +314,25 @@ A single failed or cancelled playlist entry can now be retried without re-runnin
 
 ### P1.9 Bandwidth limiting
 
-**Status:** [ ] Planned
+**Status:** [x] Complete
 
-Add optional application-level bandwidth control for long-running batch jobs.
+Optional application-level bandwidth control is now available for long-running batch jobs.
 
-#### Scope
+#### Implemented
 
-- Global limit.
-- Unlimited default.
-- Persist setting.
-- Fair sharing across active transfers.
+- Added persisted `bandwidthLimitBytesPerSec` application setting with SQLite migration v11.
+- `0` remains the backward-compatible and UI-default unlimited mode.
+- Added a 1 GiB/s validation ceiling and rejects negative limits.
+- Added one shared FIFO token bucket for all active Go-managed media transfers.
+- Each transfer receives a bounded grant and re-enters at the back of the queue, providing round-robin fairness under contention.
+- Progressive video, original M4A, MP3 source downloads, adaptive range downloads, and adaptive audio-source downloads all use the shared limiter.
+- Local transcoding/muxing and local published-file copies are not throttled because the setting represents inbound download bandwidth.
+- Browser-assisted adaptive capture is bypassed while limited because Chrome network traffic cannot be accurately accounted by the Go limiter; the existing Go range path is used instead.
+- Settings changes update the live limiter immediately, including active transfers.
+- Added Settings UI in MiB/s with `0 = Unlimited`.
+- Added deterministic limiter tests for FIFO fairness, cancellation, and switching to unlimited without timing-dependent throughput assertions.
+- Added API validation, SQLite restart-persistence, and frontend preference coverage.
+- Validation: CI run `35553564877` passed frontend type-check/build, Bun integration tests, Go tests, Go vet, and Windows production build.
 
 ---
 
