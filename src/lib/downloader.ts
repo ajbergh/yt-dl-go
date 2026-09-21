@@ -47,6 +47,7 @@ export interface DownloadJob {
   mediaType: "video" | "audio";
   audioBitrate?: string;
   category?: string;
+  storageMode?: "managed-published" | "published-only" | "managed-only";
   status: JobStatus;
   title: string;
   progress: number | null;
@@ -90,6 +91,7 @@ export interface AppSettings {
   subfolderSorting: "channel" | "category" | "flat";
   defaultCategory: string;
   userCategories: string[];
+  storageMode: "managed-published" | "published-only" | "managed-only";
 }
 
 export interface InspectedQuality {
