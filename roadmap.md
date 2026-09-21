@@ -361,9 +361,9 @@ The UI now uses authenticated Server-Sent Events for near-real-time job/settings
 - Added frontend coverage proving live progress is applied without repeated full-list polling.
 - Validation: CI run `35555097968` passed frontend type-check/build, Bun integration tests, Go tests, Go vet, and Windows production build.
 
-### P2.1 System notifications
+### P2.1 System notifications (Deferred)
 
-**Status:** [ ] Planned
+**Status:** [ ] Deferred
 
 Optional notifications for:
 
@@ -372,15 +372,15 @@ Optional notifications for:
 - playlist partially completed
 - disk/output error
 
-### P2.2 Tray/background mode
+### P2.2 Tray/background mode (Deferred)
 
-**Status:** [ ] Planned
+**Status:** [ ] Deferred
 
 Investigate whether a lightweight tray workflow improves long-running batch downloads without compromising the simple executable model.
 
-### P2.3 Automatic updater and signed releases
+### P2.3 Automatic updater and signed releases (Deferred)
 
-**Status:** [ ] Planned
+**Status:** [ ] Deferred
 
 - version metadata
 - signed release artifacts
