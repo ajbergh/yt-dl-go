@@ -4,9 +4,17 @@
  */
 import { useEffect, useMemo, useState } from "react";
 import {
+  DndContext, KeyboardSensor, PointerSensor, closestCenter, useSensor, useSensors,
+  type DragEndEvent,
+} from "@dnd-kit/core";
+import {
+  SortableContext, arrayMove, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy,
+} from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
+import {
   Activity, AlertCircle, ArrowDownToLine, Check, ChevronDown, CircleHelp, Clock3,
   DownloadCloud, FileText, Film, Folder, FolderTree, Gauge, HardDrive, Layers, ListVideo, LoaderCircle,
-  Pause, Play, Plus, RefreshCw, Search, Settings, ShieldCheck, Sparkles, Trash2, X,
+  GripVertical, Pause, Play, Plus, RefreshCw, Search, Settings, ShieldCheck, Sparkles, Trash2, X,
 } from "lucide-react";
 import {
   api, apiBlob, formatBytes, isActive, parseYouTubeURL,
@@ -110,6 +118,15 @@ function statusClass(status: DownloadJob["status"]): string {
   return "border-neutral-700 bg-neutral-800 text-neutral-300";
 }
 
+function SortableQueueOrderRow({ id, label, detail, children }: { id: string; label: string; detail?: string; children?: React.ReactNode }) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id });
+  return <div ref={setNodeRef} style={{ transform: CSS.Transform.toString(transform), transition }} className={`flex items-center gap-2 rounded-lg border border-neutral-800 bg-neutral-950/80 p-2 ${isDragging ? "z-20 opacity-70 shadow-xl" : ""}`}>
+    <button type="button" aria-label={`Drag ${label}`} title="Drag to reorder" className="grid size-8 shrink-0 cursor-grab place-items-center rounded-md border border-neutral-800 bg-neutral-900 text-neutral-500 hover:text-neutral-200 active:cursor-grabbing" {...attributes} {...listeners}><GripVertical className="size-4" aria-hidden="true" /></button>
+    <div className="min-w-0 flex-1"><p className="truncate text-[11px] font-semibold text-neutral-200">{label}</p>{detail && <p className="mt-0.5 truncate text-[10px] text-neutral-500">{detail}</p>}</div>
+    {children}
+  </div>;
+}
+
 function LibraryThumbnail({ connection, jobId, file, audio }: { connection: ServiceConnection; jobId: string; file: DownloadFile; audio: boolean }) {
   const [source, setSource] = useState(file.thumbnailUrl ?? "");
 
@@ -199,6 +216,10 @@ function builtInServiceConnection(): ServiceConnection {
 }
 
 export function HomePage() {
+  const queueSensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+  );
   const [tab, setTab] = useState<Tab>("queue");
   const [connection] = useState<ServiceConnection>(builtInServiceConnection);
   const [serviceReady, setServiceReady] = useState(false);
@@ -244,9 +265,28 @@ export function HomePage() {
     } catch { return []; }
   });
 
-  const queueRows = useMemo<QueueRow[]>(
-    () => jobs.flatMap(job => queueItemsFor(job).map(item => ({ job, item }))),
+  const queuedJobsOrdered = useMemo(
+    () => jobs.filter(job => job.status === "queued").sort((a, b) => {
+      const left = a.queuePosition ?? Number.MAX_SAFE_INTEGER;
+      const right = b.queuePosition ?? Number.MAX_SAFE_INTEGER;
+      return left === right ? a.createdAt.localeCompare(b.createdAt) : left - right;
+    }),
     [jobs],
+  );
+  const queueDisplayJobs = useMemo(() => {
+    const rank = (job: DownloadJob) => job.status === "downloading" || job.status === "processing" ? 0 : job.status === "queued" ? 1 : job.status === "paused" ? 2 : 3;
+    return [...jobs].sort((a, b) => {
+      const rankDifference = rank(a) - rank(b);
+      if (rankDifference) return rankDifference;
+      if (a.status === "queued" && b.status === "queued") {
+        return (a.queuePosition ?? Number.MAX_SAFE_INTEGER) - (b.queuePosition ?? Number.MAX_SAFE_INTEGER);
+      }
+      return b.createdAt.localeCompare(a.createdAt);
+    });
+  }, [jobs]);
+  const queueRows = useMemo<QueueRow[]>(
+    () => queueDisplayJobs.flatMap(job => queueItemsFor(job).map(item => ({ job, item }))),
+    [queueDisplayJobs],
   );
   const visibleQueueRows = useMemo(
     () => queueRows.filter(row => row.item.status !== "completed" || !clearedQueueItems.includes(queueItemKey(row))),
@@ -682,6 +722,66 @@ export function HomePage() {
       } else {
         setNotice(action === "reveal" ? "Opened the published file location." : "Opened the published output folder.");
       }
+    } catch (error) { setActionError(errorMessage(error)); }
+    finally { setBusyAction(""); }
+  }
+
+  function mergeQueuedSnapshots(updated: DownloadJob[]) {
+    const byID = new Map(updated.map(job => [job.id, job]));
+    setJobs(previous => previous.map(job => byID.get(job.id) ?? job));
+  }
+
+  async function reorderQueuedJobs(event: DragEndEvent) {
+    if (!event.over || event.active.id === event.over.id || busyAction) return;
+    const activeID = String(event.active.id).replace(/^job:/, "");
+    const overID = String(event.over.id).replace(/^job:/, "");
+    const oldIndex = queuedJobsOrdered.findIndex(job => job.id === activeID);
+    const newIndex = queuedJobsOrdered.findIndex(job => job.id === overID);
+    if (oldIndex < 0 || newIndex < 0) return;
+    const reordered = arrayMove(queuedJobsOrdered, oldIndex, newIndex);
+    setBusyAction("queue-order");
+    setActionError("");
+    try {
+      const result = await api<{ jobs: DownloadJob[] }>(connection, "/api/queue/order", {
+        method: "PUT", body: JSON.stringify({ jobIds: reordered.map(job => job.id) }), signal: AbortSignal.timeout(15000),
+      });
+      mergeQueuedSnapshots(result.jobs);
+      setNotice("Queued job order updated.");
+    } catch (error) { setActionError(errorMessage(error)); }
+    finally { setBusyAction(""); }
+  }
+
+  async function downloadNext(job: DownloadJob) {
+    if (job.status !== "queued") return;
+    setBusyAction(`${job.id}:next`);
+    setActionError("");
+    try {
+      const result = await api<{ jobs: DownloadJob[] }>(connection, `/api/jobs/${encodeURIComponent(job.id)}/next`, {
+        method: "POST", signal: AbortSignal.timeout(15000),
+      });
+      mergeQueuedSnapshots(result.jobs);
+      setNotice(`"${job.title}" will be the next queued job to start.`);
+    } catch (error) { setActionError(errorMessage(error)); }
+    finally { setBusyAction(""); }
+  }
+
+  async function reorderPlaylistItems(job: DownloadJob, event: DragEndEvent) {
+    if (!event.over || event.active.id === event.over.id || job.status !== "queued" || busyAction) return;
+    const items = job.items ?? [];
+    const activeIndex = Number(String(event.active.id).split(":").at(-1));
+    const overIndex = Number(String(event.over.id).split(":").at(-1));
+    const oldIndex = items.findIndex(item => item.playlistIndex === activeIndex);
+    const newIndex = items.findIndex(item => item.playlistIndex === overIndex);
+    if (oldIndex < 0 || newIndex < 0) return;
+    const reordered = arrayMove(items, oldIndex, newIndex);
+    setBusyAction(`${job.id}:items`);
+    setActionError("");
+    try {
+      const updated = await api<DownloadJob>(connection, `/api/jobs/${encodeURIComponent(job.id)}/items`, {
+        method: "PUT", body: JSON.stringify({ playlistIndexes: reordered.map(item => item.playlistIndex) }), signal: AbortSignal.timeout(15000),
+      });
+      setJobs(previous => previous.map(item => item.id === job.id ? updated : item));
+      setNotice(`Playlist queue order updated for "${job.title}".`);
     } catch (error) { setActionError(errorMessage(error)); }
     finally { setBusyAction(""); }
   }
