@@ -387,6 +387,10 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.retry(w, r, parts[0])
 		return
 	}
+	if len(parts) == 2 && parts[1] == "retry-item" && r.Method == http.MethodPost {
+		s.handleRetryItem(w, r, parts[0])
+		return
+	}
 	if len(parts) == 2 && parts[1] == "next" && r.Method == http.MethodPost {
 		s.handleDownloadNext(w, r, parts[0])
 		return
