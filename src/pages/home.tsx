@@ -139,6 +139,7 @@ export function HomePage() {
     defaultQuality: "best", maxConcurrentDownloads: 3, downloadLocation: "",
     namingPattern: "{channel} - {title} [{resolution}]", subfolderSorting: "channel",
     defaultCategory: "General", userCategories: ["Tech", "Science", "Coding", "Music", "Education", "Gaming", "Podcasts", "Archival", "General"],
+    storageMode: "managed-published",
   });
   const [newCategoryInput, setNewCategoryInput] = useState("");
   const [mp3Supported, setMp3Supported] = useState(false);
@@ -234,6 +235,7 @@ export function HomePage() {
           subfolderSorting: settingResult.settings.subfolderSorting || "channel",
           defaultCategory: settingResult.settings.defaultCategory || "General",
           userCategories: settingResult.settings.userCategories?.length ? settingResult.settings.userCategories : ["Tech", "Science", "Coding", "Music", "Education", "Gaming", "Podcasts", "Archival", "General"],
+          storageMode: settingResult.settings.storageMode || "managed-published",
         });
         setServiceError("");
         setServiceReady(true);
@@ -787,6 +789,18 @@ export function HomePage() {
                     return <button key={name} type="button" onClick={() => changeSetting("downloadLocation", preset)} className="rounded-md border border-neutral-800 bg-neutral-900 px-2.5 py-1 font-mono text-neutral-300 hover:border-neutral-600">{name}</button>;
                   })}
                 </div>
+              </div>
+
+              <div className="rounded-xl border border-neutral-800 bg-neutral-950/60 p-4">
+                <div className="mb-3 flex items-center gap-3"><span className="grid size-9 place-items-center rounded-lg border border-emerald-700/40 bg-emerald-950/30 text-emerald-300"><HardDrive className="size-4" aria-hidden="true" /></span><div><h4 className="text-xs font-bold">Storage policy</h4><p className="mt-0.5 text-[11px] text-neutral-400">Choose which durable copy each newly queued job keeps after finalization.</p></div></div>
+                <div className="grid gap-2 md:grid-cols-3">
+                  {([
+                    ["managed-published", "Managed + Published", "Keep a private Library copy and a copy in your configured output folder. Uses the most disk space."],
+                    ["published-only", "Published only", "Keep only the configured output copy after publishing. Library metadata remains, but in-app Save links are unavailable."],
+                    ["managed-only", "Managed only", "Keep only the private Library copy and do not publish to the output folder. Managed media follows app retention."],
+                  ] as const).map(([value, label, description]) => <label key={value} className={`cursor-pointer rounded-lg border p-3 ${settings.storageMode === value ? "border-rose-600/70 bg-rose-950/20" : "border-neutral-800 bg-neutral-900/50"}`}><span className="flex items-center justify-between gap-2 text-[11px] font-semibold text-neutral-200">{label}<input type="radio" name="storage-mode" value={value} checked={settings.storageMode === value} onChange={() => changeSetting("storageMode", value)} className="accent-rose-600" /></span><span className="mt-1 block text-[10px] leading-relaxed text-neutral-500">{description}</span></label>)}
+                </div>
+                <p className="mt-3 text-[10px] leading-relaxed text-neutral-500">The selected policy is captured when a job is queued. Changing this setting later does not alter existing jobs.</p>
               </div>
 
               <div className="rounded-xl border border-neutral-800 bg-neutral-950/60 p-4">
