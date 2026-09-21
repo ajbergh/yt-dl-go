@@ -327,8 +327,10 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if r.URL.Path == "/api/health" && r.Method == http.MethodGet {
+		info := currentBuildInfo()
 		reply(w, 200, map[string]any{
 			"ready": s.engine != nil, "missing": []string{}, "engine": "native-go",
+			"version": info.Version, "commit": info.Commit, "buildDate": info.Date,
 			"capabilities": map[string]bool{"combinedStreamsOnly": false, "adaptiveStreamsSupported": true, "externalBinariesRequired": false,
 				"mp3AudioSupported": true, "pureGoAudioConversion": true, "captionsSupported": true},
 		})
@@ -351,6 +353,19 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if s.cfg.token != "" && subtle.ConstantTimeCompare([]byte(r.Header.Get("Authorization")), []byte("Bearer "+s.cfg.token)) != 1 {
 		fail(w, 401, "Bearer authorization required")
+		return
+	}
+	if r.URL.Path == "/api/update" {
+		if r.Method != http.MethodGet {
+			fail(w, http.StatusMethodNotAllowed, "Method not allowed")
+			return
+		}
+		status, err := checkLatestRelease(r.Context(), releaseHTTPClient(), latestReleaseAPI, currentBuildInfo())
+		if err != nil {
+			fail(w, http.StatusBadGateway, "Could not check the latest release")
+			return
+		}
+		reply(w, http.StatusOK, status)
 		return
 	}
 	if r.URL.Path == "/api/settings" {
