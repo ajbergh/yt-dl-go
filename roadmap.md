@@ -385,11 +385,37 @@ Scope note: these are browser/OS Notification API alerts and therefore require t
 
 Validation coverage includes permission gating/persistence, suppression of initial snapshot notifications, live terminal-transition delivery, and direct assertions for all four roadmap notification classes.
 
-### P2.2 Tray/background mode (Deferred)
+### P2.2 Background mode / native tray investigation
 
-**Status:** [ ] Deferred
+**Status:** [x] Investigation complete; background mode implemented, native tray deferred
 
-Investigate whether a lightweight tray workflow improves long-running batch downloads without compromising the simple executable model.
+The existing service already supported headless startup through the internal `NO_BROWSER=1` environment switch. This work promotes that capability into a documented end-user runtime mode without changing the single-executable architecture.
+
+#### Implemented
+
+- Added supported `--background` and `--no-browser` runtime arguments.
+- Both modes suppress automatic browser launch while leaving the local HTTP service, scheduler, and download workers running normally.
+- The process remains foreground-owned rather than silently daemonizing; Ctrl+C / normal process signals retain the existing graceful shutdown and resumable-job behavior.
+- The service logs the browser UI URL so the user can open it manually at any time.
+- `NO_BROWSER=1` remains supported for CI and existing automation.
+- Unknown command-line arguments are rejected instead of being silently ignored.
+- Added platform-independent regression coverage for default browser launch behavior, both runtime aliases, legacy environment compatibility, and unknown-argument rejection.
+- Updated root/backend/packaging documentation.
+
+#### Native tray decision
+
+A native tray was investigated rather than adopted blindly. The strongest current zero-CGO candidate is `github.com/gogpu/systray` v0.3.0 (released August 30, 2026), which supports Windows, macOS, and Linux and builds with `CGO_ENABLED=0`. That makes it architecturally compatible with the project's single-binary packaging model.
+
+It is **not** being added to production yet. As of September 21, 2026, the upstream project still has open correctness work around menu dispatch while a menu is being rebuilt and macOS double-click dispatch, with fixes pending review. A tray integration would also need real desktop-session validation beyond ordinary headless package builds.
+
+Revisit native tray UI when:
+
+1. the relevant upstream fixes are released and stable;
+2. Windows/macOS/Linux tray creation + menu actions can be exercised on real desktop runners or hardware;
+3. adding the dependency does not regress P2.6 CGO-free packaging;
+4. background notifications can be designed coherently with P2.1 rather than duplicating browser notifications.
+
+Until then, the supported background/no-browser mode provides long-running batch operation without introducing a fragile desktop shell dependency.
 
 ### P2.3 Automatic updater and signed releases (Deferred)
 
