@@ -2,6 +2,8 @@ package main
 
 import (
 	"testing"
+
+	"github.com/kkdai/youtube/v2"
 )
 
 func TestRangeURLReplacesOnlyRange(t *testing.T) {
@@ -43,6 +45,36 @@ func TestTargetBrowserMediaURL(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			if got := isTargetBrowserMediaURL(test.raw, 299); got != test.want {
 				t.Fatalf("isTargetBrowserMediaURL(%q) = %t, want %t", test.raw, got, test.want)
+			}
+		})
+	}
+}
+
+func TestPlaybackPolicyTargetsRequestedCodecFamily(t *testing.T) {
+	tests := []struct {
+		name       string
+		mime       string
+		pattern    string
+		preference string
+		ok         bool
+	}{
+		{name: "H264 MP4", mime: `video/mp4; codecs="avc1.64002a"`, pattern: "(?:av01|av1|vp09|vp9|vp8)", preference: "480", ok: true},
+		{name: "VP9 WebM", mime: `video/webm; codecs="vp09.00.51.08"`, pattern: "(?:av01|av1)", preference: "480", ok: true},
+		{name: "AV1 WebM", mime: `video/webm; codecs="av01.0.12M.08"`, pattern: "(?:vp09|vp9|vp8)", ok: true},
+		{name: "Opus WebM", mime: `audio/webm; codecs="opus"`, pattern: "(?:mp4a|audio\\/mp4)", ok: true},
+		{name: "unsupported VP8", mime: `video/webm; codecs="vp8"`, ok: false},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			policy, ok := playbackPolicy(&youtube.Format{MimeType: test.mime})
+			if ok != test.ok {
+				t.Fatalf("playbackPolicy(%q) ok=%t, want %t", test.mime, ok, test.ok)
+			}
+			if !ok {
+				return
+			}
+			if policy.unsupportedPattern != test.pattern || policy.av1Preference != test.preference {
+				t.Fatalf("playbackPolicy(%q) = %+v, want pattern=%q preference=%q", test.mime, policy, test.pattern, test.preference)
 			}
 		})
 	}
