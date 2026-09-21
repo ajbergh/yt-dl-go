@@ -44,6 +44,7 @@ export interface DownloadJob {
   quality: Quality;
   mediaType: "video" | "audio";
   audioBitrate?: string;
+  category?: string;
   status: JobStatus;
   title: string;
   progress: number | null;
