@@ -550,6 +550,29 @@ func (s *jobStore) saveJob(j *jobState) error {
 	return tx.Commit()
 }
 
+func (s *jobStore) saveQueueOrder(jobIDs []string) error {
+	if s == nil {
+		return nil
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	now := time.Now().UnixNano()
+	for index, jobID := range jobIDs {
+		result, err := tx.Exec(`UPDATE jobs SET queue_position=?,updated_at=? WHERE id=?`, index+1, now, jobID)
+		if err != nil {
+			return err
+		}
+		affected, err := result.RowsAffected()
+		if err != nil || affected != 1 {
+			return errors.New("queue order referenced an unknown job")
+		}
+	}
+	return tx.Commit()
+}
+
 func (s *jobStore) savePart(jobID string, itemIndex int, path string, completed, expected int64) {
 	if s == nil {
 		return
