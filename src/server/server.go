@@ -37,6 +37,8 @@ type mediaFile struct {
 	OutputName         string `json:"outputName,omitempty"`
 	OutputPath         string `json:"-"`
 	OutputRelativePath string `json:"outputRelativePath,omitempty"`
+	ManagedAvailable   bool   `json:"managedAvailable"`
+	PublishedAvailable bool   `json:"publishedAvailable"`
 }
 
 type itemFailure struct {
