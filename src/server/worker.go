@@ -28,6 +28,8 @@ const playlistSelectionNote = "Only the selected exposed playlist items are queu
 const unknownLengthNote = "An unknown-length stream is complete only at clean EOF; its original size cannot be independently verified."
 const adaptiveFallbackNote = "The requested adaptive stream could not be completed safely; the highest verified progressive MP4 stream was downloaded instead."
 const browserAdaptiveNote = "Adaptive media was streamed through a temporary browser session."
+const vp9PreferenceFallbackNote = "VP9 was preferred but unavailable under the selected quality ceiling; the best supported video format was used instead."
+const av1PreferenceFallbackNote = "AV1 was preferred but unavailable under the selected quality ceiling; the best supported video format was used instead."
 
 var (
 	errMetadata     = errors.New("Video metadata is unavailable or invalid")
@@ -53,10 +55,11 @@ type nativeClient interface {
 }
 
 type streamSelection struct {
-	video       *youtube.Format
-	audio       *youtube.Format
-	progressive *youtube.Format
-	kind        string
+	video              *youtube.Format
+	audio              *youtube.Format
+	progressive        *youtube.Format
+	kind               string
+	preferenceFallback string
 }
 
 type itemProgress struct {
@@ -178,26 +181,46 @@ func betterAudioFormat(candidate, current *youtube.Format) bool {
 		(candidate.Bitrate == current.Bitrate && candidate.ContentLength > current.ContentLength)
 }
 
-// selectFormat chooses a compatible stream under the requested maximum height.
-//
-// Existing progressive streams and H.264/AAC adaptive MP4 remain the preferred
-// compatibility path through 1080p. Higher resolutions may use WebM adaptive
-// VP9/AV1 video with Opus audio; the worker remuxes those tracks without
-// transcoding. "quality" is a ceiling, so a lower supported representation may
-// still be returned when the exact requested height is unavailable.
+// selectFormat preserves the automatic P2.4 policy for callers that do not
+// need an explicit codec/container strategy.
 func selectFormat(video *youtube.Video, quality string) (streamSelection, error) {
+	return selectFormatForStrategy(video, quality, "best")
+}
+
+func validVideoStrategy(strategy string) bool {
+	return strategy == "best" || strategy == "compatibility" || strategy == "vp9" || strategy == "av1"
+}
+
+// selectFormatForStrategy chooses a stream under the requested maximum height
+// while keeping codec/container policy independent from the quality ceiling.
+//
+// "compatibility" is strict MP4: progressive MP4 or adaptive H.264/AAC MP4.
+// "vp9" and "av1" prefer that WebM video codec with Opus audio (or a matching
+// progressive WebM) and transparently fall back to the automatic best-quality
+// policy when the preferred codec is unavailable. The returned selection marks
+// that fallback so the job can disclose it to the user.
+func selectFormatForStrategy(video *youtube.Video, quality, strategy string) (streamSelection, error) {
 	if video == nil {
 		return streamSelection{}, errMetadata
+	}
+	if strategy == "" {
+		strategy = "best"
+	}
+	if !validVideoStrategy(strategy) {
+		return streamSelection{}, errCombined
 	}
 	maxHeight := 0
 	if quality != "best" {
 		maxHeight, _ = strconv.Atoi(quality)
 	}
+
 	var progressive streamSelection
 	var progressiveMP4Selection streamSelection
+	var progressiveVP9 streamSelection
+	var progressiveAV1 streamSelection
 	for i := range video.Formats {
 		f := &video.Formats[i]
-		kind, _, ok := formatType(f)
+		kind, codecs, ok := formatType(f)
 		if !ok || (kind != "video/mp4" && kind != "video/webm") || f.AudioChannels <= 0 || f.Height <= 0 || f.Width <= 0 || f.InitRange != nil || f.IndexRange != nil || (maxHeight > 0 && f.Height > maxHeight) {
 			continue
 		}
@@ -206,6 +229,18 @@ func selectFormat(video *youtube.Video, quality string) (streamSelection, error)
 		}
 		if kind == "video/mp4" && betterVideoFormat(f, progressiveMP4Selection.video) {
 			progressiveMP4Selection = streamSelection{video: f, kind: kind}
+		}
+		if kind == "video/webm" {
+			switch codecFamily(codecs) {
+			case "vp9":
+				if betterVideoFormat(f, progressiveVP9.video) {
+					progressiveVP9 = streamSelection{video: f, kind: kind}
+				}
+			case "av1":
+				if betterVideoFormat(f, progressiveAV1.video) {
+					progressiveAV1 = streamSelection{video: f, kind: kind}
+				}
+			}
 		}
 	}
 
@@ -231,7 +266,7 @@ func selectFormat(video *youtube.Video, quality string) (streamSelection, error)
 
 	var adaptiveMP4 streamSelection
 	progressiveMP4 := progressiveMP4Selection.video
-	if aacAudio != nil && progressiveMP4 != nil {
+	if aacAudio != nil {
 		for i := range video.Formats {
 			f := &video.Formats[i]
 			kind, codecs, ok := formatType(f)
@@ -245,6 +280,8 @@ func selectFormat(video *youtube.Video, quality string) (streamSelection, error)
 	}
 
 	var adaptiveWebM streamSelection
+	var adaptiveVP9 streamSelection
+	var adaptiveAV1 streamSelection
 	if opusAudio != nil {
 		for i := range video.Formats {
 			f := &video.Formats[i]
@@ -259,26 +296,66 @@ func selectFormat(video *youtube.Video, quality string) (streamSelection, error)
 			if betterWebMVideoFormat(f, adaptiveWebM.video) {
 				adaptiveWebM = streamSelection{video: f, audio: opusAudio, progressive: progressiveMP4, kind: kind}
 			}
+			switch family {
+			case "vp9":
+				if betterVideoFormat(f, adaptiveVP9.video) {
+					adaptiveVP9 = streamSelection{video: f, audio: opusAudio, progressive: progressiveMP4, kind: kind}
+				}
+			case "av1":
+				if betterVideoFormat(f, adaptiveAV1.video) {
+					adaptiveAV1 = streamSelection{video: f, audio: opusAudio, progressive: progressiveMP4, kind: kind}
+				}
+			}
 		}
 	}
 
-	bestAdaptive := adaptiveMP4
-	if adaptiveWebM.video != nil && (bestAdaptive.video == nil || betterVideoFormat(adaptiveWebM.video, bestAdaptive.video)) {
-		bestAdaptive = adaptiveWebM
+	bestAutomatic := adaptiveMP4
+	if adaptiveWebM.video != nil && (bestAutomatic.video == nil || betterVideoFormat(adaptiveWebM.video, bestAutomatic.video)) {
+		bestAutomatic = adaptiveWebM
 	}
-	if bestAdaptive.video != nil && betterVideoFormat(bestAdaptive.video, progressive.video) {
-		return bestAdaptive, nil
+	if progressive.video != nil && (bestAutomatic.video == nil || !betterVideoFormat(bestAutomatic.video, progressive.video)) {
+		bestAutomatic = progressive
 	}
-	if progressive.video != nil {
-		return progressive, nil
+	if bestAutomatic.video == nil {
+		if video.HLSManifestURL != "" || video.DASHManifestURL != "" {
+			return streamSelection{}, errManifest
+		}
+		return streamSelection{}, errCombined
 	}
-	if bestAdaptive.video != nil {
-		return bestAdaptive, nil
+
+	if strategy == "compatibility" {
+		compatibility := adaptiveMP4
+		if progressiveMP4Selection.video != nil && (compatibility.video == nil || !betterVideoFormat(compatibility.video, progressiveMP4Selection.video)) {
+			compatibility = progressiveMP4Selection
+		}
+		if compatibility.video != nil {
+			return compatibility, nil
+		}
+		if video.HLSManifestURL != "" || video.DASHManifestURL != "" {
+			return streamSelection{}, errManifest
+		}
+		return streamSelection{}, errCombined
 	}
-	if video.HLSManifestURL != "" || video.DASHManifestURL != "" {
-		return streamSelection{}, errManifest
+
+	if strategy == "vp9" || strategy == "av1" {
+		preferredProgressive := progressiveVP9
+		preferredAdaptive := adaptiveVP9
+		if strategy == "av1" {
+			preferredProgressive = progressiveAV1
+			preferredAdaptive = adaptiveAV1
+		}
+		preferred := preferredAdaptive
+		if preferredProgressive.video != nil && (preferred.video == nil || !betterVideoFormat(preferred.video, preferredProgressive.video)) {
+			preferred = preferredProgressive
+		}
+		if preferred.video != nil {
+			return preferred, nil
+		}
+		bestAutomatic.preferenceFallback = strategy
+		return bestAutomatic, nil
 	}
-	return streamSelection{}, errCombined
+
+	return bestAutomatic, nil
 }
 
 func selectAudioFormat(video *youtube.Video) (*youtube.Format, string, error) {
@@ -1000,7 +1077,10 @@ func (s *server) processItem(ctx context.Context, j *jobState, entry *youtube.Pl
 	if j.MediaType == "audio" {
 		format, extension, err = selectAudioFormat(video)
 	} else {
-		selection, err = selectFormat(video, j.Quality)
+		selection, err = selectFormatForStrategy(video, j.Quality, j.VideoStrategy)
+		if err == nil && selection.preferenceFallback != "" {
+			s.noteCodecPreferenceFallback(j, selection.preferenceFallback)
+		}
 	}
 	if err != nil {
 		return err
@@ -1596,6 +1676,23 @@ func (s *server) noteBrowserAdaptive(j *jobState) {
 	s.mu.Lock()
 	if !strings.Contains(j.Note, browserAdaptiveNote) {
 		j.Note += " " + browserAdaptiveNote
+	}
+	s.mu.Unlock()
+}
+
+func (s *server) noteCodecPreferenceFallback(j *jobState, strategy string) {
+	note := ""
+	switch strategy {
+	case "vp9":
+		note = vp9PreferenceFallbackNote
+	case "av1":
+		note = av1PreferenceFallbackNote
+	default:
+		return
+	}
+	s.mu.Lock()
+	if !strings.Contains(j.Note, note) {
+		j.Note += " " + note
 	}
 	s.mu.Unlock()
 }
