@@ -1,5 +1,4 @@
 import { Component, type ErrorInfo, type ReactNode } from "react";
-import { Button } from "@/components/ui/button";
 import { reportPrivateRuntimeError } from "@/lib/console-capture";
 import { postAppRuntimeErrorToCoworkParent } from "@/lib/cowork-parent-transport";
 
@@ -44,13 +43,13 @@ export class ErrorBoundary extends Component<Props, State> {
             <p className="font-mono text-sm text-destructive/80">
               {this.state.error?.message}
             </p>
-            <Button
-              variant="destructive"
-              className="mt-4"
+            <button
+              type="button"
+              className="mt-4 rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-500"
               onClick={() => this.setState({ hasError: false, error: null })}
             >
               Try Again
-            </Button>
+            </button>
           </div>
         </div>
       );
