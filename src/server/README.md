@@ -64,6 +64,7 @@ Control-plane API responses and errors return JSON. `GET /api/downloads/{ticket}
 | `POST /api/inspect` | Inspects a video or playlist and returns metadata plus supported quality ceilings |
 | `GET /api/settings` | Reads persisted UI preferences |
 | `PUT /api/settings` | Saves validated preferences to SQLite |
+| `POST /api/folders/select` | Opens the local OS folder picker and returns the selected absolute folder; `{}` body |
 | `POST /api/jobs` | Creates a download job; returns `202` and the job |
 | `GET /api/jobs` | Lists jobs, newest first |
 | `GET /api/jobs/{id}` | Returns one job |
@@ -75,6 +76,7 @@ Control-plane API responses and errors return JSON. `GET /api/downloads/{ticket}
 | `DELETE /api/jobs/{id}/managed` | Deletes only app-managed media copies and keeps Library history plus published output |
 | `DELETE /api/jobs/{id}/published` | Deletes only tracked copies in the configured output directory and keeps managed Library media |
 | `DELETE /api/jobs/{id}/all` | Explicitly deletes managed media, published output, and Library history |
+| `POST /api/jobs/{id}/filesystem` | Performs a path-validated `copy-path`, `reveal`, or `open-folder` action for one tracked published file |
 | `POST /api/jobs/{id}/ticket` | Creates a five-minute link for a job ZIP or one file |
 | `GET /api/downloads/{ticket}` | Streams the ticket's archive or file |
 
@@ -99,6 +101,8 @@ Pause and resume use `POST` with `{}`. A paused active job keeps finalized files
 A job includes `id`, `url`, `kind`, `quality`, `mediaType` (`video` or `audio`), `audioBitrate`, `category`, `storageMode`, `status`, `title`, `progress`, byte counts, transfer speed, ETA, `currentItem`, `activeItemCount`, playlist counts, `files`, `error`, `createdAt`, `note`, and `failures`. For parallel transfers, progress and byte counts aggregate the active items; `currentItem` shows an active title and how many more are running. Audio jobs produce `.mp3` files. File objects include `id`, `name`, `size`, `height`, and `mimeType`, plus available title, author, duration, thumbnail, publish-date metadata, `managedAvailable`, and `publishedAvailable` so clients can distinguish the two copy locations. Per-item `failures` use one-based indexes.
 
 Create a ticket with `{}` for a ZIP or `{"fileId":"FILE_ID"}` for a single finalized file. The response is `{"path":"/api/downloads/TICKET"}`. Open that path relative to the service origin without adding the bearer token to the URL.
+
+For local filesystem actions, post `{"fileId":"FILE_ID","action":"reveal"}` (or `open-folder` / `copy-path`) to `/api/jobs/{id}/filesystem`. The server resolves the path exclusively from persisted file metadata, re-validates that it remains beneath the job’s configured output location, verifies the file still exists with the expected size, and never accepts an arbitrary client-supplied path. `POST /api/folders/select` invokes the native interactive folder chooser on Windows and macOS; Linux uses `zenity` when installed. A cancelled picker returns `204`.
 
 ## Operational guidance
 
