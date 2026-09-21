@@ -291,16 +291,26 @@ Implemented explicit, durable queue ordering using the repository's existing `@d
 
 ### P1.8 Retry one playlist item
 
-**Status:** [ ] Planned
+**Status:** [x] Complete
 
-A single failed playlist entry should not require retrying an entire playlist.
+A single failed or cancelled playlist entry can now be retried without re-running the successful playlist entries.
 
-#### Scope
+#### Implemented
 
-- Per-item retry endpoint/state.
-- Preserve successful playlist files.
-- Retry only failed/cancelled entry when possible.
-- Keep original playlist ordering.
+- Added durable `POST /api/jobs/{id}/retry-item` with a one-based queue `index`.
+- Endpoint is limited to stopped playlist jobs and failed/cancelled queue rows.
+- Retry intent is persisted on the queue item through existing `queue_items` JSON.
+- Worker detects retry mode and executes only the marked playlist item.
+- Valid finalized sibling files remain intact, including their existing file IDs.
+- Successful sibling items are skipped rather than re-downloaded.
+- Non-target failed/cancelled sibling state is preserved during a targeted retry.
+- Original `playlistIndex` still drives output naming and MP3 track metadata.
+- Targeted retry state survives restart and resumes as a targeted retry.
+- Retry intent is cleared after the job reaches a terminal state.
+- Queue UI exposes a per-row **Retry item** action only where the backend contract allows it.
+- Backend regression coverage verifies isolated retry execution, sibling-file preservation, invalid completed-item rejection, and restart persistence.
+- Frontend regression coverage verifies the row-level action and request payload.
+- Validation: CI run `35552251892` passed frontend type-check/build, Bun integration tests, Go tests, Go vet, and Windows production build.
 
 ### P1.9 Bandwidth limiting
 
