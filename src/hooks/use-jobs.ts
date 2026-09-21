@@ -17,6 +17,22 @@ import {
 
 export type JobAction = "pause" | "resume" | "cancel" | "retry" | "remove" | "delete-managed" | "delete-published" | "delete-all";
 
+export function mergeJobActionResult(current: DownloadJob, result: DownloadJob, action: JobAction): DownloadJob {
+  // Pause/cancel responses are acknowledgements: the worker reaches its final
+  // state asynchronously and can publish that newer state over SSE before the
+  // HTTP response is applied. Never let the older acknowledgement regress it.
+  if (action === "pause" && current.status === "paused" && result.status !== "paused") return current;
+  if (action === "cancel" && current.status === "cancelled" && result.status !== "cancelled") return current;
+
+  // Resume returns "queued", but the scheduler may already have started the
+  // job and published a newer active/terminal state by the time HTTP resolves.
+  if (action === "resume" && result.status === "queued"
+      && ["downloading", "processing", "completed", "partial", "failed", "cancelled"].includes(current.status)) {
+    return current;
+  }
+  return result;
+}
+
 type UseJobsOptions = {
   connection: ServiceConnection;
   serviceReady: boolean;
@@ -81,7 +97,7 @@ export function useJobs({
         });
         setJobs(previous => action === "retry"
           ? [result, ...previous]
-          : previous.map(item => item.id === job.id ? result : item));
+          : previous.map(item => item.id === job.id ? mergeJobActionResult(item, result, action) : item));
       }
     } catch (error) {
       setActionError(errorMessage(error));
