@@ -113,6 +113,7 @@ type jobState struct {
 type ticket struct {
 	jobID, fileID string
 	expires       time.Time
+	inline        bool
 }
 
 type server struct {
@@ -384,6 +385,7 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	var requested struct {
 		FileID json.RawMessage `json:"fileId"`
+		Inline bool            `json:"inline"`
 	}
 	if len(parts) == 2 && parts[1] == "ticket" && r.Method == http.MethodPost && !decode(w, r, &requested) {
 		return
@@ -541,7 +543,7 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		reply(w, 200, snapshot(j))
 	case len(parts) == 2 && parts[1] == "ticket" && r.Method == http.MethodPost:
-		s.issueTicket(w, j, fileID)
+		s.issueTicket(w, j, fileID, requested.Inline)
 	default:
 		fail(w, 405, "Method not allowed")
 	}
@@ -802,9 +804,13 @@ func (s *server) enqueueJob(w http.ResponseWriter, u, kind, quality, mediaType, 
 // issueTicket creates a short-lived random capability for a stopped job's ZIP
 // or one finalized file. The returned ticket URL, not a bearer token, grants
 // access to the corresponding download route.
-func (s *server) issueTicket(w http.ResponseWriter, j *jobState, fileID string) {
+func (s *server) issueTicket(w http.ResponseWriter, j *jobState, fileID string, inline bool) {
 	if !terminal(j.Status) || len(j.Files) == 0 {
 		fail(w, 409, "Files are available only after the job has stopped and finalized output exists")
+		return
+	}
+	if inline && fileID == "" {
+		fail(w, 400, "inline preview tickets require one fileId")
 		return
 	}
 	if fileID != "" {
@@ -842,6 +848,10 @@ func (s *server) issueTicket(w http.ResponseWriter, j *jobState, fileID string) 
 		return
 	}
 	id := randomID(32)
-	s.tickets[id] = ticket{jobID: j.ID, fileID: fileID, expires: time.Now().Add(5 * time.Minute)}
+	expiresIn := 5 * time.Minute
+	if inline {
+		expiresIn = 30 * time.Minute
+	}
+	s.tickets[id] = ticket{jobID: j.ID, fileID: fileID, expires: time.Now().Add(expiresIn), inline: inline}
 	reply(w, 200, map[string]string{"path": "/api/downloads/" + id})
 }
