@@ -232,11 +232,14 @@ describe("Downloader UI and Go API integration", () => {
     expect(container.textContent).toContain("1 of 2 selectable playlist items selected");
     const category = container.querySelector('select[aria-label^="Category for"]');
     await setSelect(category, "Music");
+    const videoFormat = container.querySelector('select[aria-label^="Video format for"]');
+    expect(videoFormat).toBeTruthy();
+    await setSelect(videoFormat, "vp9");
     await click(container.querySelector('input[aria-label="Confirm download rights"]'));
     await click(button("Add 1 to queue"));
     const create = requests.find(item => item.path === "/api/jobs" && item.method === "POST");
     expect(JSON.parse(create.body)).toEqual({
-      url: inspection.url, quality: "best", mediaType: "video", category: "Music", rightsConfirmed: true,
+      url: inspection.url, quality: "best", videoStrategy: "vp9", mediaType: "video", category: "Music", rightsConfirmed: true,
       items: [playlistEntries[0]],
     });
     expect(container.textContent).toContain("Playlist added with 1 selected item");
@@ -267,6 +270,7 @@ describe("Downloader UI and Go API integration", () => {
     await setTextarea(container.querySelector("#video-url"), "https://www.youtube.com/watch?v=abcdefghijk\nhttps://www.youtube.com/watch?v=lmnopqrstuv");
     await click(button("Inspect qualities"));
     expect(container.querySelector('select[aria-label="Apply media type to all"]')).toBeTruthy();
+    expect(container.querySelector('select[aria-label="Apply video format to all"]')).toBeTruthy();
     expect(container.querySelector('select[aria-label="Apply MP3 bitrate to all"]')).toBeTruthy();
 
     await setSelect(container.querySelector('select[aria-label="Apply quality to all"]'), "720");
@@ -320,9 +324,12 @@ describe("Downloader UI and Go API integration", () => {
       Object.getOwnPropertyDescriptor(testWindow.HTMLSelectElement.prototype, "value").set.call(quality, "720");
       quality.dispatchEvent(new testWindow.Event("change", { bubbles: true }));
     });
+    const videoFormat = container.querySelector('select[aria-label="Default video format"]');
+    expect(videoFormat).toBeTruthy();
+    await setSelect(videoFormat, "av1");
     await click(button("Save preferences"));
     const save = requests.find(item => item.path === "/api/settings" && item.method === "PUT");
-    expect(JSON.parse(save.body)).toEqual({ defaultQuality: "720", maxConcurrentDownloads: 3, bandwidthLimitBytesPerSec: 0, notificationsEnabled: false, downloadLocation: "C:\\Downloads\\YouTube_Vault", namingPattern: "{channel} - {title} [{resolution}]", subfolderSorting: "channel", defaultCategory: "General", userCategories: ["General", "Music"], storageMode: "managed-published" });
+    expect(JSON.parse(save.body)).toEqual({ defaultQuality: "720", defaultVideoStrategy: "av1", maxConcurrentDownloads: 3, bandwidthLimitBytesPerSec: 0, notificationsEnabled: false, downloadLocation: "C:\\Downloads\\YouTube_Vault", namingPattern: "{channel} - {title} [{resolution}]", subfolderSorting: "channel", defaultCategory: "General", userCategories: ["General", "Music"], storageMode: "managed-published" });
     expect(container.textContent).toContain("Saved to SQLite");
   });
   test("persists a global bandwidth limit in MiB per second", async () => {
