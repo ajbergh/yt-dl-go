@@ -391,7 +391,7 @@ func (p *chromeBrowserProvider) configurePlaybackCodec(format *youtube.Format) e
 		return err
 	}
 	script := `(() => {
-  const unsupported = new RegExp(${strconv.Quote(unsupported)}, 'i');
+  const unsupported = new RegExp(` + strconv.Quote(unsupported) + `, 'i');
   if (window.MediaSource && typeof window.MediaSource.isTypeSupported === 'function') {
     const originalIsTypeSupported = window.MediaSource.isTypeSupported.bind(window.MediaSource);
     window.MediaSource.isTypeSupported = type => unsupported.test(type || '') ? false : originalIsTypeSupported(type);
