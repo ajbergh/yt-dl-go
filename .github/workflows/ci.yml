@@ -88,10 +88,77 @@ jobs:
         shell: pwsh
         run: ./scripts/build-windows.ps1 -OutputPath dist/ci/youtube-downloader.exe
 
-      - name: Upload Windows executable
+      - name: Detect Windows architecture
+        id: windows-platform
+        shell: pwsh
+        run: '"arch=$(go env GOARCH)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8'
+
+      - name: Package Windows executable
+        shell: pwsh
+        run: ./scripts/package-windows.ps1 -ExecutablePath dist/ci/youtube-downloader.exe -Architecture "${{ steps.windows-platform.outputs.arch }}" -ArchivePath "dist/ci/youtube-downloader-windows-${{ steps.windows-platform.outputs.arch }}.zip"
+
+      - name: Upload Windows package
         uses: actions/upload-artifact@v4
         with:
-          name: youtube-downloader-windows
-          path: dist/ci/youtube-downloader.exe
+          name: youtube-downloader-windows-${{ steps.windows-platform.outputs.arch }}
+          path: |
+            dist/ci/youtube-downloader.exe
+            dist/ci/youtube-downloader-windows-${{ steps.windows-platform.outputs.arch }}.zip
+            dist/ci/youtube-downloader-windows-${{ steps.windows-platform.outputs.arch }}.zip.sha256
+          if-no-files-found: error
+          retention-days: 7
+
+  unix-build:
+    name: ${{ matrix.label }} production package
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            target: linux
+            label: Linux
+          - runner: macos-latest
+            target: darwin
+            label: macOS
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.26.x"
+          cache-dependency-path: src/server/go.sum
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Detect target architecture
+        id: unix-platform
+        shell: bash
+        run: echo "arch=$(go env GOARCH)" >> "$GITHUB_OUTPUT"
+
+      - name: Build and package ${{ matrix.label }}
+        shell: bash
+        env:
+          TARGET_OS: ${{ matrix.target }}
+          TARGET_ARCH: ${{ steps.unix-platform.outputs.arch }}
+        run: bash ./scripts/build-unix.sh "dist/ci/youtube-downloader-${{ matrix.target }}-${{ steps.unix-platform.outputs.arch }}"
+
+      - name: Upload ${{ matrix.label }} package
+        uses: actions/upload-artifact@v4
+        with:
+          name: youtube-downloader-${{ matrix.target }}-${{ steps.unix-platform.outputs.arch }}
+          path: |
+            dist/ci/youtube-downloader-${{ matrix.target }}-${{ steps.unix-platform.outputs.arch }}.tar.gz
+            dist/ci/youtube-downloader-${{ matrix.target }}-${{ steps.unix-platform.outputs.arch }}.tar.gz.sha256
           if-no-files-found: error
           retention-days: 7
