@@ -455,7 +455,13 @@ func (b *jobBudget) release(amount, completed int64) error {
 
 func estimatedItemBudget(j *jobState, video *youtube.Video, format *youtube.Format, selection streamSelection) int64 {
 	if j.MediaType == "audio" {
-		if format == nil || format.ContentLength <= 0 || video == nil || video.Duration <= 0 {
+		if format == nil || format.ContentLength <= 0 {
+			return 0
+		}
+		if j.AudioFormat == "m4a" {
+			return format.ContentLength
+		}
+		if video == nil || video.Duration <= 0 {
 			return 0
 		}
 		bitrate, _ := strconv.Atoi(strings.TrimSuffix(j.AudioBitrate, "k"))
