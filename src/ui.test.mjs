@@ -40,7 +40,7 @@ beforeEach(async () => {
     requests.push({ url: String(url), path, ...init });
     if (path === "/api/health") return Response.json({ ready: missing.length === 0, missing, engine: healthEngine, capabilities: { combinedStreamsOnly: false, adaptiveStreamsSupported: true, externalBinariesRequired: false } });
     if (path === "/api/settings" && init.method === "PUT") return Response.json({ settings: JSON.parse(init.body) });
-    if (path === "/api/settings") return Response.json({ settings: { defaultQuality: "best", defaultCategory: "General", userCategories: ["General", "Music"] } });
+    if (path === "/api/settings") return Response.json({ settings: { defaultQuality: "best", defaultCategory: "General", userCategories: ["General", "Music"], storageMode: "managed-published" } });
     if (path === "/api/inspect") return Response.json(inspection);
     if (path === "/api/jobs" && init.method === "POST") return Response.json(job, { status: 202 });
     if (path === "/api/jobs") return Response.json({ jobs: rows });
@@ -172,8 +172,17 @@ describe("Downloader UI and Go API integration", () => {
     });
     await click(button("Save preferences"));
     const save = requests.find(item => item.path === "/api/settings" && item.method === "PUT");
-    expect(JSON.parse(save.body)).toEqual({ defaultQuality: "720", maxConcurrentDownloads: 3, namingPattern: "{channel} - {title} [{resolution}]", subfolderSorting: "channel", defaultCategory: "General", userCategories: ["General", "Music"] });
+    expect(JSON.parse(save.body)).toEqual({ defaultQuality: "720", maxConcurrentDownloads: 3, namingPattern: "{channel} - {title} [{resolution}]", subfolderSorting: "channel", defaultCategory: "General", userCategories: ["General", "Music"], storageMode: "managed-published" });
     expect(container.textContent).toContain("Saved to SQLite");
+  });
+  test("persists the selected storage policy for new jobs", async () => {
+    await click(button("Settings"));
+    const publishedOnly = container.querySelector('input[name="storage-mode"][value="published-only"]');
+    await click(publishedOnly);
+    await click(button("Save preferences"));
+    const saves = requests.filter(item => item.path === "/api/settings" && item.method === "PUT");
+    expect(JSON.parse(saves.at(-1).body).storageMode).toBe("published-only");
+    expect(container.textContent).toContain("Published only");
   });
   test("pauses a running job through the backend", async () => {
     rows = [{ ...job, status: "downloading" }];
