@@ -455,17 +455,67 @@ P2.5 remains the place for user-selectable codec/container preferences such as e
 
 ### P2.5 Advanced codec/container selection
 
-**Status:** [~] In progress
+**Status:** [x] Implemented
 
-Potential user-facing modes:
+Added an explicit video output-strategy model on top of the validated P2.4 high-resolution codec/container pipeline.
 
-- Compatibility MP4
-- Best quality
-- AV1 preferred
-- VP9 preferred
-- Original audio
+#### User-facing strategies
 
-Implementation is now building on the validated P2.4 codec/container layer. The goal is a small durable output-strategy model that persists with each job and drives format selection without exposing raw itags or signed media URLs.
+- **Best quality · automatic** — preserves the P2.4 automatic selection policy and chooses the highest supported representation under the selected quality ceiling.
+- **Compatibility MP4 · H.264/AAC** — strict MP4 mode. It selects only progressive H.264/AAC MP4 or adaptive H.264 video + AAC audio and never silently emits WebM.
+- **Prefer VP9 · WebM** — selects VP9 + Opus when available under the quality ceiling; otherwise falls back to the automatic best-supported representation and records that fallback in the job note.
+- **Prefer AV1 · WebM** — selects AV1 + Opus when available under the quality ceiling; otherwise falls back to the automatic best-supported representation and records that fallback in the job note.
+- **Original audio** remains the existing **Audio only → M4A · original AAC** workflow rather than being duplicated as a video-format option.
+
+#### Persistence and API behavior
+
+1. Added durable `videoStrategy` job state and `defaultVideoStrategy` application settings.
+2. Added SQLite schema migration **V14** for `jobs.video_strategy` and `app_settings.default_video_strategy`, both defaulting to `best` for existing databases.
+3. New video jobs capture the explicit strategy or inherit the current default; audio-only jobs reject video strategies.
+4. Whole-job retries preserve the original strategy.
+5. Existing stored jobs/settings hydrate safely to `best` when no strategy was previously recorded.
+6. Strategy is independent from the quality ceiling: for example, `2160 + compatibility` can legitimately produce 1080p MP4 when no higher H.264/AAC representation exists.
+7. The automatic `best` policy retains the P2.4 safety invariant that adaptive H.264/AAC MP4 participates automatically only when the verified progressive MP4 fallback required by that path exists. Explicit Compatibility MP4 may attempt the strict adaptive MP4 pair because the user explicitly selected that policy.
+
+#### UI
+
+- Added **Video format** to each inspected video item.
+- Added a batch **Apply video format to all** control.
+- Added **Default video format** to Settings.
+- Queue rows display both the quality ceiling and selected strategy.
+- Context text explains strict MP4 behavior and VP9/AV1 preference fallback semantics without exposing raw itags, signed URLs, or codec implementation details.
+
+#### Tests
+
+Coverage includes:
+
+- strict Compatibility MP4 selection
+- VP9 preference selection
+- AV1 preference selection
+- preferred-codec fallback marking
+- invalid strategy rejection
+- automatic P2.4 policy compatibility
+- default-setting validation and persistence
+- SQLite restart persistence for jobs/settings
+- audio-only strategy rejection
+- whole-job retry preservation
+- per-item and batch UI controls
+- non-default strategy submission from the UI
+- real-browser default strategy save + service-restart persistence
+
+#### Validation
+
+CI run `35623299491` passed:
+
+- frontend type-check/build
+- Bun integration tests
+- Go tests
+- Go vet
+- real-browser E2E
+- Windows production build/package
+- Linux amd64 + arm64 production packages
+- macOS amd64 + arm64 production packages
+
 
 ---
 
