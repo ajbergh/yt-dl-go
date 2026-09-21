@@ -148,7 +148,11 @@ func (s *server) download(w http.ResponseWriter, r *http.Request) {
 			contentType = "application/octet-stream"
 		}
 		w.Header().Set("Content-Type", contentType)
-		w.Header().Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": files[0].Name}))
+		disposition := "attachment"
+		if t.inline {
+			disposition = "inline"
+		}
+		w.Header().Set("Content-Disposition", mime.FormatMediaType(disposition, map[string]string{"filename": files[0].Name}))
 		http.ServeContent(w, r, files[0].Name, time.Time{}, f)
 		return
 	}
