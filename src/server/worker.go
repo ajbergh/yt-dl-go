@@ -216,6 +216,7 @@ func selectFormatForStrategy(video *youtube.Video, quality, strategy string) (st
 
 	var progressive streamSelection
 	var progressiveMP4Selection streamSelection
+	var compatibilityProgressive streamSelection
 	var progressiveVP9 streamSelection
 	var progressiveAV1 streamSelection
 	for i := range video.Formats {
@@ -227,8 +228,13 @@ func selectFormatForStrategy(video *youtube.Video, quality, strategy string) (st
 		if betterVideoFormat(f, progressive.video) {
 			progressive = streamSelection{video: f, kind: kind}
 		}
-		if kind == "video/mp4" && betterVideoFormat(f, progressiveMP4Selection.video) {
-			progressiveMP4Selection = streamSelection{video: f, kind: kind}
+		if kind == "video/mp4" {
+			if betterVideoFormat(f, progressiveMP4Selection.video) {
+				progressiveMP4Selection = streamSelection{video: f, kind: kind}
+			}
+			if codecFamily(codecs) == "h264" && strings.Contains(codecs, "mp4a") && betterVideoFormat(f, compatibilityProgressive.video) {
+				compatibilityProgressive = streamSelection{video: f, kind: kind}
+			}
 		}
 		if kind == "video/webm" {
 			switch codecFamily(codecs) {
@@ -309,7 +315,14 @@ func selectFormatForStrategy(video *youtube.Video, quality, strategy string) (st
 		}
 	}
 
-	bestAutomatic := adaptiveMP4
+	var bestAutomatic streamSelection
+	// Preserve the P2.4 automatic MP4 invariant: adaptive H.264/AAC participates
+	// in automatic selection only when a progressive MP4 exists as the verified
+	// fallback. The explicit compatibility strategy may still attempt adaptive
+	// MP4 without that fallback because the user selected a strict MP4 policy.
+	if adaptiveMP4.video != nil && progressiveMP4 != nil {
+		bestAutomatic = adaptiveMP4
+	}
 	if adaptiveWebM.video != nil && (bestAutomatic.video == nil || betterVideoFormat(adaptiveWebM.video, bestAutomatic.video)) {
 		bestAutomatic = adaptiveWebM
 	}
@@ -325,8 +338,8 @@ func selectFormatForStrategy(video *youtube.Video, quality, strategy string) (st
 
 	if strategy == "compatibility" {
 		compatibility := adaptiveMP4
-		if progressiveMP4Selection.video != nil && (compatibility.video == nil || !betterVideoFormat(compatibility.video, progressiveMP4Selection.video)) {
-			compatibility = progressiveMP4Selection
+		if compatibilityProgressive.video != nil && (compatibility.video == nil || !betterVideoFormat(compatibility.video, compatibilityProgressive.video)) {
+			compatibility = compatibilityProgressive
 		}
 		if compatibility.video != nil {
 			return compatibility, nil
