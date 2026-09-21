@@ -108,12 +108,6 @@ export default defineConfig(({ mode }) => {
     resolve: {
       alias: {
         "@": path.resolve(envDir, "src"),
-        // Azure Artifacts can mirror TanStack packages without their build/
-        // outputs. Vite dev can consume the shipped sources directly.
-        "@tanstack/react-query": path.resolve(envDir, "node_modules/@tanstack/react-query/src/index.ts"),
-        "@tanstack/query-core": path.resolve(envDir, "node_modules/@tanstack/query-core/src/index.ts"),
-        "@tanstack/react-table": path.resolve(envDir, "node_modules/@tanstack/react-table/src/index.tsx"),
-        "@tanstack/table-core": path.resolve(envDir, "node_modules/@tanstack/table-core/src/index.ts"),
       },
     },
     build: {
@@ -175,19 +169,8 @@ export default defineConfig(({ mode }) => {
       },
     },
     optimizeDeps: {
-      // Pin React + every React-importing dep here. Omitting `radix-ui`
-      // lets Vite optimize its deep imports on-demand via the CJS-interop
-      // path, which can yield `React.useContext === null` at runtime.
-      //
-      // An aliased dependency whose target is TSX is intentionally omitted:
-      // Vite cannot prebundle TSX targets, so listing one here only produces a
-      // warning. `@tanstack/react-table` is served through the JSX transform.
-      //
-      // `holdUntilCrawlEnd: true` reverts Vite 5.1+'s default partial-prebundle
-      // behavior. Without it, Vite ships an initial prebundle while still
-      // discovering deps, then re-prebundles when new deps surface — producing
-      // multiple `?v=<hash>` versions of `react.js` in one load. Separate React
-      // module identities can break hooks and context providers.
+      // Pin the small production dependency set so local development does not
+      // discover/prebundle React-linked packages in multiple passes.
       holdUntilCrawlEnd: true,
       include: [
         "react",
@@ -195,33 +178,11 @@ export default defineConfig(({ mode }) => {
         "react/jsx-dev-runtime",
         "react-dom",
         "react-dom/client",
-        // Radix UI unified package — every shadcn (new-york) ui primitive
-        // imports from `radix-ui` (e.g. `import { Dialog } from "radix-ui"`).
-        // Pin it to avoid on-demand re-optimization when UI primitives import it.
-        "radix-ui",
+        "react-router-dom",
         "@dnd-kit/core",
         "@dnd-kit/sortable",
         "@dnd-kit/utilities",
-        // Optional host SDK integration: optimize its `/data` subpath if used.
-        "@microsoft/managed-apps/data",
-        // These packages are aliased to shipped TypeScript sources. Pinning
-        // them here makes Vite prepare their optimized dependencies at server
-        // startup rather than on the first page request.
-        "@tanstack/react-query",
-        "class-variance-authority",
-        "clsx",
-        "cmdk",
-        "date-fns",
-        "zustand",
         "lucide-react",
-        "motion",
-        "react-day-picker",
-        "react-router-dom",
-        "recharts",
-        "sonner",
-        "tailwind-merge",
-        "unpdf",
-        "xlsx",
       ],
     },
   };
