@@ -15,7 +15,15 @@ import {
 } from "../lib/downloader";
 
 type Tab = "queue" | "library" | "settings";
-type Draft = Inspection & { selectedQuality: Quality; mediaType: "video" | "audio"; audioFormat: "mp3" | "m4a"; audioBitrate: string; category: string };
+type Draft = Inspection & {
+  selectedQuality: Quality;
+  mediaType: "video" | "audio";
+  audioFormat: "mp3" | "m4a";
+  audioBitrate: string;
+  category: string;
+  selectedPlaylistIndexes: number[];
+  playlistExpanded: boolean;
+};
 type QueueFilter = "all" | "active" | "queued" | "completed";
 type LibraryFilter = "all" | "video" | "audio";
 type QueueRow = { job: DownloadJob; item: QueueItem };
@@ -69,6 +77,31 @@ function dateLabel(value?: string): string {
   return Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleDateString();
 }
 
+const inspectedVideoID = /^[A-Za-z0-9_-]{11}$/;
+
+function playlistEntries(draft: Draft) {
+  return draft.entries ?? draft.items ?? [];
+}
+
+function selectablePlaylistEntries(draft: Draft) {
+  return playlistEntries(draft).filter(item =>
+    Number.isInteger(item.index) && (item.index ?? 0) > 0 && inspectedVideoID.test(item.id),
+  );
+}
+
+function selectedPlaylistEntries(draft: Draft) {
+  const selected = new Set(draft.selectedPlaylistIndexes);
+  return selectablePlaylistEntries(draft).filter(item => selected.has(item.index!));
+}
+
+function approximateMP3Bytes(draft: Draft): number {
+  if (draft.kind !== "playlist" || draft.mediaType !== "audio" || draft.audioFormat !== "mp3") return 0;
+  const bitrate = Number.parseInt(draft.audioBitrate, 10);
+  if (!Number.isFinite(bitrate) || bitrate <= 0) return 0;
+  const seconds = selectedPlaylistEntries(draft).reduce((sum, item) => sum + Math.max(0, item.durationSeconds ?? 0), 0);
+  return Math.round(seconds * bitrate * 1000 / 8);
+}
+
 function statusClass(status: DownloadJob["status"]): string {
   if (status === "completed") return "border-emerald-700/60 bg-emerald-950/50 text-emerald-300";
   if (status === "downloading" || status === "processing") return "border-rose-700/60 bg-rose-950/50 text-rose-300";
@@ -115,8 +148,11 @@ function durationMetric(job: DownloadJob): string {
 function queueItemsFor(job: DownloadJob): QueueItem[] {
   if (job.items?.length) return job.items;
   if (job.kind === "playlist" && job.files.length) {
-    return job.files.map((file, index) => ({
-      index: Number(/^([0-9]+)-/.exec(file.name)?.[1]) || index + 1,
+    return job.files.map((file, index) => {
+      const playlistIndex = Number(/^([0-9]+)-/.exec(file.name)?.[1]) || index + 1;
+      return {
+      index: index + 1,
+      playlistIndex,
       videoId: "",
       title: file.title || file.name,
       author: file.author,
@@ -129,7 +165,8 @@ function queueItemsFor(job: DownloadJob): QueueItem[] {
       speedBytesPerSec: 0,
       etaSeconds: 0,
       fileId: file.id,
-    }));
+    };
+    });
   }
   return [{
     index: 1,
@@ -377,7 +414,15 @@ export function HomePage() {
         const selectedQuality = qualities.some(option => option.value === settings.defaultQuality)
           ? settings.defaultQuality
           : qualities[0]?.value ?? settings.defaultQuality;
-        return { ...result, selectedQuality, mediaType: "video" as const, audioFormat: "mp3" as const, audioBitrate: "192k", category: settings.defaultCategory || settings.userCategories[0] || "General" };
+        const entries = result.entries ?? result.items ?? [];
+        const selectedPlaylistIndexes = result.kind === "playlist"
+          ? entries.filter(item => Number.isInteger(item.index) && (item.index ?? 0) > 0 && inspectedVideoID.test(item.id)).map(item => item.index!)
+          : [];
+        return {
+          ...result, selectedQuality, mediaType: "video" as const, audioFormat: "mp3" as const, audioBitrate: "192k",
+          category: settings.defaultCategory || settings.userCategories[0] || "General",
+          selectedPlaylistIndexes, playlistExpanded: false,
+        };
       }));
       setDrafts(results);
       if (results.length === 1 && results[0].kind === "video") setNotice("Video metadata and supported qualities loaded from YouTube.");
@@ -417,6 +462,22 @@ export function HomePage() {
     setDrafts(previous => previous.map(item => ({ ...item, category })));
   }
 
+  function updatePlaylistSelection(draftIndex: number, indexes: number[]) {
+    const unique = [...new Set(indexes)].sort((a, b) => a - b);
+    setDrafts(previous => previous.map((item, itemIndex) =>
+      itemIndex === draftIndex ? { ...item, selectedPlaylistIndexes: unique } : item,
+    ));
+  }
+
+  function togglePlaylistEntry(draftIndex: number, playlistIndex: number, selected: boolean) {
+    const current = drafts[draftIndex];
+    if (!current) return;
+    const next = selected
+      ? [...current.selectedPlaylistIndexes, playlistIndex]
+      : current.selectedPlaylistIndexes.filter(index => index !== playlistIndex);
+    updatePlaylistSelection(draftIndex, next);
+  }
+
   async function addDownloads(event: React.FormEvent) {
     event.preventDefault();
     setFormError("");
@@ -424,20 +485,30 @@ export function HomePage() {
     if (!serviceReady) { setFormError("The built-in Go service is still starting. It will connect automatically."); return; }
     if (!rightsConfirmed) { setFormError("Confirm you have permission to download this content."); return; }
     if (drafts.length === 0) { setFormError("Inspect at least one link before adding it to the queue."); return; }
+    if (drafts.some(draft => draft.kind === "playlist" && draft.selectedPlaylistIndexes.length === 0)) {
+      setFormError("Select at least one playlist item before adding the playlist to the queue.");
+      return;
+    }
     setSubmitting(true);
     const added: DownloadJob[] = [];
     try {
       for (const draft of drafts) {
         const job = await api<DownloadJob>(connection, "/api/jobs", {
           method: "POST",
-          body: JSON.stringify({ url: draft.url, quality: draft.selectedQuality, mediaType: draft.mediaType, ...(draft.mediaType === "audio" ? { audioFormat: draft.audioFormat } : {}), ...(draft.mediaType === "audio" && draft.audioFormat === "mp3" ? { audioBitrate: draft.audioBitrate } : {}), category: draft.category, rightsConfirmed: true, ...(draft.kind === "playlist" && draft.entries?.length ? { items: draft.entries } : {}) }),
+          body: JSON.stringify({
+            url: draft.url, quality: draft.selectedQuality, mediaType: draft.mediaType,
+            ...(draft.mediaType === "audio" ? { audioFormat: draft.audioFormat } : {}),
+            ...(draft.mediaType === "audio" && draft.audioFormat === "mp3" ? { audioBitrate: draft.audioBitrate } : {}),
+            category: draft.category, rightsConfirmed: true,
+            ...(draft.kind === "playlist" ? { items: selectedPlaylistEntries(draft) } : {}),
+          }),
           signal: AbortSignal.timeout(15000),
         });
         added.push(job);
       }
       setJobs(previous => [...added, ...previous.filter(item => !added.some(value => value.id === item.id))]);
       setNotice(added.length === 1 && added[0].kind === "playlist"
-        ? "Playlist added. Every exposed video will appear as an individual queue item; pause and resume control the playlist batch."
+        ? `Playlist added with ${drafts[0].selectedPlaylistIndexes.length} selected item${drafts[0].selectedPlaylistIndexes.length === 1 ? "" : "s"}; original playlist positions are preserved.`
         : `${added.length} download${added.length === 1 ? "" : "s"} added to the queue.`);
       setUrl("");
       setDrafts([]);
@@ -781,6 +852,38 @@ export function HomePage() {
                           </select>
                         </label>
                       </div>
+                      {draft.kind === "playlist" && <div className="space-y-2 border-t border-neutral-800 pt-3 sm:col-span-3">
+                        {(() => {
+                          const selectable = selectablePlaylistEntries(draft);
+                          const selected = selectedPlaylistEntries(draft);
+                          const estimate = approximateMP3Bytes(draft);
+                          return <>
+                            <div className="flex flex-wrap items-center justify-between gap-2">
+                              <div>
+                                <p className="text-[11px] font-semibold text-neutral-200">{selected.length} of {selectable.length} selectable playlist items selected</p>
+                                <p className="mt-0.5 text-[10px] text-neutral-500">{draft.itemCount ?? playlistEntries(draft).length} entries exposed by YouTube{estimate > 0 ? ` · Approx. MP3 output ${formatBytes(estimate)}` : ""}</p>
+                              </div>
+                              <div className="flex flex-wrap gap-1.5">
+                                <button type="button" className={button} onClick={() => updatePlaylistSelection(index, selectable.map(item => item.index!))}>Select all</button>
+                                <button type="button" className={button} onClick={() => updatePlaylistSelection(index, [])}>Clear all</button>
+                                <button type="button" className={button} aria-expanded={draft.playlistExpanded} onClick={() => setDrafts(previous => previous.map((item, itemIndex) => itemIndex === index ? { ...item, playlistExpanded: !item.playlistExpanded } : item))}>{draft.playlistExpanded ? "Hide items" : "Choose items"}</button>
+                              </div>
+                            </div>
+                            {draft.playlistExpanded && <div className="max-h-72 space-y-1 overflow-y-auto rounded-lg border border-neutral-800 bg-neutral-950 p-2">
+                              {playlistEntries(draft).map((entry, entryOffset) => {
+                                const originalIndex = entry.index ?? entryOffset + 1;
+                                const selectableEntry = Number.isInteger(entry.index) && originalIndex > 0 && inspectedVideoID.test(entry.id);
+                                const checked = selectableEntry && draft.selectedPlaylistIndexes.includes(originalIndex);
+                                return <label key={`${entry.id || "unavailable"}-${originalIndex}`} className={`flex items-center gap-3 rounded-md px-2 py-2 ${selectableEntry ? "cursor-pointer hover:bg-neutral-900" : "cursor-not-allowed opacity-50"}`}>
+                                  <input type="checkbox" aria-label={`Select playlist item ${originalIndex}`} checked={checked} disabled={!selectableEntry} onChange={event => togglePlaylistEntry(index, originalIndex, event.target.checked)} className="size-4 shrink-0 accent-rose-600" />
+                                  {entry.thumbnailUrl ? <img src={entry.thumbnailUrl} alt="" referrerPolicy="no-referrer" className="aspect-video w-16 shrink-0 rounded bg-neutral-900 object-cover" /> : <div className="grid aspect-video w-16 shrink-0 place-items-center rounded bg-neutral-900 text-neutral-600"><Film className="size-3.5" aria-hidden="true" /></div>}
+                                  <span className="min-w-0 flex-1"><span className="block truncate text-[11px] font-medium text-neutral-200">#{originalIndex} · {entry.title || "Unavailable playlist item"}</span><span className="mt-0.5 block truncate text-[10px] text-neutral-500">{entry.author || (selectableEntry ? "YouTube" : "Unavailable")} {entry.durationSeconds ? `· ${durationLabel(entry.durationSeconds)}` : ""}</span></span>
+                                </label>;
+                              })}
+                            </div>}
+                          </>;
+                        })()}
+                      </div>}
                     </article>)}
                     <label className="flex cursor-pointer items-start gap-2.5 border-t border-neutral-800 pt-3 text-xs text-neutral-300">
                       <input type="checkbox" checked={rightsConfirmed} onChange={event => setRightsConfirmed(event.target.checked)} className="mt-0.5 size-4 shrink-0 accent-rose-600" />
@@ -788,7 +891,7 @@ export function HomePage() {
                     </label>
                     <div className="flex flex-wrap items-center justify-between gap-3">
                       <button type="button" onClick={() => { setDrafts([]); setRightsConfirmed(false); }} className="px-2 py-2 text-xs text-neutral-400 hover:text-white">Clear inspection</button>
-                      <button type="submit" disabled={submitting || !serviceReady || !rightsConfirmed} className={primaryButton}>
+                      <button type="submit" disabled={submitting || !serviceReady || !rightsConfirmed || drafts.some(draft => draft.kind === "playlist" && draft.selectedPlaylistIndexes.length === 0)} className={primaryButton}>
                         {submitting && <LoaderCircle className="size-4 animate-spin" aria-hidden="true" />}
                         {submitting ? "Adding…" : `Add ${drafts.length} to queue`}<ChevronDown className="size-3.5 -rotate-90" aria-hidden="true" />
                       </button>
@@ -845,7 +948,7 @@ export function HomePage() {
                           <span className="rounded bg-neutral-800 px-2 py-0.5 text-[10px] text-neutral-400">{label}</span>{job.category && <span className="rounded bg-neutral-800 px-2 py-0.5 text-[10px] text-neutral-400">{job.category}</span>}
                         </div>
                         <h3 className="truncate text-sm font-semibold text-white" title={item.title}>{item.title}</h3>
-                        <p className="mt-1 truncate text-[10px] text-neutral-500" title={job.url}>{job.kind === "playlist" ? `${job.title} · Video ${item.index}${job.totalCount ? ` of ${job.totalCount}` : ""}` : job.url}</p>
+                        <p className="mt-1 truncate text-[10px] text-neutral-500" title={job.url}>{job.kind === "playlist" ? `${job.title} · Playlist item ${item.playlistIndex ?? item.index}${job.totalCount ? ` · selection ${item.index} of ${job.totalCount}` : ""}` : job.url}</p>
                         <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-[10px]">
                           <span className={item.status === "failed" ? "text-red-300" : item.status === "completed" ? "text-emerald-300" : "text-rose-300"}>{item.status === "processing" ? "Converting audio to MP3" : item.status === "downloading" ? `Downloading${item.progress === null ? "" : ` ${item.progress.toFixed(0)}%`}` : statusLabels[item.status]}</span>
                           <span className="font-mono text-neutral-400">{item.speedBytesPerSec > 0 ? `${formatBytes(item.speedBytesPerSec)}/s · ETA ${etaLabel(item.etaSeconds)}` : item.downloadedBytes > 0 ? `${formatBytes(item.downloadedBytes)}${item.totalBytes ? ` / ${formatBytes(item.totalBytes)}` : ""}` : item.status === "queued" ? "Waiting for an available slot" : item.status === "completed" ? "Ready to save" : ""}</span>
