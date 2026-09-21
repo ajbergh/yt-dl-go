@@ -105,7 +105,7 @@ For multi-URL inspection and playlist workflows, add batch controls that can app
 
 ### P0.3 Separate Library removal from disk deletion
 
-**Status:** [ ] Planned
+**Status:** [T] Implemented; CI validation pending
 
 Current job deletion can remove both managed app files and files published to the user's chosen output directory. That is too destructive for a media-library workflow.
 
@@ -124,7 +124,7 @@ Current job deletion can remove both managed app files and files published to th
 
 ### P0.4 Storage policy and duplicate-copy control
 
-**Status:** [ ] Planned
+**Status:** [~] In progress
 
 The application currently retains a managed copy under `DATA_DIR` and publishes another copy to the configured output location. Large files may therefore consume approximately twice their final size.
 
@@ -535,3 +535,40 @@ Implemented:
 8. Made the Settings quality selector explicitly addressable and repaired a pre-existing brittle UI-test selector.
 
 Validation note: source and tests were reviewed, but the test suite has not been executed in this session. Keep [T] until CI/local execution confirms the branch.
+
+
+### CI foundation
+
+**Status:** [~] Active; waiting for a green branch run
+
+- Added `.github/workflows/ci.yml`.
+- CI runs frontend type-check/build, Bun integration tests, Go tests, and Go vet on Ubuntu.
+- CI also performs the production Windows build through `scripts/build-windows.ps1` and uploads the executable as a short-lived workflow artifact.
+- Push concurrency cancels obsolete branch runs so the newest commit is authoritative.
+
+### P0.3 Separate Library removal from disk deletion
+
+**Status:** [T] Implemented; CI validation pending
+
+Implemented:
+
+1. Added explicit managed-vs-published availability fields to finalized file metadata.
+2. Added SQLite schema migration v6 to persist those availability states.
+3. Changed ordinary `DELETE /api/jobs/{id}` to mean “Remove from Library”: private managed media and history are removed, while published output is preserved.
+4. Added `DELETE /api/jobs/{id}/managed` for deleting only app-managed media.
+5. Added `DELETE /api/jobs/{id}/published` for deleting only validated tracked output copies.
+6. Added `DELETE /api/jobs/{id}/all` for explicit destructive deletion of managed media, published media, and history.
+7. Added strict output-path validation before published media deletion.
+8. Invalidated download tickets when managed media is removed and reject new/stale tickets for unavailable managed copies.
+9. Changed retention pruning so it never deletes published user output.
+10. Updated the Library UI with separate Remove, Managed copy, Published copy, and Delete everywhere actions, explicit confirmation text, availability badges, and disabled Save actions when managed copies are gone.
+11. Added backend regression coverage for all deletion scopes and retention preservation, plus frontend tests for the scoped actions.
+12. Updated the API documentation.
+
+Important bug fixed: before this milestone, automatic retention cleanup could delete files already copied into the user's configured download directory.
+
+### P0.4 Storage policy and duplicate-copy control
+
+**Status:** [~] In progress
+
+Implementation begins with a persisted storage-mode setting captured per job. Planned modes remain Managed + Published, Published only, and Managed only.
