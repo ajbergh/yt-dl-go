@@ -348,7 +348,8 @@ func TestSubtitleSidecarDownloadAndPublishing(t *testing.T) {
 	if err != nil || !strings.Contains(string(managed), "Fixture caption") {
 		t.Fatalf("managed caption sidecar missing: %v %q", err, string(managed))
 	}
-	published, err := os.ReadFile(file.Subtitle.OutputPath)
+	publishedPath := filepath.Join(s.settings.DownloadLocation, filepath.FromSlash(file.Subtitle.OutputRelativePath))
+	published, err := os.ReadFile(publishedPath)
 	if err != nil || string(published) != string(managed) {
 		t.Fatalf("published caption sidecar missing: %v", err)
 	}
