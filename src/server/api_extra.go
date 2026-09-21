@@ -181,7 +181,7 @@ func (s *server) retry(w http.ResponseWriter, r *http.Request, id string) {
 		fail(w, 409, "Only failed, partial, or cancelled jobs can be retried")
 		return
 	}
-	jobURL, quality, mediaType, audioFormat, audioBitrate, subtitleLanguage, subtitleFormat, category, storageMode := original.URL, original.Quality, original.MediaType, original.AudioFormat, original.AudioBitrate, original.SubtitleLanguage, original.SubtitleFormat, original.Category, original.StorageMode
+	jobURL, quality, videoStrategy, mediaType, audioFormat, audioBitrate, subtitleLanguage, subtitleFormat, category, storageMode := original.URL, original.Quality, original.VideoStrategy, original.MediaType, original.AudioFormat, original.AudioBitrate, original.SubtitleLanguage, original.SubtitleFormat, original.Category, original.StorageMode
 	selectedItems := []inspectedItem{}
 	if original.Kind == "playlist" {
 		for _, item := range original.Items {
@@ -201,10 +201,10 @@ func (s *server) retry(w http.ResponseWriter, r *http.Request, id string) {
 		return
 	}
 	if kind == "playlist" && len(selectedItems) > 0 {
-		s.enqueueJob(w, canonical, kind, quality, mediaType, audioFormat, audioBitrate, subtitleLanguage, subtitleFormat, category, storageMode, selectedItems)
+		s.enqueueJob(w, canonical, kind, quality, videoStrategy, mediaType, audioFormat, audioBitrate, subtitleLanguage, subtitleFormat, category, storageMode, selectedItems)
 		return
 	}
-	s.enqueueJob(w, canonical, kind, quality, mediaType, audioFormat, audioBitrate, subtitleLanguage, subtitleFormat, category, storageMode)
+	s.enqueueJob(w, canonical, kind, quality, videoStrategy, mediaType, audioFormat, audioBitrate, subtitleLanguage, subtitleFormat, category, storageMode)
 }
 
 // safeThumbnailURL returns the last HTTPS thumbnail hosted on an approved
