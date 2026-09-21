@@ -158,7 +158,9 @@ func mp3MetadataFor(j *jobState, file mediaFile, videoID string, index int) mp3T
 	}
 	if j != nil && j.Kind == "playlist" {
 		metadata.Album = j.Title
-		if j.TotalCount != nil {
+		if j.playlistItemCount > 0 {
+			metadata.TrackTotal = j.playlistItemCount
+		} else if j.TotalCount != nil {
 			metadata.TrackTotal = *j.TotalCount
 		}
 	}
