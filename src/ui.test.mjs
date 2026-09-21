@@ -23,10 +23,15 @@ const job = {
   progress: null, currentItem: "", completedCount: 0, totalCount: null,
   files: [], error: "", createdAt: "2026-01-01T00:00:00Z",
 };
+const playlistEntries = [
+  { index: 1, id: "abcdefghijk", title: "First video", author: "Channel A", durationSeconds: 60, thumbnailUrl: "https://i.ytimg.com/vi/abcdefghijk/hqdefault.jpg" },
+  { index: 2, id: "lmnopqrstuv", title: "Second video", author: "Channel B", durationSeconds: 120, thumbnailUrl: "https://i.ytimg.com/vi/lmnopqrstuv/hqdefault.jpg" },
+];
 const inspection = {
   url: "https://www.youtube.com/playlist?list=PL_example", kind: "playlist",
   title: "Test playlist", author: "Test channel", itemCount: 2, audioOnlyAvailable: true,
-  items: [{ id: "abcdefghijk", title: "First video" }],
+  items: playlistEntries,
+  entries: playlistEntries,
 };
 
 beforeAll(async () => { ({ createRoot } = await import("react-dom/client")); });
@@ -147,14 +152,21 @@ describe("Downloader UI and Go API integration", () => {
     await click(button("Inspect qualities"));
     expect(requests.some(item => item.path === "/api/inspect" && JSON.parse(item.body).url === inspection.url)).toBe(true);
     expect(container.textContent).toContain("Test playlist");
+    expect(container.textContent).toContain("2 of 2 selectable playlist items selected");
     expect(button("Add 1 to queue").disabled).toBe(true);
+    await click(button("Choose items"));
+    await click(container.querySelector('input[aria-label="Select playlist item 2"]'));
+    expect(container.textContent).toContain("1 of 2 selectable playlist items selected");
     const category = container.querySelector('select[aria-label^="Category for"]');
     await setSelect(category, "Music");
-    await click(container.querySelector('input[type="checkbox"]'));
+    await click(container.querySelector('input[aria-label="Confirm download rights"]'));
     await click(button("Add 1 to queue"));
     const create = requests.find(item => item.path === "/api/jobs" && item.method === "POST");
-    expect(JSON.parse(create.body)).toEqual({ url: inspection.url, quality: "best", mediaType: "video", category: "Music", rightsConfirmed: true });
-    expect(container.textContent).toContain("Every exposed video will appear as an individual queue item");
+    expect(JSON.parse(create.body)).toEqual({
+      url: inspection.url, quality: "best", mediaType: "video", category: "Music", rightsConfirmed: true,
+      items: [playlistEntries[0]],
+    });
+    expect(container.textContent).toContain("Playlist added with 1 selected item");
   });
   test("applies batch inspection settings without removing per-item controls", async () => {
     await connect();
@@ -178,6 +190,20 @@ describe("Downloader UI and Go API integration", () => {
     expect(categories[0].value).toBe("General");
     expect(categories[1].value).toBe("Music");
   });
+  test("supports Select all, Clear all, and MP3 aggregate estimates for playlists", async () => {
+    await connect();
+    await setInput(container.querySelector("#video-url"), "https://www.youtube.com/playlist?list=PL_example");
+    await click(button("Inspect qualities"));
+    await click(button("Choose items"));
+    await click(button("Clear all"));
+    expect(container.textContent).toContain("0 of 2 selectable playlist items selected");
+    expect(button("Add 1 to queue").disabled).toBe(true);
+    await click(button("Select all"));
+    expect(container.textContent).toContain("2 of 2 selectable playlist items selected");
+    await setSelect(container.querySelector('select[aria-label^="Media type for"]'), "audio");
+    expect(container.textContent).toContain("Approx. MP3 output");
+  });
+
   test("queues original M4A audio without an MP3 bitrate", async () => {
     await connect();
     await setInput(container.querySelector("#video-url"), "https://www.youtube.com/watch?v=abcdefghijk&list=PL_example&index=4");
@@ -185,7 +211,7 @@ describe("Downloader UI and Go API integration", () => {
     await setSelect(container.querySelector('select[aria-label^="Media type for"]'), "audio");
     await setSelect(container.querySelector('select[aria-label^="Audio format for"]'), "m4a");
     expect(container.querySelector('select[aria-label^="MP3 bitrate for"]')).toBeFalsy();
-    await click(container.querySelector('input[type="checkbox"]'));
+    await click(container.querySelector('input[aria-label="Confirm download rights"]'));
     await click(button("Add 1 to queue"));
     const creates = requests.filter(item => item.path === "/api/jobs" && item.method === "POST");
     const body = JSON.parse(creates.at(-1).body);
