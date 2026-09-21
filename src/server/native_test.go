@@ -67,6 +67,42 @@ func TestFormatSelection(t *testing.T) {
 		}
 	}
 	high.Formats = append(high.Formats, h264, aac, vp9, av1, opus)
+
+	compatibility, err := selectFormatForStrategy(high, "2160", "compatibility")
+	if err != nil || compatibility.video == nil || compatibility.video.Height != 1080 {
+		t.Fatalf("compatibility strategy selection = %+v %v", compatibility, err)
+	}
+	compatKind, compatCodecs, _ := formatType(compatibility.video)
+	if compatKind != "video/mp4" || codecFamily(compatCodecs) != "h264" || compatibility.audio == nil {
+		t.Fatalf("compatibility strategy emitted non-H.264/AAC MP4: %+v", compatibility)
+	}
+
+	vp9Preferred, err := selectFormatForStrategy(high, "2160", "vp9")
+	if err != nil || vp9Preferred.video == nil || vp9Preferred.video.Height != 1440 || vp9Preferred.preferenceFallback != "" {
+		t.Fatalf("VP9 preference selection = %+v %v", vp9Preferred, err)
+	}
+	_, vp9Codecs, _ := formatType(vp9Preferred.video)
+	if codecFamily(vp9Codecs) != "vp9" {
+		t.Fatalf("VP9 preference selected codecs %q", vp9Codecs)
+	}
+
+	av1Preferred, err := selectFormatForStrategy(high, "2160", "av1")
+	if err != nil || av1Preferred.video == nil || av1Preferred.video.Height != 2160 || av1Preferred.preferenceFallback != "" {
+		t.Fatalf("AV1 preference selection = %+v %v", av1Preferred, err)
+	}
+	_, av1Codecs, _ := formatType(av1Preferred.video)
+	if codecFamily(av1Codecs) != "av1" {
+		t.Fatalf("AV1 preference selected codecs %q", av1Codecs)
+	}
+
+	vp9Fallback, err := selectFormatForStrategy(high, "1080", "vp9")
+	if err != nil || vp9Fallback.video == nil || vp9Fallback.video.Height != 1080 || vp9Fallback.preferenceFallback != "vp9" {
+		t.Fatalf("VP9 preference fallback = %+v %v", vp9Fallback, err)
+	}
+	if _, err := selectFormatForStrategy(high, "2160", "hevc"); !errors.Is(err, errCombined) {
+		t.Fatalf("invalid strategy error = %v", err)
+	}
+
 	for quality, wantHeight := range map[string]int{"1080": 1080, "1440": 1440, "2160": 2160, "best": 2160} {
 		selected, err := selectFormat(high, quality)
 		if err != nil || selected.video == nil || selected.video.Height != wantHeight {
