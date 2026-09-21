@@ -1,8 +1,8 @@
 import type { Dispatch, FormEvent, SetStateAction } from "react";
 import {
-  Check, FileText, Folder, FolderTree, Gauge, HardDrive, LoaderCircle, Plus, ShieldCheck, Sparkles, X,
+  Check, ExternalLink, FileText, Folder, FolderTree, Gauge, HardDrive, LoaderCircle, Plus, RefreshCw, ShieldCheck, Sparkles, X,
 } from "lucide-react";
-import type { AppSettings, Quality, ServiceConnection, VideoStrategy } from "../lib/downloader";
+import type { AppSettings, BuildInfo, Quality, ServiceConnection, UpdateStatus, VideoStrategy } from "../lib/downloader";
 import {
   button, field, notificationAPI, panel, primaryButton, qualityLabels, videoStrategyLabels,
 } from "../components/downloader/view-model";
@@ -15,6 +15,11 @@ type SettingsPageProps = {
   savingSettings: boolean;
   settingsSaved: boolean;
   mp3Supported: boolean;
+  buildInfo: BuildInfo;
+  updateStatus: UpdateStatus | null;
+  updateError: string;
+  checkingUpdates: boolean;
+  checkForUpdates: () => void | Promise<void>;
   newCategoryInput: string;
   setNewCategoryInput: Dispatch<SetStateAction<string>>;
   savePreferences: (event: FormEvent) => void | Promise<void>;
@@ -27,6 +32,7 @@ type SettingsPageProps = {
 
 export function SettingsPage({
   connection, serviceReady, serviceError, settings, savingSettings, settingsSaved, mp3Supported,
+  buildInfo, updateStatus, updateError, checkingUpdates, checkForUpdates,
   newCategoryInput, setNewCategoryInput, savePreferences, selectDownloadFolder, changeSetting,
   addCategory, removeCategory, toggleNotifications,
 }: SettingsPageProps) {
@@ -38,6 +44,27 @@ export function SettingsPage({
             <div className="mb-4 flex items-start justify-between gap-3"><div><h3 id="service-heading" className="text-sm font-bold">Built-in Go download service</h3><p className="mt-1 max-w-2xl text-xs leading-relaxed text-neutral-400">This single-executable app connects automatically to its local Go backend at <span className="font-mono text-neutral-300">{connection.base}</span>. Downloads, history, and preferences use the same service and SQLite database.</p></div><span className={`rounded-full border px-2.5 py-1 text-[10px] font-semibold ${serviceReady ? "border-emerald-700/60 bg-emerald-950/40 text-emerald-300" : "border-amber-700/60 bg-amber-950/40 text-amber-200"}`}>{serviceReady ? "Connected" : serviceError ? "Reconnecting" : "Connecting"}</span></div>
             {serviceError && <p role="alert" className="mt-3 text-xs text-red-300">{serviceError}</p>}
             {!serviceReady && <p className="mt-2 text-[10px] text-neutral-500">The app retries the local service automatically while it starts.</p>}
+          </section>
+
+          <section className={`${panel} p-5 sm:p-6`} aria-labelledby="updates-heading">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <h3 id="updates-heading" className="text-sm font-bold">Version & updates</h3>
+                <p className="mt-1 text-xs text-neutral-400">Current build <span className="font-mono text-neutral-200">{buildInfo.version}</span>{buildInfo.commit !== "unknown" ? <> · <span className="font-mono">{buildInfo.commit.slice(0, 12)}</span></> : null}{buildInfo.buildDate !== "unknown" ? <> · {buildInfo.buildDate}</> : null}</p>
+              </div>
+              <button type="button" className={button} onClick={() => void checkForUpdates()} disabled={!serviceReady || checkingUpdates}>
+                <RefreshCw className={`size-3.5 ${checkingUpdates ? "animate-spin" : ""}`} aria-hidden="true" />
+                {checkingUpdates ? "Checking…" : "Check for updates"}
+              </button>
+            </div>
+            {updateError && <p role="alert" className="mt-3 text-xs text-amber-300">{updateError}</p>}
+            {updateStatus?.developmentBuild && <p className="mt-3 text-[11px] leading-relaxed text-neutral-400">Development build: external update checks are skipped. Tagged releases carry immutable version metadata.</p>}
+            {updateStatus && !updateStatus.developmentBuild && updateStatus.updateAvailable && <div className="mt-3 rounded-xl border border-blue-800/60 bg-blue-950/30 p-3 text-xs text-blue-100">
+              <div className="flex flex-wrap items-center justify-between gap-3"><span><strong>{updateStatus.latestVersion}</strong> is available.</span>{updateStatus.releaseUrl && <a href={updateStatus.releaseUrl} target="_blank" rel="noreferrer noopener" className="inline-flex items-center gap-1.5 font-semibold text-blue-300 hover:text-blue-200">Open release <ExternalLink className="size-3.5" aria-hidden="true" /></a>}</div>
+              <p className="mt-2 text-[10px] leading-relaxed text-blue-200/80">{updateStatus.note}</p>
+            </div>}
+            {updateStatus && !updateStatus.developmentBuild && !updateStatus.updateAvailable && updateStatus.latestVersion && <p className="mt-3 text-[11px] text-emerald-300">You are on the latest stable release ({updateStatus.latestVersion}).</p>}
+            <p className="mt-3 text-[10px] leading-relaxed text-neutral-500">Release packages include SHA-256 checksums and GitHub provenance attestations. Automatic self-replacement remains disabled until OS-native signing/notarization and rollback-safe update semantics are implemented.</p>
           </section>
 
           <form onSubmit={savePreferences} className="space-y-5">
