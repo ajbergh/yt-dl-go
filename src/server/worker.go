@@ -1610,7 +1610,9 @@ func (s *server) prune(now time.Time) {
 	for _, id := range s.order {
 		j := s.jobs[id]
 		if terminal(j.Status) && j.readers == 0 && !held[id] && now.Sub(j.done) >= s.cfg.retain {
-			if removeOutputCopies(j) == nil && os.RemoveAll(j.dir) == nil && s.store.deleteJob(id) == nil {
+			// Retention expires app-managed history and private media only.
+			// Published output belongs to the user and must survive pruning.
+			if removeManagedCopies(j) == nil && s.store.deleteJob(id) == nil {
 				delete(s.jobs, id)
 				continue
 			}
