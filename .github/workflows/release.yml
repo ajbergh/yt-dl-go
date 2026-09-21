@@ -225,7 +225,7 @@ jobs:
           for checksum in *.sha256; do
             sha256sum -c "$checksum"
           done
-          cat *.sha256 | sort > SHA256SUMS.txt
+          sha256sum *.zip *.tar.gz | sort > SHA256SUMS.txt
           test "$(wc -l < SHA256SUMS.txt)" -eq 5
 
       - name: Attest release checksum manifest
