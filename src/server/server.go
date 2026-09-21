@@ -157,6 +157,25 @@ func snapshot(j *jobState) Job {
 	return copy
 }
 
+func (s *server) invalidateJobTicketsLocked(jobID string) {
+	for id, ticket := range s.tickets {
+		if ticket.jobID == jobID {
+			delete(s.tickets, id)
+		}
+	}
+}
+
+func (s *server) forgetJobLocked(j *jobState) {
+	delete(s.jobs, j.ID)
+	for index, id := range s.order {
+		if id == j.ID {
+			s.order = append(s.order[:index], s.order[index+1:]...)
+			break
+		}
+	}
+	s.invalidateJobTicketsLocked(j.ID)
+}
+
 func (s *server) persistJobLocked(j *jobState) {
 	if s.store != nil {
 		_ = s.store.saveJob(j)
@@ -370,30 +389,70 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			fail(w, 409, "This job has an active file transfer")
 			return
 		}
-		if err := removeOutputCopies(j); err != nil {
-			fail(w, 500, "Could not remove the job's files from the configured download directory")
-			return
-		}
-		if err := os.RemoveAll(j.dir); err != nil {
-			fail(w, 500, "Could not remove the job's private files")
+		// Removing a job from the Library deletes only app-managed media and
+		// history. Published files in the user's output directory are preserved.
+		if err := removeManagedCopies(j); err != nil {
+			fail(w, 500, "Could not remove the job's private managed files")
 			return
 		}
 		if err := s.store.deleteJob(j.ID); err != nil {
 			fail(w, 500, "Could not remove the job from history")
 			return
 		}
-		delete(s.jobs, j.ID)
-		for index, id := range s.order {
-			if id == j.ID {
-				s.order = append(s.order[:index], s.order[index+1:]...)
-				break
-			}
+		s.forgetJobLocked(j)
+		w.WriteHeader(http.StatusNoContent)
+	case len(parts) == 2 && parts[1] == "managed" && r.Method == http.MethodDelete:
+		if !terminal(j.Status) {
+			fail(w, 409, "Only stopped jobs can have managed copies deleted")
+			return
 		}
-		for id, ticket := range s.tickets {
-			if ticket.jobID == j.ID {
-				delete(s.tickets, id)
-			}
+		if j.readers > 0 {
+			fail(w, 409, "This job has an active file transfer")
+			return
 		}
+		if err := removeManagedCopies(j); err != nil {
+			fail(w, 500, "Could not remove the app-managed media copies")
+			return
+		}
+		s.invalidateJobTicketsLocked(j.ID)
+		s.persistJobLocked(j)
+		reply(w, 200, snapshot(j))
+	case len(parts) == 2 && parts[1] == "published" && r.Method == http.MethodDelete:
+		if !terminal(j.Status) {
+			fail(w, 409, "Only stopped jobs can have published copies deleted")
+			return
+		}
+		if err := removeOutputCopies(j); err != nil {
+			s.persistJobLocked(j)
+			fail(w, 500, "Could not remove the published media copies")
+			return
+		}
+		s.persistJobLocked(j)
+		reply(w, 200, snapshot(j))
+	case len(parts) == 2 && parts[1] == "all" && r.Method == http.MethodDelete:
+		if !terminal(j.Status) {
+			fail(w, 409, "Only stopped jobs can be deleted")
+			return
+		}
+		if j.readers > 0 {
+			fail(w, 409, "This job has an active file transfer")
+			return
+		}
+		if err := removeOutputCopies(j); err != nil {
+			s.persistJobLocked(j)
+			fail(w, 500, "Could not remove the published media copies")
+			return
+		}
+		if err := removeManagedCopies(j); err != nil {
+			s.persistJobLocked(j)
+			fail(w, 500, "Published copies were removed, but private managed files could not be removed")
+			return
+		}
+		if err := s.store.deleteJob(j.ID); err != nil {
+			fail(w, 500, "Media copies were removed, but job history could not be deleted")
+			return
+		}
+		s.forgetJobLocked(j)
 		w.WriteHeader(http.StatusNoContent)
 	case len(parts) == 2 && parts[1] == "pause" && r.Method == http.MethodPost:
 		if j.Status == "queued" {
@@ -690,13 +749,28 @@ func (s *server) issueTicket(w http.ResponseWriter, j *jobState, fileID string) 
 		return
 	}
 	if fileID != "" {
-		found := false
+		found, available := false, false
 		for _, f := range j.Files {
-			found = found || f.ID == fileID
+			if f.ID == fileID {
+				found = true
+				available = f.ManagedAvailable
+				break
+			}
 		}
 		if !found {
 			fail(w, 404, "File not found")
 			return
+		}
+		if !available {
+			fail(w, 409, "The app-managed copy for this file is no longer available")
+			return
+		}
+	} else {
+		for _, f := range j.Files {
+			if !f.ManagedAvailable {
+				fail(w, 409, "One or more app-managed copies are no longer available for archive download")
+				return
+			}
 		}
 	}
 	for id, t := range s.tickets {
