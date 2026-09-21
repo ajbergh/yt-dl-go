@@ -959,8 +959,13 @@ func TestPauseDuringActiveStreamRead(t *testing.T) {
 func TestPauseAndResumeJob(t *testing.T) {
 	fake := fixtureClient(1)
 	var streamCalls atomic.Int32
+	streamStarted := make(chan struct{}, 1)
 	fake.streamFn = func(ctx context.Context, _ *youtube.Video, _ *youtube.Format) (io.ReadCloser, int64, error) {
 		if streamCalls.Add(1) == 1 {
+			select {
+			case streamStarted <- struct{}{}:
+			default:
+			}
 			<-ctx.Done()
 			return nil, 0, ctx.Err()
 		}
@@ -969,6 +974,11 @@ func TestPauseAndResumeJob(t *testing.T) {
 	s := testServer(t, fake, nil)
 	job := createJob(t, s, testVideo)
 	waitJob(t, s, job.ID, func(value Job) bool { return value.Status == "downloading" })
+	select {
+	case <-streamStarted:
+	case <-time.After(5 * time.Second):
+		t.Fatal("initial stream did not begin before pause")
+	}
 	paused := request(s, "POST", "/api/jobs/"+job.ID+"/pause", "", nil)
 	if paused.Code != 200 {
 		t.Fatalf("pause request: %d %s", paused.Code, paused.Body.String())
@@ -983,7 +993,7 @@ func TestPauseAndResumeJob(t *testing.T) {
 	}
 	completed := waitTerminal(t, s, job.ID)
 	if completed.Status != "completed" || streamCalls.Load() < 2 {
-		t.Fatalf("resumed job did not finish: status=%s stream calls=%d", completed.Status, streamCalls.Load())
+		t.Fatalf("resumed job did not finish: status=%s stream calls=%d error=%q failures=%+v", completed.Status, streamCalls.Load(), completed.Error, completed.Failures)
 	}
 }
 
