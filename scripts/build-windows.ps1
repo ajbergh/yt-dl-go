@@ -77,6 +77,54 @@ try {
         throw "Frontend build did not produce $(Join-Path $serverDist 'index.html')"
     }
 
+    $version = if ([string]::IsNullOrWhiteSpace($env:VERSION)) { 'dev' } else { $env:VERSION.Trim() }
+    $commit = if ([string]::IsNullOrWhiteSpace($env:COMMIT)) { 'unknown' } else { $env:COMMIT.Trim() }
+    $buildDate = if ([string]::IsNullOrWhiteSpace($env:BUILD_DATE)) { 'unknown' } else { $env:BUILD_DATE.Trim() }
+    foreach ($metadata in @($version, $commit, $buildDate)) {
+        if ($metadata -notmatch '^[A-Za-z0-9:._+\-]+
+        if ([string]::IsNullOrWhiteSpace($env:GOCACHE)) {
+            # Keep the default build cache in a user-writable temp location.
+            $env:GOCACHE = Join-Path ([IO.Path]::GetTempPath()) 'yt-dl-go-go-build-cache'
+        }
+        Write-Host 'Downloading Go dependencies...' -ForegroundColor Cyan
+        Invoke-Native 'go' @('mod', 'download')
+
+        Write-Host 'Running Go tests...' -ForegroundColor Cyan
+        Invoke-Native 'go' @('test', './...')
+
+        New-Item -ItemType Directory -Path $outputDirectory -Force | Out-Null
+        Write-Host "Building $OutputPath..." -ForegroundColor Cyan
+        Invoke-Native 'go' @(
+            'build',
+            '-buildvcs=false',
+            '-trimpath',
+            "-ldflags=$ldflags",
+            '-o',
+            $OutputPath,
+            '.'
+        )
+    } finally {
+        Pop-Location
+    }
+
+    if (-not (Test-Path -LiteralPath $OutputPath -PathType Leaf)) {
+        throw "Go build completed without producing $OutputPath"
+    }
+    $outputInfo = Get-Item -LiteralPath $OutputPath
+    if ($outputInfo.Length -le 0) {
+        throw "Go build produced an empty executable: $OutputPath"
+    }
+
+    Write-Host "Build succeeded: $OutputPath ($($outputInfo.Length) bytes)" -ForegroundColor Green
+} finally {
+    Set-Location $originalLocation
+}
+) {
+            throw "VERSION, COMMIT, and BUILD_DATE must contain only release-metadata-safe characters: $metadata"
+        }
+    }
+    $ldflags = "-s -w -X main.buildVersion=$version -X main.buildCommit=$commit -X main.buildDate=$buildDate"
+
     Push-Location (Join-Path $repoRoot 'src\server')
     try {
         $env:CGO_ENABLED = '0'
