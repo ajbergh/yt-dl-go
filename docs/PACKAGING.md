@@ -85,26 +85,50 @@ On Linux, `zenity` is required only for the **Browse** button. A user can still 
 
 The command-selection semantics are covered by platform-independent Go tests.
 
-## Signing and notarization
+## Tagged release workflow and provenance
 
-The repository does **not** currently sign CI artifacts. Signing is deliberately kept out of ordinary branch CI because it requires protected credentials and should be performed only in a controlled release workflow.
+Pushing a stable semantic-version tag such as `v1.2.3` triggers `.github/workflows/release.yml`.
 
-A signed public-release pipeline would require:
+The workflow:
 
-- **Windows:** an Authenticode code-signing certificate, preferably backed by an approved secret/key service, followed by signature verification before publishing.
-- **macOS:** Apple Developer ID Application signing, hardened runtime where appropriate, notarization with Apple, ticket stapling where applicable, and verification with `codesign`/`spctl`. An eventual `.app`/DMG distribution would also need bundle metadata and signing of the full bundle.
-- **Linux:** there is no universal OS code-signing requirement. Published archives should at minimum retain SHA-256 checksums; a future release process may add GPG or Sigstore/cosign signatures.
+1. validates the tag format and reruns frontend type-check/build, Bun tests, Go tests/vet, and browser E2E;
+2. builds the Windows package plus Linux/macOS amd64 and arm64 packages;
+3. injects `VERSION`, `COMMIT`, and `BUILD_DATE` into the Go executable via linker variables;
+4. verifies every per-package SHA-256 checksum;
+5. produces a canonical `SHA256SUMS.txt`;
+6. creates GitHub build-provenance attestations for each release archive and the checksum manifest using OIDC;
+7. publishes all archives, individual checksums, and the combined manifest to the immutable tag's GitHub Release.
+
+For local release-like builds, the package scripts accept these optional environment variables:
+
+- `VERSION` — semantic version such as `v1.2.3`
+- `COMMIT` — source commit identifier
+- `BUILD_DATE` — metadata-safe RFC3339-style build timestamp
+
+When absent, binaries report `dev`, `unknown`, and `unknown`.
+
+### What the provenance attestation does — and does not — mean
+
+GitHub provenance attestations cryptographically bind release archives to the GitHub Actions workflow and source repository. They are useful supply-chain evidence, but they are **not** equivalent to operating-system-native code signing.
+
+The repository still does not possess or embed signing credentials:
+
+- **Windows:** public self-updating distribution should use an Authenticode certificate and verify the signature before replacement.
+- **macOS:** public self-updating distribution should use Apple Developer ID signing and notarization; a future `.app`/DMG path would also require bundle-level signing/stapling.
+- **Linux:** published archives retain SHA-256 checksums plus GitHub provenance; optional GPG/Sigstore signatures can be added later if distribution requirements demand them.
 
 No signing key, Apple credential, or certificate should be committed to the repository.
 
-## Release packaging recommendation
+## Update-discovery policy
 
-When promoting CI-validated packages to a GitHub Release:
+Tagged release builds expose their embedded build metadata through `/api/health`. The UI can ask `/api/update` for the latest stable project release. That server-side check is bounded, redirect-free, and validates both semantic-version metadata and the GitHub release URL.
 
-1. build from an immutable release tag;
-2. run the full frontend, Go, browser-E2E, and platform packaging gates;
-3. sign/notarize applicable platform artifacts using protected release secrets;
-4. verify signatures/checksums after signing;
-5. publish archives and checksum/signature files together;
-6. record the source tag/commit and supported architectures in the release notes.
+The app deliberately does **not** replace its own executable. A safe automatic updater must not be enabled until all of the following are available:
+
+1. OS-native signing/notarization for applicable platforms;
+2. downloaded-artifact checksum **and** signature/provenance verification;
+3. platform-specific atomic replacement semantics;
+4. preservation of the previously working binary;
+5. restart verification and automatic rollback when the new process does not become healthy;
+6. clear opt-in/update policy and failure reporting.
 
