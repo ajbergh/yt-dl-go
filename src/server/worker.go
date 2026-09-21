@@ -939,11 +939,11 @@ func (s *server) rebuildFilesLocked(j *jobState) {
 	j.CompletedCount = len(j.Files)
 }
 
-func (s *server) transferAudio(ctx context.Context, j *jobState, engine nativeClient, video *youtube.Video, format *youtube.Format, extension string, index int, budget int64) (result mediaFile, err error) {
+func (s *server) transferAudio(ctx context.Context, j *jobState, engine nativeClient, video *youtube.Video, format *youtube.Format, extension string, queueIndex, outputIndex int, budget int64) (result mediaFile, err error) {
 	if budget <= 0 || (format.ContentLength > 0 && format.ContentLength > budget) {
 		return result, errLimit
 	}
-	result = mediaFile{ID: randomID(16), Name: fmt.Sprintf("%06d-%s.mp3", index, video.ID), MimeType: "audio/mpeg", MediaType: "audio"}
+	result = mediaFile{ID: randomID(16), Name: fmt.Sprintf("%06d-%s.mp3", outputIndex, video.ID), MimeType: "audio/mpeg", MediaType: "audio"}
 	applyVideoMetadata(&result, video)
 	result.Category = j.Category
 	result.ManagedAvailable = true
@@ -957,7 +957,7 @@ func (s *server) transferAudio(ctx context.Context, j *jobState, engine nativeCl
 		}
 	}()
 	finalPath := filepath.Join(j.dir, result.Name)
-	sourcePath := filepath.Join(j.dir, fmt.Sprintf("%06d-%s.source.%s", index, video.ID, extension))
+	sourcePath := filepath.Join(j.dir, fmt.Sprintf("%06d-%s.source.%s", outputIndex, video.ID, extension))
 	outputPart := finalPath + ".part"
 	if existing, openErr := openFinal(j.dir, result.Name); openErr == nil {
 		info, statErr := existing.Stat()
@@ -1015,7 +1015,7 @@ func (s *server) transferAudio(ctx context.Context, j *jobState, engine nativeCl
 		return result, errStorage
 	}
 	sourceSize, copyErr := copyStream(ctx, source, stream, budget, expected, func(written int64) {
-		s.updateProgress(j, index, written, expected)
+		s.updateProgress(j, queueIndex, written, expected)
 	})
 	if copyErr != nil {
 		_ = source.Close()
@@ -1033,7 +1033,7 @@ func (s *server) transferAudio(ctx context.Context, j *jobState, engine nativeCl
 	if outputBudget <= 0 {
 		return result, errLimit
 	}
-	s.updateProgress(j, index, sourceSize, sourceSize+outputBudget)
+	s.updateProgress(j, queueIndex, sourceSize, sourceSize+outputBudget)
 	if ctx.Err() != nil {
 		return result, ctx.Err()
 	}
@@ -1041,8 +1041,8 @@ func (s *server) transferAudio(ctx context.Context, j *jobState, engine nativeCl
 	if openErr != nil {
 		return result, errStorage
 	}
-	s.setProcessing(j, index, true)
-	defer s.setProcessing(j, index, false)
+	s.setProcessing(j, queueIndex, true)
+	defer s.setProcessing(j, queueIndex, false)
 	s.mu.Lock()
 	j.Progress = floatPointer(99)
 	s.persistJobLocked(j)
@@ -1052,12 +1052,12 @@ func (s *server) transferAudio(ctx context.Context, j *jobState, engine nativeCl
 		_ = output.Close()
 		return result, errStorage
 	}
-	tag, tagErr := buildID3v23Tag(mp3MetadataFor(j, result, video.ID, index))
+	tag, tagErr := buildID3v23Tag(mp3MetadataFor(j, result, video.ID, outputIndex))
 	if tagErr != nil {
 		tag = nil // Metadata is best-effort; never fail playable audio over tags.
 	}
 	outputSize, convertErr := convertAACToMP3Tagged(ctx, source, output, j.AudioBitrate, outputBudget, tag, func(written int64) {
-		s.updateProgress(j, index, sourceSize+written, 0)
+		s.updateProgress(j, queueIndex, sourceSize+written, 0)
 	})
 	sourceCloseErr := source.Close()
 	outputSyncErr := output.Sync()
@@ -1084,15 +1084,15 @@ func (s *server) transferAudio(ctx context.Context, j *jobState, engine nativeCl
 		return result, errStorage
 	}
 	result.Size = outputSize
-	s.updateProgress(j, index, sourceSize+outputSize, sourceSize+outputSize)
+	s.updateProgress(j, queueIndex, sourceSize+outputSize, sourceSize+outputSize)
 	return result, nil
 }
 
-func (s *server) transferOriginalAudio(ctx context.Context, j *jobState, engine nativeClient, video *youtube.Video, format *youtube.Format, index int, budget int64) (result mediaFile, err error) {
+func (s *server) transferOriginalAudio(ctx context.Context, j *jobState, engine nativeClient, video *youtube.Video, format *youtube.Format, queueIndex, outputIndex int, budget int64) (result mediaFile, err error) {
 	if budget <= 0 || (format.ContentLength > 0 && format.ContentLength > budget) {
 		return result, errLimit
 	}
-	result = mediaFile{ID: randomID(16), Name: fmt.Sprintf("%06d-%s.m4a", index, video.ID), MimeType: "audio/mp4", MediaType: "audio"}
+	result = mediaFile{ID: randomID(16), Name: fmt.Sprintf("%06d-%s.m4a", outputIndex, video.ID), MimeType: "audio/mp4", MediaType: "audio"}
 	applyVideoMetadata(&result, video)
 	result.Category = j.Category
 	result.ManagedAvailable = true
@@ -1163,7 +1163,7 @@ func (s *server) transferOriginalAudio(ctx context.Context, j *jobState, engine 
 		}
 	}()
 	result.Size, err = copyStream(ctx, output, stream, budget, expected, func(written int64) {
-		s.updateProgress(j, index, written, expected)
+		s.updateProgress(j, queueIndex, written, expected)
 	})
 	if err != nil {
 		return result, err
@@ -1184,7 +1184,7 @@ func (s *server) transferOriginalAudio(ctx context.Context, j *jobState, engine 
 		return result, errStorage
 	}
 	finalized = true
-	s.updateProgress(j, index, result.Size, result.Size)
+	s.updateProgress(j, queueIndex, result.Size, result.Size)
 	return result, nil
 }
 
@@ -1277,14 +1277,14 @@ func (s *server) finish(ctx context.Context, j *jobState, fatal error) {
 	s.persistJobLocked(j)
 }
 
-func (s *server) transfer(ctx context.Context, j *jobState, engine nativeClient, video *youtube.Video, selection streamSelection, index int, budget int64) (mediaFile, error) {
+func (s *server) transfer(ctx context.Context, j *jobState, engine nativeClient, video *youtube.Video, selection streamSelection, queueIndex, outputIndex int, budget int64) (mediaFile, error) {
 	if selection.audio != nil {
-		return s.transferAdaptive(ctx, j, engine, video, selection, index, budget)
+		return s.transferAdaptive(ctx, j, engine, video, selection, queueIndex, outputIndex, budget)
 	}
-	return s.transferProgressive(ctx, j, engine, video, selection.video, selection.kind, index, budget)
+	return s.transferProgressive(ctx, j, engine, video, selection.video, selection.kind, queueIndex, outputIndex, budget)
 }
 
-func (s *server) transferProgressive(ctx context.Context, j *jobState, engine nativeClient, video *youtube.Video, format *youtube.Format, kind string, index int, budget int64) (result mediaFile, err error) {
+func (s *server) transferProgressive(ctx context.Context, j *jobState, engine nativeClient, video *youtube.Video, format *youtube.Format, kind string, queueIndex, outputIndex int, budget int64) (result mediaFile, err error) {
 	if budget <= 0 || format.ContentLength > budget {
 		return result, errLimit
 	}
@@ -1332,7 +1332,7 @@ func (s *server) transferProgressive(ctx context.Context, j *jobState, engine na
 		}
 		s.mu.Unlock()
 	}
-	result = mediaFile{ID: randomID(16), Name: fmt.Sprintf("%06d-%s.%s", index, video.ID, strings.TrimPrefix(kind, "video/")), Height: format.Height, MimeType: kind}
+	result = mediaFile{ID: randomID(16), Name: fmt.Sprintf("%06d-%s.%s", outputIndex, video.ID, strings.TrimPrefix(kind, "video/")), Height: format.Height, MimeType: kind}
 	path := filepath.Join(j.dir, result.Name)
 	part := path + ".part"
 	if info, statErr := os.Stat(path); statErr == nil && info.Size() > 0 && (expected <= 0 || info.Size() == expected) {
@@ -1354,7 +1354,7 @@ func (s *server) transferProgressive(ctx context.Context, j *jobState, engine na
 		}
 	}()
 	result.Size, err = copyStream(ctx, f, stream, budget, expected, func(written int64) {
-		s.updateProgress(j, index, written, expected)
+		s.updateProgress(j, queueIndex, written, expected)
 	})
 	closeStream()
 	if ctx.Err() != nil {
@@ -1382,12 +1382,12 @@ func (s *server) transferProgressive(ctx context.Context, j *jobState, engine na
 	return result, nil
 }
 
-func (s *server) transferAdaptive(ctx context.Context, j *jobState, engine nativeClient, video *youtube.Video, selection streamSelection, index int, budget int64) (result mediaFile, err error) {
+func (s *server) transferAdaptive(ctx context.Context, j *jobState, engine nativeClient, video *youtube.Video, selection streamSelection, queueIndex, outputIndex int, budget int64) (result mediaFile, err error) {
 	if selection.video == nil || selection.audio == nil || budget <= 0 {
 		return result, errLimit
 	}
 	result = mediaFile{
-		ID: randomID(16), Name: fmt.Sprintf("%06d-%s.mp4", index, video.ID),
+		ID: randomID(16), Name: fmt.Sprintf("%06d-%s.mp4", outputIndex, video.ID),
 		Height: selection.video.Height, MimeType: "video/mp4",
 	}
 	path := filepath.Join(j.dir, result.Name)
@@ -1433,9 +1433,9 @@ func (s *server) transferAdaptive(ctx context.Context, j *jobState, engine nativ
 		if totalExpected <= 0 {
 			return
 		}
-		s.updateProgress(j, index, downloaded+current, progressTotal)
+		s.updateProgress(j, queueIndex, downloaded+current, progressTotal)
 	}
-	videoSize, browserUsed, err := s.downloadAdaptiveRanges(ctx, j, engine, video, selection.video, videoPart, index, budget, progress, browserProvider)
+	videoSize, browserUsed, err := s.downloadAdaptiveRanges(ctx, j, engine, video, selection.video, videoPart, queueIndex, budget, progress, browserProvider)
 	if err != nil {
 		if ctx.Err() == nil && errors.Is(err, errRead) && selection.progressive != nil {
 			// YouTube may advertise adaptive formats while rejecting their later
@@ -1446,7 +1446,7 @@ func (s *server) transferAdaptive(ctx context.Context, j *jobState, engine nativ
 				j.Note += " " + adaptiveFallbackNote
 			}
 			s.mu.Unlock()
-			fallback, fallbackErr := s.transferProgressive(ctx, j, engine, video, selection.progressive, "video/mp4", index, budget)
+			fallback, fallbackErr := s.transferProgressive(ctx, j, engine, video, selection.progressive, "video/mp4", queueIndex, outputIndex, budget)
 			if fallbackErr == nil {
 				finalized = true
 			}
@@ -1493,7 +1493,7 @@ func (s *server) transferAdaptive(ctx context.Context, j *jobState, engine nativ
 		return result, ctx.Err()
 	}
 	if totalExpected > 0 {
-		s.updateProgress(j, index, progressTotal, progressTotal)
+		s.updateProgress(j, queueIndex, progressTotal, progressTotal)
 	}
 	if os.Rename(outputPart, path) != nil {
 		return result, errStorage
