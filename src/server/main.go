@@ -69,23 +69,6 @@ func env(key, fallback string) string {
 	return fallback
 }
 
-type runtimeOptions struct {
-	noBrowser bool
-}
-
-func parseRuntimeOptions(args []string, noBrowserEnv string) (runtimeOptions, error) {
-	options := runtimeOptions{noBrowser: noBrowserEnv == "1"}
-	for _, arg := range args {
-		switch arg {
-		case "--background", "--no-browser":
-			options.noBrowser = true
-		default:
-			return runtimeOptions{}, fmt.Errorf("unsupported argument %q (supported: --background, --no-browser)", arg)
-		}
-	}
-	return options, nil
-}
-
 // loadConfig reads environment overrides, applies local defaults, and validates
 // listener, authentication, origin/host, queue, timeout, and retention limits.
 func loadConfig() (config, error) {
@@ -272,11 +255,14 @@ func main() {
 	defer cancel()
 	result := make(chan error, 1)
 	go func() { result <- h.Serve(listener) }()
+	uiURL := browserURL(c.addr)
 	log.Printf("Downloader API listening on %s", c.addr)
 	if automaticBrowserEnabled(options, os.Getenv("NO_BROWSER")) {
-		if err := openBrowser(browserURL(c.addr)); err != nil {
+		if err := openBrowser(uiURL); err != nil {
 			log.Printf("Could not open web UI automatically: %v", err)
 		}
+	} else {
+		log.Printf("Background/no-browser mode active; open %s to use the UI", uiURL)
 	}
 	select {
 	case <-stopping.Done():
