@@ -228,7 +228,7 @@ func TestAPIContractAndSecurity(t *testing.T) {
 	if body := request(s, "GET", "/api/jobs", "", nil).Body.String(); strings.TrimSpace(body) != `{"jobs":[]}` {
 		t.Fatalf("empty jobs contract: %s", body)
 	}
-	valid := `{"url":"` + testPlaylist + `","quality":"best","rightsConfirmed":true}`
+	valid := `{"url":"` + testPlaylist + `","quality":"best","category":"Music","rightsConfirmed":true}`
 	for _, tt := range []struct {
 		name, body string
 		headers    map[string]string
@@ -238,6 +238,7 @@ func TestAPIContractAndSecurity(t *testing.T) {
 		{name: "host", body: valid, headers: map[string]string{"Host": "evil.invalid:8080"}, code: 403},
 		{name: "auth", body: valid, headers: map[string]string{"Authorization": ""}, code: 401},
 		{name: "rights", body: strings.Replace(valid, "true", "false", 1), code: 400},
+		{name: "category", body: strings.Replace(valid, `"Music"`, `"Not configured"`, 1), code: 400},
 		{name: "unknown", body: strings.Replace(valid, `"quality"`, `"unknown":1,"quality"`, 1), code: 400},
 		{name: "trailing", body: valid + `{}`, code: 400}, {name: "null", body: "null", code: 400},
 		{name: "oversized", body: `{"url":"` + strings.Repeat("x", 5000) + `"}`, code: 400},
@@ -259,7 +260,7 @@ func TestAPIContractAndSecurity(t *testing.T) {
 	if w.Code != 202 || json.Unmarshal(w.Body.Bytes(), &value) != nil {
 		t.Fatalf("create: %d %s", w.Code, w.Body.String())
 	}
-	for _, key := range []string{"id", "url", "kind", "quality", "status", "title", "currentItem", "error", "createdAt", "note"} {
+	for _, key := range []string{"id", "url", "kind", "quality", "category", "status", "title", "currentItem", "error", "createdAt", "note"} {
 		if raw := value[key]; len(raw) == 0 || raw[0] != '"' {
 			t.Errorf("%s must always be a string", key)
 		}
@@ -268,6 +269,9 @@ func TestAPIContractAndSecurity(t *testing.T) {
 		if string(value[key]) != "[]" {
 			t.Errorf("%s must always be an array", key)
 		}
+	}
+	if string(value["category"]) != `"Music"` {
+		t.Fatalf("selected category was not captured: %s", value["category"])
 	}
 	if string(value["progress"]) != "null" || string(value["totalCount"]) != "null" {
 		t.Fatal("unknown metrics must be present as null")
