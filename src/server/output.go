@@ -22,7 +22,7 @@ func defaultAppSettings() AppSettings {
 		home = os.TempDir()
 	}
 	return AppSettings{
-		DefaultQuality: "best", MaxConcurrentDownloads: 3,
+		DefaultQuality: "best", DefaultVideoStrategy: "best", MaxConcurrentDownloads: 3,
 		DownloadLocation: filepath.Join(home, "Downloads", "YouTube_Vault"),
 		NamingPattern:    defaultNamingPattern, SubfolderSorting: "channel",
 		DefaultCategory: "General", UserCategories: append([]string(nil), defaultUserCategories...),
@@ -35,6 +35,9 @@ func defaultAppSettings() AppSettings {
 func mergeAppSettings(defaults, settings AppSettings) AppSettings {
 	if settings.DefaultQuality == "" {
 		settings.DefaultQuality = defaults.DefaultQuality
+	}
+	if settings.DefaultVideoStrategy == "" {
+		settings.DefaultVideoStrategy = defaults.DefaultVideoStrategy
 	}
 	if settings.MaxConcurrentDownloads == 0 {
 		settings.MaxConcurrentDownloads = defaults.MaxConcurrentDownloads
@@ -92,6 +95,9 @@ func validateAppSettings(settings AppSettings) error {
 	}
 	if strings.ContainsAny(template, "{}") {
 		return errors.New("namingPattern contains an unsupported token")
+	}
+	if !validVideoStrategy(settings.DefaultVideoStrategy) {
+		return errors.New("defaultVideoStrategy must be best, compatibility, vp9, or av1")
 	}
 	if settings.SubfolderSorting != "channel" && settings.SubfolderSorting != "category" && settings.SubfolderSorting != "flat" {
 		return errors.New("subfolderSorting must be channel, category, or flat")
