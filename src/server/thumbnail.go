@@ -132,14 +132,20 @@ func openTrackedThumbnail(j *jobState, file mediaFile) (*os.File, error) {
 }
 
 func (s *server) captureThumbnail(ctx context.Context, j *jobState, file *mediaFile) {
-	if s.thumbnailFetcher == nil || file == nil || file.ThumbnailURL == "" {
+	if file == nil || file.ThumbnailURL == "" {
 		return
 	}
 	destination, err := thumbnailPath(j, *file)
 	if err != nil {
 		return
 	}
-	mimeType, err := s.thumbnailFetcher(ctx, file.ThumbnailURL, destination)
+	fetcher := s.thumbnailFetcher
+	if fetcher == nil {
+		fetcher = func(ctx context.Context, rawURL, destination string) (string, error) {
+			return fetchThumbnail(ctx, s.cfg.timeout, rawURL, destination)
+		}
+	}
+	mimeType, err := fetcher(ctx, file.ThumbnailURL, destination)
 	if err != nil || !allowedThumbnailMime(mimeType) {
 		_ = os.Remove(destination)
 		return
