@@ -40,7 +40,7 @@ beforeEach(async () => {
     requests.push({ url: String(url), path, ...init });
     if (path === "/api/health") return Response.json({ ready: missing.length === 0, missing, engine: healthEngine, capabilities: { combinedStreamsOnly: false, adaptiveStreamsSupported: true, externalBinariesRequired: false } });
     if (path === "/api/settings" && init.method === "PUT") return Response.json({ settings: JSON.parse(init.body) });
-    if (path === "/api/settings") return Response.json({ settings: { defaultQuality: "best" } });
+    if (path === "/api/settings") return Response.json({ settings: { defaultQuality: "best", defaultCategory: "General", userCategories: ["General", "Music"] } });
     if (path === "/api/inspect") return Response.json(inspection);
     if (path === "/api/jobs" && init.method === "POST") return Response.json(job, { status: 202 });
     if (path === "/api/jobs") return Response.json({ jobs: rows });
@@ -113,10 +113,15 @@ describe("Downloader UI and Go API integration", () => {
     expect(requests.some(item => item.path === "/api/inspect" && JSON.parse(item.body).url === inspection.url)).toBe(true);
     expect(container.textContent).toContain("Test playlist");
     expect(button("Add 1 to queue").disabled).toBe(true);
+    const category = container.querySelector('select[aria-label^="Category for"]');
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(testWindow.HTMLSelectElement.prototype, "value").set.call(category, "Music");
+      category.dispatchEvent(new testWindow.Event("change", { bubbles: true }));
+    });
     await click(container.querySelector('input[type="checkbox"]'));
     await click(button("Add 1 to queue"));
     const create = requests.find(item => item.path === "/api/jobs" && item.method === "POST");
-    expect(JSON.parse(create.body)).toEqual({ url: inspection.url, quality: "best", mediaType: "video", audioBitrate: "192k", rightsConfirmed: true });
+    expect(JSON.parse(create.body)).toEqual({ url: inspection.url, quality: "best", mediaType: "video", audioBitrate: "192k", category: "Music", rightsConfirmed: true });
     expect(container.textContent).toContain("Every exposed video will appear as an individual queue item");
   });
   test("persists only a supported preference through the service API", async () => {
@@ -128,7 +133,7 @@ describe("Downloader UI and Go API integration", () => {
     });
     await click(button("Save preferences"));
     const save = requests.find(item => item.path === "/api/settings" && item.method === "PUT");
-    expect(JSON.parse(save.body)).toEqual({ defaultQuality: "720", maxConcurrentDownloads: 3 });
+    expect(JSON.parse(save.body)).toEqual({ defaultQuality: "720", maxConcurrentDownloads: 3, namingPattern: "{channel} - {title} [{resolution}]", subfolderSorting: "channel", defaultCategory: "General", userCategories: ["General", "Music"] });
     expect(container.textContent).toContain("Saved to SQLite");
   });
   test("pauses a running job through the backend", async () => {
