@@ -176,7 +176,7 @@ func TestPersistentHistoryAndQueueResume(t *testing.T) {
 	}
 	s.engine = fixtureClient(1)
 	queued := createJob(t, s, testVideo)
-	if err := s.store.saveAppSettings(AppSettings{DefaultQuality: "720"}); err != nil {
+	if err := s.store.saveAppSettings(AppSettings{DefaultQuality: "720", BandwidthLimitBytesPerSec: 5 * 1024 * 1024}); err != nil {
 		t.Fatal(err)
 	}
 	s.stop()
@@ -204,7 +204,7 @@ func TestPersistentHistoryAndQueueResume(t *testing.T) {
 	if history.jobs[queued.ID].Status != "completed" {
 		t.Fatalf("history status = %q", history.jobs[queued.ID].Status)
 	}
-	if history.settings.DefaultQuality != "720" {
+	if history.settings.DefaultQuality != "720" || history.settings.BandwidthLimitBytesPerSec != 5*1024*1024 {
 		t.Fatalf("application preferences did not persist: %+v", history.settings)
 	}
 	var configCount int
