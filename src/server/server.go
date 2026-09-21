@@ -72,6 +72,7 @@ type Job struct {
 	Quality          string        `json:"quality"`
 	MediaType        string        `json:"mediaType"`
 	AudioBitrate     string        `json:"audioBitrate,omitempty"`
+	AudioFormat      string        `json:"audioFormat,omitempty"`
 	Status           string        `json:"status"`
 	Title            string        `json:"title"`
 	Progress         *float64      `json:"progress"`
@@ -645,6 +646,7 @@ func (s *server) create(w http.ResponseWriter, r *http.Request) {
 		Quality         string          `json:"quality"`
 		MediaType       string          `json:"mediaType"`
 		AudioBitrate    string          `json:"audioBitrate"`
+		AudioFormat     string          `json:"audioFormat"`
 		Category        string          `json:"category"`
 		RightsConfirmed bool            `json:"rightsConfirmed"`
 		Items           []inspectedItem `json:"items"`
@@ -676,19 +678,38 @@ func (s *server) create(w http.ResponseWriter, r *http.Request) {
 		fail(w, 400, "mediaType must be video or audio")
 		return
 	}
-	if request.AudioBitrate == "" {
-		request.AudioBitrate = "192k"
+	if request.MediaType == "audio" {
+		if request.AudioFormat == "" {
+			request.AudioFormat = "mp3"
+		}
+		if request.AudioFormat != "mp3" && request.AudioFormat != "m4a" {
+			fail(w, 400, "audioFormat must be mp3 or m4a")
+			return
+		}
+		if request.AudioFormat == "mp3" {
+			if request.AudioBitrate == "" {
+				request.AudioBitrate = "192k"
+			}
+			if request.AudioBitrate != "128k" && request.AudioBitrate != "192k" && request.AudioBitrate != "256k" && request.AudioBitrate != "320k" {
+				fail(w, 400, "audioBitrate must be 128k, 192k, 256k, or 320k")
+				return
+			}
+		} else {
+			request.AudioBitrate = ""
+		}
+	} else {
+		if request.AudioFormat != "" {
+			fail(w, 400, "audioFormat is valid only when mediaType is audio")
+			return
+		}
+		request.AudioBitrate = ""
 	}
-	if request.AudioBitrate != "128k" && request.AudioBitrate != "192k" && request.AudioBitrate != "256k" && request.AudioBitrate != "320k" {
-		fail(w, 400, "audioBitrate must be 128k, 192k, 256k, or 320k")
-		return
-	}
-	s.enqueueJob(w, u, kind, request.Quality, request.MediaType, request.AudioBitrate, request.Category, "", request.Items)
+	s.enqueueJob(w, u, kind, request.Quality, request.MediaType, request.AudioFormat, request.AudioBitrate, request.Category, "", request.Items)
 }
 
 // enqueueJob allocates private per-job storage, persists a queued job, and
 // returns 202 only after the job has entered the bounded worker queue.
-func (s *server) enqueueJob(w http.ResponseWriter, u, kind, quality, mediaType, audioBitrate, requestedCategory, requestedStorageMode string, inspectedItems ...[]inspectedItem) {
+func (s *server) enqueueJob(w http.ResponseWriter, u, kind, quality, mediaType, audioFormat, audioBitrate, requestedCategory, requestedStorageMode string, inspectedItems ...[]inspectedItem) {
 	if s.engine == nil {
 		fail(w, 503, "Native download engine is not initialized")
 		return
@@ -738,7 +759,7 @@ func (s *server) enqueueJob(w http.ResponseWriter, u, kind, quality, mediaType, 
 		return
 	}
 	j := &jobState{Job: Job{
-		ID: randomID(16), URL: u, Kind: kind, Quality: quality, MediaType: mediaType, AudioBitrate: audioBitrate,
+		ID: randomID(16), URL: u, Kind: kind, Quality: quality, MediaType: mediaType, AudioFormat: audioFormat, AudioBitrate: audioBitrate,
 		Status: "queued", Title: "YouTube " + kind, Files: []mediaFile{}, Items: items, Failures: []itemFailure{},
 		Note: formatNote, CreatedAt: time.Now().UTC().Format(time.RFC3339Nano), DownloadLocation: outputSettings.DownloadLocation,
 		NamingPattern: outputSettings.NamingPattern, SubfolderSorting: outputSettings.SubfolderSorting, Category: category, StorageMode: storageMode,
