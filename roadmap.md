@@ -229,7 +229,7 @@ Promote the Library from a job-results list to a true local media browser.
 
 ### P1.5 Local media preview
 
-**Status:** [ ] Planned
+**Status:** [T] Implemented; CI validation pending
 
 Provide lightweight playback from finalized local media.
 
@@ -680,3 +680,23 @@ Implemented:
 8. Added UI regression coverage for category/channel filtering, storage summaries, and layout persistence.
 
 The facet implementation remains frontend-derived from SQLite-backed job/file metadata; no duplicate category or channel index is introduced in the database.
+
+
+### P1.5 Local media preview
+
+**Status:** [T] Implemented; CI validation pending
+
+Implemented:
+
+1. Extended the existing random file-capability ticket model with an `inline` preview scope rather than exposing filesystem paths or bearer tokens in media URLs.
+2. Inline tickets require a specific managed `fileId`, cannot represent ZIP archives, and expire after 30 minutes; ordinary download tickets remain five-minute attachment tickets.
+3. Reused the existing validated managed-file access path and HTTP single-range support so browser media controls can seek efficiently without loading the full file into JavaScript memory.
+4. Inline responses use the finalized media MIME type and `Content-Disposition: inline`.
+5. Added a Library Preview action for managed media and a modal supporting browser-compatible video and audio.
+6. Preview uses `preload="metadata"`, standard controls, and never autoplays.
+7. Managed-copy removal disables preview automatically; no new arbitrary-path API was introduced.
+8. Added backend tests for inline ticket validation, MIME/disposition, and `206` byte-range behavior.
+9. Added frontend coverage for inline ticket creation, modal rendering, media URL scoping, no-autoplay behavior, and close behavior.
+10. Updated API documentation.
+
+Published-only jobs intentionally do not stream their user-owned output back through the app preview API; those files remain available through native Open/Reveal actions, while in-app preview requires a managed copy.
