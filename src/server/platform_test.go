@@ -5,6 +5,40 @@ import (
 	"testing"
 )
 
+func TestRuntimeBackgroundOptions(t *testing.T) {
+	tests := []struct {
+		name      string
+		args      []string
+		env       string
+		noBrowser bool
+		wantErr   bool
+	}{
+		{name: "default opens browser"},
+		{name: "legacy env", env: "1", noBrowser: true},
+		{name: "no-browser flag", args: []string{"--no-browser"}, noBrowser: true},
+		{name: "background alias", args: []string{"--background"}, noBrowser: true},
+		{name: "flag overrides empty env", args: []string{"--background"}, env: "0", noBrowser: true},
+		{name: "unknown argument rejected", args: []string{"--tray"}, wantErr: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			options, err := parseRuntimeOptions(test.args, test.env)
+			if test.wantErr {
+				if err == nil {
+					t.Fatal("expected unsupported argument error")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if options.noBrowser != test.noBrowser {
+				t.Fatalf("noBrowser = %v; want %v", options.noBrowser, test.noBrowser)
+			}
+		})
+	}
+}
+
 func TestBrowserOpenCommands(t *testing.T) {
 	target := "http://127.0.0.1:8080/"
 	tests := []struct {
