@@ -207,11 +207,20 @@ async function clickButton(cdp, label) {
 async function clickSelector(cdp, selector) {
   const result = await cdp.evaluate(`(() => {
     const element = document.querySelector(${JSON.stringify(selector)});
-    if (!element) return false;
+    if (!element || element.disabled) return false;
     element.click();
     return true;
   })()`);
-  assert.equal(result, true, `element not found: ${selector}`);
+  assert.equal(result, true, `enabled element not found: ${selector}`);
+}
+
+async function waitForEnabledSelector(cdp, selector, label, timeoutMs = 15000) {
+  return waitFor(
+    cdp,
+    `(() => { const element = document.querySelector(${JSON.stringify(selector)}); return Boolean(element && !element.disabled); })()`,
+    label,
+    timeoutMs,
+  );
 }
 
 async function setValue(cdp, selector, value) {
@@ -328,9 +337,16 @@ async function main() {
     await waitFor(cdp, bodyIncludes("Downloading"), "active download");
 
     // 4: pause and resume through the browser UI while the fixture stream is live.
-    await clickSelector(cdp, '[aria-label^="Pause E2E Fixture Video"]');
+    // Queue creation can briefly leave row actions disabled even after the first
+    // live "Downloading" paint. Wait for the actual enabled controls so a DOM
+    // click cannot be silently ignored by the browser.
+    const pauseSelector = '[aria-label^="Pause E2E Fixture Video"]';
+    const resumeSelector = '[aria-label^="Resume E2E Fixture Video"]';
+    await waitForEnabledSelector(cdp, pauseSelector, "enabled pause control");
+    await clickSelector(cdp, pauseSelector);
     await waitFor(cdp, bodyIncludes("Paused"), "paused job");
-    await clickSelector(cdp, '[aria-label^="Resume E2E Fixture Video"]');
+    await waitForEnabledSelector(cdp, resumeSelector, "enabled resume control");
+    await clickSelector(cdp, resumeSelector);
 
     // 5-6: completion must surface in the queue and Library.
     await waitFor(cdp, bodyIncludes("Completed"), "completed job", 30000);
