@@ -58,6 +58,8 @@ Ticket links last five minutes. Individual-file transfers support one byte range
 
 Control-plane API responses and errors return JSON. `GET /api/downloads/{ticket}` instead streams a file or ZIP. When `API_TOKEN` is configured, send `Authorization: Bearer TOKEN` except for `GET /api/health`, approved CORS preflight requests, and ticket download links. API JSON bodies must be one object no larger than 4096 bytes and cannot include unknown fields. The bundled UI sends no bearer token; if one is configured, use a token-capable external client or leave the token unset for the built-in UI.
 
+`GET /api/events` is a long-lived `text/event-stream` endpoint and remains bearer-protected like the rest of the control plane. It sends an initial `snapshot` containing the current jobs and settings, then emits `job-created`, throttled `job-progress`, `job-status`, `job-file-finalized`, `job-error`, `job-deleted`, and `settings-changed` events. Heartbeat comments keep idle connections alive. Slow clients use a bounded event buffer; the bundled UI also performs a 30-second full-job reconciliation so a dropped event cannot permanently desynchronize state. The frontend consumes SSE through authenticated `fetch` rather than native `EventSource`, preserving bearer-header support for external/tokenized use. SSE requests are exempt from the normal short response write deadline so a healthy stream can remain connected indefinitely.
+
 | Endpoint | Purpose |
 | --- | --- |
 | `GET /api/health` | Reports the native engine and capabilities |
@@ -67,6 +69,7 @@ Control-plane API responses and errors return JSON. `GET /api/downloads/{ticket}
 | `POST /api/folders/select` | Opens the local OS folder picker and returns the selected absolute folder; `{}` body |
 | `POST /api/jobs` | Creates a download job; returns `202` and the job |
 | `GET /api/jobs` | Lists jobs, newest first |
+| `GET /api/events` | Authenticated Server-Sent Events stream with an initial snapshot and live job/settings updates |
 | `GET /api/jobs/{id}` | Returns one job |
 | `POST /api/jobs/{id}/pause` | Pauses a queued or active job |
 | `POST /api/jobs/{id}/resume` | Resumes a paused job |
@@ -122,7 +125,7 @@ go test ./...
 go vet ./...
 ~~~
 
-The unit suite uses fake metadata and streams to cover format selection, download completion, limits, cancellation, playlist selection/reordering, single-item retry, restart persistence, API validation, tickets, ranges, retention, and browser-assisted fallback logic.
+The unit suite uses fake metadata and streams to cover format selection, download completion, limits, cancellation, playlist selection/reordering, single-item retry, restart persistence, API validation, authenticated SSE framing/lifetime/event delivery, tickets, ranges, retention, and browser-assisted fallback logic.
 
 The live test is opt-in, downloads real media, and requires working internet access plus a Chrome-compatible browser for the adaptive-HD case. Replace the sample URL with an accessible video you are authorized to download:
 
