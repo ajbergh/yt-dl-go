@@ -1401,6 +1401,33 @@ export function HomePage() {
                   <span className="mt-1 block text-[10px] leading-relaxed text-neutral-500">0 = unlimited. The cap is shared fairly across active Go-managed transfers and applies immediately.</span>
                 </label>
               </div>
+              <div className="rounded-xl border border-neutral-800 bg-neutral-950/60 p-4">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div className="min-w-0">
+                    <h4 className="text-xs font-bold text-neutral-200">System notifications</h4>
+                    <p className="mt-1 max-w-2xl text-[10px] leading-relaxed text-neutral-500">Optional OS/browser alerts for completed downloads, failed jobs, partially completed playlists, and storage/output errors. Permission is requested only when you turn this on.</p>
+                  </div>
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-label="System notifications"
+                    aria-checked={settings.notificationsEnabled}
+                    onClick={() => void toggleNotifications()}
+                    className={`inline-flex min-h-9 items-center rounded-full border px-3 text-[11px] font-semibold transition-colors ${settings.notificationsEnabled ? "border-emerald-700/60 bg-emerald-950/40 text-emerald-300" : "border-neutral-700 bg-neutral-900 text-neutral-300"}`}
+                  >
+                    {settings.notificationsEnabled ? "Enabled" : "Off"}
+                  </button>
+                </div>
+                <p className="mt-2 text-[10px] text-neutral-500">
+                  {notificationAPI()
+                    ? notificationAPI()?.permission === "granted"
+                      ? "Browser/OS permission is granted."
+                      : notificationAPI()?.permission === "denied"
+                        ? "Browser/OS permission is blocked; change it in notification settings before enabling."
+                        : "Permission has not been requested yet."
+                    : "This browser does not expose the system Notification API."}
+                </p>
+              </div>
               {serviceError && <p role="alert" className="text-xs text-red-300">{serviceError}</p>}
               <div className="flex flex-wrap items-center justify-between gap-3 border-t border-neutral-800 pt-4">
                 <p className="max-w-lg text-[10px] leading-relaxed text-neutral-500">Settings apply to new jobs. Each download also stays in private app storage for the library and secure save links. {mp3Supported ? "Built-in Go MP3 conversion is ready." : "This backend does not support MP3 conversion."}</p>
@@ -1409,7 +1436,7 @@ export function HomePage() {
             </section>
           </form>
 
-            <section className={`${panel} p-5`}><div className="flex items-start gap-3"><div className="grid size-9 shrink-0 place-items-center rounded-xl border border-blue-800/50 bg-blue-950/30 text-blue-300"><Gauge className="size-4" aria-hidden="true" /></div><div><h3 className="text-xs font-bold">What this backend supports</h3><ul className="mt-2 space-y-1.5 text-[11px] leading-relaxed text-neutral-400"><li>Video and playlist downloads, including adaptive MP4 remuxing and pure-Go MP3 conversion for AAC audio.</li><li>Up to six concurrent jobs, multi-routine stream transfers, fair global bandwidth limiting, pause/resume, retries, and live speed and ETA.</li><li>Quality ceilings: best, 1080p, 720p, or 480p. Actual output quality is reported after completion.</li><li>Files are copied to the selected destination and remain available in the private SQLite-backed library.</li></ul>{!mp3Supported && <p className="mt-3 flex items-start gap-1.5 text-[10px] leading-relaxed text-amber-300"><ShieldCheck className="mt-0.5 size-3 shrink-0" aria-hidden="true" />This backend does not support MP3 conversion.</p>}</div></div></section>
+            <section className={`${panel} p-5`}><div className="flex items-start gap-3"><div className="grid size-9 shrink-0 place-items-center rounded-xl border border-blue-800/50 bg-blue-950/30 text-blue-300"><Gauge className="size-4" aria-hidden="true" /></div><div><h3 className="text-xs font-bold">What this backend supports</h3><ul className="mt-2 space-y-1.5 text-[11px] leading-relaxed text-neutral-400"><li>Video and playlist downloads, including adaptive MP4 remuxing and pure-Go MP3 conversion for AAC audio.</li><li>Up to six concurrent jobs, multi-routine stream transfers, fair global bandwidth limiting, pause/resume, retries, live speed/ETA, and optional system notifications.</li><li>Quality ceilings: best, 1080p, 720p, or 480p. Actual output quality is reported after completion.</li><li>Files are copied to the selected destination and remain available in the private SQLite-backed library.</li></ul>{!mp3Supported && <p className="mt-3 flex items-start gap-1.5 text-[10px] leading-relaxed text-amber-300"><ShieldCheck className="mt-0.5 size-3 shrink-0" aria-hidden="true" />This backend does not support MP3 conversion.</p>}</div></div></section>
         </div>}
       </main>
       {preview && <div role="dialog" aria-modal="true" aria-labelledby="media-preview-title" className="fixed inset-0 z-50 grid place-items-center bg-black/80 p-4" onMouseDown={event => { if (event.target === event.currentTarget) setPreview(null); }}>
