@@ -334,6 +334,85 @@ func TestInspectionPreferencesRetryAndRemoval(t *testing.T) {
 	}
 }
 
+func TestLibraryRemovalPreservesPublishedMedia(t *testing.T) {
+	s := testServer(t, fixtureClient(1), nil)
+	j := waitTerminal(t, s, createJob(t, s, testVideo).ID)
+	if len(j.Files) != 1 || !j.Files[0].ManagedAvailable || !j.Files[0].PublishedAvailable {
+		t.Fatalf("completed file availability not recorded: %+v", j.Files)
+	}
+	outputPath := j.Files[0].OutputPath
+	if outputPath == "" {
+		t.Fatal("completed file has no published output path")
+	}
+	if _, err := os.Stat(outputPath); err != nil {
+		t.Fatalf("published output missing before Library removal: %v", err)
+	}
+	if response := request(s, "DELETE", "/api/jobs/"+j.ID, "", nil); response.Code != 204 {
+		t.Fatalf("remove from Library: %d %s", response.Code, response.Body.String())
+	}
+	if request(s, "GET", "/api/jobs/"+j.ID, "", nil).Code != 404 {
+		t.Fatal("removed Library job is still available")
+	}
+	if _, err := os.Stat(outputPath); err != nil {
+		t.Fatalf("Library removal deleted published media: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(s.cfg.root, j.ID)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("Library removal retained app-managed media: %v", err)
+	}
+	_ = os.Remove(outputPath)
+}
+
+func TestScopedMediaDeletion(t *testing.T) {
+	s := testServer(t, fixtureClient(1), nil)
+
+	publishedJob := waitTerminal(t, s, createJob(t, s, testVideo).ID)
+	publishedPath := publishedJob.Files[0].OutputPath
+	response := request(s, "DELETE", "/api/jobs/"+publishedJob.ID+"/published", "", nil)
+	var afterPublished Job
+	if response.Code != 200 || json.Unmarshal(response.Body.Bytes(), &afterPublished) != nil {
+		t.Fatalf("delete published copies: %d %s", response.Code, response.Body.String())
+	}
+	if afterPublished.Files[0].PublishedAvailable || !afterPublished.Files[0].ManagedAvailable {
+		t.Fatalf("published deletion changed wrong copy state: %+v", afterPublished.Files[0])
+	}
+	if _, err := os.Stat(publishedPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("published file survived scoped deletion: %v", err)
+	}
+	if request(s, "POST", "/api/jobs/"+publishedJob.ID+"/ticket", `{"fileId":"`+afterPublished.Files[0].ID+`"}`, nil).Code != 200 {
+		t.Fatal("managed copy became unavailable after published-only deletion")
+	}
+
+	managedJob := waitTerminal(t, s, createJob(t, s, testVideo).ID)
+	managedPath := managedJob.Files[0].OutputPath
+	response = request(s, "DELETE", "/api/jobs/"+managedJob.ID+"/managed", "", nil)
+	var afterManaged Job
+	if response.Code != 200 || json.Unmarshal(response.Body.Bytes(), &afterManaged) != nil {
+		t.Fatalf("delete managed copies: %d %s", response.Code, response.Body.String())
+	}
+	if afterManaged.Files[0].ManagedAvailable || !afterManaged.Files[0].PublishedAvailable {
+		t.Fatalf("managed deletion changed wrong copy state: %+v", afterManaged.Files[0])
+	}
+	if _, err := os.Stat(managedPath); err != nil {
+		t.Fatalf("published output was removed with managed copy: %v", err)
+	}
+	if request(s, "POST", "/api/jobs/"+managedJob.ID+"/ticket", `{"fileId":"`+afterManaged.Files[0].ID+`"}`, nil).Code != 409 {
+		t.Fatal("ticket was issued for a removed managed copy")
+	}
+
+	allJob := waitTerminal(t, s, createJob(t, s, testVideo).ID)
+	allPath := allJob.Files[0].OutputPath
+	if response = request(s, "DELETE", "/api/jobs/"+allJob.ID+"/all", "", nil); response.Code != 204 {
+		t.Fatalf("delete everywhere: %d %s", response.Code, response.Body.String())
+	}
+	if request(s, "GET", "/api/jobs/"+allJob.ID, "", nil).Code != 404 {
+		t.Fatal("delete everywhere retained Library history")
+	}
+	if _, err := os.Stat(allPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("delete everywhere retained published media: %v", err)
+	}
+	_ = os.Remove(managedPath)
+}
+
 func TestPauseAndResumeJob(t *testing.T) {
 	fake := fixtureClient(1)
 	var streamCalls atomic.Int32
@@ -444,6 +523,10 @@ func TestDownloadsAndRetention(t *testing.T) {
 			t.Fatal("archive content or entry name is invalid")
 		}
 	}
+	publishedPaths := make([]string, 0, len(j.Files))
+	for _, file := range j.Files {
+		publishedPaths = append(publishedPaths, file.OutputPath)
+	}
 	s.mu.Lock()
 	s.jobs[j.ID].done = time.Now().Add(-time.Hour)
 	s.mu.Unlock()
@@ -456,6 +539,12 @@ func TestDownloadsAndRetention(t *testing.T) {
 		t.Fatal("expired job/ticket survived retention")
 	}
 	if _, err := os.Stat(filepath.Join(s.cfg.root, j.ID)); !errors.Is(err, os.ErrNotExist) {
-		t.Fatal("retained disk output was not removed")
+		t.Fatal("retained app-managed output was not removed")
+	}
+	for _, outputPath := range publishedPaths {
+		if _, err := os.Stat(outputPath); err != nil {
+			t.Fatalf("retention deleted published media: %v", err)
+		}
+		_ = os.Remove(outputPath)
 	}
 }
