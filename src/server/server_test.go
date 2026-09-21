@@ -116,6 +116,23 @@ func request(s *server, method, path, body string, headers map[string]string) *h
 	return w
 }
 
+func trackedOutputPath(t *testing.T, s *server, jobID, fileID string) string {
+	t.Helper()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	j := s.jobs[jobID]
+	if j == nil {
+		t.Fatalf("tracked job %s not found", jobID)
+	}
+	for _, file := range j.Files {
+		if file.ID == fileID {
+			return file.OutputPath
+		}
+	}
+	t.Fatalf("tracked file %s not found for job %s", fileID, jobID)
+	return ""
+}
+
 func createJob(t *testing.T, s *server, raw string) Job {
 	t.Helper()
 	body, _ := json.Marshal(map[string]any{"url": raw, "quality": "best", "rightsConfirmed": true})
@@ -343,7 +360,7 @@ func TestLibraryRemovalPreservesPublishedMedia(t *testing.T) {
 	if len(j.Files) != 1 || !j.Files[0].ManagedAvailable || !j.Files[0].PublishedAvailable {
 		t.Fatalf("completed file availability not recorded: %+v", j.Files)
 	}
-	outputPath := j.Files[0].OutputPath
+	outputPath := trackedOutputPath(t, s, j.ID, j.Files[0].ID)
 	if outputPath == "" {
 		t.Fatal("completed file has no published output path")
 	}
@@ -369,7 +386,7 @@ func TestScopedMediaDeletion(t *testing.T) {
 	s := testServer(t, fixtureClient(1), nil)
 
 	publishedJob := waitTerminal(t, s, createJob(t, s, testVideo).ID)
-	publishedPath := publishedJob.Files[0].OutputPath
+	publishedPath := trackedOutputPath(t, s, publishedJob.ID, publishedJob.Files[0].ID)
 	response := request(s, "DELETE", "/api/jobs/"+publishedJob.ID+"/published", "", nil)
 	var afterPublished Job
 	if response.Code != 200 || json.Unmarshal(response.Body.Bytes(), &afterPublished) != nil {
@@ -386,7 +403,7 @@ func TestScopedMediaDeletion(t *testing.T) {
 	}
 
 	managedJob := waitTerminal(t, s, createJob(t, s, testVideo).ID)
-	managedPath := managedJob.Files[0].OutputPath
+	managedPath := trackedOutputPath(t, s, managedJob.ID, managedJob.Files[0].ID)
 	response = request(s, "DELETE", "/api/jobs/"+managedJob.ID+"/managed", "", nil)
 	var afterManaged Job
 	if response.Code != 200 || json.Unmarshal(response.Body.Bytes(), &afterManaged) != nil {
@@ -403,7 +420,7 @@ func TestScopedMediaDeletion(t *testing.T) {
 	}
 
 	allJob := waitTerminal(t, s, createJob(t, s, testVideo).ID)
-	allPath := allJob.Files[0].OutputPath
+	allPath := trackedOutputPath(t, s, allJob.ID, allJob.Files[0].ID)
 	if response = request(s, "DELETE", "/api/jobs/"+allJob.ID+"/all", "", nil); response.Code != 204 {
 		t.Fatalf("delete everywhere: %d %s", response.Code, response.Body.String())
 	}
@@ -447,16 +464,17 @@ func TestStoragePolicies(t *testing.T) {
 			if !tt.managed && !errors.Is(managedErr, os.ErrNotExist) {
 				t.Fatalf("managed copy unexpectedly retained for %s: %v", tt.mode, managedErr)
 			}
+			outputPath := trackedOutputPath(t, s, j.ID, file.ID)
 			if tt.published {
-				if file.OutputPath == "" {
+				if outputPath == "" {
 					t.Fatalf("published output path missing for %s", tt.mode)
 				}
-				if _, err := os.Stat(file.OutputPath); err != nil {
+				if _, err := os.Stat(outputPath); err != nil {
 					t.Fatalf("published copy missing for %s: %v", tt.mode, err)
 				}
-				_ = os.Remove(file.OutputPath)
-			} else if file.OutputPath != "" {
-				t.Fatalf("managed-only job unexpectedly published to %q", file.OutputPath)
+				_ = os.Remove(outputPath)
+			} else if outputPath != "" {
+				t.Fatalf("managed-only job unexpectedly published to %q", outputPath)
 			}
 		})
 	}
@@ -491,6 +509,7 @@ func TestTrackedFilesystemActions(t *testing.T) {
 		t.Fatalf("fixture did not publish media: %+v", j.Files)
 	}
 	file := j.Files[0]
+	outputPath := trackedOutputPath(t, s, j.ID, file.ID)
 	var openedAction, openedPath string
 	s.filesystemOpener = func(_ context.Context, action, path string) error {
 		openedAction, openedPath = action, path
@@ -498,14 +517,14 @@ func TestTrackedFilesystemActions(t *testing.T) {
 	}
 
 	response := request(s, "POST", "/api/jobs/"+j.ID+"/filesystem", `{"fileId":"`+file.ID+`","action":"reveal"}`, nil)
-	if response.Code != 200 || openedAction != "reveal" || openedPath != file.OutputPath {
+	if response.Code != 200 || openedAction != "reveal" || openedPath != outputPath {
 		t.Fatalf("reveal tracked output: %d action=%q path=%q body=%s", response.Code, openedAction, openedPath, response.Body.String())
 	}
 
 	openedAction, openedPath = "", ""
 	response = request(s, "POST", "/api/jobs/"+j.ID+"/filesystem", `{"fileId":"`+file.ID+`","action":"copy-path"}`, nil)
 	var copied struct{ Path string `json:"path"` }
-	if response.Code != 200 || json.Unmarshal(response.Body.Bytes(), &copied) != nil || copied.Path != file.OutputPath || openedAction != "" {
+	if response.Code != 200 || json.Unmarshal(response.Body.Bytes(), &copied) != nil || copied.Path != outputPath || openedAction != "" {
 		t.Fatalf("copy tracked path: %d %+v opener=%q", response.Code, copied, openedAction)
 	}
 	if request(s, "POST", "/api/jobs/"+j.ID+"/filesystem", `{"fileId":"../other","action":"reveal"}`, nil).Code != 404 {
@@ -634,7 +653,7 @@ func TestDownloadsAndRetention(t *testing.T) {
 	}
 	publishedPaths := make([]string, 0, len(j.Files))
 	for _, file := range j.Files {
-		publishedPaths = append(publishedPaths, file.OutputPath)
+		publishedPaths = append(publishedPaths, trackedOutputPath(t, s, j.ID, file.ID))
 	}
 	s.mu.Lock()
 	s.jobs[j.ID].done = time.Now().Add(-time.Hour)
