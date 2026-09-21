@@ -3,6 +3,7 @@ import { Window } from "happy-dom";
 import { act, createElement } from "react";
 import { HomePage } from "./pages/home";
 import { mergeJobActionResult } from "./hooks/use-jobs";
+import { terminalNotification } from "./components/downloader/view-model";
 
 const testWindow = new Window({ url: "http://localhost:5173/" });
 for (const key of ["window", "document", "HTMLElement", "HTMLInputElement", "Node", "Event", "MouseEvent"]) {
@@ -342,6 +343,34 @@ describe("Downloader UI and Go API integration", () => {
     await click(button("Save preferences"));
     const saves = requests.filter(item => item.path === "/api/settings" && item.method === "PUT");
     expect(JSON.parse(saves.at(-1).body).bandwidthLimitBytesPerSec).toBe(5 * 1024 * 1024);
+  });
+
+  test("maps all roadmap terminal notification classes to concise system alerts", () => {
+    const base = {
+      ...job,
+      title: "Notification fixture",
+      completedCount: 1,
+      totalCount: 2,
+    };
+
+    expect(terminalNotification({ ...base, kind: "playlist", status: "completed", error: "" })).toEqual({
+      title: "Batch completed",
+      body: "Notification fixture finished successfully.",
+    });
+
+    const failed = terminalNotification({ ...base, kind: "video", status: "failed", error: "Network request failed." });
+    expect(failed?.title).toBe("Download failed");
+    expect(failed?.body).toContain("Network request failed.");
+
+    const partial = terminalNotification({ ...base, kind: "playlist", status: "partial", error: "One item failed." });
+    expect(partial?.title).toBe("Playlist partially completed");
+    expect(partial?.body).toContain("1 of 2 files completed");
+
+    const storage = terminalNotification({ ...base, kind: "video", status: "failed", error: "Output storage disk is full." });
+    expect(storage?.title).toBe("Download storage error");
+    expect(storage?.body).toContain("Output storage disk is full.");
+
+    expect(terminalNotification({ ...base, status: "downloading", error: "" })).toBeNull();
   });
 
   test("requests notification permission only when explicitly enabled and persists the choice", async () => {

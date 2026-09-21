@@ -361,16 +361,29 @@ The UI now uses authenticated Server-Sent Events for near-real-time job/settings
 - Added frontend coverage proving live progress is applied without repeated full-list polling.
 - Validation: CI run `35555097968` passed frontend type-check/build, Bun integration tests, Go tests, Go vet, and Windows production build.
 
-### P2.1 System notifications (Deferred)
+### P2.1 System notifications
 
-**Status:** [ ] Deferred
+**Status:** [x] Implemented
 
-Optional notifications for:
+The browser UI already contained the full notification path; this roadmap item was stale documentation/status rather than missing product behavior.
 
-- batch completed
-- job failed
-- playlist partially completed
-- disk/output error
+Implemented behavior:
+
+- persisted `notificationsEnabled` preference in SQLite-backed application settings
+- explicit opt-in toggle in Settings
+- notification permission is requested only when the user enables the feature
+- permission denied/unavailable states are surfaced in the UI without breaking download behavior
+- live SSE job transitions are compared against the prior known job status so initial hydration/snapshots do not emit duplicate alerts
+- completed single downloads emit **Download completed**
+- completed playlists/batches emit **Batch completed**
+- failed jobs emit **Download failed**
+- partially completed playlists emit **Playlist partially completed** with completed/total counts
+- storage/output/disk/filesystem failures receive the higher-priority **Download storage error** notification
+- notification tags include job ID + terminal status to keep OS/browser deduplication scoped to the transition
+
+Scope note: these are browser/OS Notification API alerts and therefore require the UI/browser session to remain open. Native background notification delivery is intentionally not part of P2.1; that concern belongs with P2.2 tray/background mode.
+
+Validation coverage includes permission gating/persistence, suppression of initial snapshot notifications, live terminal-transition delivery, and direct assertions for all four roadmap notification classes.
 
 ### P2.2 Tray/background mode (Deferred)
 
