@@ -2,7 +2,7 @@
 
 > Durable roadmap for the `yt-dl-go` product. This file is the source of truth for roadmap scope, sequencing, implementation status, acceptance criteria, and follow-up work.
 >
-> **Branch:** `roadmap/subtitle-captions-v1`
+> **Branch:** `roadmap/frontend-decomposition-v1`
 >
 > **Last updated:** 2026-09-20
 
@@ -455,33 +455,40 @@ Do not expose codec complexity until format selection and compatibility checks a
 
 ## P1.12 Decompose `src/pages/home.tsx`
 
-**Status:** [ ] Planned
+**Status:** [T] Implemented; CI validation in progress
 
-The production page currently owns service initialization, polling, queue state, inspection, settings, library state, and most rendering.
+The production page previously owned service initialization, polling, queue state, inspection, settings, library state, job actions, and nearly all rendering in one ~1,479-line file.
 
-#### Target structure
+#### Implemented structure
 
 ```text
 src/
   pages/
+    home.tsx
     queue.tsx
     library.tsx
     settings.tsx
   components/downloader/
-    add-download.tsx
-    inspection-card.tsx
-    batch-controls.tsx
-    queue-toolbar.tsx
-    queue-item.tsx
-    library-card.tsx
-    output-settings.tsx
+    view-model.tsx
   hooks/
     use-service.ts
     use-jobs.ts
     use-settings.ts
 ```
 
-The exact boundaries may evolve, but new major features should not continue expanding a single page component indefinitely.
+- `queue.tsx` owns add/inspect controls, batch controls, queue filters, queue rendering, and drag/drop presentation.
+- `library.tsx` owns Library filtering/layout, file cards, preview/save/filesystem controls, and scoped-delete presentation.
+- `settings.tsx` owns service status and all preference/output configuration rendering.
+- `use-service.ts` owns backend bootstrap, SQLite hydration, SSE updates, reconciliation, readiness/error state, and terminal notifications.
+- `use-jobs.ts` owns queue/job mutations, retries, preview/save tickets, filesystem actions, queue/playlist reordering, batch actions, and cleared-completed persistence.
+- `use-settings.ts` owns settings mutation/save behavior, folder selection, notification permission flow, and user-category management.
+- `view-model.tsx` centralizes downloader-specific view types, labels, formatting/selection helpers, thumbnail loading, and the sortable queue row.
+- `home.tsx` is reduced to roughly 450 lines and primarily coordinates derived queue/library state, inspection submission, top-level navigation/messages, and page composition.
+- Existing DOM labels/test selectors were intentionally preserved so the refactor remains behavior-compatible.
+
+#### Validation
+
+- Branch CI is running for the completed structural refactor. Mark this item **[x]** only after frontend type-check/build/tests, Go tests/vet, and the Windows production build all pass.
 
 ## P1.13 Frontend dependency cleanup
 
