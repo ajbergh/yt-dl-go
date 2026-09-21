@@ -75,6 +75,22 @@ beforeEach(async () => {
     if (path.endsWith("/cancel")) return Response.json({ ...job, status: "cancelled" });
     if (path.endsWith("/pause")) return Response.json({ ...job, status: "paused" });
     if (path.endsWith("/resume")) return Response.json({ ...job, status: "queued" });
+    if (path.endsWith("/retry-item") && init.method === "POST") {
+      const id = path.split("/").at(-2);
+      const current = rows.find(item => item.id === id) ?? job;
+      const { index } = JSON.parse(init.body);
+      const updated = {
+        ...current,
+        status: "queued",
+        error: "",
+        queuePosition: 99,
+        items: (current.items ?? []).map(item => item.index === index
+          ? { ...item, status: "queued", error: "", retryRequested: true }
+          : item),
+      };
+      rows = rows.map(item => item.id === id ? updated : item);
+      return Response.json(updated, { status: 202 });
+    }
     if (path.endsWith("/retry")) return Response.json({ ...job, id: "retried-job" }, { status: 202 });
     if (path.endsWith("/ticket")) return Response.json({ path: "/api/downloads/test-ticket" });
     if (path.endsWith("/thumbnail") && init.method !== "POST") return new Response(new Blob(["local-thumbnail"], { type: "image/jpeg" }), { status: 200, headers: { "Content-Type": "image/jpeg" } });
@@ -287,6 +303,35 @@ describe("Downloader UI and Go API integration", () => {
     await click(nextButtons[1]);
     expect(requests.some(item => item.path === "/api/jobs/job-b/next" && item.method === "POST")).toBe(true);
     expect(container.textContent).toContain('"Second queued" will be the next queued job to start.');
+  });
+
+  test("retries only one failed playlist item and preserves successful siblings", async () => {
+    rows = [{
+      ...job,
+      id: "partial-playlist",
+      title: "Partial playlist",
+      status: "partial",
+      completedCount: 1,
+      totalCount: 2,
+      error: "1 entry failed",
+      files: [{ id: "file-1", name: "000001-abcdefghijk.mp4", size: 1024 }],
+      items: [
+        { index: 1, playlistIndex: 1, videoId: "abcdefghijk", title: "Completed sibling", status: "completed", progress: 100, downloadedBytes: 1024, totalBytes: 1024, speedBytesPerSec: 0, etaSeconds: 0, fileId: "file-1" },
+        { index: 2, playlistIndex: 2, videoId: "lmnopqrstuv", title: "Failed sibling", status: "failed", progress: null, downloadedBytes: 0, totalBytes: 0, speedBytesPerSec: 0, etaSeconds: 0, error: "Download interrupted" },
+      ],
+      failures: [{ index: 2, error: "Download interrupted" }],
+    }];
+    await remount();
+    await connect();
+    const retryButton = container.querySelector('button[aria-label="Retry item Failed sibling"]');
+    expect(retryButton).toBeTruthy();
+    expect(container.querySelector('button[aria-label="Retry item Completed sibling"]')).toBeFalsy();
+    await click(retryButton);
+    const retryRequest = requests.find(item => item.path === "/api/jobs/partial-playlist/retry-item" && item.method === "POST");
+    expect(JSON.parse(retryRequest.body)).toEqual({ index: 2 });
+    expect(container.textContent).toContain('Retrying only "Failed sibling"');
+    expect(container.querySelector('button[aria-label="Retry item Failed sibling"]')).toBeFalsy();
+    expect(rows[0].items[0].fileId).toBe("file-1");
   });
 
   test("pauses a running job through the backend", async () => {
