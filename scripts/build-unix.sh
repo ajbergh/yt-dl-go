@@ -7,6 +7,14 @@ target_os="${TARGET_OS:-$(go env GOOS)}"
 target_arch="${TARGET_ARCH:-$(go env GOARCH)}"
 host_os="$(go env GOOS)"
 host_arch="$(go env GOARCH)"
+version="${VERSION:-dev}"
+commit="${COMMIT:-unknown}"
+build_date="${BUILD_DATE:-unknown}"
+
+if [[ ! "$version" =~ ^[A-Za-z0-9._+-]+$ || ! "$commit" =~ ^[A-Za-z0-9._-]+$ || ! "$build_date" =~ ^[A-Za-z0-9:._+-]+$ ]]; then
+  echo "VERSION, COMMIT, and BUILD_DATE must contain only release-metadata-safe characters." >&2
+  exit 1
+fi
 
 case "$target_os" in
   linux|darwin) ;;
@@ -74,7 +82,7 @@ echo "Building ${target_os}/${target_arch} binary..."
   CGO_ENABLED=0 GOOS="$target_os" GOARCH="$target_arch" go build \
     -buildvcs=false \
     -trimpath \
-    -ldflags="-s -w" \
+    -ldflags="-s -w -X main.buildVersion=$version -X main.buildCommit=$commit -X main.buildDate=$build_date" \
     -o "$output" \
     .
 )
