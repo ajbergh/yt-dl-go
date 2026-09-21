@@ -25,7 +25,7 @@ const job = {
 };
 const inspection = {
   url: "https://www.youtube.com/playlist?list=PL_example", kind: "playlist",
-  title: "Test playlist", author: "Test channel", itemCount: 2,
+  title: "Test playlist", author: "Test channel", itemCount: 2, audioOnlyAvailable: true,
   items: [{ id: "abcdefghijk", title: "First video" }],
 };
 
@@ -38,7 +38,7 @@ beforeEach(async () => {
   globalThis.fetch = async (url, init = {}) => {
     const path = new URL(url).pathname;
     requests.push({ url: String(url), path, ...init });
-    if (path === "/api/health") return Response.json({ ready: missing.length === 0, missing, engine: healthEngine, capabilities: { combinedStreamsOnly: false, adaptiveStreamsSupported: true, externalBinariesRequired: false } });
+    if (path === "/api/health") return Response.json({ ready: missing.length === 0, missing, engine: healthEngine, capabilities: { combinedStreamsOnly: false, adaptiveStreamsSupported: true, externalBinariesRequired: false, mp3AudioSupported: true } });
     if (path === "/api/settings" && init.method === "PUT") return Response.json({ settings: JSON.parse(init.body) });
     if (path === "/api/folders/select" && init.method === "POST") return Response.json({ path: "C:\\Media\\YouTube" });
     if (path === "/api/settings") return Response.json({ settings: { defaultQuality: "best", maxConcurrentDownloads: 3, downloadLocation: "C:\\Downloads\\YouTube_Vault", namingPattern: "{channel} - {title} [{resolution}]", subfolderSorting: "channel", defaultCategory: "General", userCategories: ["General", "Music"], storageMode: "managed-published" } });
@@ -151,7 +151,7 @@ describe("Downloader UI and Go API integration", () => {
     await click(container.querySelector('input[type="checkbox"]'));
     await click(button("Add 1 to queue"));
     const create = requests.find(item => item.path === "/api/jobs" && item.method === "POST");
-    expect(JSON.parse(create.body)).toEqual({ url: inspection.url, quality: "best", mediaType: "video", audioBitrate: "192k", category: "Music", rightsConfirmed: true });
+    expect(JSON.parse(create.body)).toEqual({ url: inspection.url, quality: "best", mediaType: "video", category: "Music", rightsConfirmed: true });
     expect(container.textContent).toContain("Every exposed video will appear as an individual queue item");
   });
   test("applies batch inspection settings without removing per-item controls", async () => {
@@ -176,6 +176,22 @@ describe("Downloader UI and Go API integration", () => {
     expect(categories[0].value).toBe("General");
     expect(categories[1].value).toBe("Music");
   });
+  test("queues original M4A audio without an MP3 bitrate", async () => {
+    await connect();
+    await setInput(container.querySelector("#video-url"), "https://www.youtube.com/watch?v=abcdefghijk&list=PL_example&index=4");
+    await click(button("Inspect qualities"));
+    await setSelect(container.querySelector('select[aria-label^="Media type for"]'), "audio");
+    await setSelect(container.querySelector('select[aria-label^="Audio format for"]'), "m4a");
+    expect(container.querySelector('select[aria-label^="MP3 bitrate for"]')).toBeFalsy();
+    await click(container.querySelector('input[type="checkbox"]'));
+    await click(button("Add 1 to queue"));
+    const creates = requests.filter(item => item.path === "/api/jobs" && item.method === "POST");
+    const body = JSON.parse(creates.at(-1).body);
+    expect(body.audioFormat).toBe("m4a");
+    expect(body.audioBitrate).toBeUndefined();
+    expect(body.mediaType).toBe("audio");
+  });
+
   test("persists only a supported preference through the service API", async () => {
     await click(button("Settings"));
     const quality = container.querySelector('select[aria-label="Default maximum video quality"]');
