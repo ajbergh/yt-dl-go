@@ -30,8 +30,10 @@ type mediaFile struct {
 	Title              string `json:"title,omitempty"`
 	Author             string `json:"author,omitempty"`
 	DurationSeconds    int64  `json:"durationSeconds,omitempty"`
-	ThumbnailURL       string `json:"thumbnailUrl,omitempty"`
-	PublishDate        string `json:"publishDate,omitempty"`
+	ThumbnailURL            string `json:"thumbnailUrl,omitempty"`
+	ThumbnailLocalAvailable bool   `json:"thumbnailLocalAvailable,omitempty"`
+	ThumbnailMimeType       string `json:"thumbnailMimeType,omitempty"`
+	PublishDate             string `json:"publishDate,omitempty"`
 	Category           string `json:"category,omitempty"`
 	MediaType          string `json:"mediaType,omitempty"`
 	OutputName         string `json:"outputName,omitempty"`
@@ -132,6 +134,7 @@ type server struct {
 	browserFactory  browserProviderFactory
 	filesystemOpener filesystemOpener
 	folderSelector   folderSelector
+	thumbnailFetcher func(context.Context, string, string) (string, error)
 	store            *jobStore
 }
 
