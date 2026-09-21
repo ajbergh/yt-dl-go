@@ -865,6 +865,73 @@ func TestTrackedFilesystemActions(t *testing.T) {
 	}
 }
 
+type activePauseTestStream struct {
+	ctx       context.Context
+	remaining int
+	started   chan<- struct{}
+}
+
+func (r *activePauseTestStream) Read(p []byte) (int, error) {
+	if r.remaining <= 0 {
+		return 0, io.EOF
+	}
+	select {
+	case r.started <- struct{}{}:
+	default:
+	}
+	select {
+	case <-r.ctx.Done():
+		return 0, r.ctx.Err()
+	case <-time.After(12 * time.Millisecond):
+	}
+	n := min(len(p), 8192, r.remaining)
+	copy(p[:n], bytes.Repeat([]byte{0x2a}, n))
+	r.remaining -= n
+	return n, nil
+}
+
+func (r *activePauseTestStream) Close() error { return nil }
+
+func TestPauseDuringActiveStreamRead(t *testing.T) {
+	const size = 2 << 20
+	fake := fixtureClient(1)
+	started := make(chan struct{}, 1)
+	var streamCalls atomic.Int32
+	fake.videoFn = func(_ context.Context, id string) (*youtube.Video, error) {
+		video := fixtureVideo(id)
+		video.Formats[0].ContentLength = size
+		return video, nil
+	}
+	fake.streamFn = func(ctx context.Context, _ *youtube.Video, _ *youtube.Format) (io.ReadCloser, int64, error) {
+		if streamCalls.Add(1) == 1 {
+			return &activePauseTestStream{ctx: ctx, remaining: size, started: started}, size, nil
+		}
+		return io.NopCloser(bytes.NewReader(bytes.Repeat([]byte{0x2a}, size))), size, nil
+	}
+
+	s := testServer(t, fake, nil)
+	job := createJob(t, s, testVideo)
+	select {
+	case <-started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("active stream did not begin reading")
+	}
+	if response := request(s, "POST", "/api/jobs/"+job.ID+"/pause", "", nil); response.Code != 200 {
+		t.Fatalf("pause active stream: %d %s", response.Code, response.Body.String())
+	}
+	paused := waitJob(t, s, job.ID, func(value Job) bool { return value.Status == "paused" })
+	if len(paused.Failures) != 0 {
+		t.Fatalf("active-stream pause was recorded as failure: %+v", paused.Failures)
+	}
+	if response := request(s, "POST", "/api/jobs/"+job.ID+"/resume", "", nil); response.Code != 200 {
+		t.Fatalf("resume active stream: %d %s", response.Code, response.Body.String())
+	}
+	completed := waitTerminal(t, s, job.ID)
+	if completed.Status != "completed" || streamCalls.Load() < 2 {
+		t.Fatalf("active-stream resume did not complete: status=%s calls=%d", completed.Status, streamCalls.Load())
+	}
+}
+
 func TestPauseAndResumeJob(t *testing.T) {
 	fake := fixtureClient(1)
 	var streamCalls atomic.Int32
