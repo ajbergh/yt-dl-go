@@ -1,0 +1,94 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+      - "roadmap/**"
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    name: Validate source and tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.26.x"
+          cache-dependency-path: src/server/go.sum
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Type-check frontend
+        run: npm run typecheck
+
+      - name: Build embedded frontend
+        run: npm run build -- --outDir src/server/dist
+
+      - name: Run frontend integration tests
+        run: bun test src/downloader.test.mjs src/ui.test.mjs
+
+      - name: Run Go tests
+        working-directory: src/server
+        run: go test ./...
+
+      - name: Run Go vet
+        working-directory: src/server
+        run: go vet ./...
+
+  windows-build:
+    name: Windows production build
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.26.x"
+          cache-dependency-path: src/server/go.sum
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Build and test Windows executable
+        shell: pwsh
+        run: ./scripts/build-windows.ps1 -OutputPath dist/ci/youtube-downloader.exe
+
+      - name: Upload Windows executable
+        uses: actions/upload-artifact@v4
+        with:
+          name: youtube-downloader-windows
+          path: dist/ci/youtube-downloader.exe
+          if-no-files-found: error
+          retention-days: 7
