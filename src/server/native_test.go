@@ -56,11 +56,11 @@ func TestFormatSelection(t *testing.T) {
 	high := fixtureVideo("dQw4w9WgXcQ")
 	var h264, aac, vp9, av1, opus youtube.Format
 	for target, raw := range map[*youtube.Format]string{
-		&h264: `{"itag":299,"mimeType":"video/mp4; codecs=\"avc1.64002a\"","height":1080,"width":1920,"fps":60,"bitrate":5000000,"contentLength":6000,"audioChannels":0,"initRange":{"start":"0","end":"1"},"indexRange":{"start":"0","end":"1"}}`,
-		&aac:  `{"itag":140,"mimeType":"audio/mp4; codecs=\"mp4a.40.2\"","audioChannels":2,"bitrate":128000,"contentLength":1000,"initRange":{"start":"0","end":"1"},"indexRange":{"start":"0","end":"1"}}`,
-		&vp9:  `{"itag":308,"mimeType":"video/webm; codecs=\"vp09.00.51.08\"","height":1440,"width":2560,"fps":60,"bitrate":9000000,"contentLength":9000,"audioChannels":0,"initRange":{"start":"0","end":"1"},"indexRange":{"start":"0","end":"1"}}`,
-		&av1:  `{"itag":401,"mimeType":"video/webm; codecs=\"av01.0.12M.08\"","height":2160,"width":3840,"fps":60,"bitrate":12000000,"contentLength":12000,"audioChannels":0,"initRange":{"start":"0","end":"1"},"indexRange":{"start":"0","end":"1"}}`,
-		&opus: `{"itag":251,"mimeType":"audio/webm; codecs=\"opus\"","audioChannels":2,"bitrate":160000,"contentLength":1200,"initRange":{"start":"0","end":"1"},"indexRange":{"start":"0","end":"1"}}`,
+		&h264: `{"itag":299,"mimeType":"video/mp4; codecs=\"avc1.64002a\"","height":1080,"width":1920,"fps":60,"bitrate":5000000,"contentLength":"6000","audioChannels":0,"initRange":{"start":"0","end":"1"},"indexRange":{"start":"0","end":"1"}}`,
+		&aac:  `{"itag":140,"mimeType":"audio/mp4; codecs=\"mp4a.40.2\"","audioChannels":2,"bitrate":128000,"contentLength":"1000","initRange":{"start":"0","end":"1"},"indexRange":{"start":"0","end":"1"}}`,
+		&vp9:  `{"itag":308,"mimeType":"video/webm; codecs=\"vp09.00.51.08\"","height":1440,"width":2560,"fps":60,"bitrate":9000000,"contentLength":"9000","audioChannels":0,"initRange":{"start":"0","end":"1"},"indexRange":{"start":"0","end":"1"}}`,
+		&av1:  `{"itag":401,"mimeType":"video/webm; codecs=\"av01.0.12M.08\"","height":2160,"width":3840,"fps":60,"bitrate":12000000,"contentLength":"12000","audioChannels":0,"initRange":{"start":"0","end":"1"},"indexRange":{"start":"0","end":"1"}}`,
+		&opus: `{"itag":251,"mimeType":"audio/webm; codecs=\"opus\"","audioChannels":2,"bitrate":160000,"contentLength":"1200","initRange":{"start":"0","end":"1"},"indexRange":{"start":"0","end":"1"}}`,
 	} {
 		if err := json.Unmarshal([]byte(raw), target); err != nil {
 			t.Fatal(err)
