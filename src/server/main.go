@@ -147,6 +147,7 @@ func newServer(c config) (*server, error) {
 		ctx: ctx, stop: cancel,
 		store:     store,
 		bandwidth: newBandwidthLimiter(settings.BandwidthLimitBytesPerSec),
+		events:    newEventBroker(),
 		engine:    newNativeClient(c.timeout),
 		browserFactory: func(ctx context.Context) (browserMediaProvider, error) {
 			return newChromeBrowserProvider(ctx, c.browserPath)
