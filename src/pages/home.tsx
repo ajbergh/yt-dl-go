@@ -15,7 +15,7 @@ import {
 } from "../lib/downloader";
 
 type Tab = "queue" | "library" | "settings";
-type Draft = Inspection & { selectedQuality: Quality; mediaType: "video" | "audio"; audioBitrate: string; category: string };
+type Draft = Inspection & { selectedQuality: Quality; mediaType: "video" | "audio"; audioFormat: "mp3" | "m4a"; audioBitrate: string; category: string };
 type QueueFilter = "all" | "active" | "queued" | "completed";
 type LibraryFilter = "all" | "video" | "audio";
 type QueueRow = { job: DownloadJob; item: QueueItem };
@@ -333,7 +333,7 @@ export function HomePage() {
         const selectedQuality = qualities.some(option => option.value === settings.defaultQuality)
           ? settings.defaultQuality
           : qualities[0]?.value ?? settings.defaultQuality;
-        return { ...result, selectedQuality, mediaType: "video" as const, audioBitrate: "192k", category: settings.defaultCategory || settings.userCategories[0] || "General" };
+        return { ...result, selectedQuality, mediaType: "video" as const, audioFormat: "mp3" as const, audioBitrate: "192k", category: settings.defaultCategory || settings.userCategories[0] || "General" };
       }));
       setDrafts(results);
       if (results.length === 1 && results[0].kind === "video") setNotice("Video metadata and supported qualities loaded from YouTube.");
@@ -342,9 +342,10 @@ export function HomePage() {
   }
 
   function applyMediaTypeToAll(mediaType: Draft["mediaType"]) {
-    setDrafts(previous => previous.map(item =>
-      mediaType === "audio" && (!mp3Supported || !item.audioOnlyAvailable) ? item : { ...item, mediaType },
-    ));
+    setDrafts(previous => previous.map(item => {
+      if (mediaType === "audio" && !item.audioOnlyAvailable) return item;
+      return { ...item, mediaType, ...(mediaType === "audio" && !mp3Supported && item.audioFormat === "mp3" ? { audioFormat: "m4a" as const } : {}) };
+    }));
   }
 
   function applyQualityToAll(quality: Quality) {
@@ -355,9 +356,18 @@ export function HomePage() {
     }));
   }
 
-  function applyAudioBitrateToAll(audioBitrate: string) {
-    setDrafts(previous => previous.map(item => item.mediaType === "audio" ? { ...item, audioBitrate } : item));
+  function applyAudioFormatToAll(audioFormat: Draft["audioFormat"]) {
+    setDrafts(previous => previous.map(item =>
+      item.mediaType === "audio" && item.audioOnlyAvailable && (audioFormat !== "mp3" || mp3Supported)
+        ? { ...item, audioFormat }
+        : item,
+    ));
   }
+
+  function applyAudioBitrateToAll(audioBitrate: string) {
+    setDrafts(previous => previous.map(item => item.mediaType === "audio" && item.audioFormat === "mp3" ? { ...item, audioBitrate } : item));
+  }
+
 
   function applyCategoryToAll(category: string) {
     setDrafts(previous => previous.map(item => ({ ...item, category })));
@@ -376,7 +386,7 @@ export function HomePage() {
       for (const draft of drafts) {
         const job = await api<DownloadJob>(connection, "/api/jobs", {
           method: "POST",
-          body: JSON.stringify({ url: draft.url, quality: draft.selectedQuality, mediaType: draft.mediaType, audioBitrate: draft.audioBitrate, category: draft.category, rightsConfirmed: true, ...(draft.kind === "playlist" && draft.entries?.length ? { items: draft.entries } : {}) }),
+          body: JSON.stringify({ url: draft.url, quality: draft.selectedQuality, mediaType: draft.mediaType, ...(draft.mediaType === "audio" ? { audioFormat: draft.audioFormat } : {}), ...(draft.mediaType === "audio" && draft.audioFormat === "mp3" ? { audioBitrate: draft.audioBitrate } : {}), category: draft.category, rightsConfirmed: true, ...(draft.kind === "playlist" && draft.entries?.length ? { items: draft.entries } : {}) }),
           signal: AbortSignal.timeout(15000),
         });
         added.push(job);
@@ -648,12 +658,15 @@ export function HomePage() {
                     </div>
                     {drafts.length > 1 && <div className="rounded-xl border border-neutral-800 bg-neutral-900/70 p-3">
                       <div className="mb-2 flex items-center justify-between gap-2"><div><p className="text-[11px] font-bold text-neutral-200">Apply to all inspected items</p><p className="mt-0.5 text-[10px] text-neutral-500">Batch values update eligible items now; each card can still be overridden afterward.</p></div><Layers className="size-4 text-rose-400" aria-hidden="true" /></div>
-                      <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+                      <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
                         <select aria-label="Apply media type to all" defaultValue="" onChange={event => { if (event.target.value) applyMediaTypeToAll(event.target.value as Draft["mediaType"]); event.currentTarget.value = ""; }} className={`${field} py-2 text-xs`}>
-                          <option value="" disabled>Media type…</option><option value="video">All video</option><option value="audio" disabled={!mp3Supported}>All eligible MP3 audio</option>
+                          <option value="" disabled>Media type…</option><option value="video">All video</option><option value="audio">All eligible audio</option>
                         </select>
                         <select aria-label="Apply quality to all" defaultValue="" onChange={event => { if (event.target.value) applyQualityToAll(event.target.value as Quality); event.currentTarget.value = ""; }} className={`${field} py-2 text-xs`}>
                           <option value="" disabled>Video quality…</option>{(Object.entries(qualityLabels) as [Quality, string][]).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+                        </select>
+                        <select aria-label="Apply audio format to all" defaultValue="" onChange={event => { if (event.target.value) applyAudioFormatToAll(event.target.value as Draft["audioFormat"]); event.currentTarget.value = ""; }} className={`${field} py-2 text-xs`}>
+                          <option value="" disabled>Audio format…</option><option value="mp3" disabled={!mp3Supported}>MP3</option><option value="m4a">M4A · original AAC</option>
                         </select>
                         <select aria-label="Apply MP3 bitrate to all" defaultValue="" onChange={event => { if (event.target.value) applyAudioBitrateToAll(event.target.value); event.currentTarget.value = ""; }} className={`${field} py-2 text-xs`}>
                           <option value="" disabled>MP3 bitrate…</option>{["128k", "192k", "256k", "320k"].map(value => <option key={value} value={value}>{value}</option>)}
@@ -674,16 +687,20 @@ export function HomePage() {
                       </div>
                       <div className="space-y-2">
                         <label className="block text-[11px] font-medium text-neutral-400">Download as
-                          <select aria-label={`Media type for ${draft.title || `item ${index + 1}`}`} value={draft.mediaType} onChange={event => setDrafts(previous => previous.map((item, itemIndex) => itemIndex === index ? { ...item, mediaType: event.target.value as Draft["mediaType"] } : item))} className={`${field} mt-1.5 py-2 text-xs`}>
+                          <select aria-label={`Media type for ${draft.title || `item ${index + 1}`}`} value={draft.mediaType} onChange={event => setDrafts(previous => previous.map((item, itemIndex) => itemIndex === index ? { ...item, mediaType: event.target.value as Draft["mediaType"], ...(event.target.value === "audio" && !mp3Supported ? { audioFormat: "m4a" as const } : {}) } : item))} className={`${field} mt-1.5 py-2 text-xs`}>
                             <option value="video">Video</option>
-                            <option value="audio" disabled={!mp3Supported || !draft.audioOnlyAvailable}>Audio only · MP3{!mp3Supported ? " (unsupported)" : !draft.audioOnlyAvailable ? " (unavailable)" : ""}</option>
+                            <option value="audio" disabled={!draft.audioOnlyAvailable}>Audio only{!draft.audioOnlyAvailable ? " (unavailable)" : ""}</option>
                           </select>
                         </label>
-                        {draft.mediaType === "audio" ? <label className="block text-[11px] font-medium text-neutral-400">MP3 bitrate
+                        {draft.mediaType === "audio" ? <><label className="block text-[11px] font-medium text-neutral-400">Audio format
+                          <select aria-label={`Audio format for ${draft.title || `item ${index + 1}`}`} value={draft.audioFormat} onChange={event => setDrafts(previous => previous.map((item, itemIndex) => itemIndex === index ? { ...item, audioFormat: event.target.value as Draft["audioFormat"] } : item))} className={`${field} mt-1.5 py-2 text-xs`}>
+                            <option value="mp3" disabled={!mp3Supported}>MP3 · tagged</option><option value="m4a">M4A · original AAC</option>
+                          </select>
+                        </label>{draft.audioFormat === "mp3" && <label className="block text-[11px] font-medium text-neutral-400">MP3 bitrate
                           <select aria-label={`MP3 bitrate for ${draft.title || `item ${index + 1}`}`} value={draft.audioBitrate} onChange={event => setDrafts(previous => previous.map((item, itemIndex) => itemIndex === index ? { ...item, audioBitrate: event.target.value } : item))} className={`${field} mt-1.5 py-2 text-xs`}>
                             {["128k", "192k", "256k", "320k"].map(value => <option key={value} value={value}>{value}</option>)}
                           </select>
-                        </label> : <label className="block text-[11px] font-medium text-neutral-400">Maximum quality
+                        </label>}</> : <label className="block text-[11px] font-medium text-neutral-400">Maximum quality
                           <select aria-label={`Quality for ${draft.title || `item ${index + 1}`}`} value={draft.selectedQuality} onChange={event => setDrafts(previous => previous.map((item, itemIndex) => itemIndex === index ? { ...item, selectedQuality: event.target.value as Quality } : item))} className={`${field} mt-1.5 py-2 text-xs`}>
                             {(draft.availableQualities ?? (draft.kind === "playlist"
                               ? (Object.entries(qualityLabels) as [Quality, string][]).map(([value, label]) => ({ value, label, height: 0 }))
@@ -742,13 +759,13 @@ export function HomePage() {
                 <div className="mx-auto mb-3 grid size-12 place-items-center rounded-2xl bg-neutral-800 text-neutral-500"><Layers className="size-5" aria-hidden="true" /></div>
                 <h3 className="text-sm font-semibold text-neutral-200">{jobs.length === 0 ? "No downloads yet" : visibleQueueRows.length === 0 ? "Queue is clear" : "No videos match this filter"}</h3>
                 <p className="mx-auto mt-1 max-w-md text-xs leading-relaxed text-neutral-500">{visibleQueueRows.length === 0 && jobs.length > 0 ? "Cleared downloads remain available in your library. Inspect a YouTube URL above to add another download." : serviceReady ? "Inspect a YouTube URL above to add a real download job. Progress and status are reported by the Go worker." : "The app will load your SQLite-backed history and enable downloads as soon as its built-in Go service is ready."}</p>
-                {jobs.length === 0 && <p className="mt-2 text-[10px] text-neutral-600">Video downloads and AAC-to-MP3 audio conversion use the native Go service.</p>}
+                {jobs.length === 0 && <p className="mt-2 text-[10px] text-neutral-600">Video downloads, tagged MP3 conversion, and original AAC/M4A audio use the native Go service.</p>}
               </div> : <div className="space-y-2.5">
                 {filteredQueue.map(({ job, item }) => {
                   const itemActive = item.status === "downloading" || item.status === "processing";
                   const batchControls = job.kind === "playlist" && item.index === 1;
                   const itemError = item.error || ((job.kind === "video" || !job.items?.length) ? job.error : "");
-                  const label = job.mediaType === "audio" ? `MP3 ${job.audioBitrate ?? "192k"}` : qualityLabels[job.quality];
+                  const label = job.mediaType === "audio" ? (job.audioFormat === "m4a" ? "M4A · original AAC" : `MP3 ${job.audioBitrate ?? "192k"}`) : qualityLabels[job.quality];
                   return <article key={`${job.id}:${item.index}`} className={`rounded-2xl border bg-neutral-900/80 p-4 sm:p-5 ${itemActive ? "border-rose-800/70" : "border-neutral-800"}`}>
                     <div className="flex flex-wrap items-center gap-4">
                       {item.thumbnailUrl ? <img src={item.thumbnailUrl} alt="" referrerPolicy="no-referrer" className="hidden aspect-video w-40 shrink-0 rounded-lg bg-neutral-950 object-cover sm:block" />
@@ -801,7 +818,7 @@ export function HomePage() {
             : <div className={`grid gap-4 ${libraryLayout === "grid" ? "md:grid-cols-2" : "grid-cols-1"}`}>
               {visibleLibraryJobs.map(job => <article key={job.id} className={`${panel} overflow-hidden`}>
                 <div className="flex items-start justify-between gap-3 border-b border-neutral-800 p-4">
-                  <div className="min-w-0"><div className="mb-1.5 flex flex-wrap gap-2"><span className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold ${statusClass(job.status)}`}>{statusLabels[job.status]}</span><span className="text-[10px] text-neutral-500">{job.kind} · {qualityLabels[job.quality]}{job.category ? ` · ${job.category}` : ""}</span></div><h3 className="truncate text-sm font-bold text-white">{job.title}</h3><p className="mt-1 text-[10px] text-neutral-500">{dateLabel(job.createdAt)} · {job.files.length} file{job.files.length === 1 ? "" : "s"}</p></div>
+                  <div className="min-w-0"><div className="mb-1.5 flex flex-wrap gap-2"><span className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold ${statusClass(job.status)}`}>{statusLabels[job.status]}</span><span className="text-[10px] text-neutral-500">{job.kind} · {job.mediaType === "audio" ? (job.audioFormat === "m4a" ? "M4A original" : `MP3 ${job.audioBitrate ?? "192k"}`) : qualityLabels[job.quality]}{job.category ? ` · ${job.category}` : ""}</span></div><h3 className="truncate text-sm font-bold text-white">{job.title}</h3><p className="mt-1 text-[10px] text-neutral-500">{dateLabel(job.createdAt)} · {job.files.length} file{job.files.length === 1 ? "" : "s"}</p></div>
                   <button type="button" className={button} disabled={busyAction === job.id} onClick={() => void jobAction(job, "remove")} title="Remove from Library while preserving published output"><Trash2 className="size-3.5" aria-hidden="true" /><span className="hidden sm:inline">Remove</span></button>
                 </div>
                 <div className="space-y-2 p-3">
