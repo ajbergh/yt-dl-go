@@ -11,6 +11,7 @@ const fallbackCategories = ["Tech", "Science", "Coding", "Music", "Education", "
 
 const defaultSettings: AppSettings = {
   defaultQuality: "best",
+  defaultVideoStrategy: "best",
   maxConcurrentDownloads: 3,
   bandwidthLimitBytesPerSec: 0,
   notificationsEnabled: false,
@@ -26,6 +27,7 @@ function hydratedSettings(settings: AppSettings, previous: AppSettings = default
   return {
     ...previous,
     ...settings,
+    defaultVideoStrategy: settings.defaultVideoStrategy || "best",
     maxConcurrentDownloads: settings.maxConcurrentDownloads || 3,
     bandwidthLimitBytesPerSec: settings.bandwidthLimitBytesPerSec ?? 0,
     notificationsEnabled: settings.notificationsEnabled ?? false,
