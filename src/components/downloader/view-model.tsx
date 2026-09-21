@@ -5,12 +5,13 @@ import { Activity, Film, GripVertical } from "lucide-react";
 import {
   apiBlob, formatBytes,
   type DownloadFile, type DownloadJob, type Inspection, type QueueItem, type Quality,
-  type ServiceConnection,
+  type ServiceConnection, type VideoStrategy,
 } from "../../lib/downloader";
 
 export type Tab = "queue" | "library" | "settings";
 export type Draft = Inspection & {
   selectedQuality: Quality;
+  selectedVideoStrategy: VideoStrategy;
   mediaType: "video" | "audio";
   audioFormat: "mp3" | "m4a";
   audioBitrate: string;
@@ -38,6 +39,13 @@ export const qualityLabels: Record<Quality, string> = {
   "1080": "Up to 1080p",
   "720": "Up to 720p",
   "480": "Up to 480p",
+};
+
+export const videoStrategyLabels: Record<VideoStrategy, string> = {
+  best: "Best quality · automatic",
+  compatibility: "Compatibility MP4 · H.264/AAC",
+  vp9: "Prefer VP9 · WebM",
+  av1: "Prefer AV1 · WebM",
 };
 
 export const statusLabels: Record<DownloadJob["status"], string> = {
