@@ -145,8 +145,9 @@ func newServer(c config) (*server, error) {
 		cfg: c, settings: settings, jobs: map[string]*jobState{}, tickets: map[string]ticket{},
 		queue: make(chan string, c.maxJobs), slots: make(chan struct{}, 4), scheduleChanged: make(chan struct{}),
 		ctx: ctx, stop: cancel,
-		store:  store,
-		engine: newNativeClient(c.timeout),
+		store:     store,
+		bandwidth: newBandwidthLimiter(settings.BandwidthLimitBytesPerSec),
+		engine:    newNativeClient(c.timeout),
 		browserFactory: func(ctx context.Context) (browserMediaProvider, error) {
 			return newChromeBrowserProvider(ctx, c.browserPath)
 		},
