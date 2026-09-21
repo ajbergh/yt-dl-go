@@ -791,7 +791,11 @@ func (s *server) processItem(ctx context.Context, j *jobState, entry *youtube.Pl
 	}()
 	var file mediaFile
 	if j.MediaType == "audio" {
-		file, err = s.transferAudio(ctx, j, engine, video, format, extension, current, budget)
+		if j.AudioFormat == "m4a" {
+			file, err = s.transferOriginalAudio(ctx, j, engine, video, format, current, budget)
+		} else {
+			file, err = s.transferAudio(ctx, j, engine, video, format, extension, current, budget)
+		}
 	} else {
 		file, err = s.transfer(ctx, j, engine, video, selection, current, budget)
 	}
@@ -1008,6 +1012,106 @@ func (s *server) transferAudio(ctx context.Context, j *jobState, engine nativeCl
 	}
 	result.Size = outputSize
 	s.updateProgress(j, index, sourceSize+outputSize, sourceSize+outputSize)
+	return result, nil
+}
+
+func (s *server) transferOriginalAudio(ctx context.Context, j *jobState, engine nativeClient, video *youtube.Video, format *youtube.Format, index int, budget int64) (result mediaFile, err error) {
+	if budget <= 0 || (format.ContentLength > 0 && format.ContentLength > budget) {
+		return result, errLimit
+	}
+	result = mediaFile{ID: randomID(16), Name: fmt.Sprintf("%06d-%s.m4a", index, video.ID), MimeType: "audio/mp4", MediaType: "audio"}
+	applyVideoMetadata(&result, video)
+	result.Category = j.Category
+	result.ManagedAvailable = true
+	s.captureThumbnail(ctx, j, &result)
+	defer func() {
+		if err != nil && result.ThumbnailLocalAvailable {
+			if path, pathErr := thumbnailPath(j, result); pathErr == nil {
+				_ = os.Remove(path)
+			}
+			result.ThumbnailLocalAvailable = false
+		}
+	}()
+
+	finalPath := filepath.Join(j.dir, result.Name)
+	if existing, openErr := openFinal(j.dir, result.Name); openErr == nil {
+		info, statErr := existing.Stat()
+		_ = existing.Close()
+		if statErr == nil {
+			result.Size = info.Size()
+			return result, nil
+		}
+	}
+	part := finalPath + ".part"
+	_ = os.Remove(part)
+	stream, reported, streamErr := engine.GetStreamContext(ctx, video, format)
+	if stream == nil {
+		if ctx.Err() != nil {
+			return result, ctx.Err()
+		}
+		return result, errRead
+	}
+	stopClose := context.AfterFunc(ctx, func() { _ = stream.Close() })
+	defer func() { stopClose(); _ = stream.Close() }()
+	if ctx.Err() != nil {
+		return result, ctx.Err()
+	}
+	if streamErr != nil {
+		return result, errRead
+	}
+	expected := format.ContentLength
+	if reported > 0 {
+		if expected > 0 && reported != expected {
+			return result, errLength
+		}
+		expected = reported
+	}
+	if expected > budget {
+		return result, errLimit
+	}
+	if expected <= 0 {
+		s.mu.Lock()
+		if !strings.Contains(j.Note, unknownLengthNote) {
+			j.Note += " " + unknownLengthNote
+		}
+		s.mu.Unlock()
+	}
+	output, openErr := os.OpenFile(part, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+	if openErr != nil {
+		return result, errStorage
+	}
+	finalized := false
+	defer func() {
+		_ = output.Close()
+		if !finalized && !s.keepPartial(j) {
+			if removeErr := os.Remove(part); removeErr != nil && !errors.Is(removeErr, os.ErrNotExist) && err == nil {
+				err = errStorage
+			}
+		}
+	}()
+	result.Size, err = copyStream(ctx, output, stream, budget, expected, func(written int64) {
+		s.updateProgress(j, index, written, expected)
+	})
+	if err != nil {
+		return result, err
+	}
+	if ctx.Err() != nil {
+		return result, ctx.Err()
+	}
+	if output.Sync() != nil || output.Close() != nil {
+		return result, errStorage
+	}
+	if result.Size <= 0 || (expected > 0 && result.Size != expected) {
+		return result, errLength
+	}
+	if _, statErr := os.Lstat(finalPath); !errors.Is(statErr, os.ErrNotExist) {
+		return result, errStorage
+	}
+	if os.Rename(part, finalPath) != nil {
+		return result, errStorage
+	}
+	finalized = true
+	s.updateProgress(j, index, result.Size, result.Size)
 	return result, nil
 }
 
