@@ -140,7 +140,36 @@ func openJobStore(root string) (*jobStore, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("migrate state database: %w", err)
 	}
+	if err := store.migrateV8(); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("migrate state database: %w", err)
+	}
 	return store, nil
+}
+
+func (s *jobStore) migrateV8() error {
+	var version int
+	if err := s.db.QueryRow(`SELECT COALESCE(MAX(version), 0) FROM schema_migrations`).Scan(&version); err != nil {
+		return err
+	}
+	if version >= 8 {
+		return nil
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	for _, statement := range []string{
+		`ALTER TABLE job_files ADD COLUMN thumbnail_mime_type TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE job_files ADD COLUMN thumbnail_local_available INTEGER NOT NULL DEFAULT 0`,
+		`INSERT INTO schema_migrations(version) VALUES (8)`,
+	} {
+		if _, err := tx.Exec(statement); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 func (s *jobStore) migrateV7() error {
@@ -436,16 +465,19 @@ func (s *jobStore) saveJob(j *jobState) error {
 				break
 			}
 		}
-		managedAvailable, publishedAvailable := 0, 0
+		managedAvailable, publishedAvailable, thumbnailLocalAvailable := 0, 0, 0
 		if file.ManagedAvailable {
 			managedAvailable = 1
 		}
 		if file.PublishedAvailable {
 			publishedAvailable = 1
 		}
-		if _, err = tx.Exec(`INSERT INTO job_files(job_id,item_index,file_id,name,size,height,mime_type,title,author,duration_seconds,thumbnail_url,publish_date,category,output_name,output_path,output_relative_path,managed_available,published_available) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		if file.ThumbnailLocalAvailable {
+			thumbnailLocalAvailable = 1
+		}
+		if _, err = tx.Exec(`INSERT INTO job_files(job_id,item_index,file_id,name,size,height,mime_type,title,author,duration_seconds,thumbnail_url,thumbnail_mime_type,thumbnail_local_available,publish_date,category,output_name,output_path,output_relative_path,managed_available,published_available) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 			j.ID, itemIndex, file.ID, file.Name, file.Size, file.Height, file.MimeType, file.Title, file.Author,
-			file.DurationSeconds, file.ThumbnailURL, file.PublishDate, file.Category, file.OutputName, file.OutputPath, file.OutputRelativePath, managedAvailable, publishedAvailable); err != nil {
+			file.DurationSeconds, file.ThumbnailURL, file.ThumbnailMimeType, thumbnailLocalAvailable, file.PublishDate, file.Category, file.OutputName, file.OutputPath, file.OutputRelativePath, managedAvailable, publishedAvailable); err != nil {
 			return err
 		}
 	}
@@ -585,21 +617,22 @@ func (s *jobStore) loadJobs(root string) ([]*storedJob, error) {
 				return nil, err
 			}
 		}
-		files, err := s.db.Query(`SELECT item_index,file_id,name,size,height,mime_type,title,author,duration_seconds,thumbnail_url,publish_date,category,output_name,output_path,output_relative_path,managed_available,published_available FROM job_files WHERE job_id=? ORDER BY item_index`, j.ID)
+		files, err := s.db.Query(`SELECT item_index,file_id,name,size,height,mime_type,title,author,duration_seconds,thumbnail_url,thumbnail_mime_type,thumbnail_local_available,publish_date,category,output_name,output_path,output_relative_path,managed_available,published_available FROM job_files WHERE job_id=? ORDER BY item_index`, j.ID)
 		if err != nil {
 			return nil, err
 		}
 		for files.Next() {
 			var index int
 			var file mediaFile
-			var managedAvailable, publishedAvailable int
+			var managedAvailable, publishedAvailable, thumbnailLocalAvailable int
 			if err := files.Scan(&index, &file.ID, &file.Name, &file.Size, &file.Height, &file.MimeType, &file.Title, &file.Author,
-				&file.DurationSeconds, &file.ThumbnailURL, &file.PublishDate, &file.Category, &file.OutputName, &file.OutputPath, &file.OutputRelativePath, &managedAvailable, &publishedAvailable); err != nil {
+				&file.DurationSeconds, &file.ThumbnailURL, &file.ThumbnailMimeType, &thumbnailLocalAvailable, &file.PublishDate, &file.Category, &file.OutputName, &file.OutputPath, &file.OutputRelativePath, &managedAvailable, &publishedAvailable); err != nil {
 				_ = files.Close()
 				return nil, err
 			}
 			file.ManagedAvailable = managedAvailable != 0
 			file.PublishedAvailable = publishedAvailable != 0
+			file.ThumbnailLocalAvailable = thumbnailLocalAvailable != 0
 			loaded.items[index] = file
 			loaded.job.Files = append(loaded.job.Files, file)
 		}
