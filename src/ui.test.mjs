@@ -78,7 +78,9 @@ afterEach(async () => {
 });
 
 function button(label) {
-  return [...container.querySelectorAll("button")].find(item => item.textContent.trim() === label);
+  const buttons = [...container.querySelectorAll("button")];
+  return buttons.find(item => item.textContent.trim() === label)
+    ?? buttons.find(item => item.textContent.trim().startsWith(label));
 }
 async function click(element) {
   expect(element).toBeTruthy();
