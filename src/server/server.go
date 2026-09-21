@@ -296,7 +296,9 @@ func canonicalURL(raw string) (string, string, error) {
 // ticket-download requests. GET health and ticket downloads are token-exempt;
 // the random ticket itself authorizes a download.
 func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	_ = http.NewResponseController(w).SetWriteDeadline(time.Now().Add(30 * time.Second))
+	if r.URL.Path != "/api/events" {
+		_ = http.NewResponseController(w).SetWriteDeadline(time.Now().Add(30 * time.Second))
+	}
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Referrer-Policy", "no-referrer")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
