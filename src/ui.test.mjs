@@ -79,6 +79,18 @@ async function setInput(element, value) {
     element.dispatchEvent(new testWindow.Event("input", { bubbles: true }));
   });
 }
+async function setTextarea(element, value) {
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(testWindow.HTMLTextAreaElement.prototype, "value").set.call(element, value);
+    element.dispatchEvent(new testWindow.Event("input", { bubbles: true }));
+  });
+}
+async function setSelect(element, value) {
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(testWindow.HTMLSelectElement.prototype, "value").set.call(element, value);
+    element.dispatchEvent(new testWindow.Event("change", { bubbles: true }));
+  });
+}
 async function connect() {
   expect(container.textContent).toContain("Service connected");
 }
@@ -114,15 +126,34 @@ describe("Downloader UI and Go API integration", () => {
     expect(container.textContent).toContain("Test playlist");
     expect(button("Add 1 to queue").disabled).toBe(true);
     const category = container.querySelector('select[aria-label^="Category for"]');
-    await act(async () => {
-      Object.getOwnPropertyDescriptor(testWindow.HTMLSelectElement.prototype, "value").set.call(category, "Music");
-      category.dispatchEvent(new testWindow.Event("change", { bubbles: true }));
-    });
+    await setSelect(category, "Music");
     await click(container.querySelector('input[type="checkbox"]'));
     await click(button("Add 1 to queue"));
     const create = requests.find(item => item.path === "/api/jobs" && item.method === "POST");
     expect(JSON.parse(create.body)).toEqual({ url: inspection.url, quality: "best", mediaType: "video", audioBitrate: "192k", category: "Music", rightsConfirmed: true });
     expect(container.textContent).toContain("Every exposed video will appear as an individual queue item");
+  });
+  test("applies batch inspection settings without removing per-item controls", async () => {
+    await connect();
+    await click(button("Batch URLs"));
+    await setTextarea(container.querySelector("#video-url"), "https://www.youtube.com/watch?v=abcdefghijk\nhttps://www.youtube.com/watch?v=lmnopqrstuv");
+    await click(button("Inspect qualities"));
+    expect(container.querySelector('select[aria-label="Apply media type to all"]')).toBeTruthy();
+    expect(container.querySelector('select[aria-label="Apply MP3 bitrate to all"]')).toBeTruthy();
+
+    await setSelect(container.querySelector('select[aria-label="Apply quality to all"]'), "720");
+    await setSelect(container.querySelector('select[aria-label="Apply category to all"]'), "Music");
+
+    const qualities = [...container.querySelectorAll('select[aria-label^="Quality for"]')];
+    const categories = [...container.querySelectorAll('select[aria-label^="Category for"]')];
+    expect(qualities).toHaveLength(2);
+    expect(categories).toHaveLength(2);
+    expect(qualities.every(item => item.value === "720")).toBe(true);
+    expect(categories.every(item => item.value === "Music")).toBe(true);
+
+    await setSelect(categories[0], "General");
+    expect(categories[0].value).toBe("General");
+    expect(categories[1].value).toBe("Music");
   });
   test("persists only a supported preference through the service API", async () => {
     await click(button("Settings"));
