@@ -659,6 +659,26 @@ export function HomePage() {
     finally { setBusyAction(""); }
   }
 
+  async function retryPlaylistItem(job: DownloadJob, item: QueueItem) {
+    if (!serviceReady || job.kind !== "playlist" || (item.status !== "failed" && item.status !== "cancelled")) return;
+    const key = `${job.id}:retry-item:${item.index}`;
+    setBusyAction(key);
+    setActionError("");
+    try {
+      const updated = await api<DownloadJob>(connection, `/api/jobs/${encodeURIComponent(job.id)}/retry-item`, {
+        method: "POST",
+        body: JSON.stringify({ index: item.index }),
+        signal: AbortSignal.timeout(15000),
+      });
+      setJobs(previous => previous.map(value => value.id === job.id ? updated : value));
+      setNotice(`Retrying only "${item.title}". Successful playlist files are being preserved.`);
+    } catch (error) {
+      setActionError(errorMessage(error));
+    } finally {
+      setBusyAction("");
+    }
+  }
+
   async function previewFile(job: DownloadJob, file: DownloadFile) {
     if (!serviceReady || file.managedAvailable === false) return;
     const key = `${job.id}:${file.id}:preview`;
@@ -1093,6 +1113,7 @@ export function HomePage() {
                         {item.status === "completed" && item.fileId && <button type="button" className={button} disabled={busyAction === `${job.id}:${item.fileId}`} onClick={() => void saveFile(job, item.fileId)} aria-label={`Save ${item.title}`}><ArrowDownToLine className="size-3.5" aria-hidden="true" /><span className="hidden md:inline">Save</span></button>}
                         {job.kind === "video" && (job.status === "failed" || job.status === "cancelled") && <button type="button" className={button} disabled={busyAction === job.id} onClick={() => void jobAction(job, "retry")} aria-label={`Retry ${item.title}`}><RefreshCw className="size-3.5" aria-hidden="true" /></button>}
                         {batchControls && (job.status === "failed" || job.status === "partial" || job.status === "cancelled") && <button type="button" className={button} disabled={busyAction === job.id} onClick={() => void jobAction(job, "retry")} aria-label={`Retry playlist ${job.title}`}><RefreshCw className="size-3.5" aria-hidden="true" /><span className="hidden md:inline">Retry batch</span></button>}
+                        {job.kind === "playlist" && (job.status === "partial" || job.status === "failed" || job.status === "cancelled") && (item.status === "failed" || item.status === "cancelled") && <button type="button" className={button} disabled={busyAction === `${job.id}:retry-item:${item.index}` || item.retryRequested === true} onClick={() => void retryPlaylistItem(job, item)} aria-label={`Retry item ${item.title}`}><RefreshCw className="size-3.5" aria-hidden="true" /><span className="hidden md:inline">{item.retryRequested ? "Retry queued" : "Retry item"}</span></button>}
                         {item.status === "failed" && job.kind === "video" && <button type="button" className={button} disabled={busyAction === job.id} onClick={() => void jobAction(job, "remove")} aria-label={`Remove ${item.title}`}><Trash2 className="size-3.5" aria-hidden="true" /></button>}
                       </div>
                     </div>
