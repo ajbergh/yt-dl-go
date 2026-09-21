@@ -36,8 +36,9 @@ type inspection struct {
 	DurationSeconds    int64              `json:"durationSeconds,omitempty"`
 	ThumbnailURL       string             `json:"thumbnailUrl,omitempty"`
 	PublishDate        string             `json:"publishDate,omitempty"`
-	AvailableQuality   []inspectedQuality `json:"availableQualities,omitempty"`
-	AudioOnlyAvailable bool               `json:"audioOnlyAvailable"`
+	AvailableQuality   []inspectedQuality     `json:"availableQualities,omitempty"`
+	CaptionTracks      []inspectedCaptionTrack `json:"captionTracks,omitempty"`
+	AudioOnlyAvailable bool                   `json:"audioOnlyAvailable"`
 	ItemCount          int                `json:"itemCount,omitempty"`
 	Items              []inspectedItem    `json:"items,omitempty"`
 	Entries            []inspectedItem    `json:"entries,omitempty"`
@@ -84,6 +85,7 @@ func (s *server) inspect(w http.ResponseWriter, r *http.Request) {
 		}
 		_, _, audioErr := selectAudioFormat(video)
 		result.AudioOnlyAvailable = audioErr == nil
+		result.CaptionTracks = inspectedCaptionTracks(video)
 		if !video.PublishDate.IsZero() {
 			result.PublishDate = video.PublishDate.UTC().Format("2006-01-02")
 		}
@@ -131,6 +133,26 @@ func (s *server) inspect(w http.ResponseWriter, r *http.Request) {
 			result.Items = append(result.Items, item)
 		}
 	}
+	// Playlist metadata does not include caption tracks. Inspect a small prefix
+	// until a usable entry exposes captions; the worker still resolves the
+	// selected language independently for every selected playlist item.
+	for index, entry := range playlist.Videos {
+		if index >= 5 {
+			break
+		}
+		if entry == nil || !videoID.MatchString(entry.ID) {
+			continue
+		}
+		video, videoErr := engine.VideoFromPlaylistEntryContext(ctx, entry)
+		if videoErr != nil || video == nil || video.ID != entry.ID {
+			continue
+		}
+		if tracks := inspectedCaptionTracks(video); len(tracks) > 0 {
+			result.CaptionTracks = tracks
+			result.Note += " Caption languages are sampled from an accessible playlist item; items without the selected language will still download without a sidecar."
+			break
+		}
+	}
 	reply(w, 200, result)
 }
 
@@ -159,7 +181,7 @@ func (s *server) retry(w http.ResponseWriter, r *http.Request, id string) {
 		fail(w, 409, "Only failed, partial, or cancelled jobs can be retried")
 		return
 	}
-	jobURL, quality, mediaType, audioFormat, audioBitrate, category, storageMode := original.URL, original.Quality, original.MediaType, original.AudioFormat, original.AudioBitrate, original.Category, original.StorageMode
+	jobURL, quality, mediaType, audioFormat, audioBitrate, subtitleLanguage, subtitleFormat, category, storageMode := original.URL, original.Quality, original.MediaType, original.AudioFormat, original.AudioBitrate, original.SubtitleLanguage, original.SubtitleFormat, original.Category, original.StorageMode
 	selectedItems := []inspectedItem{}
 	if original.Kind == "playlist" {
 		for _, item := range original.Items {
@@ -179,10 +201,10 @@ func (s *server) retry(w http.ResponseWriter, r *http.Request, id string) {
 		return
 	}
 	if kind == "playlist" && len(selectedItems) > 0 {
-		s.enqueueJob(w, canonical, kind, quality, mediaType, audioFormat, audioBitrate, category, storageMode, selectedItems)
+		s.enqueueJob(w, canonical, kind, quality, mediaType, audioFormat, audioBitrate, subtitleLanguage, subtitleFormat, category, storageMode, selectedItems)
 		return
 	}
-	s.enqueueJob(w, canonical, kind, quality, mediaType, audioFormat, audioBitrate, category, storageMode)
+	s.enqueueJob(w, canonical, kind, quality, mediaType, audioFormat, audioBitrate, subtitleLanguage, subtitleFormat, category, storageMode)
 }
 
 // safeThumbnailURL returns the last HTTPS thumbnail hosted on an approved
