@@ -27,6 +27,7 @@ export interface DownloadFile {
 }
 export interface QueueItem {
   index: number;
+  playlistIndex?: number;
   videoId?: string;
   title: string;
   author?: string;
