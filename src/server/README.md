@@ -127,6 +127,14 @@ Create a ticket with `{}` for a ZIP or `{"fileId":"FILE_ID"}` for a single final
 
 For local filesystem actions, post `{"fileId":"FILE_ID","action":"reveal"}` (or `open-folder` / `copy-path`) to `/api/jobs/{id}/filesystem`. The server resolves the path exclusively from persisted file metadata, re-validates that it remains beneath the job’s configured output location, verifies the file still exists with the expected size, and never accepts an arbitrary client-supplied path. `POST /api/folders/select` invokes the native interactive folder chooser on Windows and macOS; Linux uses `zenity` when installed. A cancelled picker returns `204`. Reveal/open uses Explorer on Windows, `open`/`open -R` on macOS, and `xdg-open` on Linux; Linux reveal opens the containing folder because there is no portable freedesktop file-selection command.
 
+## Version and update API
+
+`GET /api/health` includes `version`, `commit`, and `buildDate`. Ordinary local/branch builds report `dev`, `unknown`, and `unknown`; tagged release builds inject immutable values through the package build scripts.
+
+Authenticated `GET /api/update` returns the current version, the latest stable GitHub Release when available, whether an update exists, the validated release URL, and `automaticUpdate:false`. Development builds do not contact GitHub and return `developmentBuild:true`. Release checks use a six-second timeout, reject redirects, bound the response body to 64 KiB, require semantic-version tags, reject drafts/prereleases, and accept release links only under `https://github.com/ajbergh/yt-dl-go/releases/`.
+
+The endpoint never downloads an executable and never applies an update.
+
 ## Operational guidance
 
 Keep the listener on loopback where possible. The default bundled UI is intended for this local, tokenless mode. A network-visible deployment needs TLS, a long random token, exact origin and host allowlists, firewall/rate controls, and disk quotas; use an external API client that can send the bearer token because the bundled UI has no token field. Do not treat it as a public download service or run it under an account that exposes unrelated private files.

@@ -77,6 +77,16 @@ try {
         throw "Frontend build did not produce $(Join-Path $serverDist 'index.html')"
     }
 
+    $version = if ([string]::IsNullOrWhiteSpace($env:VERSION)) { 'dev' } else { $env:VERSION.Trim() }
+    $commit = if ([string]::IsNullOrWhiteSpace($env:COMMIT)) { 'unknown' } else { $env:COMMIT.Trim() }
+    $buildDate = if ([string]::IsNullOrWhiteSpace($env:BUILD_DATE)) { 'unknown' } else { $env:BUILD_DATE.Trim() }
+    foreach ($metadataValue in @($version, $commit, $buildDate)) {
+        if ($metadataValue -notmatch '^[A-Za-z0-9:._+\-]+$') {
+            throw "VERSION, COMMIT, and BUILD_DATE must contain only release-metadata-safe characters: $metadataValue"
+        }
+    }
+    $ldflags = "-s -w -X main.buildVersion=$version -X main.buildCommit=$commit -X main.buildDate=$buildDate"
+
     Push-Location (Join-Path $repoRoot 'src\server')
     try {
         $env:CGO_ENABLED = '0'
@@ -96,7 +106,7 @@ try {
             'build',
             '-buildvcs=false',
             '-trimpath',
-            '-ldflags=-s -w',
+            "-ldflags=$ldflags",
             '-o',
             $OutputPath,
             '.'

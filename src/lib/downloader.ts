@@ -91,8 +91,28 @@ export interface DownloadJob {
   etaSeconds: number;
   activeItemCount?: number;
 }
+export interface BuildInfo {
+  version: string;
+  commit: string;
+  buildDate: string;
+}
+
+export interface UpdateStatus {
+  currentVersion: string;
+  latestVersion?: string;
+  updateAvailable: boolean;
+  developmentBuild?: boolean;
+  releaseUrl?: string;
+  publishedAt?: string;
+  automaticUpdate: boolean;
+  note?: string;
+}
+
 export interface ServiceHealth {
   ready: boolean;
+  version?: string;
+  commit?: string;
+  buildDate?: string;
   missing: string[];
   engine?: string;
   capabilities?: {

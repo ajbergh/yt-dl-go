@@ -35,6 +35,7 @@ export function HomePage() {
   const [tab, setTab] = useState<Tab>("queue");
   const {
     connection, serviceReady, jobs, setJobs, settings, setSettings, mp3Supported,
+    buildInfo, updateStatus, updateError, checkingUpdates, checkForUpdates,
     serviceError, setServiceError, pollError,
   } = useService();
   const [url, setUrl] = useState("");
@@ -434,6 +435,11 @@ export function HomePage() {
           savingSettings={savingSettings}
           settingsSaved={settingsSaved}
           mp3Supported={mp3Supported}
+          buildInfo={buildInfo}
+          updateStatus={updateStatus}
+          updateError={updateError}
+          checkingUpdates={checkingUpdates}
+          checkForUpdates={checkForUpdates}
           newCategoryInput={newCategoryInput}
           setNewCategoryInput={setNewCategoryInput}
           savePreferences={savePreferences}

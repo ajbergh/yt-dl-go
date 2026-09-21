@@ -18,6 +18,8 @@ let requests;
 let rows;
 let missing;
 let healthEngine;
+let healthVersion;
+let updateResponse;
 let liveEvent;
 let notificationsEnabled;
 let notificationPermission;
@@ -51,6 +53,8 @@ beforeEach(async () => {
   rows = [];
   missing = [];
   healthEngine = "native-go";
+  healthVersion = "dev";
+  updateResponse = { currentVersion: "dev", updateAvailable: false, developmentBuild: true, automaticUpdate: false, note: "Development build: external update checks are skipped." };
   liveEvent = null;
   notificationsEnabled = false;
   notificationPermission = "granted";
@@ -69,7 +73,8 @@ beforeEach(async () => {
   globalThis.fetch = async (url, init = {}) => {
     const path = new URL(url).pathname;
     requests.push({ url: String(url), path, ...init });
-    if (path === "/api/health") return Response.json({ ready: missing.length === 0, missing, engine: healthEngine, capabilities: { combinedStreamsOnly: false, adaptiveStreamsSupported: true, externalBinariesRequired: false, mp3AudioSupported: true } });
+    if (path === "/api/health") return Response.json({ ready: missing.length === 0, missing, engine: healthEngine, version: healthVersion, commit: healthVersion === "dev" ? "unknown" : "abc123def456", buildDate: healthVersion === "dev" ? "unknown" : "2026-09-21T12:00:00Z", capabilities: { combinedStreamsOnly: false, adaptiveStreamsSupported: true, externalBinariesRequired: false, mp3AudioSupported: true } });
+    if (path === "/api/update") return Response.json(updateResponse);
     if (path === "/api/settings" && init.method === "PUT") {
       const settings = JSON.parse(init.body);
       notificationsEnabled = settings.notificationsEnabled === true;
@@ -316,6 +321,35 @@ describe("Downloader UI and Go API integration", () => {
     expect(body.audioFormat).toBe("m4a");
     expect(body.audioBitrate).toBeUndefined();
     expect(body.mediaType).toBe("audio");
+  });
+
+  test("shows build metadata and an available stable release", async () => {
+    healthVersion = "v1.1.0";
+    updateResponse = {
+      currentVersion: "v1.1.0",
+      latestVersion: "v1.2.0",
+      updateAvailable: true,
+      releaseUrl: "https://github.com/ajbergh/yt-dl-go/releases/tag/v1.2.0",
+      publishedAt: "2026-09-21T12:00:00Z",
+      automaticUpdate: false,
+      note: "Automatic self-update is disabled until OS-native signing/notarization and rollback-safe replacement are implemented.",
+    };
+    await remount();
+    await click(button("Settings"));
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 20)); });
+    expect(container.textContent).toContain("Current build v1.1.0");
+    expect(container.textContent).toContain("v1.2.0 is available");
+    const releaseLink = [...container.querySelectorAll("a")].find(link => link.textContent.includes("Open release"));
+    expect(releaseLink?.getAttribute("href")).toBe("https://github.com/ajbergh/yt-dl-go/releases/tag/v1.2.0");
+    expect(requests.some(item => item.path === "/api/update")).toBe(true);
+  });
+
+  test("shows development build update state without pretending self-update is available", async () => {
+    await click(button("Settings"));
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 10)); });
+    expect(container.textContent).toContain("Current build dev");
+    expect(container.textContent).toContain("Development build: external update checks are skipped");
+    expect(container.textContent).toContain("Automatic self-replacement remains disabled");
   });
 
   test("persists only a supported preference through the service API", async () => {
