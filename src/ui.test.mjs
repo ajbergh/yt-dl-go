@@ -49,6 +49,7 @@ beforeEach(async () => {
     if (path.endsWith("/resume")) return Response.json({ ...job, status: "queued" });
     if (path.endsWith("/retry")) return Response.json({ ...job, id: "retried-job" }, { status: 202 });
     if (path.endsWith("/ticket")) return Response.json({ path: "/api/downloads/test-ticket" });
+    if (path.endsWith("/filesystem") && init.method === "POST") return Response.json({ path: "C:\\\\Media\\\\test.mp4" });
     if (init.method === "DELETE" && path.endsWith("/published")) {
       const current = rows[0] ?? job;
       return Response.json({ ...current, files: (current.files ?? []).map(file => ({ ...file, publishedAvailable: false })) });
@@ -200,6 +201,13 @@ describe("Downloader UI and Go API integration", () => {
     expect(button("Managed copy")).toBeTruthy();
     expect(button("Published copy")).toBeTruthy();
     expect(button("Delete everywhere")).toBeTruthy();
+    expect(button("Reveal")).toBeTruthy();
+    expect(button("Folder")).toBeTruthy();
+    expect(button("Path")).toBeTruthy();
+
+    await click(button("Reveal"));
+    const filesystemRequest = requests.find(item => item.path.endsWith("/filesystem") && item.method === "POST");
+    expect(JSON.parse(filesystemRequest.body)).toEqual({ fileId: "file-1", action: "reveal" });
 
     const originalConfirm = testWindow.confirm;
     testWindow.confirm = () => true;
