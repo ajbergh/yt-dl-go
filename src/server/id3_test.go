@@ -80,8 +80,11 @@ func TestBuildID3v23TagSkipsOversizedOrUnsupportedArtwork(t *testing.T) {
 }
 
 func TestMP3MetadataForPlaylist(t *testing.T) {
-	total := 8
-	j := &jobState{Job: Job{Kind: "playlist", Title: "Road Trip", TotalCount: &total}}
+	selectedTotal := 2
+	j := &jobState{
+		Job: Job{Kind: "playlist", Title: "Road Trip", TotalCount: &selectedTotal},
+		playlistItemCount: 8,
+	}
 	file := mediaFile{Title: "Song", Author: "Artist", PublishDate: "2026-09-20"}
 	metadata := mp3MetadataFor(j, file, "dQw4w9WgXcQ", 3)
 	if metadata.Title != "Song" || metadata.Artist != "Artist" || metadata.Album != "Road Trip" || metadata.Track != 3 || metadata.TrackTotal != 8 {
