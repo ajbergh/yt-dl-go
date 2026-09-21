@@ -124,7 +124,7 @@ Current job deletion can remove both managed app files and files published to th
 
 ### P0.4 Storage policy and duplicate-copy control
 
-**Status:** [~] In progress
+**Status:** [T] Implemented; CI validation pending
 
 The application currently retains a managed copy under `DATA_DIR` and publishes another copy to the configured output location. Large files may therefore consume approximately twice their final size.
 
@@ -143,7 +143,7 @@ The application currently retains a managed copy under `DATA_DIR` and publishes 
 
 ### P0.5 Native folder selection and filesystem actions
 
-**Status:** [ ] Planned
+**Status:** [~] In progress
 
 Typing an absolute path manually is not sufficient desktop UX.
 
@@ -569,6 +569,23 @@ Important bug fixed: before this milestone, automatic retention cleanup could de
 
 ### P0.4 Storage policy and duplicate-copy control
 
+**Status:** [T] Implemented; CI validation pending
+
+Implemented:
+
+1. Added persisted `storageMode` with three supported policies: `managed-published`, `published-only`, and `managed-only`.
+2. Added SQLite migration v7 for both application settings and per-job captured storage mode.
+3. Captured the selected storage policy when a job is queued and preserved it when retrying jobs.
+4. `managed-published` retains the existing two-copy behavior.
+5. `published-only` publishes the finalized file and then removes the private managed media copy.
+6. `managed-only` retains the private Library copy and skips publication to the configured output directory.
+7. Updated restart/resume validation so completed playlist items can be considered valid from the copy set their policy actually retained.
+8. Added a Settings UI explaining the disk/durability tradeoffs and that policy changes affect only newly queued jobs.
+9. Added backend tests for all three modes and invalid values plus frontend persistence coverage.
+10. Updated API documentation.
+
+### P0.5 Native folder selection and filesystem actions
+
 **Status:** [~] In progress
 
-Implementation begins with a persisted storage-mode setting captured per job. Planned modes remain Managed + Published, Published only, and Managed only.
+Next implementation focus: safe localhost filesystem actions for opening/revealing tracked output paths, while preserving strict path validation. Native folder selection will be evaluated separately because the current browser-hosted SPA cannot invoke an unrestricted OS folder picker safely without an explicit local capability.
