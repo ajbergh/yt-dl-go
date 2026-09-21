@@ -343,6 +343,12 @@ func (s *server) run(ctx context.Context, j *jobState) {
 		s.finish(ctx, j, fatal)
 	}()
 	requested := append([]queueItem(nil), j.Items...)
+	retryTargets := make(map[int]struct{})
+	for _, item := range requested {
+		if item.RetryRequested {
+			retryTargets[item.Index] = struct{}{}
+		}
+	}
 	work := []playlistWorkItem{{entry: &youtube.PlaylistEntry{ID: strings.TrimPrefix(j.URL, "https://www.youtube.com/watch?v=")}}}
 	if j.Kind == "playlist" {
 		playlist, err := engine.GetPlaylistContext(ctx, j.URL)
@@ -376,7 +382,7 @@ func (s *server) run(ctx context.Context, j *jobState) {
 		j.TotalCount = &total
 		s.mu.Unlock()
 	}
-	s.setQueueItems(j, work)
+	s.setQueueItems(j, work, retryTargets)
 	s.mu.Lock()
 	for index, file := range j.fileItems {
 		if !s.validCompletedFile(j, file) {
@@ -414,6 +420,11 @@ func (s *server) run(ctx context.Context, j *jobState) {
 					return
 				}
 				current := index + 1
+				if len(retryTargets) > 0 {
+					if _, retryThisItem := retryTargets[current]; !retryThisItem {
+						continue
+					}
+				}
 				item := work[index]
 				outputIndex := item.playlistIndex
 				if outputIndex <= 0 {
@@ -650,7 +661,7 @@ func makeQueueItem(index, playlistIndex int, entry *youtube.PlaylistEntry) queue
 	return item
 }
 
-func (s *server) setQueueItems(j *jobState, work []playlistWorkItem) {
+func (s *server) setQueueItems(j *jobState, work []playlistWorkItem, retryTargets map[int]struct{}) {
 	items := make([]queueItem, len(work))
 	for index, selected := range work {
 		playlistIndex := 0
@@ -658,6 +669,7 @@ func (s *server) setQueueItems(j *jobState, work []playlistWorkItem) {
 			playlistIndex = selected.playlistIndex
 		}
 		items[index] = makeQueueItem(index+1, playlistIndex, selected.entry)
+		_, items[index].RetryRequested = retryTargets[index+1]
 	}
 	s.mu.Lock()
 	j.Items = items
@@ -726,11 +738,23 @@ func (s *server) refreshQueueItemLocked(j *jobState, index int) {
 		return
 	}
 	item.SpeedBytesPerSec, item.ETASeconds = 0, 0
+	retryMode := false
+	for _, candidate := range j.Items {
+		if candidate.RetryRequested {
+			retryMode = true
+			break
+		}
+	}
+	if retryMode && !item.RetryRequested && (item.Status == "failed" || item.Status == "cancelled") {
+		return
+	}
 	switch {
 	case j.pauseRequested || j.Status == "paused":
 		item.Status = "paused"
 	case j.cancelRequested || j.Status == "cancelled":
 		item.Status = "cancelled"
+	case j.Status == "partial" && item.Status == "cancelled":
+		item.Status, item.Error = "cancelled", ""
 	case j.Status == "failed" || (j.Status == "partial" && j.Error != ""):
 		item.Status, item.Error = "failed", j.Error
 	default:
@@ -1269,6 +1293,11 @@ func (s *server) finish(ctx context.Context, j *jobState, fatal error) {
 		j.Error = "No complete output, or not every exposed entry was downloaded"
 	default:
 		j.Status, j.Error = "completed", ""
+	}
+	if terminal(j.Status) {
+		for index := range j.Items {
+			j.Items[index].RetryRequested = false
+		}
 	}
 	s.refreshAllQueueItemsLocked(j)
 	s.persistJobLocked(j)
