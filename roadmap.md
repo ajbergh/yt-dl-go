@@ -201,7 +201,7 @@ The pure-Go MP3 path currently emits audio without ID3 tags.
 
 ### P1.3 M4A “original audio” mode
 
-**Status:** [ ] Planned
+**Status:** [T] Implemented; CI validation pending
 
 When YouTube exposes AAC-in-MP4 audio, users should be able to preserve it without transcoding.
 
@@ -641,3 +641,24 @@ Implemented:
 9. Updated the server documentation.
 
 No new runtime dependency, CGO dependency, or FFmpeg requirement was introduced.
+
+
+### P1.3 M4A “original audio” mode
+
+**Status:** [T] Implemented; CI validation pending
+
+Implemented:
+
+1. Added optional per-job `audioFormat` with `mp3` as the backward-compatible default and `m4a` as the zero-transcode option.
+2. Added SQLite migration v9 and retry persistence for the selected audio format.
+3. Added direct AAC-in-MP4 transfer to finalized `.m4a` output without decode/re-encode.
+4. Preserved the source stream bytes exactly in the M4A path while retaining existing size limits, progress reporting, atomic `.part` finalization, storage policy, output publishing, and restart semantics.
+5. Added `.m4a` to managed-file validation and published-output validation.
+6. Added per-item and batch audio-format controls to inspection UX.
+7. MP3 bitrate controls now appear only for MP3 jobs; M4A requests do not send meaningless bitrate values.
+8. Queue and Library labels distinguish tagged MP3 from M4A original AAC.
+9. Added backend coverage proving M4A output bytes match the source bytes and API validation rejects unsupported audio formats.
+10. Added frontend coverage proving the M4A request sends `audioFormat:"m4a"` without `audioBitrate`.
+11. Updated API documentation.
+
+This path remains limited to compatible AAC-in-MP4 audio streams already selected by the native YouTube format selector; it does not introduce Opus/WebM conversion or FFmpeg.
