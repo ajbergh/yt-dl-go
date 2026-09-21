@@ -309,6 +309,28 @@ export function HomePage() {
     finally { setInspecting(false); }
   }
 
+  function applyMediaTypeToAll(mediaType: Draft["mediaType"]) {
+    setDrafts(previous => previous.map(item =>
+      mediaType === "audio" && (!mp3Supported || !item.audioOnlyAvailable) ? item : { ...item, mediaType },
+    ));
+  }
+
+  function applyQualityToAll(quality: Quality) {
+    setDrafts(previous => previous.map(item => {
+      if (item.mediaType !== "video") return item;
+      const supported = item.kind === "playlist" || !item.availableQualities?.length || item.availableQualities.some(option => option.value === quality);
+      return supported ? { ...item, selectedQuality: quality } : item;
+    }));
+  }
+
+  function applyAudioBitrateToAll(audioBitrate: string) {
+    setDrafts(previous => previous.map(item => item.mediaType === "audio" ? { ...item, audioBitrate } : item));
+  }
+
+  function applyCategoryToAll(category: string) {
+    setDrafts(previous => previous.map(item => ({ ...item, category })));
+  }
+
   async function addDownloads(event: React.FormEvent) {
     event.preventDefault();
     setFormError("");
@@ -539,6 +561,23 @@ export function HomePage() {
                       <div><h3 className="text-xs font-bold uppercase tracking-wider text-neutral-300">Inspection results</h3><p className="mt-1 text-[11px] text-neutral-500">Quality options and metadata are returned by the Go backend; no media URLs are exposed.</p></div>
                       <span className="rounded-full bg-neutral-800 px-2 py-1 text-[10px] text-neutral-300">{drafts.length} item{drafts.length === 1 ? "" : "s"}</span>
                     </div>
+                    {drafts.length > 1 && <div className="rounded-xl border border-neutral-800 bg-neutral-900/70 p-3">
+                      <div className="mb-2 flex items-center justify-between gap-2"><div><p className="text-[11px] font-bold text-neutral-200">Apply to all inspected items</p><p className="mt-0.5 text-[10px] text-neutral-500">Batch values update eligible items now; each card can still be overridden afterward.</p></div><Layers className="size-4 text-rose-400" aria-hidden="true" /></div>
+                      <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+                        <select aria-label="Apply media type to all" defaultValue="" onChange={event => { if (event.target.value) applyMediaTypeToAll(event.target.value as Draft["mediaType"]); event.currentTarget.value = ""; }} className={`${field} py-2 text-xs`}>
+                          <option value="" disabled>Media type…</option><option value="video">All video</option><option value="audio" disabled={!mp3Supported}>All eligible MP3 audio</option>
+                        </select>
+                        <select aria-label="Apply quality to all" defaultValue="" onChange={event => { if (event.target.value) applyQualityToAll(event.target.value as Quality); event.currentTarget.value = ""; }} className={`${field} py-2 text-xs`}>
+                          <option value="" disabled>Video quality…</option>{(Object.entries(qualityLabels) as [Quality, string][]).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+                        </select>
+                        <select aria-label="Apply MP3 bitrate to all" defaultValue="" onChange={event => { if (event.target.value) applyAudioBitrateToAll(event.target.value); event.currentTarget.value = ""; }} className={`${field} py-2 text-xs`}>
+                          <option value="" disabled>MP3 bitrate…</option>{["128k", "192k", "256k", "320k"].map(value => <option key={value} value={value}>{value}</option>)}
+                        </select>
+                        <select aria-label="Apply category to all" defaultValue="" onChange={event => { if (event.target.value) applyCategoryToAll(event.target.value); event.currentTarget.value = ""; }} className={`${field} py-2 text-xs`}>
+                          <option value="" disabled>Category…</option>{settings.userCategories.map(category => <option key={category} value={category}>{category}</option>)}
+                        </select>
+                      </div>
+                    </div>}
                     {drafts.map((draft, index) => <article key={`${draft.url}-${index}`} className="grid gap-3 rounded-xl border border-neutral-800 bg-neutral-950/60 p-3 sm:grid-cols-[8rem_1fr_12rem] sm:items-center">
                       {draft.thumbnailUrl ? <img src={draft.thumbnailUrl} alt="" referrerPolicy="no-referrer" className="aspect-video w-full rounded-lg bg-neutral-900 object-cover sm:w-32" />
                         : <div className="grid aspect-video w-full place-items-center rounded-lg bg-neutral-900 text-neutral-600 sm:w-32">{draft.kind === "playlist" ? <ListVideo className="size-7" aria-hidden="true" /> : <Film className="size-7" aria-hidden="true" />}</div>}
