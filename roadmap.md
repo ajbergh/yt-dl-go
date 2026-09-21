@@ -492,9 +492,20 @@ src/
 
 ## P1.13 Frontend dependency cleanup
 
-**Status:** [ ] Planned
+**Status:** [x] Implemented
 
-Audit root dependencies and remove unused scaffold packages after the UI structure stabilizes.
+Audited the production frontend graph after P1.12 and removed the generated scaffold that was no longer part of the downloader application.
+
+Implemented:
+
+1. Reduced direct runtime dependencies to React/ReactDOM, React Router, Tailwind, Geist, Lucide, and the three DnD packages used by the queue UI.
+2. Removed unused QueryClient, MotionConfig, Sonner, Radix confirmation-provider, Zustand placeholder-store, and generated shadcn-style UI layers from the production shell.
+3. Deleted 55 orphaned scaffold/helper files that were not reachable from the downloader entrypoint.
+4. Removed unused TanStack/managed-app aliases and dependency pre-bundling from Vite.
+5. Synchronized npm and Bun lockfile root dependency manifests.
+6. Preserved router/error-boundary/preview-diagnostic behavior and the downloader's existing DOM/test contract.
+
+Validation note: CI run `35566160345` passed frontend type-check/build, Bun integration tests, Go tests, Go vet, the Windows production build, and Windows artifact upload.
 
 ## P1.14 Browser end-to-end testing
 
