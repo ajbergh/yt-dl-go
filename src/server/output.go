@@ -26,6 +26,7 @@ func defaultAppSettings() AppSettings {
 		DownloadLocation: filepath.Join(home, "Downloads", "YouTube_Vault"),
 		NamingPattern:    defaultNamingPattern, SubfolderSorting: "channel",
 		DefaultCategory: "General", UserCategories: append([]string(nil), defaultUserCategories...),
+		StorageMode: "managed-published",
 	}
 }
 
@@ -52,6 +53,9 @@ func mergeAppSettings(defaults, settings AppSettings) AppSettings {
 	}
 	if settings.UserCategories == nil {
 		settings.UserCategories = append([]string(nil), defaults.UserCategories...)
+	}
+	if settings.StorageMode == "" {
+		settings.StorageMode = defaults.StorageMode
 	}
 	return settings
 }
@@ -91,6 +95,9 @@ func validateAppSettings(settings AppSettings) error {
 	}
 	if settings.SubfolderSorting != "channel" && settings.SubfolderSorting != "category" && settings.SubfolderSorting != "flat" {
 		return errors.New("subfolderSorting must be channel, category, or flat")
+	}
+	if settings.StorageMode != "managed-published" && settings.StorageMode != "published-only" && settings.StorageMode != "managed-only" {
+		return errors.New("storageMode must be managed-published, published-only, or managed-only")
 	}
 	if len(settings.UserCategories) == 0 || len(settings.UserCategories) > 50 {
 		return errors.New("userCategories must contain between 1 and 50 categories")
