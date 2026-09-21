@@ -176,6 +176,7 @@ func TestPersistentHistoryAndQueueResume(t *testing.T) {
 		t.Fatal(err)
 	}
 	s.settings.DownloadLocation = filepath.Join(root, "published")
+	s.settings.DefaultVideoStrategy = "vp9"
 	if err := s.store.saveAppSettings(s.settings); err != nil {
 		s.stop()
 		t.Fatal(err)
@@ -184,6 +185,7 @@ func TestPersistentHistoryAndQueueResume(t *testing.T) {
 	queued := createJob(t, s, testVideo)
 	settings := s.settings
 	settings.DefaultQuality = "720"
+	settings.DefaultVideoStrategy = "av1"
 	settings.BandwidthLimitBytesPerSec = 5 * 1024 * 1024
 	settings.NotificationsEnabled = true
 	if err := s.store.saveAppSettings(settings); err != nil {
@@ -199,7 +201,7 @@ func TestPersistentHistoryAndQueueResume(t *testing.T) {
 	resumed.engine = fixtureClient(1)
 	resumed.start()
 	completed := waitTerminal(t, resumed, queued.ID)
-	if completed.Status != "completed" || len(completed.Files) != 1 || completed.Files[0].Title != "Fixture video" || completed.Files[0].Author != "Fixture channel" {
+	if completed.Status != "completed" || completed.VideoStrategy != "vp9" || len(completed.Files) != 1 || completed.Files[0].Title != "Fixture video" || completed.Files[0].Author != "Fixture channel" {
 		t.Fatalf("queued job did not resume: %+v", completed)
 	}
 	resumed.stop()
@@ -212,10 +214,10 @@ func TestPersistentHistoryAndQueueResume(t *testing.T) {
 	if got := len(history.jobs); got != 1 {
 		t.Fatalf("history count = %d, want 1", got)
 	}
-	if history.jobs[queued.ID].Status != "completed" {
-		t.Fatalf("history status = %q", history.jobs[queued.ID].Status)
+	if history.jobs[queued.ID].Status != "completed" || history.jobs[queued.ID].VideoStrategy != "vp9" {
+		t.Fatalf("history state = %+v", history.jobs[queued.ID])
 	}
-	if history.settings.DefaultQuality != "720" || history.settings.BandwidthLimitBytesPerSec != 5*1024*1024 || !history.settings.NotificationsEnabled {
+	if history.settings.DefaultQuality != "720" || history.settings.DefaultVideoStrategy != "av1" || history.settings.BandwidthLimitBytesPerSec != 5*1024*1024 || !history.settings.NotificationsEnabled {
 		t.Fatalf("application preferences did not persist: %+v", history.settings)
 	}
 	var configCount int

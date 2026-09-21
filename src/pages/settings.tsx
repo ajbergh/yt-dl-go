@@ -2,9 +2,9 @@ import type { Dispatch, FormEvent, SetStateAction } from "react";
 import {
   Check, FileText, Folder, FolderTree, Gauge, HardDrive, LoaderCircle, Plus, ShieldCheck, Sparkles, X,
 } from "lucide-react";
-import type { AppSettings, Quality, ServiceConnection } from "../lib/downloader";
+import type { AppSettings, Quality, ServiceConnection, VideoStrategy } from "../lib/downloader";
 import {
-  button, field, notificationAPI, panel, primaryButton, qualityLabels,
+  button, field, notificationAPI, panel, primaryButton, qualityLabels, videoStrategyLabels,
 } from "../components/downloader/view-model";
 
 type SettingsPageProps = {
@@ -108,9 +108,13 @@ export function SettingsPage({
                 </div>
               </div>
 
-              <div className="grid gap-4 border-t border-neutral-800 pt-4 sm:grid-cols-3">
+              <div className="grid gap-4 border-t border-neutral-800 pt-4 sm:grid-cols-2 lg:grid-cols-4">
                 <label className="block text-xs font-medium text-neutral-300">Default maximum video quality
                   <select aria-label="Default maximum video quality" className={`${field} mt-1.5`} value={settings.defaultQuality} onChange={event => changeSetting("defaultQuality", event.target.value as Quality)}>{(Object.entries(qualityLabels) as [Quality, string][]).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select>
+                </label>
+                <label className="block text-xs font-medium text-neutral-300">Default video format
+                  <select aria-label="Default video format" className={`${field} mt-1.5`} value={settings.defaultVideoStrategy} onChange={event => changeSetting("defaultVideoStrategy", event.target.value as VideoStrategy)}>{(Object.entries(videoStrategyLabels) as [VideoStrategy, string][]).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select>
+                  <span className="mt-1 block text-[10px] leading-relaxed text-neutral-500">Compatibility MP4 is strict H.264/AAC; VP9 and AV1 are preferences with automatic fallback when unavailable.</span>
                 </label>
                 <label className="block text-xs font-medium text-neutral-300">Maximum concurrent downloads <span className="float-right font-mono text-rose-300">{settings.maxConcurrentDownloads}</span>
                   <input aria-label="Maximum concurrent downloads" type="range" min="1" max="6" step="1" value={settings.maxConcurrentDownloads} onChange={event => changeSetting("maxConcurrentDownloads", Number(event.target.value))} className="mt-2 w-full accent-rose-600" />
@@ -156,7 +160,7 @@ export function SettingsPage({
             </section>
           </form>
 
-            <section className={`${panel} p-5`}><div className="flex items-start gap-3"><div className="grid size-9 shrink-0 place-items-center rounded-xl border border-blue-800/50 bg-blue-950/30 text-blue-300"><Gauge className="size-4" aria-hidden="true" /></div><div><h3 className="text-xs font-bold">What this backend supports</h3><ul className="mt-2 space-y-1.5 text-[11px] leading-relaxed text-neutral-400"><li>Video and playlist downloads, including adaptive H.264/AAC MP4, high-resolution VP9/AV1 + Opus WebM remuxing, and pure-Go MP3 conversion for AAC audio.</li><li>Up to six concurrent jobs, multi-routine stream transfers, fair global bandwidth limiting, pause/resume, retries, live speed/ETA, and optional system notifications.</li><li>Quality ceilings: best, 2160p (4K), 1440p, 1080p, 720p, or 480p. Actual output quality and container are reported after completion.</li><li>Files are copied to the selected destination and remain available in the private SQLite-backed library.</li></ul>{!mp3Supported && <p className="mt-3 flex items-start gap-1.5 text-[10px] leading-relaxed text-amber-300"><ShieldCheck className="mt-0.5 size-3 shrink-0" aria-hidden="true" />This backend does not support MP3 conversion.</p>}</div></div></section>
+            <section className={`${panel} p-5`}><div className="flex items-start gap-3"><div className="grid size-9 shrink-0 place-items-center rounded-xl border border-blue-800/50 bg-blue-950/30 text-blue-300"><Gauge className="size-4" aria-hidden="true" /></div><div><h3 className="text-xs font-bold">What this backend supports</h3><ul className="mt-2 space-y-1.5 text-[11px] leading-relaxed text-neutral-400"><li>Video and playlist downloads, including adaptive H.264/AAC MP4, high-resolution VP9/AV1 + Opus WebM remuxing, and pure-Go MP3 conversion for AAC audio.</li><li>Up to six concurrent jobs, multi-routine stream transfers, fair global bandwidth limiting, pause/resume, retries, live speed/ETA, and optional system notifications.</li><li>Quality ceilings: best, 2160p (4K), 1440p, 1080p, 720p, or 480p, plus Best/Compatibility MP4/VP9/AV1 video strategies. Actual output quality and container are reported after completion.</li><li>Files are copied to the selected destination and remain available in the private SQLite-backed library.</li></ul>{!mp3Supported && <p className="mt-3 flex items-start gap-1.5 text-[10px] leading-relaxed text-amber-300"><ShieldCheck className="mt-0.5 size-3 shrink-0" aria-hidden="true" />This backend does not support MP3 conversion.</p>}</div></div></section>
         </div>
   );
 }

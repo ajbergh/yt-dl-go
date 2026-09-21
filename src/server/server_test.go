@@ -427,7 +427,7 @@ func TestInspectionPreferencesRetryAndRemoval(t *testing.T) {
 	}
 
 	settings := request(s, "GET", "/api/settings", "", nil)
-	if settings.Code != 200 || !strings.Contains(settings.Body.String(), `"defaultQuality":"best"`) {
+	if settings.Code != 200 || !strings.Contains(settings.Body.String(), `"defaultQuality":"best"`) || !strings.Contains(settings.Body.String(), `"defaultVideoStrategy":"best"`) {
 		t.Fatalf("default settings: %d %s", settings.Code, settings.Body.String())
 	}
 	settings = request(s, "PUT", "/api/settings", `{"defaultQuality":"720"}`, nil)
@@ -450,6 +450,22 @@ func TestInspectionPreferencesRetryAndRemoval(t *testing.T) {
 	if settings.Code != 200 || !strings.Contains(settings.Body.String(), `"defaultQuality":"2160"`) {
 		t.Fatalf("save 4K quality preference: %d %s", settings.Code, settings.Body.String())
 	}
+	settings = request(s, "PUT", "/api/settings", `{"defaultVideoStrategy":"vp9"}`, nil)
+	if settings.Code != 200 || !strings.Contains(settings.Body.String(), `"defaultVideoStrategy":"vp9"`) {
+		t.Fatalf("save video strategy preference: %d %s", settings.Code, settings.Body.String())
+	}
+	if request(s, "PUT", "/api/settings", `{"defaultVideoStrategy":"hevc"}`, nil).Code != 400 {
+		t.Fatal("unsupported video strategy preference was accepted")
+	}
+	overrideResponse := request(s, "POST", "/api/jobs", `{"url":"`+testVideo+`","quality":"best","videoStrategy":"compatibility","rightsConfirmed":true}`, nil)
+	var override Job
+	if overrideResponse.Code != 202 || json.Unmarshal(overrideResponse.Body.Bytes(), &override) != nil || override.VideoStrategy != "compatibility" {
+		t.Fatalf("explicit video strategy was not captured: %d %s", overrideResponse.Code, overrideResponse.Body.String())
+	}
+	waitTerminal(t, s, override.ID)
+	if request(s, "POST", "/api/jobs", `{"url":"`+testVideo+`","quality":"best","mediaType":"audio","videoStrategy":"vp9","rightsConfirmed":true}`, nil).Code != 400 {
+		t.Fatal("video strategy was accepted for an audio-only job")
+	}
 	if request(s, "PUT", "/api/settings", `{"defaultQuality":"4320"}`, nil).Code != 400 {
 		t.Fatal("unsupported quality preference was accepted")
 	}
@@ -459,12 +475,12 @@ func TestInspectionPreferencesRetryAndRemoval(t *testing.T) {
 
 	fake.videoFn = func(context.Context, string) (*youtube.Video, error) { return nil, errors.New("fixture failure") }
 	failed := waitTerminal(t, s, createJob(t, s, testVideo).ID)
-	if failed.Status != "failed" {
-		t.Fatalf("fixture job status = %s", failed.Status)
+	if failed.Status != "failed" || failed.VideoStrategy != "vp9" {
+		t.Fatalf("fixture job did not capture default video strategy: %+v", failed)
 	}
 	retriedResponse := request(s, "POST", "/api/jobs/"+failed.ID+"/retry", `{"rightsConfirmed":true}`, nil)
 	var retried Job
-	if retriedResponse.Code != 202 || json.Unmarshal(retriedResponse.Body.Bytes(), &retried) != nil || retried.ID == failed.ID || retried.Quality != failed.Quality {
+	if retriedResponse.Code != 202 || json.Unmarshal(retriedResponse.Body.Bytes(), &retried) != nil || retried.ID == failed.ID || retried.Quality != failed.Quality || retried.VideoStrategy != failed.VideoStrategy {
 		t.Fatalf("retry: %d %s", retriedResponse.Code, retriedResponse.Body.String())
 	}
 	if request(s, "POST", "/api/jobs/"+failed.ID+"/retry", `{"rightsConfirmed":false}`, nil).Code != 400 {

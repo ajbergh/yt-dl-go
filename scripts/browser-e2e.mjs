@@ -389,12 +389,14 @@ async function main() {
     // 7: save settings through the real UI/API.
     await clickButton(cdp, "Settings");
     await setValue(cdp, "#naming-pattern", "E2E {title}");
+    await setValue(cdp, 'select[aria-label="Default video format"]', "av1");
     await setValue(cdp, 'input[aria-label="Maximum concurrent downloads"]', "2");
     await clickButton(cdp, "Save preferences");
     await waitFor(cdp, bodyIncludes("Saved"), "settings save acknowledgement");
 
     let settings = (await getJSON(`${baseURL}/api/settings`)).settings;
     assert.equal(settings.namingPattern, "E2E {title}");
+    assert.equal(settings.defaultVideoStrategy, "av1");
     assert.equal(settings.maxConcurrentDownloads, 2);
 
     // 8: restart the service against the same SQLite/data directory, then reload
@@ -405,12 +407,14 @@ async function main() {
     await waitFor(cdp, bodyIncludes("Service connected"), "service reconnect after restart", 30000);
     await clickButton(cdp, "Settings");
     await waitFor(cdp, `document.querySelector("#naming-pattern")?.value === "E2E {title}"`, "persisted naming pattern");
+    assert.equal(await readValue(cdp, 'select[aria-label="Default video format"]'), "av1");
     assert.equal(await readValue(cdp, 'input[aria-label="Maximum concurrent downloads"]'), "2");
     await clickButton(cdp, "Library");
     await waitFor(cdp, bodyIncludes("E2E Fixture Video"), "persisted Library item after restart");
 
     settings = (await getJSON(`${baseURL}/api/settings`)).settings;
     assert.equal(settings.namingPattern, "E2E {title}");
+    assert.equal(settings.defaultVideoStrategy, "av1");
     const afterRestart = await getJSON(`${baseURL}/api/jobs`);
     assert.equal(afterRestart.jobs.length, 1);
     assert.equal(afterRestart.jobs[0].status, "completed");

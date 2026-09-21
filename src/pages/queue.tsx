@@ -9,7 +9,7 @@ import { formatBytes, isActive, type AppSettings, type DownloadJob, type QueueIt
 import {
   SortableQueueOrderRow, approximateMP3Bytes, button, dateLabel, durationLabel, etaLabel, field,
   inspectedVideoID, panel, playlistEntries, primaryButton, qualityLabels, selectablePlaylistEntries,
-  selectedPlaylistEntries, statusClass, statusLabels, type Draft, type QueueFilter, type QueueRow,
+  selectedPlaylistEntries, statusClass, statusLabels, videoStrategyLabels, type Draft, type QueueFilter, type QueueRow,
 } from "../components/downloader/view-model";
 
 type QueueJobAction = "pause" | "resume" | "cancel" | "retry" | "remove";
@@ -30,6 +30,7 @@ type QueuePageProps = {
   settings: AppSettings;
   applyMediaTypeToAll: (mediaType: Draft["mediaType"]) => void;
   applyQualityToAll: (quality: Quality) => void;
+  applyVideoStrategyToAll: (strategy: Draft["selectedVideoStrategy"]) => void;
   applyAudioFormatToAll: (format: Draft["audioFormat"]) => void;
   applyAudioBitrateToAll: (bitrate: string) => void;
   applyCategoryToAll: (category: string) => void;
@@ -64,7 +65,7 @@ type QueuePageProps = {
 
 export function QueuePage({
   url, setUrl, batchMode, setBatchMode, drafts, setDrafts, serviceReady, inspecting, inspectLinks,
-  formError, setFormError, mp3Supported, settings, applyMediaTypeToAll, applyQualityToAll, applyAudioFormatToAll,
+  formError, setFormError, mp3Supported, settings, applyMediaTypeToAll, applyQualityToAll, applyVideoStrategyToAll, applyAudioFormatToAll,
   applyAudioBitrateToAll, applyCategoryToAll, updatePlaylistSelection, togglePlaylistEntry,
   rightsConfirmed, setRightsConfirmed, submitting, addDownloads, visibleQueueRows, activeCount,
   totalCurrentSpeed, completedQueueCount, queuedCount, jobs, batchAction, clearCompleted,
@@ -116,12 +117,15 @@ export function QueuePage({
                     </div>
                     {drafts.length > 1 && <div className="rounded-xl border border-neutral-800 bg-neutral-900/70 p-3">
                       <div className="mb-2 flex items-center justify-between gap-2"><div><p className="text-[11px] font-bold text-neutral-200">Apply to all inspected items</p><p className="mt-0.5 text-[10px] text-neutral-500">Batch values update eligible items now; each card can still be overridden afterward.</p></div><Layers className="size-4 text-rose-400" aria-hidden="true" /></div>
-                      <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
+                      <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-6">
                         <select aria-label="Apply media type to all" defaultValue="" onChange={event => { if (event.target.value) applyMediaTypeToAll(event.target.value as Draft["mediaType"]); event.currentTarget.value = ""; }} className={`${field} py-2 text-xs`}>
                           <option value="" disabled>Media type…</option><option value="video">All video</option><option value="audio">All eligible audio</option>
                         </select>
                         <select aria-label="Apply quality to all" defaultValue="" onChange={event => { if (event.target.value) applyQualityToAll(event.target.value as Quality); event.currentTarget.value = ""; }} className={`${field} py-2 text-xs`}>
                           <option value="" disabled>Video quality…</option>{(Object.entries(qualityLabels) as [Quality, string][]).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+                        </select>
+                        <select aria-label="Apply video format to all" defaultValue="" onChange={event => { if (event.target.value) applyVideoStrategyToAll(event.target.value as Draft["selectedVideoStrategy"]); event.currentTarget.value = ""; }} className={`${field} py-2 text-xs`}>
+                          <option value="" disabled>Video format…</option>{(Object.entries(videoStrategyLabels) as [Draft["selectedVideoStrategy"], string][]).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
                         </select>
                         <select aria-label="Apply audio format to all" defaultValue="" onChange={event => { if (event.target.value) applyAudioFormatToAll(event.target.value as Draft["audioFormat"]); event.currentTarget.value = ""; }} className={`${field} py-2 text-xs`}>
                           <option value="" disabled>Audio format…</option><option value="mp3" disabled={!mp3Supported}>MP3</option><option value="m4a">M4A · original AAC</option>
@@ -158,13 +162,19 @@ export function QueuePage({
                           <select aria-label={`MP3 bitrate for ${draft.title || `item ${index + 1}`}`} value={draft.audioBitrate} onChange={event => setDrafts(previous => previous.map((item, itemIndex) => itemIndex === index ? { ...item, audioBitrate: event.target.value } : item))} className={`${field} mt-1.5 py-2 text-xs`}>
                             {["128k", "192k", "256k", "320k"].map(value => <option key={value} value={value}>{value}</option>)}
                           </select>
-                        </label>}</> : <label className="block text-[11px] font-medium text-neutral-400">Maximum quality
+                        </label>}</> : <><label className="block text-[11px] font-medium text-neutral-400">Maximum quality
                           <select aria-label={`Quality for ${draft.title || `item ${index + 1}`}`} value={draft.selectedQuality} onChange={event => setDrafts(previous => previous.map((item, itemIndex) => itemIndex === index ? { ...item, selectedQuality: event.target.value as Quality } : item))} className={`${field} mt-1.5 py-2 text-xs`}>
                             {(draft.availableQualities ?? (draft.kind === "playlist"
                               ? (Object.entries(qualityLabels) as [Quality, string][]).map(([value, label]) => ({ value, label, height: 0 }))
                               : [{ value: "best" as const, label: "Best available", height: 0 }])).map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
                           </select>
-                        </label>}
+                        </label>
+                        <label className="block text-[11px] font-medium text-neutral-400">Video format
+                          <select aria-label={`Video format for ${draft.title || `item ${index + 1}`}`} value={draft.selectedVideoStrategy} onChange={event => setDrafts(previous => previous.map((item, itemIndex) => itemIndex === index ? { ...item, selectedVideoStrategy: event.target.value as Draft["selectedVideoStrategy"] } : item))} className={`${field} mt-1.5 py-2 text-xs`}>
+                            {(Object.entries(videoStrategyLabels) as [Draft["selectedVideoStrategy"], string][]).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+                          </select>
+                          <span className="mt-1 block text-[10px] leading-relaxed text-neutral-500">{draft.selectedVideoStrategy === "compatibility" ? "Strict MP4 output; may use a lower resolution when H.264/AAC is the highest compatible option." : draft.selectedVideoStrategy === "best" ? "Automatically chooses the highest-quality supported MP4 or WebM representation." : `Prefers ${draft.selectedVideoStrategy.toUpperCase()} WebM; falls back transparently when unavailable.`}</span>
+                        </label></>}
                         <label className="block text-[11px] font-medium text-neutral-400">Captions
                           <select aria-label={`Captions for ${draft.title || `item ${index + 1}`}`} value={draft.subtitleLanguage} onChange={event => setDrafts(previous => previous.map((item, itemIndex) => itemIndex === index ? { ...item, subtitleLanguage: event.target.value } : item))} className={`${field} mt-1.5 py-2 text-xs`}>
                             <option value="">None</option>
@@ -292,7 +302,7 @@ export function QueuePage({
                   const itemActive = item.status === "downloading" || item.status === "processing";
                   const batchControls = job.kind === "playlist" && item.index === 1;
                   const itemError = item.error || ((job.kind === "video" || !job.items?.length) ? job.error : "");
-                  const label = job.mediaType === "audio" ? (job.audioFormat === "m4a" ? "M4A · original AAC" : `MP3 ${job.audioBitrate ?? "192k"}`) : qualityLabels[job.quality];
+                  const label = job.mediaType === "audio" ? (job.audioFormat === "m4a" ? "M4A · original AAC" : `MP3 ${job.audioBitrate ?? "192k"}`) : `${qualityLabels[job.quality]} · ${videoStrategyLabels[job.videoStrategy ?? "best"]}`;
                   return <article key={`${job.id}:${item.index}`} className={`rounded-2xl border bg-neutral-900/80 p-4 sm:p-5 ${itemActive ? "border-rose-800/70" : "border-neutral-800"}`}>
                     <div className="flex flex-wrap items-center gap-4">
                       {item.thumbnailUrl ? <img src={item.thumbnailUrl} alt="" referrerPolicy="no-referrer" className="hidden aspect-video w-40 shrink-0 rounded-lg bg-neutral-950 object-cover sm:block" />

@@ -4,6 +4,7 @@
  * page bootstrap, not in this client module.
  */
 export type Quality = "best" | "2160" | "1440" | "1080" | "720" | "480";
+export type VideoStrategy = "best" | "compatibility" | "vp9" | "av1";
 export type JobStatus = "queued" | "downloading" | "processing" | "paused" | "completed" | "partial" | "failed" | "cancelled";
 export interface SubtitleFile {
   languageCode: string;
@@ -63,6 +64,7 @@ export interface DownloadJob {
   url: string;
   kind: "video" | "playlist";
   quality: Quality;
+  videoStrategy?: VideoStrategy;
   mediaType: "video" | "audio";
   audioFormat?: "mp3" | "m4a";
   audioBitrate?: string;
@@ -118,6 +120,7 @@ export interface ServiceEvent {
 
 export interface AppSettings {
   defaultQuality: Quality;
+  defaultVideoStrategy: VideoStrategy;
   maxConcurrentDownloads: number;
   bandwidthLimitBytesPerSec: number;
   notificationsEnabled: boolean;

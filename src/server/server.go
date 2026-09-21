@@ -74,6 +74,7 @@ type Job struct {
 	URL              string        `json:"url"`
 	Kind             string        `json:"kind"`
 	Quality          string        `json:"quality"`
+	VideoStrategy    string        `json:"videoStrategy,omitempty"`
 	MediaType        string        `json:"mediaType"`
 	AudioBitrate     string        `json:"audioBitrate,omitempty"`
 	AudioFormat      string        `json:"audioFormat,omitempty"`
@@ -600,6 +601,7 @@ func (s *server) handleSettings(w http.ResponseWriter, r *http.Request) {
 	case http.MethodPut:
 		var patch struct {
 			DefaultQuality         *string   `json:"defaultQuality"`
+			DefaultVideoStrategy   *string   `json:"defaultVideoStrategy"`
 			MaxConcurrentDownloads   *int      `json:"maxConcurrentDownloads"`
 			BandwidthLimitBytesPerSec *int64    `json:"bandwidthLimitBytesPerSec"`
 			NotificationsEnabled     *bool     `json:"notificationsEnabled"`
@@ -617,6 +619,9 @@ func (s *server) handleSettings(w http.ResponseWriter, r *http.Request) {
 		settings := mergeAppSettings(defaultAppSettings(), s.settings)
 		if patch.DefaultQuality != nil {
 			settings.DefaultQuality = *patch.DefaultQuality
+		}
+		if patch.DefaultVideoStrategy != nil {
+			settings.DefaultVideoStrategy = strings.ToLower(strings.TrimSpace(*patch.DefaultVideoStrategy))
 		}
 		if patch.MaxConcurrentDownloads != nil {
 			settings.MaxConcurrentDownloads = *patch.MaxConcurrentDownloads
@@ -698,6 +703,7 @@ func (s *server) create(w http.ResponseWriter, r *http.Request) {
 	var request struct {
 		URL             string          `json:"url"`
 		Quality         string          `json:"quality"`
+		VideoStrategy   string          `json:"videoStrategy"`
 		MediaType       string          `json:"mediaType"`
 		AudioBitrate    string          `json:"audioBitrate"`
 		AudioFormat     string          `json:"audioFormat"`
@@ -752,6 +758,16 @@ func (s *server) create(w http.ResponseWriter, r *http.Request) {
 		fail(w, 400, "mediaType must be video or audio")
 		return
 	}
+	request.VideoStrategy = strings.ToLower(strings.TrimSpace(request.VideoStrategy))
+	if request.MediaType == "video" {
+		if request.VideoStrategy != "" && !validVideoStrategy(request.VideoStrategy) {
+			fail(w, 400, "videoStrategy must be best, compatibility, vp9, or av1")
+			return
+		}
+	} else if request.VideoStrategy != "" {
+		fail(w, 400, "videoStrategy is valid only when mediaType is video")
+		return
+	}
 	if request.MediaType == "audio" {
 		if request.AudioFormat == "" {
 			request.AudioFormat = "mp3"
@@ -787,12 +803,12 @@ func (s *server) create(w http.ResponseWriter, r *http.Request) {
 		fail(w, 400, err.Error())
 		return
 	}
-	s.enqueueJob(w, u, kind, request.Quality, request.MediaType, request.AudioFormat, request.AudioBitrate, request.SubtitleLanguage, request.SubtitleFormat, request.Category, "", request.Items)
+	s.enqueueJob(w, u, kind, request.Quality, request.VideoStrategy, request.MediaType, request.AudioFormat, request.AudioBitrate, request.SubtitleLanguage, request.SubtitleFormat, request.Category, "", request.Items)
 }
 
 // enqueueJob allocates private per-job storage, persists a queued job, and
 // returns 202 only after the job has entered the bounded worker queue.
-func (s *server) enqueueJob(w http.ResponseWriter, u, kind, quality, mediaType, audioFormat, audioBitrate, subtitleLanguage, subtitleFormat, requestedCategory, requestedStorageMode string, inspectedItems ...[]inspectedItem) {
+func (s *server) enqueueJob(w http.ResponseWriter, u, kind, quality, requestedVideoStrategy, mediaType, audioFormat, audioBitrate, subtitleLanguage, subtitleFormat, requestedCategory, requestedStorageMode string, inspectedItems ...[]inspectedItem) {
 	if s.engine == nil {
 		fail(w, 503, "Native download engine is not initialized")
 		return
@@ -825,6 +841,17 @@ func (s *server) enqueueJob(w http.ResponseWriter, u, kind, quality, mediaType, 
 		}
 	}
 	outputSettings := mergeAppSettings(defaultAppSettings(), s.settings)
+	videoStrategy := ""
+	if mediaType == "video" {
+		videoStrategy = strings.ToLower(strings.TrimSpace(requestedVideoStrategy))
+		if videoStrategy == "" {
+			videoStrategy = outputSettings.DefaultVideoStrategy
+		}
+		if !validVideoStrategy(videoStrategy) {
+			fail(w, 400, "videoStrategy must be best, compatibility, vp9, or av1")
+			return
+		}
+	}
 	category, err := resolveJobCategory(outputSettings, requestedCategory)
 	if err != nil {
 		fail(w, 400, err.Error())
@@ -839,7 +866,7 @@ func (s *server) enqueueJob(w http.ResponseWriter, u, kind, quality, mediaType, 
 		return
 	}
 	j := &jobState{Job: Job{
-		ID: randomID(16), URL: u, Kind: kind, Quality: quality, MediaType: mediaType, AudioFormat: audioFormat, AudioBitrate: audioBitrate,
+		ID: randomID(16), URL: u, Kind: kind, Quality: quality, VideoStrategy: videoStrategy, MediaType: mediaType, AudioFormat: audioFormat, AudioBitrate: audioBitrate,
 		SubtitleLanguage: subtitleLanguage, SubtitleFormat: subtitleFormat,
 		Status: "queued", Title: "YouTube " + kind, Files: []mediaFile{}, Items: items, Failures: []itemFailure{},
 		Note: formatNote, CreatedAt: time.Now().UTC().Format(time.RFC3339Nano), DownloadLocation: outputSettings.DownloadLocation,
