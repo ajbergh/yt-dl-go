@@ -909,7 +909,7 @@ func TestPauseDuringActiveStreamRead(t *testing.T) {
 		return io.NopCloser(bytes.NewReader(bytes.Repeat([]byte{0x2a}, size))), size, nil
 	}
 
-	s := testServer(t, fake, nil)
+	s := testServer(t, fake, func(c *config) { c.maxBytes = 4 << 20 })
 	job := createJob(t, s, testVideo)
 	select {
 	case <-started:
