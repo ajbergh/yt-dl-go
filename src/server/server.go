@@ -142,6 +142,7 @@ type server struct {
 	folderSelector   folderSelector
 	thumbnailFetcher func(context.Context, string, string) (string, error)
 	store            *jobStore
+	bandwidth        *bandwidthLimiter
 }
 
 func terminal(status string) bool {
@@ -585,8 +586,9 @@ func (s *server) handleSettings(w http.ResponseWriter, r *http.Request) {
 	case http.MethodPut:
 		var patch struct {
 			DefaultQuality         *string   `json:"defaultQuality"`
-			MaxConcurrentDownloads *int      `json:"maxConcurrentDownloads"`
-			DownloadLocation       *string   `json:"downloadLocation"`
+			MaxConcurrentDownloads   *int      `json:"maxConcurrentDownloads"`
+			BandwidthLimitBytesPerSec *int64    `json:"bandwidthLimitBytesPerSec"`
+			DownloadLocation         *string   `json:"downloadLocation"`
 			NamingPattern          *string   `json:"namingPattern"`
 			SubfolderSorting       *string   `json:"subfolderSorting"`
 			DefaultCategory        *string   `json:"defaultCategory"`
@@ -603,6 +605,9 @@ func (s *server) handleSettings(w http.ResponseWriter, r *http.Request) {
 		}
 		if patch.MaxConcurrentDownloads != nil {
 			settings.MaxConcurrentDownloads = *patch.MaxConcurrentDownloads
+		}
+		if patch.BandwidthLimitBytesPerSec != nil {
+			settings.BandwidthLimitBytesPerSec = *patch.BandwidthLimitBytesPerSec
 		}
 		if patch.DownloadLocation != nil {
 			settings.DownloadLocation = *patch.DownloadLocation
@@ -644,6 +649,9 @@ func (s *server) handleSettings(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.settings = settings
+		if s.bandwidth != nil {
+			s.bandwidth.SetLimit(settings.BandwidthLimitBytesPerSec)
+		}
 		s.notifySchedulerLocked()
 		s.mu.Unlock()
 		reply(w, 200, map[string]AppSettings{"settings": settings})
