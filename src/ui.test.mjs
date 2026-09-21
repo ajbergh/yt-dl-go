@@ -41,7 +41,7 @@ beforeEach(async () => {
     if (path === "/api/health") return Response.json({ ready: missing.length === 0, missing, engine: healthEngine, capabilities: { combinedStreamsOnly: false, adaptiveStreamsSupported: true, externalBinariesRequired: false } });
     if (path === "/api/settings" && init.method === "PUT") return Response.json({ settings: JSON.parse(init.body) });
     if (path === "/api/folders/select" && init.method === "POST") return Response.json({ path: "C:\\Media\\YouTube" });
-    if (path === "/api/settings") return Response.json({ settings: { defaultQuality: "best", maxConcurrentDownloads: 3, downloadLocation: "C:\\\\Downloads\\\\YouTube_Vault", namingPattern: "{channel} - {title} [{resolution}]", subfolderSorting: "channel", defaultCategory: "General", userCategories: ["General", "Music"], storageMode: "managed-published" } });
+    if (path === "/api/settings") return Response.json({ settings: { defaultQuality: "best", maxConcurrentDownloads: 3, downloadLocation: "C:\\Downloads\\YouTube_Vault", namingPattern: "{channel} - {title} [{resolution}]", subfolderSorting: "channel", defaultCategory: "General", userCategories: ["General", "Music"], storageMode: "managed-published" } });
     if (path === "/api/inspect") return Response.json(inspection);
     if (path === "/api/jobs" && init.method === "POST") return Response.json(job, { status: 202 });
     if (path === "/api/jobs") return Response.json({ jobs: rows });
@@ -50,7 +50,7 @@ beforeEach(async () => {
     if (path.endsWith("/resume")) return Response.json({ ...job, status: "queued" });
     if (path.endsWith("/retry")) return Response.json({ ...job, id: "retried-job" }, { status: 202 });
     if (path.endsWith("/ticket")) return Response.json({ path: "/api/downloads/test-ticket" });
-    if (path.endsWith("/filesystem") && init.method === "POST") return Response.json({ path: "C:\\\\Media\\\\test.mp4" });
+    if (path.endsWith("/filesystem") && init.method === "POST") return Response.json({ path: "C:\\Media\\test.mp4" });
     if (init.method === "DELETE" && path.endsWith("/published")) {
       const current = rows[0] ?? job;
       return Response.json({ ...current, files: (current.files ?? []).map(file => ({ ...file, publishedAvailable: false })) });
@@ -105,11 +105,12 @@ async function connect() {
   expect(container.textContent).toContain("Service connected");
 }
 async function remount() {
+  requests = [];
   await act(async () => root.unmount());
   root = createRoot(container);
   await act(async () => {
     root.render(createElement(HomePage));
-    await new Promise(resolve => setTimeout(resolve, 0));
+    await new Promise(resolve => setTimeout(resolve, 10));
   });
 }
 
@@ -206,7 +207,7 @@ describe("Downloader UI and Go API integration", () => {
     rows = [{ ...job, status: "downloading" }];
     await remount();
     await connect();
-    await click(button("Pause"));
+    await click(button("Pause batch"));
     expect(requests.some(item => item.path.endsWith("/pause") && item.method === "POST")).toBe(true);
   });
   test("separates Library removal from managed and published media deletion", async () => {
