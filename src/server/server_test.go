@@ -483,6 +483,56 @@ func TestStoragePolicies(t *testing.T) {
 	}
 }
 
+func TestLocalThumbnailCapturePersistenceAndServing(t *testing.T) {
+	s := testServer(t, fixtureClient(1), nil)
+	const thumbnailData = "fixture-thumbnail"
+	s.thumbnailFetcher = func(_ context.Context, rawURL, destination string) (string, error) {
+		if safeInspectedThumbnailURL(rawURL) == "" {
+			t.Fatalf("thumbnail fetch received unsafe URL %q", rawURL)
+		}
+		if err := os.WriteFile(destination, []byte(thumbnailData), 0600); err != nil {
+			return "", err
+		}
+		return "image/jpeg", nil
+	}
+
+	j := waitTerminal(t, s, createJob(t, s, testVideo).ID)
+	if len(j.Files) != 1 {
+		t.Fatalf("thumbnail fixture finalized %d files", len(j.Files))
+	}
+	file := j.Files[0]
+	if !file.ThumbnailLocalAvailable || file.ThumbnailMimeType != "image/jpeg" || file.ThumbnailURL == "" {
+		t.Fatalf("local thumbnail metadata missing: %+v", file)
+	}
+
+	response := request(s, "GET", "/api/jobs/"+j.ID+"/thumbnail?fileId="+file.ID, "", nil)
+	if response.Code != 200 || response.Body.String() != thumbnailData || response.Header().Get("Content-Type") != "image/jpeg" {
+		t.Fatalf("serve local thumbnail: %d %q %q", response.Code, response.Body.String(), response.Header().Get("Content-Type"))
+	}
+	if request(s, "GET", "/api/jobs/"+j.ID+"/thumbnail?fileId=../other", "", nil).Code != 400 {
+		t.Fatal("thumbnail endpoint accepted unsafe file id")
+	}
+	if request(s, "GET", "/api/jobs/"+j.ID+"/thumbnail?fileId=missing", "", nil).Code != 404 {
+		t.Fatal("thumbnail endpoint accepted unknown file id")
+	}
+
+	loaded, err := s.store.loadJobs(s.cfg.root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, stored := range loaded {
+		if stored.job.ID != j.ID || len(stored.job.Files) != 1 {
+			continue
+		}
+		persisted := stored.job.Files[0]
+		found = persisted.ThumbnailLocalAvailable && persisted.ThumbnailMimeType == "image/jpeg"
+	}
+	if !found {
+		t.Fatal("local thumbnail state did not persist through SQLite")
+	}
+}
+
 func TestNativeFolderSelectionEndpoint(t *testing.T) {
 	s := testServer(t, fixtureClient(1), nil)
 	selected := filepath.Join(s.cfg.root, "chosen-output")
