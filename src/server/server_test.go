@@ -336,6 +336,10 @@ func TestInspectionPreferencesRetryAndRemoval(t *testing.T) {
 	if settings.Code != 200 || !strings.Contains(settings.Body.String(), `"bandwidthLimitBytesPerSec":5242880`) || s.bandwidth.Limit() != 5242880 {
 		t.Fatalf("save bandwidth setting: %d %s limit=%d", settings.Code, settings.Body.String(), s.bandwidth.Limit())
 	}
+	settings = request(s, "PUT", "/api/settings", `{"notificationsEnabled":true}`, nil)
+	if settings.Code != 200 || !strings.Contains(settings.Body.String(), `"notificationsEnabled":true`) || !s.settings.NotificationsEnabled {
+		t.Fatalf("save notification setting: %d %s", settings.Code, settings.Body.String())
+	}
 	if request(s, "PUT", "/api/settings", `{"bandwidthLimitBytesPerSec":-1}`, nil).Code != 400 ||
 		request(s, "PUT", "/api/settings", `{"bandwidthLimitBytesPerSec":1073741825}`, nil).Code != 400 {
 		t.Fatal("invalid bandwidth limit was accepted")
