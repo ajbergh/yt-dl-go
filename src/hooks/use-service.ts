@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import {
   api, streamServiceEvents,
-  type AppSettings, type DownloadJob, type ServiceConnection, type ServiceEvent, type ServiceHealth,
+  type AppSettings, type BuildInfo, type DownloadJob, type ServiceConnection, type ServiceEvent, type ServiceHealth, type UpdateStatus,
 } from "../lib/downloader";
 import {
   builtInServiceConnection, errorMessage, notificationAPI, terminalNotification,
@@ -45,6 +45,10 @@ export function useService() {
   const [jobs, setJobs] = useState<DownloadJob[]>([]);
   const [settings, setSettings] = useState<AppSettings>(defaultSettings);
   const [mp3Supported, setMp3Supported] = useState(false);
+  const [buildInfo, setBuildInfo] = useState<BuildInfo>({ version: "dev", commit: "unknown", buildDate: "unknown" });
+  const [updateStatus, setUpdateStatus] = useState<UpdateStatus | null>(null);
+  const [updateError, setUpdateError] = useState("");
+  const [checkingUpdates, setCheckingUpdates] = useState(false);
   const [serviceError, setServiceError] = useState("");
   const [pollError, setPollError] = useState("");
   const knownJobStatuses = useRef<Map<string, DownloadJob["status"]>>(new Map());
@@ -53,6 +57,21 @@ export function useService() {
   useEffect(() => {
     notificationsEnabledRef.current = settings.notificationsEnabled;
   }, [settings.notificationsEnabled]);
+
+  async function checkForUpdates() {
+    setCheckingUpdates(true);
+    setUpdateError("");
+    try {
+      const status = await api<UpdateStatus>(connection, "/api/update", {
+        signal: AbortSignal.timeout(10000),
+      });
+      setUpdateStatus(status);
+    } catch (error) {
+      setUpdateError(errorMessage(error));
+    } finally {
+      setCheckingUpdates(false);
+    }
+  }
 
   useEffect(() => {
     const controller = new AbortController();
@@ -72,6 +91,11 @@ export function useService() {
             : "The Go service is starting up.");
         }
         setMp3Supported(health.capabilities?.mp3AudioSupported === true);
+        setBuildInfo({
+          version: health.version || "dev",
+          commit: health.commit || "unknown",
+          buildDate: health.buildDate || "unknown",
+        });
         const [jobResult, settingResult] = await Promise.all([
           api<{ jobs: DownloadJob[] }>(connection, "/api/jobs", {
             signal: AbortSignal.any([controller.signal, AbortSignal.timeout(10000)]),
@@ -86,6 +110,13 @@ export function useService() {
         setSettings(previous => hydratedSettings(settingResult.settings, previous));
         setServiceError("");
         setServiceReady(true);
+        void api<UpdateStatus>(connection, "/api/update", {
+          signal: AbortSignal.any([controller.signal, AbortSignal.timeout(10000)]),
+        }).then(status => {
+          if (!controller.signal.aborted) setUpdateStatus(status);
+        }).catch(() => {
+          // Update discovery is advisory and must never affect service readiness.
+        });
       } catch (error) {
         if (controller.signal.aborted) return;
         setServiceReady(false);
@@ -200,6 +231,11 @@ export function useService() {
     settings,
     setSettings,
     mp3Supported,
+    buildInfo,
+    updateStatus,
+    updateError,
+    checkingUpdates,
+    checkForUpdates,
     serviceError,
     setServiceError,
     pollError,
