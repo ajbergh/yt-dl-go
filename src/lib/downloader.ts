@@ -102,6 +102,7 @@ export interface AppSettings {
   defaultQuality: Quality;
   maxConcurrentDownloads: number;
   bandwidthLimitBytesPerSec: number;
+  notificationsEnabled: boolean;
   downloadLocation: string;
   namingPattern: string;
   subfolderSorting: "channel" | "category" | "flat";
