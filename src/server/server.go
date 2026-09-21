@@ -30,13 +30,17 @@ type mediaFile struct {
 	Title              string `json:"title,omitempty"`
 	Author             string `json:"author,omitempty"`
 	DurationSeconds    int64  `json:"durationSeconds,omitempty"`
-	ThumbnailURL       string `json:"thumbnailUrl,omitempty"`
-	PublishDate        string `json:"publishDate,omitempty"`
+	ThumbnailURL            string `json:"thumbnailUrl,omitempty"`
+	ThumbnailLocalAvailable bool   `json:"thumbnailLocalAvailable,omitempty"`
+	ThumbnailMimeType       string `json:"thumbnailMimeType,omitempty"`
+	PublishDate             string `json:"publishDate,omitempty"`
 	Category           string `json:"category,omitempty"`
 	MediaType          string `json:"mediaType,omitempty"`
 	OutputName         string `json:"outputName,omitempty"`
 	OutputPath         string `json:"-"`
 	OutputRelativePath string `json:"outputRelativePath,omitempty"`
+	ManagedAvailable   bool   `json:"managedAvailable"`
+	PublishedAvailable bool   `json:"publishedAvailable"`
 }
 
 type itemFailure struct {
@@ -46,6 +50,7 @@ type itemFailure struct {
 
 type queueItem struct {
 	Index            int      `json:"index"`
+	PlaylistIndex    int      `json:"playlistIndex,omitempty"`
 	VideoID          string   `json:"videoId,omitempty"`
 	Title            string   `json:"title"`
 	Author           string   `json:"author,omitempty"`
@@ -59,6 +64,7 @@ type queueItem struct {
 	ETASeconds       int64    `json:"etaSeconds"`
 	Error            string   `json:"error,omitempty"`
 	FileID           string   `json:"fileId,omitempty"`
+	RetryRequested   bool     `json:"retryRequested,omitempty"`
 }
 
 type Job struct {
@@ -68,6 +74,7 @@ type Job struct {
 	Quality          string        `json:"quality"`
 	MediaType        string        `json:"mediaType"`
 	AudioBitrate     string        `json:"audioBitrate,omitempty"`
+	AudioFormat      string        `json:"audioFormat,omitempty"`
 	Status           string        `json:"status"`
 	Title            string        `json:"title"`
 	Progress         *float64      `json:"progress"`
@@ -88,7 +95,9 @@ type Job struct {
 	DownloadLocation string        `json:"-"`
 	NamingPattern    string        `json:"-"`
 	SubfolderSorting string        `json:"-"`
-	Category         string        `json:"-"`
+	Category         string        `json:"category,omitempty"`
+	StorageMode      string        `json:"storageMode"`
+	QueuePosition    int64         `json:"queuePosition,omitempty"`
 }
 
 type jobState struct {
@@ -102,11 +111,13 @@ type jobState struct {
 	readers         int
 	itemProgress    map[int]*itemProgress
 	processingItems int
+	playlistItemCount int
 }
 
 type ticket struct {
 	jobID, fileID string
 	expires       time.Time
+	inline        bool
 }
 
 type server struct {
@@ -127,7 +138,12 @@ type server struct {
 	wg              sync.WaitGroup
 	engine          nativeClient
 	browserFactory  browserProviderFactory
-	store           *jobStore
+	filesystemOpener filesystemOpener
+	folderSelector   folderSelector
+	thumbnailFetcher func(context.Context, string, string) (string, error)
+	store            *jobStore
+	bandwidth        *bandwidthLimiter
+	events           *eventBroker
 }
 
 func terminal(status string) bool {
@@ -155,10 +171,31 @@ func snapshot(j *jobState) Job {
 	return copy
 }
 
+func (s *server) invalidateJobTicketsLocked(jobID string) {
+	for id, ticket := range s.tickets {
+		if ticket.jobID == jobID {
+			delete(s.tickets, id)
+		}
+	}
+}
+
+func (s *server) forgetJobLocked(j *jobState) {
+	delete(s.jobs, j.ID)
+	for index, id := range s.order {
+		if id == j.ID {
+			s.order = append(s.order[:index], s.order[index+1:]...)
+			break
+		}
+	}
+	s.invalidateJobTicketsLocked(j.ID)
+	s.publishDeletedEventLocked(j.ID)
+}
+
 func (s *server) persistJobLocked(j *jobState) {
 	if s.store != nil {
 		_ = s.store.saveJob(j)
 	}
+	s.publishJobEventLocked("job-status", j)
 }
 
 func reply(w http.ResponseWriter, code int, value any) {
@@ -259,7 +296,9 @@ func canonicalURL(raw string) (string, string, error) {
 // ticket-download requests. GET health and ticket downloads are token-exempt;
 // the random ticket itself authorizes a download.
 func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	_ = http.NewResponseController(w).SetWriteDeadline(time.Now().Add(30 * time.Second))
+	if r.URL.Path != "/api/events" {
+		_ = http.NewResponseController(w).SetWriteDeadline(time.Now().Add(30 * time.Second))
+	}
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Referrer-Policy", "no-referrer")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
@@ -312,6 +351,26 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.handleSettings(w, r)
 		return
 	}
+	if r.URL.Path == "/api/events" {
+		s.serveEvents(w, r)
+		return
+	}
+	if r.URL.Path == "/api/folders/select" {
+		if r.Method != http.MethodPost {
+			fail(w, 405, "Method not allowed")
+			return
+		}
+		s.handleFolderSelection(w, r)
+		return
+	}
+	if r.URL.Path == "/api/queue/order" {
+		if r.Method != http.MethodPut {
+			fail(w, http.StatusMethodNotAllowed, "Method not allowed")
+			return
+		}
+		s.handleQueueOrder(w, r)
+		return
+	}
 	if r.URL.Path == "/api/jobs" {
 		switch r.Method {
 		case http.MethodPost:
@@ -338,8 +397,29 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.retry(w, r, parts[0])
 		return
 	}
+	if len(parts) == 2 && parts[1] == "retry-item" && r.Method == http.MethodPost {
+		s.handleRetryItem(w, r, parts[0])
+		return
+	}
+	if len(parts) == 2 && parts[1] == "next" && r.Method == http.MethodPost {
+		s.handleDownloadNext(w, r, parts[0])
+		return
+	}
+	if len(parts) == 2 && parts[1] == "items" && r.Method == http.MethodPut {
+		s.handleItemOrder(w, r, parts[0])
+		return
+	}
+	if len(parts) == 2 && parts[1] == "filesystem" && r.Method == http.MethodPost {
+		s.handleFilesystem(w, r, parts[0])
+		return
+	}
+	if len(parts) == 2 && parts[1] == "thumbnail" && (r.Method == http.MethodGet || r.Method == http.MethodHead) {
+		s.serveThumbnail(w, r, parts[0])
+		return
+	}
 	var requested struct {
 		FileID json.RawMessage `json:"fileId"`
+		Inline bool            `json:"inline"`
 	}
 	if len(parts) == 2 && parts[1] == "ticket" && r.Method == http.MethodPost && !decode(w, r, &requested) {
 		return
@@ -368,30 +448,74 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			fail(w, 409, "This job has an active file transfer")
 			return
 		}
-		if err := removeOutputCopies(j); err != nil {
-			fail(w, 500, "Could not remove the job's files from the configured download directory")
-			return
-		}
-		if err := os.RemoveAll(j.dir); err != nil {
-			fail(w, 500, "Could not remove the job's private files")
+		// Removing a job from the Library deletes only app-managed media and
+		// history. Published files in the user's output directory are preserved.
+		if err := removeManagedCopies(j); err != nil {
+			fail(w, 500, "Could not remove the job's private managed files")
 			return
 		}
 		if err := s.store.deleteJob(j.ID); err != nil {
 			fail(w, 500, "Could not remove the job from history")
 			return
 		}
-		delete(s.jobs, j.ID)
-		for index, id := range s.order {
-			if id == j.ID {
-				s.order = append(s.order[:index], s.order[index+1:]...)
-				break
-			}
+		s.forgetJobLocked(j)
+		w.WriteHeader(http.StatusNoContent)
+	case len(parts) == 2 && parts[1] == "managed" && r.Method == http.MethodDelete:
+		if !terminal(j.Status) {
+			fail(w, 409, "Only stopped jobs can have managed copies deleted")
+			return
 		}
-		for id, ticket := range s.tickets {
-			if ticket.jobID == j.ID {
-				delete(s.tickets, id)
-			}
+		if j.readers > 0 {
+			fail(w, 409, "This job has an active file transfer")
+			return
 		}
+		if err := removeManagedCopies(j); err != nil {
+			fail(w, 500, "Could not remove the app-managed media copies")
+			return
+		}
+		s.invalidateJobTicketsLocked(j.ID)
+		s.persistJobLocked(j)
+		reply(w, 200, snapshot(j))
+	case len(parts) == 2 && parts[1] == "published" && r.Method == http.MethodDelete:
+		if !terminal(j.Status) {
+			fail(w, 409, "Only stopped jobs can have published copies deleted")
+			return
+		}
+		if j.readers > 0 {
+			fail(w, 409, "This job has an active file or filesystem operation")
+			return
+		}
+		if err := removeOutputCopies(j); err != nil {
+			s.persistJobLocked(j)
+			fail(w, 500, "Could not remove the published media copies")
+			return
+		}
+		s.persistJobLocked(j)
+		reply(w, 200, snapshot(j))
+	case len(parts) == 2 && parts[1] == "all" && r.Method == http.MethodDelete:
+		if !terminal(j.Status) {
+			fail(w, 409, "Only stopped jobs can be deleted")
+			return
+		}
+		if j.readers > 0 {
+			fail(w, 409, "This job has an active file transfer")
+			return
+		}
+		if err := removeOutputCopies(j); err != nil {
+			s.persistJobLocked(j)
+			fail(w, 500, "Could not remove the published media copies")
+			return
+		}
+		if err := removeManagedCopies(j); err != nil {
+			s.persistJobLocked(j)
+			fail(w, 500, "Published copies were removed, but private managed files could not be removed")
+			return
+		}
+		if err := s.store.deleteJob(j.ID); err != nil {
+			fail(w, 500, "Media copies were removed, but job history could not be deleted")
+			return
+		}
+		s.forgetJobLocked(j)
 		w.WriteHeader(http.StatusNoContent)
 	case len(parts) == 2 && parts[1] == "pause" && r.Method == http.MethodPost:
 		if j.Status == "queued" {
@@ -420,6 +544,7 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			j.pauseRequested = false
 			j.cancelRequested = false
 			j.Status, j.Error, j.done = "queued", "", time.Time{}
+			j.QueuePosition = s.nextQueuePositionLocked()
 			s.refreshAllQueueItemsLocked(j)
 			s.persistJobLocked(j)
 			s.notifySchedulerLocked()
@@ -453,7 +578,7 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		reply(w, 200, snapshot(j))
 	case len(parts) == 2 && parts[1] == "ticket" && r.Method == http.MethodPost:
-		s.issueTicket(w, j, fileID)
+		s.issueTicket(w, j, fileID, requested.Inline)
 	default:
 		fail(w, 405, "Method not allowed")
 	}
@@ -470,12 +595,15 @@ func (s *server) handleSettings(w http.ResponseWriter, r *http.Request) {
 	case http.MethodPut:
 		var patch struct {
 			DefaultQuality         *string   `json:"defaultQuality"`
-			MaxConcurrentDownloads *int      `json:"maxConcurrentDownloads"`
-			DownloadLocation       *string   `json:"downloadLocation"`
+			MaxConcurrentDownloads   *int      `json:"maxConcurrentDownloads"`
+			BandwidthLimitBytesPerSec *int64    `json:"bandwidthLimitBytesPerSec"`
+			NotificationsEnabled     *bool     `json:"notificationsEnabled"`
+			DownloadLocation         *string   `json:"downloadLocation"`
 			NamingPattern          *string   `json:"namingPattern"`
 			SubfolderSorting       *string   `json:"subfolderSorting"`
 			DefaultCategory        *string   `json:"defaultCategory"`
 			UserCategories         *[]string `json:"userCategories"`
+			StorageMode            *string   `json:"storageMode"`
 		}
 		if !decode(w, r, &patch) {
 			return
@@ -487,6 +615,12 @@ func (s *server) handleSettings(w http.ResponseWriter, r *http.Request) {
 		}
 		if patch.MaxConcurrentDownloads != nil {
 			settings.MaxConcurrentDownloads = *patch.MaxConcurrentDownloads
+		}
+		if patch.BandwidthLimitBytesPerSec != nil {
+			settings.BandwidthLimitBytesPerSec = *patch.BandwidthLimitBytesPerSec
+		}
+		if patch.NotificationsEnabled != nil {
+			settings.NotificationsEnabled = *patch.NotificationsEnabled
 		}
 		if patch.DownloadLocation != nil {
 			settings.DownloadLocation = *patch.DownloadLocation
@@ -502,6 +636,9 @@ func (s *server) handleSettings(w http.ResponseWriter, r *http.Request) {
 		}
 		if patch.UserCategories != nil {
 			settings.UserCategories = *patch.UserCategories
+		}
+		if patch.StorageMode != nil {
+			settings.StorageMode = *patch.StorageMode
 		}
 		settings.DownloadLocation = filepath.Clean(strings.TrimSpace(settings.DownloadLocation))
 		if settings.DefaultQuality != "best" && settings.DefaultQuality != "1080" && settings.DefaultQuality != "720" && settings.DefaultQuality != "480" {
@@ -525,6 +662,10 @@ func (s *server) handleSettings(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.settings = settings
+		if s.bandwidth != nil {
+			s.bandwidth.SetLimit(settings.BandwidthLimitBytesPerSec)
+		}
+		s.publishSettingsEventLocked(settings)
 		s.notifySchedulerLocked()
 		s.mu.Unlock()
 		reply(w, 200, map[string]AppSettings{"settings": settings})
@@ -554,6 +695,8 @@ func (s *server) create(w http.ResponseWriter, r *http.Request) {
 		Quality         string          `json:"quality"`
 		MediaType       string          `json:"mediaType"`
 		AudioBitrate    string          `json:"audioBitrate"`
+		AudioFormat     string          `json:"audioFormat"`
+		Category        string          `json:"category"`
 		RightsConfirmed bool            `json:"rightsConfirmed"`
 		Items           []inspectedItem `json:"items"`
 	}
@@ -570,8 +713,26 @@ func (s *server) create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if len(request.Items) > 10000 {
-		fail(w, 400, "A playlist may contain at most 10000 displayed entries")
+		fail(w, 400, "A playlist may contain at most 10000 selected entries")
 		return
+	}
+	if kind != "playlist" && len(request.Items) > 0 {
+		fail(w, 400, "items may be supplied only for playlist jobs")
+		return
+	}
+	if kind == "playlist" && len(request.Items) > 0 {
+		seenIndexes := make(map[int]struct{}, len(request.Items))
+		for _, item := range request.Items {
+			if item.Index < 1 || item.Index > 10000 || !videoID.MatchString(item.ID) {
+				fail(w, 400, "playlist items must include a valid original index and video ID")
+				return
+			}
+			if _, exists := seenIndexes[item.Index]; exists {
+				fail(w, 400, "playlist item indexes must be unique")
+				return
+			}
+			seenIndexes[item.Index] = struct{}{}
+		}
 	}
 	if request.Quality != "best" && request.Quality != "1080" && request.Quality != "720" && request.Quality != "480" {
 		fail(w, 400, "Quality must be best, 1080, 720, or 480")
@@ -584,19 +745,38 @@ func (s *server) create(w http.ResponseWriter, r *http.Request) {
 		fail(w, 400, "mediaType must be video or audio")
 		return
 	}
-	if request.AudioBitrate == "" {
-		request.AudioBitrate = "192k"
+	if request.MediaType == "audio" {
+		if request.AudioFormat == "" {
+			request.AudioFormat = "mp3"
+		}
+		if request.AudioFormat != "mp3" && request.AudioFormat != "m4a" {
+			fail(w, 400, "audioFormat must be mp3 or m4a")
+			return
+		}
+		if request.AudioFormat == "mp3" {
+			if request.AudioBitrate == "" {
+				request.AudioBitrate = "192k"
+			}
+			if request.AudioBitrate != "128k" && request.AudioBitrate != "192k" && request.AudioBitrate != "256k" && request.AudioBitrate != "320k" {
+				fail(w, 400, "audioBitrate must be 128k, 192k, 256k, or 320k")
+				return
+			}
+		} else {
+			request.AudioBitrate = ""
+		}
+	} else {
+		if request.AudioFormat != "" {
+			fail(w, 400, "audioFormat is valid only when mediaType is audio")
+			return
+		}
+		request.AudioBitrate = ""
 	}
-	if request.AudioBitrate != "128k" && request.AudioBitrate != "192k" && request.AudioBitrate != "256k" && request.AudioBitrate != "320k" {
-		fail(w, 400, "audioBitrate must be 128k, 192k, 256k, or 320k")
-		return
-	}
-	s.enqueueJob(w, u, kind, request.Quality, request.MediaType, request.AudioBitrate, request.Items)
+	s.enqueueJob(w, u, kind, request.Quality, request.MediaType, request.AudioFormat, request.AudioBitrate, request.Category, "", request.Items)
 }
 
 // enqueueJob allocates private per-job storage, persists a queued job, and
 // returns 202 only after the job has entered the bounded worker queue.
-func (s *server) enqueueJob(w http.ResponseWriter, u, kind, quality, mediaType, audioBitrate string, inspectedItems ...[]inspectedItem) {
+func (s *server) enqueueJob(w http.ResponseWriter, u, kind, quality, mediaType, audioFormat, audioBitrate, requestedCategory, requestedStorageMode string, inspectedItems ...[]inspectedItem) {
 	if s.engine == nil {
 		fail(w, 503, "Native download engine is not initialized")
 		return
@@ -618,25 +798,36 @@ func (s *server) enqueueJob(w http.ResponseWriter, u, kind, quality, mediaType, 
 		for index, inspected := range inspectedItems[0] {
 			title := inspected.Title
 			if title == "" {
-				title = "Item " + strconv.Itoa(index+1)
+				title = "Playlist item " + strconv.Itoa(inspected.Index)
 			}
-			item := queueItem{
-				Index: index + 1, Title: title, Author: inspected.Author,
+			items = append(items, queueItem{
+				Index: index + 1, PlaylistIndex: inspected.Index, VideoID: inspected.ID,
+				Title: title, Author: inspected.Author,
 				DurationSeconds: max(int64(0), inspected.DurationSeconds),
-				ThumbnailURL:    safeInspectedThumbnailURL(inspected.ThumbnailURL), Status: "queued",
-			}
-			if videoID.MatchString(inspected.ID) {
-				item.VideoID = inspected.ID
-			}
-			items = append(items, item)
+				ThumbnailURL: safeInspectedThumbnailURL(inspected.ThumbnailURL), Status: "queued",
+			})
 		}
 	}
 	outputSettings := mergeAppSettings(defaultAppSettings(), s.settings)
+	category, err := resolveJobCategory(outputSettings, requestedCategory)
+	if err != nil {
+		fail(w, 400, err.Error())
+		return
+	}
+	storageMode := requestedStorageMode
+	if storageMode == "" {
+		storageMode = outputSettings.StorageMode
+	}
+	if storageMode != "managed-published" && storageMode != "published-only" && storageMode != "managed-only" {
+		fail(w, 400, "storageMode must be managed-published, published-only, or managed-only")
+		return
+	}
 	j := &jobState{Job: Job{
-		ID: randomID(16), URL: u, Kind: kind, Quality: quality, MediaType: mediaType, AudioBitrate: audioBitrate,
+		ID: randomID(16), URL: u, Kind: kind, Quality: quality, MediaType: mediaType, AudioFormat: audioFormat, AudioBitrate: audioBitrate,
 		Status: "queued", Title: "YouTube " + kind, Files: []mediaFile{}, Items: items, Failures: []itemFailure{},
 		Note: formatNote, CreatedAt: time.Now().UTC().Format(time.RFC3339Nano), DownloadLocation: outputSettings.DownloadLocation,
-		NamingPattern: outputSettings.NamingPattern, SubfolderSorting: outputSettings.SubfolderSorting, Category: outputSettings.DefaultCategory,
+		NamingPattern: outputSettings.NamingPattern, SubfolderSorting: outputSettings.SubfolderSorting, Category: category, StorageMode: storageMode,
+		QueuePosition: s.nextQueuePositionLocked(),
 	}, fileItems: map[int]mediaFile{}}
 	if kind == "playlist" {
 		j.Note += " " + playlistNote
@@ -666,6 +857,7 @@ func (s *server) enqueueJob(w http.ResponseWriter, u, kind, quality, mediaType, 
 			fail(w, 500, "Cannot persist download job")
 			return
 		}
+		s.publishJobEventLocked("job-created", j)
 		reply(w, 202, snapshot(j))
 	default:
 		_ = os.RemoveAll(j.dir)
@@ -676,19 +868,38 @@ func (s *server) enqueueJob(w http.ResponseWriter, u, kind, quality, mediaType, 
 // issueTicket creates a short-lived random capability for a stopped job's ZIP
 // or one finalized file. The returned ticket URL, not a bearer token, grants
 // access to the corresponding download route.
-func (s *server) issueTicket(w http.ResponseWriter, j *jobState, fileID string) {
+func (s *server) issueTicket(w http.ResponseWriter, j *jobState, fileID string, inline bool) {
 	if !terminal(j.Status) || len(j.Files) == 0 {
 		fail(w, 409, "Files are available only after the job has stopped and finalized output exists")
 		return
 	}
+	if inline && fileID == "" {
+		fail(w, 400, "inline preview tickets require one fileId")
+		return
+	}
 	if fileID != "" {
-		found := false
+		found, available := false, false
 		for _, f := range j.Files {
-			found = found || f.ID == fileID
+			if f.ID == fileID {
+				found = true
+				available = f.ManagedAvailable
+				break
+			}
 		}
 		if !found {
 			fail(w, 404, "File not found")
 			return
+		}
+		if !available {
+			fail(w, 409, "The app-managed copy for this file is no longer available")
+			return
+		}
+	} else {
+		for _, f := range j.Files {
+			if !f.ManagedAvailable {
+				fail(w, 409, "One or more app-managed copies are no longer available for archive download")
+				return
+			}
 		}
 	}
 	for id, t := range s.tickets {
@@ -701,6 +912,10 @@ func (s *server) issueTicket(w http.ResponseWriter, j *jobState, fileID string) 
 		return
 	}
 	id := randomID(32)
-	s.tickets[id] = ticket{jobID: j.ID, fileID: fileID, expires: time.Now().Add(5 * time.Minute)}
+	expiresIn := 5 * time.Minute
+	if inline {
+		expiresIn = 30 * time.Minute
+	}
+	s.tickets[id] = ticket{jobID: j.ID, fileID: fileID, expires: time.Now().Add(expiresIn), inline: inline}
 	reply(w, 200, map[string]string{"path": "/api/downloads/" + id})
 }

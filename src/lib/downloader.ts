@@ -15,14 +15,19 @@ export interface DownloadFile {
   author?: string;
   durationSeconds?: number;
   thumbnailUrl?: string;
+  thumbnailLocalAvailable?: boolean;
+  thumbnailMimeType?: string;
   publishDate?: string;
   category?: string;
   mediaType?: "video" | "audio";
   outputName?: string;
   outputRelativePath?: string;
+  managedAvailable?: boolean;
+  publishedAvailable?: boolean;
 }
 export interface QueueItem {
   index: number;
+  playlistIndex?: number;
   videoId?: string;
   title: string;
   author?: string;
@@ -36,6 +41,7 @@ export interface QueueItem {
   etaSeconds: number;
   error?: string;
   fileId?: string;
+  retryRequested?: boolean;
 }
 export interface DownloadJob {
   id: string;
@@ -43,7 +49,11 @@ export interface DownloadJob {
   kind: "video" | "playlist";
   quality: Quality;
   mediaType: "video" | "audio";
+  audioFormat?: "mp3" | "m4a";
   audioBitrate?: string;
+  category?: string;
+  storageMode?: "managed-published" | "published-only" | "managed-only";
+  queuePosition?: number;
   status: JobStatus;
   title: string;
   progress: number | null;
@@ -79,14 +89,26 @@ export interface ServiceConnection {
   token: string;
 }
 
+export interface ServiceEvent {
+  id?: number;
+  type: "snapshot" | "job-created" | "job-progress" | "job-status" | "job-file-finalized" | "job-error" | "job-deleted" | "settings-changed" | string;
+  job?: DownloadJob;
+  jobId?: string;
+  jobs?: DownloadJob[];
+  settings?: AppSettings;
+}
+
 export interface AppSettings {
   defaultQuality: Quality;
   maxConcurrentDownloads: number;
+  bandwidthLimitBytesPerSec: number;
+  notificationsEnabled: boolean;
   downloadLocation: string;
   namingPattern: string;
   subfolderSorting: "channel" | "category" | "flat";
   defaultCategory: string;
   userCategories: string[];
+  storageMode: "managed-published" | "published-only" | "managed-only";
 }
 
 export interface InspectedQuality {
@@ -186,6 +208,97 @@ export async function api<T>(connection: ServiceConnection, path: string, init: 
   }
   if (!payload) throw new Error("The service returned an unexpected response.");
   return payload as T;
+}
+
+/**
+ * Consume authenticated server-sent events with fetch so bearer authorization
+ * remains available. Resolves when the stream closes and throws on protocol or
+ * HTTP failures so callers can reconcile state and reconnect.
+ */
+export async function streamServiceEvents(
+  connection: ServiceConnection,
+  onEvent: (event: ServiceEvent) => void,
+  signal: AbortSignal,
+): Promise<void> {
+  const headers = new Headers({ Accept: "text/event-stream" });
+  if (connection.token) headers.set("Authorization", `Bearer ${connection.token}`);
+  const response = await fetch(`${connection.base}/api/events`, {
+    method: "GET", headers, credentials: "omit", signal,
+  });
+  if (!response.ok) {
+    const payload: unknown = await response.clone().json().catch(() => null);
+    const message = payload && typeof payload === "object" && "error" in payload
+      ? String(payload.error)
+      : `Live updates could not connect (${response.status}).`;
+    throw new Error(message);
+  }
+  if (!response.headers.get("Content-Type")?.toLowerCase().startsWith("text/event-stream") || !response.body) {
+    throw new Error("The service returned an invalid live-update stream.");
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let lineBuffer = "";
+  let eventType = "";
+  let dataLines: string[] = [];
+
+  const dispatch = () => {
+    if (dataLines.length === 0) {
+      eventType = "";
+      return;
+    }
+    const payload = JSON.parse(dataLines.join("\n")) as ServiceEvent;
+    if (!payload || typeof payload !== "object") throw new Error("The live-update stream returned an invalid event.");
+    if (!payload.type && eventType) payload.type = eventType;
+    if (!payload.type) throw new Error("The live-update stream omitted an event type.");
+    onEvent(payload);
+    eventType = "";
+    dataLines = [];
+  };
+
+  const processLine = (raw: string) => {
+    const line = raw.endsWith("\r") ? raw.slice(0, -1) : raw;
+    if (line === "") {
+      dispatch();
+      return;
+    }
+    if (line.startsWith(":")) return;
+    const separator = line.indexOf(":");
+    const field = separator < 0 ? line : line.slice(0, separator);
+    let value = separator < 0 ? "" : line.slice(separator + 1);
+    if (value.startsWith(" ")) value = value.slice(1);
+    if (field === "event") eventType = value;
+    if (field === "data") dataLines.push(value);
+  };
+
+  for (;;) {
+    const { value, done } = await reader.read();
+    const text = lineBuffer + decoder.decode(value ?? new Uint8Array(), { stream: !done });
+    const lines = text.split("\n");
+    const remainder = lines.pop() ?? "";
+    lineBuffer = done ? "" : remainder;
+    for (const line of lines) processLine(line);
+    if (done) {
+      if (remainder) processLine(remainder);
+      if (dataLines.length) dispatch();
+      return;
+    }
+  }
+}
+
+/** Fetch authenticated non-JSON media from the Go service without cookies. */
+export async function apiBlob(connection: ServiceConnection, path: string, init: RequestInit = {}): Promise<Blob> {
+  const headers = new Headers(init.headers);
+  if (connection.token) headers.set("Authorization", `Bearer ${connection.token}`);
+  const response = await fetch(`${connection.base}${path}`, { ...init, headers, credentials: "omit" });
+  if (!response.ok) {
+    const payload: unknown = await response.clone().json().catch(() => null);
+    const error = payload && typeof payload === "object" && "error" in payload ? String(payload.error) : `The download service could not complete this media request (${response.status}).`;
+    throw new Error(error);
+  }
+  const blob = await response.blob();
+  if (!blob.size) throw new Error("The service returned empty media.");
+  return blob;
 }
 
 export function isActive(job: DownloadJob): boolean {

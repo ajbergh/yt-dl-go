@@ -100,6 +100,9 @@ func testServer(t *testing.T, engine nativeClient, change func(*config)) *server
 		t.Fatal(err)
 	}
 	s.engine = engine
+	s.thumbnailFetcher = func(context.Context, string, string) (string, error) {
+		return "", errors.New("thumbnail capture disabled in generic fixture")
+	}
 	s.start()
 	return s
 }
@@ -118,6 +121,23 @@ func request(s *server, method, path, body string, headers map[string]string) *h
 	w := httptest.NewRecorder()
 	s.ServeHTTP(w, r)
 	return w
+}
+
+func trackedOutputPath(t *testing.T, s *server, jobID, fileID string) string {
+	t.Helper()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	j := s.jobs[jobID]
+	if j == nil {
+		t.Fatalf("tracked job %s not found", jobID)
+	}
+	for _, file := range j.Files {
+		if file.ID == fileID {
+			return file.OutputPath
+		}
+	}
+	t.Fatalf("tracked file %s not found for job %s", fileID, jobID)
+	return ""
 }
 
 func createJob(t *testing.T, s *server, raw string) Job {
@@ -232,7 +252,7 @@ func TestAPIContractAndSecurity(t *testing.T) {
 	if body := request(s, "GET", "/api/jobs", "", nil).Body.String(); strings.TrimSpace(body) != `{"jobs":[]}` {
 		t.Fatalf("empty jobs contract: %s", body)
 	}
-	valid := `{"url":"` + testPlaylist + `","quality":"best","rightsConfirmed":true}`
+	valid := `{"url":"` + testPlaylist + `","quality":"best","category":"Music","rightsConfirmed":true}`
 	for _, tt := range []struct {
 		name, body string
 		headers    map[string]string
@@ -242,6 +262,11 @@ func TestAPIContractAndSecurity(t *testing.T) {
 		{name: "host", body: valid, headers: map[string]string{"Host": "evil.invalid:8080"}, code: 403},
 		{name: "auth", body: valid, headers: map[string]string{"Authorization": ""}, code: 401},
 		{name: "rights", body: strings.Replace(valid, "true", "false", 1), code: 400},
+		{name: "category", body: strings.Replace(valid, `"Music"`, `"Not configured"`, 1), code: 400},
+		{name: "audio-format", body: `{"url":"` + testVideo + `","quality":"best","mediaType":"audio","audioFormat":"flac","rightsConfirmed":true}`, code: 400},
+		{name: "video-items", body: `{"url":"` + testVideo + `","quality":"best","rightsConfirmed":true,"items":[{"index":1,"id":"dQw4w9WgXcQ","title":"Item"}]}`, code: 400},
+		{name: "playlist-invalid-item", body: `{"url":"` + testPlaylist + `","quality":"best","rightsConfirmed":true,"items":[{"index":0,"id":"00000000001","title":"Item"}]}`, code: 400},
+		{name: "playlist-duplicate-index", body: `{"url":"` + testPlaylist + `","quality":"best","rightsConfirmed":true,"items":[{"index":1,"id":"00000000001","title":"One"},{"index":1,"id":"00000000002","title":"Two"}]}`, code: 400},
 		{name: "unknown", body: strings.Replace(valid, `"quality"`, `"unknown":1,"quality"`, 1), code: 400},
 		{name: "trailing", body: valid + `{}`, code: 400}, {name: "null", body: "null", code: 400},
 		{name: "oversized", body: `{"url":"` + strings.Repeat("x", 5000) + `"}`, code: 400},
@@ -263,7 +288,7 @@ func TestAPIContractAndSecurity(t *testing.T) {
 	if w.Code != 202 || json.Unmarshal(w.Body.Bytes(), &value) != nil {
 		t.Fatalf("create: %d %s", w.Code, w.Body.String())
 	}
-	for _, key := range []string{"id", "url", "kind", "quality", "status", "title", "currentItem", "error", "createdAt", "note"} {
+	for _, key := range []string{"id", "url", "kind", "quality", "category", "status", "title", "currentItem", "error", "createdAt", "note"} {
 		if raw := value[key]; len(raw) == 0 || raw[0] != '"' {
 			t.Errorf("%s must always be a string", key)
 		}
@@ -272,6 +297,9 @@ func TestAPIContractAndSecurity(t *testing.T) {
 		if string(value[key]) != "[]" {
 			t.Errorf("%s must always be an array", key)
 		}
+	}
+	if string(value["category"]) != `"Music"` {
+		t.Fatalf("selected category was not captured: %s", value["category"])
 	}
 	if string(value["progress"]) != "null" || string(value["totalCount"]) != "null" {
 		t.Fatal("unknown metrics must be present as null")
@@ -308,8 +336,23 @@ func TestInspectionPreferencesRetryAndRemoval(t *testing.T) {
 	if settings.Code != 200 || !strings.Contains(settings.Body.String(), `"defaultQuality":"720"`) {
 		t.Fatalf("save settings: %d %s", settings.Code, settings.Body.String())
 	}
+	settings = request(s, "PUT", "/api/settings", `{"bandwidthLimitBytesPerSec":5242880}`, nil)
+	if settings.Code != 200 || !strings.Contains(settings.Body.String(), `"bandwidthLimitBytesPerSec":5242880`) || s.bandwidth.Limit() != 5242880 {
+		t.Fatalf("save bandwidth setting: %d %s limit=%d", settings.Code, settings.Body.String(), s.bandwidth.Limit())
+	}
+	settings = request(s, "PUT", "/api/settings", `{"notificationsEnabled":true}`, nil)
+	if settings.Code != 200 || !strings.Contains(settings.Body.String(), `"notificationsEnabled":true`) || !s.settings.NotificationsEnabled {
+		t.Fatalf("save notification setting: %d %s", settings.Code, settings.Body.String())
+	}
+	if request(s, "PUT", "/api/settings", `{"bandwidthLimitBytesPerSec":-1}`, nil).Code != 400 ||
+		request(s, "PUT", "/api/settings", `{"bandwidthLimitBytesPerSec":1073741825}`, nil).Code != 400 {
+		t.Fatal("invalid bandwidth limit was accepted")
+	}
 	if request(s, "PUT", "/api/settings", `{"defaultQuality":"2160"}`, nil).Code != 400 {
 		t.Fatal("unsupported quality preference was accepted")
+	}
+	if request(s, "PUT", "/api/settings", `{"storageMode":"unknown"}`, nil).Code != 400 {
+		t.Fatal("unsupported storage mode was accepted")
 	}
 
 	fake.videoFn = func(context.Context, string) (*youtube.Video, error) { return nil, errors.New("fixture failure") }
@@ -331,6 +374,400 @@ func TestInspectionPreferencesRetryAndRemoval(t *testing.T) {
 	}
 	if code := request(s, "GET", "/api/jobs/"+failed.ID, "", nil).Code; code != 404 {
 		t.Fatalf("deleted job still available: %d", code)
+	}
+}
+
+func TestLibraryRemovalPreservesPublishedMedia(t *testing.T) {
+	s := testServer(t, fixtureClient(1), nil)
+	j := waitTerminal(t, s, createJob(t, s, testVideo).ID)
+	if len(j.Files) != 1 || !j.Files[0].ManagedAvailable || !j.Files[0].PublishedAvailable {
+		t.Fatalf("completed file availability not recorded: %+v", j.Files)
+	}
+	outputPath := trackedOutputPath(t, s, j.ID, j.Files[0].ID)
+	if outputPath == "" {
+		t.Fatal("completed file has no published output path")
+	}
+	if _, err := os.Stat(outputPath); err != nil {
+		t.Fatalf("published output missing before Library removal: %v", err)
+	}
+	if response := request(s, "DELETE", "/api/jobs/"+j.ID, "", nil); response.Code != 204 {
+		t.Fatalf("remove from Library: %d %s", response.Code, response.Body.String())
+	}
+	if request(s, "GET", "/api/jobs/"+j.ID, "", nil).Code != 404 {
+		t.Fatal("removed Library job is still available")
+	}
+	if _, err := os.Stat(outputPath); err != nil {
+		t.Fatalf("Library removal deleted published media: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(s.cfg.root, j.ID)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("Library removal retained app-managed media: %v", err)
+	}
+	_ = os.Remove(outputPath)
+}
+
+func TestScopedMediaDeletion(t *testing.T) {
+	s := testServer(t, fixtureClient(1), nil)
+
+	publishedJob := waitTerminal(t, s, createJob(t, s, testVideo).ID)
+	publishedPath := trackedOutputPath(t, s, publishedJob.ID, publishedJob.Files[0].ID)
+	response := request(s, "DELETE", "/api/jobs/"+publishedJob.ID+"/published", "", nil)
+	var afterPublished Job
+	if response.Code != 200 || json.Unmarshal(response.Body.Bytes(), &afterPublished) != nil {
+		t.Fatalf("delete published copies: %d %s", response.Code, response.Body.String())
+	}
+	if afterPublished.Files[0].PublishedAvailable || !afterPublished.Files[0].ManagedAvailable {
+		t.Fatalf("published deletion changed wrong copy state: %+v", afterPublished.Files[0])
+	}
+	if _, err := os.Stat(publishedPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("published file survived scoped deletion: %v", err)
+	}
+	if request(s, "POST", "/api/jobs/"+publishedJob.ID+"/ticket", `{"fileId":"`+afterPublished.Files[0].ID+`"}`, nil).Code != 200 {
+		t.Fatal("managed copy became unavailable after published-only deletion")
+	}
+
+	managedJob := waitTerminal(t, s, createJob(t, s, testVideo).ID)
+	managedPath := trackedOutputPath(t, s, managedJob.ID, managedJob.Files[0].ID)
+	response = request(s, "DELETE", "/api/jobs/"+managedJob.ID+"/managed", "", nil)
+	var afterManaged Job
+	if response.Code != 200 || json.Unmarshal(response.Body.Bytes(), &afterManaged) != nil {
+		t.Fatalf("delete managed copies: %d %s", response.Code, response.Body.String())
+	}
+	if afterManaged.Files[0].ManagedAvailable || !afterManaged.Files[0].PublishedAvailable {
+		t.Fatalf("managed deletion changed wrong copy state: %+v", afterManaged.Files[0])
+	}
+	if _, err := os.Stat(managedPath); err != nil {
+		t.Fatalf("published output was removed with managed copy: %v", err)
+	}
+	if request(s, "POST", "/api/jobs/"+managedJob.ID+"/ticket", `{"fileId":"`+afterManaged.Files[0].ID+`"}`, nil).Code != 409 {
+		t.Fatal("ticket was issued for a removed managed copy")
+	}
+
+	allJob := waitTerminal(t, s, createJob(t, s, testVideo).ID)
+	allPath := trackedOutputPath(t, s, allJob.ID, allJob.Files[0].ID)
+	if response = request(s, "DELETE", "/api/jobs/"+allJob.ID+"/all", "", nil); response.Code != 204 {
+		t.Fatalf("delete everywhere: %d %s", response.Code, response.Body.String())
+	}
+	if request(s, "GET", "/api/jobs/"+allJob.ID, "", nil).Code != 404 {
+		t.Fatal("delete everywhere retained Library history")
+	}
+	if _, err := os.Stat(allPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("delete everywhere retained published media: %v", err)
+	}
+	_ = os.Remove(managedPath)
+}
+
+func TestStoragePolicies(t *testing.T) {
+	for _, tt := range []struct {
+		mode                 string
+		managed, published   bool
+	}{
+		{mode: "managed-published", managed: true, published: true},
+		{mode: "published-only", managed: false, published: true},
+		{mode: "managed-only", managed: true, published: false},
+	} {
+		t.Run(tt.mode, func(t *testing.T) {
+			s := testServer(t, fixtureClient(1), nil)
+			settings := request(s, "PUT", "/api/settings", `{"storageMode":"`+tt.mode+`"}`, nil)
+			if settings.Code != 200 {
+				t.Fatalf("set storage mode: %d %s", settings.Code, settings.Body.String())
+			}
+			j := waitTerminal(t, s, createJob(t, s, testVideo).ID)
+			if j.StorageMode != tt.mode || len(j.Files) != 1 {
+				t.Fatalf("storage policy not captured: %+v", j)
+			}
+			file := j.Files[0]
+			if file.ManagedAvailable != tt.managed || file.PublishedAvailable != tt.published {
+				t.Fatalf("availability for %s = managed:%t published:%t", tt.mode, file.ManagedAvailable, file.PublishedAvailable)
+			}
+			managedPath := filepath.Join(s.cfg.root, j.ID, file.Name)
+			_, managedErr := os.Stat(managedPath)
+			if tt.managed && managedErr != nil {
+				t.Fatalf("managed copy missing for %s: %v", tt.mode, managedErr)
+			}
+			if !tt.managed && !errors.Is(managedErr, os.ErrNotExist) {
+				t.Fatalf("managed copy unexpectedly retained for %s: %v", tt.mode, managedErr)
+			}
+			outputPath := trackedOutputPath(t, s, j.ID, file.ID)
+			if tt.published {
+				if outputPath == "" {
+					t.Fatalf("published output path missing for %s", tt.mode)
+				}
+				if _, err := os.Stat(outputPath); err != nil {
+					t.Fatalf("published copy missing for %s: %v", tt.mode, err)
+				}
+				_ = os.Remove(outputPath)
+			} else if outputPath != "" {
+				t.Fatalf("managed-only job unexpectedly published to %q", outputPath)
+			}
+		})
+	}
+}
+
+func TestOriginalM4AAudioPreservesSourceBytes(t *testing.T) {
+	fake := fixtureClient(1)
+	fake.videoFn = func(_ context.Context, id string) (*youtube.Video, error) {
+		video := fixtureVideo(id)
+		video.Formats = youtube.FormatList{{
+			ItagNo: 140,
+			MimeType: `audio/mp4; codecs="mp4a.40.2"`,
+			AudioChannels: 2,
+			AudioSampleRate: "44100",
+			ContentLength: int64(len(fixtureData)),
+		}}
+		return video, nil
+	}
+	s := testServer(t, fake, nil)
+	body := `{"url":"` + testVideo + `","quality":"best","mediaType":"audio","audioFormat":"m4a","rightsConfirmed":true}`
+	response := request(s, "POST", "/api/jobs", body, nil)
+	var created Job
+	if response.Code != 202 || json.Unmarshal(response.Body.Bytes(), &created) != nil {
+		t.Fatalf("create M4A job: %d %s", response.Code, response.Body.String())
+	}
+	if created.AudioFormat != "m4a" || created.AudioBitrate != "" {
+		t.Fatalf("audio request was not normalized: %+v", created)
+	}
+	j := waitTerminal(t, s, created.ID)
+	if j.Status != "completed" || len(j.Files) != 1 {
+		t.Fatalf("M4A job failed: %+v", j)
+	}
+	file := j.Files[0]
+	if !strings.HasSuffix(file.Name, ".m4a") || file.MimeType != "audio/mp4" || file.MediaType != "audio" {
+		t.Fatalf("unexpected M4A metadata: %+v", file)
+	}
+	handle, err := openFinal(filepath.Join(s.cfg.root, j.ID), file.Name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, readErr := io.ReadAll(handle)
+	_ = handle.Close()
+	if readErr != nil || string(data) != fixtureData {
+		t.Fatalf("M4A source bytes changed: %q err=%v", data, readErr)
+	}
+	outputPath := trackedOutputPath(t, s, j.ID, file.ID)
+	if outputPath == "" {
+		t.Fatal("M4A output was not published")
+	}
+	_ = os.Remove(outputPath)
+}
+
+func TestRetrySinglePlaylistItemPreservesSuccessfulFiles(t *testing.T) {
+	fake := fixtureClient(3)
+	var secondAttempts atomic.Int32
+	fake.videoFn = func(_ context.Context, id string) (*youtube.Video, error) {
+		if id == "00000000002" && secondAttempts.Add(1) == 1 {
+			return nil, errors.New("fixture item failure")
+		}
+		return fixtureVideo(id), nil
+	}
+	s := testServer(t, fake, nil)
+	initial := waitTerminal(t, s, createJob(t, s, testPlaylist).ID)
+	if initial.Status != "partial" || len(initial.Files) != 2 || len(initial.Items) != 3 || initial.Items[1].Status != "failed" {
+		t.Fatalf("playlist fixture did not produce one failed item: %+v", initial)
+	}
+	firstFileID, thirdFileID := initial.Items[0].FileID, initial.Items[2].FileID
+	if firstFileID == "" || thirdFileID == "" {
+		t.Fatalf("successful sibling files were not finalized: %+v", initial.Items)
+	}
+	if response := request(s, "POST", "/api/jobs/"+initial.ID+"/retry-item", `{"index":1}`, nil); response.Code != 409 {
+		t.Fatalf("completed playlist item was accepted for retry: %d %s", response.Code, response.Body.String())
+	}
+	response := request(s, "POST", "/api/jobs/"+initial.ID+"/retry-item", `{"index":2}`, nil)
+	var queued Job
+	if response.Code != 202 || json.Unmarshal(response.Body.Bytes(), &queued) != nil {
+		t.Fatalf("retry failed item: %d %s", response.Code, response.Body.String())
+	}
+	if queued.Status != "queued" || !queued.Items[1].RetryRequested || queued.Items[0].RetryRequested || queued.Items[2].RetryRequested {
+		t.Fatalf("single retry intent was not isolated: %+v", queued.Items)
+	}
+
+	completed := waitTerminal(t, s, initial.ID)
+	if completed.Status != "completed" || len(completed.Files) != 3 || len(completed.Failures) != 0 || secondAttempts.Load() != 2 {
+		t.Fatalf("single item retry did not complete cleanly: status=%s files=%d failures=%v attempts=%d error=%q",
+			completed.Status, len(completed.Files), completed.Failures, secondAttempts.Load(), completed.Error)
+	}
+	if completed.Items[0].FileID != firstFileID || completed.Items[2].FileID != thirdFileID {
+		t.Fatalf("successful sibling files changed during one-item retry: before=%q/%q after=%q/%q",
+			firstFileID, thirdFileID, completed.Items[0].FileID, completed.Items[2].FileID)
+	}
+	if completed.Items[1].FileID == "" || completed.Items[1].RetryRequested {
+		t.Fatalf("retried item did not finalize or retry intent survived: %+v", completed.Items[1])
+	}
+	for _, file := range completed.Files {
+		if path := trackedOutputPath(t, s, completed.ID, file.ID); path != "" {
+			_ = os.Remove(path)
+		}
+	}
+}
+
+func TestPlaylistItemSelectionPreservesOriginalPositions(t *testing.T) {
+	fake := fixtureClient(5)
+	var processed atomic.Int32
+	fake.videoFn = func(_ context.Context, id string) (*youtube.Video, error) {
+		processed.Add(1)
+		return fixtureVideo(id), nil
+	}
+	s := testServer(t, fake, nil)
+	body := `{"url":"` + testPlaylist + `","quality":"best","rightsConfirmed":true,"items":[{"index":2,"id":"00000000002","title":"Item 2"},{"index":4,"id":"00000000004","title":"Item 4"}]}`
+	response := request(s, "POST", "/api/jobs", body, nil)
+	var created Job
+	if response.Code != 202 || json.Unmarshal(response.Body.Bytes(), &created) != nil {
+		t.Fatalf("create selected playlist: %d %s", response.Code, response.Body.String())
+	}
+	if len(created.Items) != 2 || created.Items[0].Index != 1 || created.Items[0].PlaylistIndex != 2 || created.Items[1].Index != 2 || created.Items[1].PlaylistIndex != 4 {
+		t.Fatalf("queued selection did not preserve indexes: %+v", created.Items)
+	}
+	j := waitTerminal(t, s, created.ID)
+	if j.Status != "completed" || j.TotalCount == nil || *j.TotalCount != 2 || len(j.Files) != 2 || processed.Load() != 2 {
+		t.Fatalf("selected playlist did not complete only two items: status=%s total=%v files=%d processed=%d error=%q", j.Status, j.TotalCount, len(j.Files), processed.Load(), j.Error)
+	}
+	if !strings.HasPrefix(j.Files[0].Name, "000002-") || !strings.HasPrefix(j.Files[1].Name, "000004-") {
+		t.Fatalf("original playlist positions were not retained in filenames: %+v", j.Files)
+	}
+	if len(j.Items) != 2 || j.Items[0].Index != 1 || j.Items[0].PlaylistIndex != 2 || j.Items[1].Index != 2 || j.Items[1].PlaylistIndex != 4 {
+		t.Fatalf("final queue indexes are not contiguous/original-position aware: %+v", j.Items)
+	}
+	if !strings.Contains(j.Note, playlistSelectionNote) {
+		t.Fatalf("selection note missing: %q", j.Note)
+	}
+	for _, file := range j.Files {
+		if path := trackedOutputPath(t, s, j.ID, file.ID); path != "" {
+			_ = os.Remove(path)
+		}
+	}
+}
+
+func TestPlaylistItemSelectionRejectsStaleMetadata(t *testing.T) {
+	s := testServer(t, fixtureClient(3), nil)
+	body := `{"url":"` + testPlaylist + `","quality":"best","rightsConfirmed":true,"items":[{"index":2,"id":"00000000003","title":"Stale item"}]}`
+	response := request(s, "POST", "/api/jobs", body, nil)
+	var created Job
+	if response.Code != 202 || json.Unmarshal(response.Body.Bytes(), &created) != nil {
+		t.Fatalf("create stale selection: %d %s", response.Code, response.Body.String())
+	}
+	j := waitTerminal(t, s, created.ID)
+	if j.Status != "failed" || len(j.Files) != 0 || !strings.Contains(j.Error, errPlaylistSelection.Error()) {
+		t.Fatalf("stale playlist selection was not rejected: %+v", j)
+	}
+
+	retry := request(s, "POST", "/api/jobs/"+j.ID+"/retry", `{"rightsConfirmed":true}`, nil)
+	var retried Job
+	if retry.Code != 202 || json.Unmarshal(retry.Body.Bytes(), &retried) != nil {
+		t.Fatalf("retry stale selection: %d %s", retry.Code, retry.Body.String())
+	}
+	if len(retried.Items) != 1 || retried.Items[0].PlaylistIndex != 2 || retried.Items[0].VideoID != "00000000003" {
+		t.Fatalf("retry did not preserve playlist selection: %+v", retried.Items)
+	}
+	waitTerminal(t, s, retried.ID)
+}
+
+func TestLocalThumbnailCapturePersistenceAndServing(t *testing.T) {
+	s := testServer(t, fixtureClient(1), nil)
+	const thumbnailData = "fixture-thumbnail"
+	s.thumbnailFetcher = func(_ context.Context, rawURL, destination string) (string, error) {
+		if safeInspectedThumbnailURL(rawURL) == "" {
+			t.Fatalf("thumbnail fetch received unsafe URL %q", rawURL)
+		}
+		if err := os.WriteFile(destination, []byte(thumbnailData), 0600); err != nil {
+			return "", err
+		}
+		return "image/jpeg", nil
+	}
+
+	j := waitTerminal(t, s, createJob(t, s, testVideo).ID)
+	if len(j.Files) != 1 {
+		t.Fatalf("thumbnail fixture finalized %d files", len(j.Files))
+	}
+	file := j.Files[0]
+	if !file.ThumbnailLocalAvailable || file.ThumbnailMimeType != "image/jpeg" || file.ThumbnailURL == "" {
+		t.Fatalf("local thumbnail metadata missing: %+v", file)
+	}
+
+	response := request(s, "GET", "/api/jobs/"+j.ID+"/thumbnail?fileId="+file.ID, "", nil)
+	if response.Code != 200 || response.Body.String() != thumbnailData || response.Header().Get("Content-Type") != "image/jpeg" {
+		t.Fatalf("serve local thumbnail: %d %q %q", response.Code, response.Body.String(), response.Header().Get("Content-Type"))
+	}
+	if request(s, "GET", "/api/jobs/"+j.ID+"/thumbnail?fileId=../other", "", nil).Code != 400 {
+		t.Fatal("thumbnail endpoint accepted unsafe file id")
+	}
+	if request(s, "GET", "/api/jobs/"+j.ID+"/thumbnail?fileId=missing", "", nil).Code != 404 {
+		t.Fatal("thumbnail endpoint accepted unknown file id")
+	}
+
+	loaded, err := s.store.loadJobs(s.cfg.root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, stored := range loaded {
+		if stored.job.ID != j.ID || len(stored.job.Files) != 1 {
+			continue
+		}
+		persisted := stored.job.Files[0]
+		found = persisted.ThumbnailLocalAvailable && persisted.ThumbnailMimeType == "image/jpeg"
+	}
+	if !found {
+		t.Fatal("local thumbnail state did not persist through SQLite")
+	}
+}
+
+func TestNativeFolderSelectionEndpoint(t *testing.T) {
+	s := testServer(t, fixtureClient(1), nil)
+	selected := filepath.Join(s.cfg.root, "chosen-output")
+	s.folderSelector = func(context.Context) (string, error) { return selected, nil }
+	response := request(s, "POST", "/api/folders/select", `{}`, nil)
+	var result struct{ Path string `json:"path"` }
+	if response.Code != 200 || json.Unmarshal(response.Body.Bytes(), &result) != nil || result.Path != selected {
+		t.Fatalf("folder selection: %d %s", response.Code, response.Body.String())
+	}
+	if request(s, "GET", "/api/folders/select", "", nil).Code != 405 {
+		t.Fatal("folder selector accepted unsupported method")
+	}
+	s.folderSelector = func(context.Context) (string, error) { return "", errFolderSelectionCancelled }
+	if response = request(s, "POST", "/api/folders/select", `{}`, nil); response.Code != 204 {
+		t.Fatalf("cancelled folder selection: %d %s", response.Code, response.Body.String())
+	}
+	s.folderSelector = func(context.Context) (string, error) { return "relative/path", nil }
+	if response = request(s, "POST", "/api/folders/select", `{}`, nil); response.Code != 500 {
+		t.Fatal("folder selector accepted a relative path")
+	}
+}
+
+func TestTrackedFilesystemActions(t *testing.T) {
+	s := testServer(t, fixtureClient(1), nil)
+	j := waitTerminal(t, s, createJob(t, s, testVideo).ID)
+	if len(j.Files) != 1 || !j.Files[0].PublishedAvailable {
+		t.Fatalf("fixture did not publish media: %+v", j.Files)
+	}
+	file := j.Files[0]
+	outputPath := trackedOutputPath(t, s, j.ID, file.ID)
+	var openedAction, openedPath string
+	s.filesystemOpener = func(_ context.Context, action, path string) error {
+		openedAction, openedPath = action, path
+		return nil
+	}
+
+	response := request(s, "POST", "/api/jobs/"+j.ID+"/filesystem", `{"fileId":"`+file.ID+`","action":"reveal"}`, nil)
+	if response.Code != 200 || openedAction != "reveal" || openedPath != outputPath {
+		t.Fatalf("reveal tracked output: %d action=%q path=%q body=%s", response.Code, openedAction, openedPath, response.Body.String())
+	}
+
+	openedAction, openedPath = "", ""
+	response = request(s, "POST", "/api/jobs/"+j.ID+"/filesystem", `{"fileId":"`+file.ID+`","action":"copy-path"}`, nil)
+	var copied struct{ Path string `json:"path"` }
+	if response.Code != 200 || json.Unmarshal(response.Body.Bytes(), &copied) != nil || copied.Path != outputPath || openedAction != "" {
+		t.Fatalf("copy tracked path: %d %+v opener=%q", response.Code, copied, openedAction)
+	}
+	if request(s, "POST", "/api/jobs/"+j.ID+"/filesystem", `{"fileId":"../other","action":"reveal"}`, nil).Code != 404 {
+		t.Fatal("filesystem action accepted unknown file")
+	}
+	if request(s, "POST", "/api/jobs/"+j.ID+"/filesystem", `{"fileId":"`+file.ID+`","action":"execute"}`, nil).Code != 400 {
+		t.Fatal("filesystem action accepted unsupported operation")
+	}
+	if request(s, "DELETE", "/api/jobs/"+j.ID+"/published", "", nil).Code != 200 {
+		t.Fatal("could not remove published fixture")
+	}
+	if request(s, "POST", "/api/jobs/"+j.ID+"/filesystem", `{"fileId":"`+file.ID+`","action":"reveal"}`, nil).Code != 409 {
+		t.Fatal("filesystem action accepted removed published media")
 	}
 }
 
@@ -400,6 +837,28 @@ func ticketPath(t *testing.T, s *server, id, body string) string {
 	return result.Path
 }
 
+func TestInlinePreviewTicketSupportsRanges(t *testing.T) {
+	s := testServer(t, fixtureClient(1), nil)
+	j := waitTerminal(t, s, createJob(t, s, testVideo).ID)
+	if j.Status != "completed" || len(j.Files) != 1 {
+		t.Fatalf("preview fixture failed: %+v", j)
+	}
+	if response := request(s, "POST", "/api/jobs/"+j.ID+"/ticket", `{"inline":true}`, nil); response.Code != 400 {
+		t.Fatalf("inline archive ticket accepted: %d %s", response.Code, response.Body.String())
+	}
+	path := ticketPath(t, s, j.ID, `{"fileId":"`+j.Files[0].ID+`","inline":true}`)
+	response := request(s, "GET", path, "", map[string]string{"Authorization": "", "Range": "bytes=0-6"})
+	if response.Code != 206 || response.Body.String() != "fixture" {
+		t.Fatalf("inline preview range: %d %q", response.Code, response.Body.String())
+	}
+	if disposition := response.Header().Get("Content-Disposition"); !strings.HasPrefix(disposition, "inline") {
+		t.Fatalf("preview disposition = %q", disposition)
+	}
+	if response.Header().Get("Content-Type") != j.Files[0].MimeType {
+		t.Fatalf("preview MIME = %q, want %q", response.Header().Get("Content-Type"), j.Files[0].MimeType)
+	}
+}
+
 func TestDownloadsAndRetention(t *testing.T) {
 	s := testServer(t, fixtureClient(2), nil)
 	j := waitTerminal(t, s, createJob(t, s, testPlaylist).ID)
@@ -444,6 +903,10 @@ func TestDownloadsAndRetention(t *testing.T) {
 			t.Fatal("archive content or entry name is invalid")
 		}
 	}
+	publishedPaths := make([]string, 0, len(j.Files))
+	for _, file := range j.Files {
+		publishedPaths = append(publishedPaths, trackedOutputPath(t, s, j.ID, file.ID))
+	}
 	s.mu.Lock()
 	s.jobs[j.ID].done = time.Now().Add(-time.Hour)
 	s.mu.Unlock()
@@ -456,6 +919,12 @@ func TestDownloadsAndRetention(t *testing.T) {
 		t.Fatal("expired job/ticket survived retention")
 	}
 	if _, err := os.Stat(filepath.Join(s.cfg.root, j.ID)); !errors.Is(err, os.ErrNotExist) {
-		t.Fatal("retained disk output was not removed")
+		t.Fatal("retained app-managed output was not removed")
+	}
+	for _, outputPath := range publishedPaths {
+		if _, err := os.Stat(outputPath); err != nil {
+			t.Fatalf("retention deleted published media: %v", err)
+		}
+		_ = os.Remove(outputPath)
 	}
 }

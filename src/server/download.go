@@ -16,7 +16,7 @@ import (
 	"time"
 )
 
-var outputName = regexp.MustCompile(`^[0-9]{6,}-[A-Za-z0-9_-]{11}\.(mp4|webm|mp3)$`)
+var outputName = regexp.MustCompile(`^[0-9]{6,}-[A-Za-z0-9_-]{11}\.(mp4|webm|mp3|m4a)$`)
 
 // openFinal opens a finalized filename only if it is a safe child of the job
 // directory and is a regular file rather than a symlink or other file type.
@@ -94,10 +94,20 @@ func (s *server) download(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	files := []mediaFile{}
+	unavailable := false
 	for _, f := range j.Files {
 		if t.fileID == "" || t.fileID == f.ID {
+			if !f.ManagedAvailable {
+				unavailable = true
+				continue
+			}
 			files = append(files, f)
 		}
+	}
+	if unavailable {
+		s.mu.Unlock()
+		fail(w, 409, "The app-managed media copy is no longer available")
+		return
 	}
 	j.readers++
 	s.mu.Unlock()
@@ -138,7 +148,11 @@ func (s *server) download(w http.ResponseWriter, r *http.Request) {
 			contentType = "application/octet-stream"
 		}
 		w.Header().Set("Content-Type", contentType)
-		w.Header().Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": files[0].Name}))
+		disposition := "attachment"
+		if t.inline {
+			disposition = "inline"
+		}
+		w.Header().Set("Content-Disposition", mime.FormatMediaType(disposition, map[string]string{"filename": files[0].Name}))
 		http.ServeContent(w, r, files[0].Name, time.Time{}, f)
 		return
 	}

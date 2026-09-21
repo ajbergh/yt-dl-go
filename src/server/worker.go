@@ -24,6 +24,7 @@ import (
 
 const formatNote = "Native Go engine: progressive MP4/WebM, remuxed MP4, and MP3 audio-only downloads. Quality is a maximum, not a guarantee; HLS/DASH manifest and live sources are unsupported."
 const playlistNote = "Playlist totals cover all entries exposed by YouTube, not independently verified hidden entries."
+const playlistSelectionNote = "Only the selected exposed playlist items are queued; original playlist positions are preserved."
 const unknownLengthNote = "An unknown-length stream is complete only at clean EOF; its original size cannot be independently verified."
 const adaptiveFallbackNote = "YouTube rejected the adaptive HD stream; the highest verified progressive MP4 stream was downloaded instead."
 const browserAdaptiveNote = "Adaptive HD media was streamed through a temporary browser session."
@@ -31,6 +32,7 @@ const browserAdaptiveNote = "Adaptive HD media was streamed through a temporary 
 var (
 	errMetadata     = errors.New("Video metadata is unavailable or invalid")
 	errPlaylist     = errors.New("Playlist enumeration failed; completeness could not be verified")
+	errPlaylistSelection = errors.New("Selected playlist items no longer match the inspected playlist")
 	errCombined     = errors.New("No compatible combined or adaptive MP4 stream fits the requested maximum height")
 	errManifest     = errors.New("HLS/DASH manifest or live sources are unsupported")
 	errRead         = errors.New("Media stream could not be read completely")
@@ -65,6 +67,7 @@ type itemProgress struct {
 	processing    bool
 	progressAt    time.Time
 	progressBytes int64
+	eventAt       time.Time
 }
 
 type synchronizedNativeClient struct {
@@ -222,52 +225,50 @@ func selectAudioFormat(video *youtube.Video) (*youtube.Format, string, error) {
 }
 
 // start launches the bounded download scheduler and periodic retention pruning.
+// The queue channel is only a wake-up signal; persisted QueuePosition selects
+// which queued job starts next.
 func (s *server) start() {
 	s.wg.Add(2)
 	go func() {
 		defer s.wg.Done()
-		var pending string
 		for {
-			if pending == "" {
-				select {
-				case <-s.ctx.Done():
-					return
-				case pending = <-s.queue:
-				}
-			}
 			s.mu.Lock()
-			j := s.jobs[pending]
-			if j == nil || j.Status != "queued" {
-				pending = ""
+			if s.ctx.Err() != nil {
 				s.mu.Unlock()
-				continue
+				return
 			}
-			if s.activeDownloads >= s.settings.MaxConcurrentDownloads {
-				changed := s.scheduleChanged
-				s.mu.Unlock()
-				select {
-				case <-s.ctx.Done():
-					return
-				case <-changed:
+			limit := s.settings.MaxConcurrentDownloads
+			if limit < 1 {
+				limit = 1
+			}
+			if s.activeDownloads < limit {
+				if j := s.nextQueuedJobLocked(); j != nil {
+					s.activeDownloads++
+					ctx, cancel := context.WithTimeout(s.ctx, s.cfg.timeout)
+					j.Status, j.cancel = "downloading", cancel
+					s.persistJobLocked(j)
+					s.mu.Unlock()
+					s.wg.Add(1)
+					go func(job *jobState, jobCtx context.Context, jobCancel context.CancelFunc) {
+						defer s.wg.Done()
+						defer jobCancel()
+						s.run(jobCtx, job)
+						s.mu.Lock()
+						s.activeDownloads--
+						s.notifySchedulerLocked()
+						s.mu.Unlock()
+					}(j, ctx, cancel)
+					continue
 				}
-				continue
 			}
-			s.activeDownloads++
-			ctx, cancel := context.WithTimeout(s.ctx, s.cfg.timeout)
-			j.Status, j.cancel = "downloading", cancel
-			s.persistJobLocked(j)
+			changed := s.scheduleChanged
 			s.mu.Unlock()
-			pending = ""
-			s.wg.Add(1)
-			go func(job *jobState, jobCtx context.Context, jobCancel context.CancelFunc) {
-				defer s.wg.Done()
-				defer jobCancel()
-				s.run(jobCtx, job)
-				s.mu.Lock()
-				s.activeDownloads--
-				s.notifySchedulerLocked()
-				s.mu.Unlock()
-			}(j, ctx, cancel)
+			select {
+			case <-s.ctx.Done():
+				return
+			case <-s.queue:
+			case <-changed:
+			}
 		}
 	}()
 	go func() {
@@ -285,9 +286,54 @@ func (s *server) start() {
 	}()
 }
 
-// run processes one video or every playlist entry exposed by the upstream
-// library, reuses validated finalized items, records per-item failures, and
-// finalizes job status even if an unexpected panic occurs.
+// run processes one video or the selected playlist entries exposed by the
+// upstream library, reuses validated finalized items, records per-item failures,
+// and finalizes job status even if an unexpected panic occurs.
+type playlistWorkItem struct {
+	entry         *youtube.PlaylistEntry
+	playlistIndex int
+}
+
+func playlistWorkItems(playlist *youtube.Playlist, requested []queueItem) ([]playlistWorkItem, error) {
+	if playlist == nil {
+		return nil, errPlaylist
+	}
+	hasSelection := false
+	for _, item := range requested {
+		if item.PlaylistIndex > 0 {
+			hasSelection = true
+			break
+		}
+	}
+	if !hasSelection {
+		work := make([]playlistWorkItem, 0, len(playlist.Videos))
+		for index, entry := range playlist.Videos {
+			work = append(work, playlistWorkItem{entry: entry, playlistIndex: index + 1})
+		}
+		return work, nil
+	}
+	work := make([]playlistWorkItem, 0, len(requested))
+	seen := make(map[int]struct{}, len(requested))
+	for _, item := range requested {
+		if item.PlaylistIndex < 1 || item.PlaylistIndex > len(playlist.Videos) || !videoID.MatchString(item.VideoID) {
+			return nil, errPlaylistSelection
+		}
+		if _, exists := seen[item.PlaylistIndex]; exists {
+			return nil, errPlaylistSelection
+		}
+		seen[item.PlaylistIndex] = struct{}{}
+		entry := playlist.Videos[item.PlaylistIndex-1]
+		if entry == nil || entry.ID != item.VideoID {
+			return nil, errPlaylistSelection
+		}
+		work = append(work, playlistWorkItem{entry: entry, playlistIndex: item.PlaylistIndex})
+	}
+	if len(work) == 0 {
+		return nil, errPlaylistSelection
+	}
+	return work, nil
+}
+
 func (s *server) run(ctx context.Context, j *jobState) {
 	var fatal error
 	engine := s.operationEngine()
@@ -297,31 +343,47 @@ func (s *server) run(ctx context.Context, j *jobState) {
 		}
 		s.finish(ctx, j, fatal)
 	}()
-	entries := []*youtube.PlaylistEntry{{ID: strings.TrimPrefix(j.URL, "https://www.youtube.com/watch?v=")}}
+	requested := append([]queueItem(nil), j.Items...)
+	retryTargets := make(map[int]struct{})
+	for _, item := range requested {
+		if item.RetryRequested {
+			retryTargets[item.Index] = struct{}{}
+		}
+	}
+	work := []playlistWorkItem{{entry: &youtube.PlaylistEntry{ID: strings.TrimPrefix(j.URL, "https://www.youtube.com/watch?v=")}}}
 	if j.Kind == "playlist" {
 		playlist, err := engine.GetPlaylistContext(ctx, j.URL)
 		if playlist == nil {
 			fatal = errPlaylist
 			return
 		}
-		entries = playlist.Videos
+		j.playlistItemCount = len(playlist.Videos)
+		selected, selectionErr := playlistWorkItems(playlist, requested)
+		if selectionErr != nil {
+			fatal = selectionErr
+			return
+		}
+		work = selected
 		s.mu.Lock()
-		total := len(entries)
+		total := len(work)
 		j.TotalCount = &total
 		if playlist.Title != "" {
 			j.Title = playlist.Title
+		}
+		if len(work) < len(playlist.Videos) && !strings.Contains(j.Note, playlistSelectionNote) {
+			j.Note += " " + playlistSelectionNote
 		}
 		s.mu.Unlock()
 		if err != nil {
 			fatal = errPlaylist
 		}
 	} else {
-		total := len(entries)
+		total := len(work)
 		s.mu.Lock()
 		j.TotalCount = &total
 		s.mu.Unlock()
 	}
-	s.setQueueItems(j, entries)
+	s.setQueueItems(j, work, retryTargets)
 	s.mu.Lock()
 	for index, file := range j.fileItems {
 		if !s.validCompletedFile(j, file) {
@@ -340,7 +402,7 @@ func (s *server) run(ctx context.Context, j *jobState) {
 	defer stopWork()
 	var nextMu, fatalMu sync.Mutex
 	nextIndex := 0
-	workerCount := min(6, len(entries))
+	workerCount := min(6, len(work))
 	var workers sync.WaitGroup
 	for range workerCount {
 		workers.Add(1)
@@ -348,7 +410,7 @@ func (s *server) run(ctx context.Context, j *jobState) {
 			defer workers.Done()
 			for {
 				nextMu.Lock()
-				if nextIndex >= len(entries) {
+				if nextIndex >= len(work) {
 					nextMu.Unlock()
 					return
 				}
@@ -359,7 +421,17 @@ func (s *server) run(ctx context.Context, j *jobState) {
 					return
 				}
 				current := index + 1
-				entry := entries[index]
+				if len(retryTargets) > 0 {
+					if _, retryThisItem := retryTargets[current]; !retryThisItem {
+						continue
+					}
+				}
+				item := work[index]
+				outputIndex := item.playlistIndex
+				if outputIndex <= 0 {
+					outputIndex = current
+				}
+				entry := item.entry
 				title := fmt.Sprintf("Item %d", current)
 				if entry != nil && entry.Title != "" {
 					title = entry.Title
@@ -367,7 +439,7 @@ func (s *server) run(ctx context.Context, j *jobState) {
 				if !s.acquireItemSlot(workCtx, j, current, title) {
 					return
 				}
-				err := s.safeProcessItem(workCtx, j, entry, current, tracker)
+				err := s.safeProcessItem(workCtx, j, entry, current, outputIndex, tracker)
 				s.releaseItemSlot(j, current)
 				if err == nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 					continue
@@ -455,7 +527,13 @@ func (b *jobBudget) release(amount, completed int64) error {
 
 func estimatedItemBudget(j *jobState, video *youtube.Video, format *youtube.Format, selection streamSelection) int64 {
 	if j.MediaType == "audio" {
-		if format == nil || format.ContentLength <= 0 || video == nil || video.Duration <= 0 {
+		if format == nil || format.ContentLength <= 0 {
+			return 0
+		}
+		if j.AudioFormat == "m4a" {
+			return format.ContentLength
+		}
+		if video == nil || video.Duration <= 0 {
 			return 0
 		}
 		bitrate, _ := strconv.Atoi(strings.TrimSuffix(j.AudioBitrate, "k"))
@@ -501,6 +579,7 @@ func (s *server) acquireItemSlot(ctx context.Context, j *jobState, index int, ti
 			j.itemProgress[index] = &itemProgress{title: title, progressAt: time.Now()}
 			s.refreshQueueItemLocked(j, index)
 			s.refreshProgressLocked(j)
+			s.publishJobEventLocked("job-status", j)
 			s.mu.Unlock()
 			return true
 		}
@@ -525,6 +604,7 @@ func (s *server) releaseItemSlot(j *jobState, index int) {
 	}
 	s.refreshQueueItemLocked(j, index)
 	s.refreshProgressLocked(j)
+	s.publishJobEventLocked("job-progress", j)
 	s.notifySchedulerLocked()
 	s.mu.Unlock()
 }
@@ -567,11 +647,12 @@ func (s *server) setProcessing(j *jobState, index int, processing bool) {
 		j.Status = "downloading"
 	}
 	s.refreshQueueItemLocked(j, index)
+	s.publishJobEventLocked("job-status", j)
 	s.mu.Unlock()
 }
 
-func makeQueueItem(index int, entry *youtube.PlaylistEntry) queueItem {
-	item := queueItem{Index: index, Title: fmt.Sprintf("Item %d", index), Status: "queued"}
+func makeQueueItem(index, playlistIndex int, entry *youtube.PlaylistEntry) queueItem {
+	item := queueItem{Index: index, PlaylistIndex: playlistIndex, Title: fmt.Sprintf("Item %d", index), Status: "queued"}
 	if entry != nil {
 		item.VideoID = entry.ID
 		if entry.Title != "" {
@@ -584,10 +665,24 @@ func makeQueueItem(index int, entry *youtube.PlaylistEntry) queueItem {
 	return item
 }
 
-func (s *server) setQueueItems(j *jobState, entries []*youtube.PlaylistEntry) {
-	items := make([]queueItem, len(entries))
-	for index, entry := range entries {
-		items[index] = makeQueueItem(index+1, entry)
+func (s *server) setQueueItems(j *jobState, work []playlistWorkItem, retryTargets map[int]struct{}) {
+	previous := append([]queueItem(nil), j.Items...)
+	items := make([]queueItem, len(work))
+	for index, selected := range work {
+		playlistIndex := 0
+		if j.Kind == "playlist" {
+			playlistIndex = selected.playlistIndex
+		}
+		items[index] = makeQueueItem(index+1, playlistIndex, selected.entry)
+		_, items[index].RetryRequested = retryTargets[index+1]
+		if len(retryTargets) > 0 && !items[index].RetryRequested && index < len(previous) {
+			items[index].Status = previous[index].Status
+			items[index].Error = previous[index].Error
+			items[index].Progress = previous[index].Progress
+			items[index].DownloadedBytes = previous[index].DownloadedBytes
+			items[index].TotalBytes = previous[index].TotalBytes
+			items[index].FileID = previous[index].FileID
+		}
 	}
 	s.mu.Lock()
 	j.Items = items
@@ -656,11 +751,23 @@ func (s *server) refreshQueueItemLocked(j *jobState, index int) {
 		return
 	}
 	item.SpeedBytesPerSec, item.ETASeconds = 0, 0
+	retryMode := false
+	for _, candidate := range j.Items {
+		if candidate.RetryRequested {
+			retryMode = true
+			break
+		}
+	}
+	if retryMode && !item.RetryRequested && (item.Status == "failed" || item.Status == "cancelled") {
+		return
+	}
 	switch {
 	case j.pauseRequested || j.Status == "paused":
 		item.Status = "paused"
 	case j.cancelRequested || j.Status == "cancelled":
 		item.Status = "cancelled"
+	case j.Status == "partial" && item.Status == "cancelled":
+		item.Status, item.Error = "cancelled", ""
 	case j.Status == "failed" || (j.Status == "partial" && j.Error != ""):
 		item.Status, item.Error = "failed", j.Error
 	default:
@@ -731,9 +838,13 @@ func (s *server) updateProgress(j *jobState, index int, downloaded, total int64)
 	}
 	s.refreshQueueItemLocked(j, index)
 	s.refreshProgressLocked(j)
+	if item.eventAt.IsZero() || now.Sub(item.eventAt) >= 200*time.Millisecond || (total > 0 && downloaded >= total) {
+		item.eventAt = now
+		s.publishJobEventLocked("job-progress", j)
+	}
 }
 
-func (s *server) processItem(ctx context.Context, j *jobState, entry *youtube.PlaylistEntry, current int, tracker *jobBudget) error {
+func (s *server) processItem(ctx context.Context, j *jobState, entry *youtube.PlaylistEntry, current, outputIndex int, tracker *jobBudget) error {
 	s.mu.Lock()
 	if completed, ok := j.fileItems[current]; ok {
 		if s.validCompletedFile(j, completed) {
@@ -791,23 +902,46 @@ func (s *server) processItem(ctx context.Context, j *jobState, entry *youtube.Pl
 	}()
 	var file mediaFile
 	if j.MediaType == "audio" {
-		file, err = s.transferAudio(ctx, j, engine, video, format, extension, current, budget)
+		if j.AudioFormat == "m4a" {
+			file, err = s.transferOriginalAudio(ctx, j, engine, video, format, current, outputIndex, budget)
+		} else {
+			file, err = s.transferAudio(ctx, j, engine, video, format, extension, current, outputIndex, budget)
+		}
 	} else {
-		file, err = s.transfer(ctx, j, engine, video, selection, current, budget)
+		file, err = s.transfer(ctx, j, engine, video, selection, current, outputIndex, budget)
 	}
 	if err != nil {
 		return err
 	}
-	applyVideoMetadata(&file, video)
-	file.Category = j.Category
-	if err := s.publishOutput(j, &file); err != nil {
-		_ = os.Remove(filepath.Join(j.dir, file.Name))
-		return errStorage
+	if j.MediaType != "audio" {
+		applyVideoMetadata(&file, video)
+		file.Category = j.Category
+		file.ManagedAvailable = true
+		s.captureThumbnail(ctx, j, &file)
+	}
+	if j.StorageMode != "managed-only" {
+		if err := s.publishOutput(j, &file); err != nil {
+			_ = os.Remove(filepath.Join(j.dir, file.Name))
+			return errStorage
+		}
+	}
+	if j.StorageMode == "published-only" {
+		if err := os.Remove(filepath.Join(j.dir, file.Name)); err != nil && !errors.Is(err, os.ErrNotExist) {
+			if file.PublishedAvailable {
+				_ = os.Remove(file.OutputPath)
+			}
+			return errStorage
+		}
+		file.ManagedAvailable = false
 	}
 	leaseOpen = false
 	if err := tracker.release(budget, file.Size); err != nil {
-		_ = os.Remove(filepath.Join(j.dir, file.Name))
-		_ = os.Remove(file.OutputPath)
+		if file.ManagedAvailable {
+			_ = os.Remove(filepath.Join(j.dir, file.Name))
+		}
+		if file.PublishedAvailable {
+			_ = os.Remove(file.OutputPath)
+		}
 		return err
 	}
 	s.mu.Lock()
@@ -817,17 +951,18 @@ func (s *server) processItem(ctx context.Context, j *jobState, entry *youtube.Pl
 	progress := 100.0
 	j.Progress = &progress
 	s.persistJobLocked(j)
+	s.publishJobEventLocked("job-file-finalized", j)
 	s.mu.Unlock()
 	return nil
 }
 
-func (s *server) safeProcessItem(ctx context.Context, j *jobState, entry *youtube.PlaylistEntry, current int, tracker *jobBudget) (err error) {
+func (s *server) safeProcessItem(ctx context.Context, j *jobState, entry *youtube.PlaylistEntry, current, outputIndex int, tracker *jobBudget) (err error) {
 	defer func() {
 		if recover() != nil {
 			err = errNative
 		}
 	}()
-	return s.processItem(ctx, j, entry, current, tracker)
+	return s.processItem(ctx, j, entry, current, outputIndex, tracker)
 }
 
 func (s *server) rebuildFilesLocked(j *jobState) {
@@ -843,13 +978,25 @@ func (s *server) rebuildFilesLocked(j *jobState) {
 	j.CompletedCount = len(j.Files)
 }
 
-func (s *server) transferAudio(ctx context.Context, j *jobState, engine nativeClient, video *youtube.Video, format *youtube.Format, extension string, index int, budget int64) (result mediaFile, err error) {
+func (s *server) transferAudio(ctx context.Context, j *jobState, engine nativeClient, video *youtube.Video, format *youtube.Format, extension string, queueIndex, outputIndex int, budget int64) (result mediaFile, err error) {
 	if budget <= 0 || (format.ContentLength > 0 && format.ContentLength > budget) {
 		return result, errLimit
 	}
-	result = mediaFile{ID: randomID(16), Name: fmt.Sprintf("%06d-%s.mp3", index, video.ID), MimeType: "audio/mpeg", MediaType: "audio"}
+	result = mediaFile{ID: randomID(16), Name: fmt.Sprintf("%06d-%s.mp3", outputIndex, video.ID), MimeType: "audio/mpeg", MediaType: "audio"}
+	applyVideoMetadata(&result, video)
+	result.Category = j.Category
+	result.ManagedAvailable = true
+	s.captureThumbnail(ctx, j, &result)
+	defer func() {
+		if err != nil && result.ThumbnailLocalAvailable {
+			if path, pathErr := thumbnailPath(j, result); pathErr == nil {
+				_ = os.Remove(path)
+			}
+			result.ThumbnailLocalAvailable = false
+		}
+	}()
 	finalPath := filepath.Join(j.dir, result.Name)
-	sourcePath := filepath.Join(j.dir, fmt.Sprintf("%06d-%s.source.%s", index, video.ID, extension))
+	sourcePath := filepath.Join(j.dir, fmt.Sprintf("%06d-%s.source.%s", outputIndex, video.ID, extension))
 	outputPart := finalPath + ".part"
 	if existing, openErr := openFinal(j.dir, result.Name); openErr == nil {
 		info, statErr := existing.Stat()
@@ -906,8 +1053,8 @@ func (s *server) transferAudio(ctx context.Context, j *jobState, engine nativeCl
 	if openErr != nil {
 		return result, errStorage
 	}
-	sourceSize, copyErr := copyStream(ctx, source, stream, budget, expected, func(written int64) {
-		s.updateProgress(j, index, written, expected)
+	sourceSize, copyErr := copyStream(ctx, source, s.bandwidthReader(ctx, stream), budget, expected, func(written int64) {
+		s.updateProgress(j, queueIndex, written, expected)
 	})
 	if copyErr != nil {
 		_ = source.Close()
@@ -925,7 +1072,7 @@ func (s *server) transferAudio(ctx context.Context, j *jobState, engine nativeCl
 	if outputBudget <= 0 {
 		return result, errLimit
 	}
-	s.updateProgress(j, index, sourceSize, sourceSize+outputBudget)
+	s.updateProgress(j, queueIndex, sourceSize, sourceSize+outputBudget)
 	if ctx.Err() != nil {
 		return result, ctx.Err()
 	}
@@ -933,8 +1080,8 @@ func (s *server) transferAudio(ctx context.Context, j *jobState, engine nativeCl
 	if openErr != nil {
 		return result, errStorage
 	}
-	s.setProcessing(j, index, true)
-	defer s.setProcessing(j, index, false)
+	s.setProcessing(j, queueIndex, true)
+	defer s.setProcessing(j, queueIndex, false)
 	s.mu.Lock()
 	j.Progress = floatPointer(99)
 	s.persistJobLocked(j)
@@ -944,8 +1091,12 @@ func (s *server) transferAudio(ctx context.Context, j *jobState, engine nativeCl
 		_ = output.Close()
 		return result, errStorage
 	}
-	outputSize, convertErr := convertAACToMP3(ctx, source, output, j.AudioBitrate, outputBudget, func(written int64) {
-		s.updateProgress(j, index, sourceSize+written, 0)
+	tag, tagErr := buildID3v23Tag(mp3MetadataFor(j, result, video.ID, outputIndex))
+	if tagErr != nil {
+		tag = nil // Metadata is best-effort; never fail playable audio over tags.
+	}
+	outputSize, convertErr := convertAACToMP3Tagged(ctx, source, output, j.AudioBitrate, outputBudget, tag, func(written int64) {
+		s.updateProgress(j, queueIndex, sourceSize+written, 0)
 	})
 	sourceCloseErr := source.Close()
 	outputSyncErr := output.Sync()
@@ -972,25 +1123,135 @@ func (s *server) transferAudio(ctx context.Context, j *jobState, engine nativeCl
 		return result, errStorage
 	}
 	result.Size = outputSize
-	s.updateProgress(j, index, sourceSize+outputSize, sourceSize+outputSize)
+	s.updateProgress(j, queueIndex, sourceSize+outputSize, sourceSize+outputSize)
+	return result, nil
+}
+
+func (s *server) transferOriginalAudio(ctx context.Context, j *jobState, engine nativeClient, video *youtube.Video, format *youtube.Format, queueIndex, outputIndex int, budget int64) (result mediaFile, err error) {
+	if budget <= 0 || (format.ContentLength > 0 && format.ContentLength > budget) {
+		return result, errLimit
+	}
+	result = mediaFile{ID: randomID(16), Name: fmt.Sprintf("%06d-%s.m4a", outputIndex, video.ID), MimeType: "audio/mp4", MediaType: "audio"}
+	applyVideoMetadata(&result, video)
+	result.Category = j.Category
+	result.ManagedAvailable = true
+	s.captureThumbnail(ctx, j, &result)
+	defer func() {
+		if err != nil && result.ThumbnailLocalAvailable {
+			if path, pathErr := thumbnailPath(j, result); pathErr == nil {
+				_ = os.Remove(path)
+			}
+			result.ThumbnailLocalAvailable = false
+		}
+	}()
+
+	finalPath := filepath.Join(j.dir, result.Name)
+	if existing, openErr := openFinal(j.dir, result.Name); openErr == nil {
+		info, statErr := existing.Stat()
+		_ = existing.Close()
+		if statErr == nil {
+			result.Size = info.Size()
+			return result, nil
+		}
+	}
+	part := finalPath + ".part"
+	_ = os.Remove(part)
+	stream, reported, streamErr := engine.GetStreamContext(ctx, video, format)
+	if stream == nil {
+		if ctx.Err() != nil {
+			return result, ctx.Err()
+		}
+		return result, errRead
+	}
+	stopClose := context.AfterFunc(ctx, func() { _ = stream.Close() })
+	defer func() { stopClose(); _ = stream.Close() }()
+	if ctx.Err() != nil {
+		return result, ctx.Err()
+	}
+	if streamErr != nil {
+		return result, errRead
+	}
+	expected := format.ContentLength
+	if reported > 0 {
+		if expected > 0 && reported != expected {
+			return result, errLength
+		}
+		expected = reported
+	}
+	if expected > budget {
+		return result, errLimit
+	}
+	if expected <= 0 {
+		s.mu.Lock()
+		if !strings.Contains(j.Note, unknownLengthNote) {
+			j.Note += " " + unknownLengthNote
+		}
+		s.mu.Unlock()
+	}
+	output, openErr := os.OpenFile(part, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+	if openErr != nil {
+		return result, errStorage
+	}
+	finalized := false
+	defer func() {
+		_ = output.Close()
+		if !finalized && !s.keepPartial(j) {
+			if removeErr := os.Remove(part); removeErr != nil && !errors.Is(removeErr, os.ErrNotExist) && err == nil {
+				err = errStorage
+			}
+		}
+	}()
+	result.Size, err = copyStream(ctx, output, s.bandwidthReader(ctx, stream), budget, expected, func(written int64) {
+		s.updateProgress(j, queueIndex, written, expected)
+	})
+	if err != nil {
+		return result, err
+	}
+	if ctx.Err() != nil {
+		return result, ctx.Err()
+	}
+	if output.Sync() != nil || output.Close() != nil {
+		return result, errStorage
+	}
+	if result.Size <= 0 || (expected > 0 && result.Size != expected) {
+		return result, errLength
+	}
+	if _, statErr := os.Lstat(finalPath); !errors.Is(statErr, os.ErrNotExist) {
+		return result, errStorage
+	}
+	if os.Rename(part, finalPath) != nil {
+		return result, errStorage
+	}
+	finalized = true
+	s.updateProgress(j, queueIndex, result.Size, result.Size)
 	return result, nil
 }
 
 func (s *server) validCompletedFile(j *jobState, file mediaFile) bool {
-	f, err := openFinal(j.dir, file.Name)
-	if err != nil {
-		return false
+	available := false
+	if file.ManagedAvailable {
+		f, err := openFinal(j.dir, file.Name)
+		if err != nil {
+			return false
+		}
+		info, err := f.Stat()
+		_ = f.Close()
+		if err != nil || info.Size() != file.Size {
+			return false
+		}
+		available = true
 	}
-	info, err := f.Stat()
-	_ = f.Close()
-	if err != nil || info.Size() != file.Size {
-		return false
-	}
-	if file.OutputPath != "" {
+	if file.PublishedAvailable {
+		if err := validateOutputCopy(j, file); err != nil {
+			return false
+		}
 		output, statErr := os.Lstat(file.OutputPath)
-		return statErr == nil && output.Mode().IsRegular() && output.Size() == file.Size
+		if statErr != nil || !output.Mode().IsRegular() || output.Size() != file.Size {
+			return false
+		}
+		available = true
 	}
-	return true
+	return available
 }
 
 func (s *server) keepPartial(j *jobState) bool {
@@ -1021,6 +1282,7 @@ func (s *server) recordFailure(j *jobState, index int, err error) {
 	j.Failures[position] = itemFailure{Index: index, Error: message}
 	s.refreshQueueItemLocked(j, index)
 	s.persistJobLocked(j)
+	s.publishJobEventLocked("job-error", j)
 	s.mu.Unlock()
 }
 
@@ -1052,17 +1314,25 @@ func (s *server) finish(ctx context.Context, j *jobState, fatal error) {
 		j.Status, j.Error = "completed", ""
 	}
 	s.refreshAllQueueItemsLocked(j)
-	s.persistJobLocked(j)
-}
-
-func (s *server) transfer(ctx context.Context, j *jobState, engine nativeClient, video *youtube.Video, selection streamSelection, index int, budget int64) (mediaFile, error) {
-	if selection.audio != nil {
-		return s.transferAdaptive(ctx, j, engine, video, selection, index, budget)
+	if terminal(j.Status) {
+		for index := range j.Items {
+			j.Items[index].RetryRequested = false
+		}
 	}
-	return s.transferProgressive(ctx, j, engine, video, selection.video, selection.kind, index, budget)
+	s.persistJobLocked(j)
+	if j.Error != "" {
+		s.publishJobEventLocked("job-error", j)
+	}
 }
 
-func (s *server) transferProgressive(ctx context.Context, j *jobState, engine nativeClient, video *youtube.Video, format *youtube.Format, kind string, index int, budget int64) (result mediaFile, err error) {
+func (s *server) transfer(ctx context.Context, j *jobState, engine nativeClient, video *youtube.Video, selection streamSelection, queueIndex, outputIndex int, budget int64) (mediaFile, error) {
+	if selection.audio != nil {
+		return s.transferAdaptive(ctx, j, engine, video, selection, queueIndex, outputIndex, budget)
+	}
+	return s.transferProgressive(ctx, j, engine, video, selection.video, selection.kind, queueIndex, outputIndex, budget)
+}
+
+func (s *server) transferProgressive(ctx context.Context, j *jobState, engine nativeClient, video *youtube.Video, format *youtube.Format, kind string, queueIndex, outputIndex int, budget int64) (result mediaFile, err error) {
 	if budget <= 0 || format.ContentLength > budget {
 		return result, errLimit
 	}
@@ -1110,7 +1380,7 @@ func (s *server) transferProgressive(ctx context.Context, j *jobState, engine na
 		}
 		s.mu.Unlock()
 	}
-	result = mediaFile{ID: randomID(16), Name: fmt.Sprintf("%06d-%s.%s", index, video.ID, strings.TrimPrefix(kind, "video/")), Height: format.Height, MimeType: kind}
+	result = mediaFile{ID: randomID(16), Name: fmt.Sprintf("%06d-%s.%s", outputIndex, video.ID, strings.TrimPrefix(kind, "video/")), Height: format.Height, MimeType: kind}
 	path := filepath.Join(j.dir, result.Name)
 	part := path + ".part"
 	if info, statErr := os.Stat(path); statErr == nil && info.Size() > 0 && (expected <= 0 || info.Size() == expected) {
@@ -1131,8 +1401,8 @@ func (s *server) transferProgressive(ctx context.Context, j *jobState, engine na
 			}
 		}
 	}()
-	result.Size, err = copyStream(ctx, f, stream, budget, expected, func(written int64) {
-		s.updateProgress(j, index, written, expected)
+	result.Size, err = copyStream(ctx, f, s.bandwidthReader(ctx, stream), budget, expected, func(written int64) {
+		s.updateProgress(j, queueIndex, written, expected)
 	})
 	closeStream()
 	if ctx.Err() != nil {
@@ -1160,12 +1430,12 @@ func (s *server) transferProgressive(ctx context.Context, j *jobState, engine na
 	return result, nil
 }
 
-func (s *server) transferAdaptive(ctx context.Context, j *jobState, engine nativeClient, video *youtube.Video, selection streamSelection, index int, budget int64) (result mediaFile, err error) {
+func (s *server) transferAdaptive(ctx context.Context, j *jobState, engine nativeClient, video *youtube.Video, selection streamSelection, queueIndex, outputIndex int, budget int64) (result mediaFile, err error) {
 	if selection.video == nil || selection.audio == nil || budget <= 0 {
 		return result, errLimit
 	}
 	result = mediaFile{
-		ID: randomID(16), Name: fmt.Sprintf("%06d-%s.mp4", index, video.ID),
+		ID: randomID(16), Name: fmt.Sprintf("%06d-%s.mp4", outputIndex, video.ID),
 		Height: selection.video.Height, MimeType: "video/mp4",
 	}
 	path := filepath.Join(j.dir, result.Name)
@@ -1197,7 +1467,7 @@ func (s *server) transferAdaptive(ctx context.Context, j *jobState, engine nativ
 		}
 	}()
 	var browserProvider browserMediaProvider
-	if s.browserFactory != nil {
+	if s.browserFactory != nil && !s.bandwidthLimited() {
 		if provider, providerErr := s.browserFactory(ctx); providerErr == nil && provider != nil {
 			defer provider.Close()
 			browserProvider = provider
@@ -1211,9 +1481,9 @@ func (s *server) transferAdaptive(ctx context.Context, j *jobState, engine nativ
 		if totalExpected <= 0 {
 			return
 		}
-		s.updateProgress(j, index, downloaded+current, progressTotal)
+		s.updateProgress(j, queueIndex, downloaded+current, progressTotal)
 	}
-	videoSize, browserUsed, err := s.downloadAdaptiveRanges(ctx, j, engine, video, selection.video, videoPart, index, budget, progress, browserProvider)
+	videoSize, browserUsed, err := s.downloadAdaptiveRanges(ctx, j, engine, video, selection.video, videoPart, queueIndex, budget, progress, browserProvider)
 	if err != nil {
 		if ctx.Err() == nil && errors.Is(err, errRead) && selection.progressive != nil {
 			// YouTube may advertise adaptive formats while rejecting their later
@@ -1224,7 +1494,7 @@ func (s *server) transferAdaptive(ctx context.Context, j *jobState, engine nativ
 				j.Note += " " + adaptiveFallbackNote
 			}
 			s.mu.Unlock()
-			fallback, fallbackErr := s.transferProgressive(ctx, j, engine, video, selection.progressive, "video/mp4", index, budget)
+			fallback, fallbackErr := s.transferProgressive(ctx, j, engine, video, selection.progressive, "video/mp4", queueIndex, outputIndex, budget)
 			if fallbackErr == nil {
 				finalized = true
 			}
@@ -1271,7 +1541,7 @@ func (s *server) transferAdaptive(ctx context.Context, j *jobState, engine nativ
 		return result, ctx.Err()
 	}
 	if totalExpected > 0 {
-		s.updateProgress(j, index, progressTotal, progressTotal)
+		s.updateProgress(j, queueIndex, progressTotal, progressTotal)
 	}
 	if os.Rename(outputPart, path) != nil {
 		return result, errStorage
@@ -1362,7 +1632,7 @@ func (s *server) downloadAdaptiveRanges(ctx context.Context, j *jobState, engine
 			}
 			_, _ = f.Seek(start, io.SeekStart)
 			_ = f.Truncate(start)
-			written, copyErr := io.Copy(f, io.LimitReader(resp.Body, chunkSize+1))
+			written, copyErr := io.Copy(f, io.LimitReader(s.bandwidthReader(ctx, resp.Body), chunkSize+1))
 			_ = resp.Body.Close()
 			if copyErr == nil && written == chunkSize && (resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusPartialContent) {
 				chunkOK = true
@@ -1465,7 +1735,7 @@ func (s *server) downloadSource(ctx context.Context, j *jobState, engine nativeC
 	if progress == nil {
 		progress = func(int64) {}
 	}
-	result, err = copyStream(ctx, f, stream, budget, expected, progress)
+	result, err = copyStream(ctx, f, s.bandwidthReader(ctx, stream), budget, expected, progress)
 	closeStream()
 	if ctx.Err() != nil {
 		return result, ctx.Err()
@@ -1609,8 +1879,11 @@ func (s *server) prune(now time.Time) {
 	for _, id := range s.order {
 		j := s.jobs[id]
 		if terminal(j.Status) && j.readers == 0 && !held[id] && now.Sub(j.done) >= s.cfg.retain {
-			if removeOutputCopies(j) == nil && os.RemoveAll(j.dir) == nil && s.store.deleteJob(id) == nil {
+			// Retention expires app-managed history and private media only.
+			// Published output belongs to the user and must survive pruning.
+			if removeManagedCopies(j) == nil && s.store.deleteJob(id) == nil {
 				delete(s.jobs, id)
+				s.publishDeletedEventLocked(id)
 				continue
 			}
 		}

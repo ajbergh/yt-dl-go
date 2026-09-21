@@ -26,6 +26,7 @@ func defaultAppSettings() AppSettings {
 		DownloadLocation: filepath.Join(home, "Downloads", "YouTube_Vault"),
 		NamingPattern:    defaultNamingPattern, SubfolderSorting: "channel",
 		DefaultCategory: "General", UserCategories: append([]string(nil), defaultUserCategories...),
+		StorageMode: "managed-published",
 	}
 }
 
@@ -53,7 +54,24 @@ func mergeAppSettings(defaults, settings AppSettings) AppSettings {
 	if settings.UserCategories == nil {
 		settings.UserCategories = append([]string(nil), defaults.UserCategories...)
 	}
+	if settings.StorageMode == "" {
+		settings.StorageMode = defaults.StorageMode
+	}
 	return settings
+}
+
+func resolveJobCategory(settings AppSettings, requested string) (string, error) {
+	requested = strings.TrimSpace(requested)
+	if requested == "" {
+		requested = strings.TrimSpace(settings.DefaultCategory)
+	}
+	for _, category := range settings.UserCategories {
+		category = strings.TrimSpace(category)
+		if strings.EqualFold(category, requested) {
+			return category, nil
+		}
+	}
+	return "", errors.New("category must match an active user category")
 }
 
 func validateAppSettings(settings AppSettings) error {
@@ -77,6 +95,12 @@ func validateAppSettings(settings AppSettings) error {
 	}
 	if settings.SubfolderSorting != "channel" && settings.SubfolderSorting != "category" && settings.SubfolderSorting != "flat" {
 		return errors.New("subfolderSorting must be channel, category, or flat")
+	}
+	if settings.StorageMode != "managed-published" && settings.StorageMode != "published-only" && settings.StorageMode != "managed-only" {
+		return errors.New("storageMode must be managed-published, published-only, or managed-only")
+	}
+	if settings.BandwidthLimitBytesPerSec < 0 || settings.BandwidthLimitBytesPerSec > maxBandwidthLimitBytesPerSec {
+		return errors.New("bandwidthLimitBytesPerSec must be between 0 and 1073741824")
 	}
 	if len(settings.UserCategories) == 0 || len(settings.UserCategories) > 50 {
 		return errors.New("userCategories must contain between 1 and 50 categories")
@@ -111,7 +135,7 @@ func (s *server) publishOutput(j *jobState, file *mediaFile) error {
 		return errors.New("job contains an invalid output directory")
 	}
 	extension := filepath.Ext(file.Name)
-	if extension != ".mp4" && extension != ".webm" && extension != ".mp3" {
+	if extension != ".mp4" && extension != ".webm" && extension != ".mp3" && extension != ".m4a" {
 		return errors.New("download has an unsupported output type")
 	}
 	channel := file.Author
@@ -126,6 +150,7 @@ func (s *server) publishOutput(j *jobState, file *mediaFile) error {
 	if strings.TrimSpace(category) == "" {
 		category = "General"
 	}
+	file.Category = category
 	resolution := "audio"
 	if file.Height > 0 {
 		resolution = fmt.Sprintf("%dp", file.Height)
@@ -185,6 +210,7 @@ func (s *server) publishOutput(j *jobState, file *mediaFile) error {
 		file.OutputName = name
 		file.OutputPath = destination
 		file.OutputRelativePath = filepath.ToSlash(filepath.Join(filepath.Base(folder), name))
+		file.PublishedAvailable = true
 		if j.SubfolderSorting == "flat" {
 			file.OutputRelativePath = name
 		}
@@ -219,25 +245,62 @@ func sanitizePathComponent(value string) string {
 	return clean
 }
 
+func validateOutputCopy(j *jobState, file mediaFile) error {
+	if file.OutputPath == "" || file.OutputName == "" || file.OutputRelativePath == "" || !filepath.IsAbs(j.DownloadLocation) {
+		return errors.New("job contains invalid output metadata")
+	}
+	relative := filepath.FromSlash(file.OutputRelativePath)
+	if filepath.IsAbs(relative) || filepath.Clean(relative) != relative || relative == "." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+		return errors.New("job contains an unsafe output path")
+	}
+	expected := filepath.Join(j.DownloadLocation, relative)
+	if filepath.Clean(file.OutputPath) != expected || filepath.Base(file.OutputPath) != file.OutputName {
+		return errors.New("job output path does not match its recorded destination")
+	}
+	return nil
+}
+
 func removeOutputCopies(j *jobState) error {
 	for _, file := range j.Files {
-		if file.OutputPath == "" {
+		if !file.PublishedAvailable {
 			continue
 		}
-		if file.OutputName == "" || file.OutputRelativePath == "" || !filepath.IsAbs(j.DownloadLocation) {
-			return errors.New("job contains invalid output metadata")
+		if err := validateOutputCopy(j, file); err != nil {
+			return err
 		}
-		relative := filepath.FromSlash(file.OutputRelativePath)
-		if filepath.IsAbs(relative) || filepath.Clean(relative) != relative || relative == "." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
-			return errors.New("job contains an unsafe output path")
-		}
-		expected := filepath.Join(j.DownloadLocation, relative)
-		if filepath.Clean(file.OutputPath) != expected || filepath.Base(file.OutputPath) != file.OutputName {
-			return errors.New("job output path does not match its recorded destination")
+	}
+	for index := range j.Files {
+		file := &j.Files[index]
+		if !file.PublishedAvailable {
+			continue
 		}
 		if err := os.Remove(file.OutputPath); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return err
 		}
+		file.PublishedAvailable = false
+		for itemIndex, saved := range j.fileItems {
+			if saved.ID == file.ID {
+				saved.PublishedAvailable = false
+				j.fileItems[itemIndex] = saved
+				break
+			}
+		}
+	}
+	return nil
+}
+
+func removeManagedCopies(j *jobState) error {
+	if err := os.RemoveAll(j.dir); err != nil {
+		return err
+	}
+	for index := range j.Files {
+		j.Files[index].ManagedAvailable = false
+		j.Files[index].ThumbnailLocalAvailable = false
+	}
+	for itemIndex, saved := range j.fileItems {
+		saved.ManagedAvailable = false
+		saved.ThumbnailLocalAvailable = false
+		j.fileItems[itemIndex] = saved
 	}
 	return nil
 }

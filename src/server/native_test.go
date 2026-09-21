@@ -213,6 +213,19 @@ func TestEntireExposedPlaylistAndInvalidEntries(t *testing.T) {
 	}
 }
 
+func TestOriginalM4ABudgetUsesOnlySourceBytes(t *testing.T) {
+	format := &youtube.Format{ContentLength: 4096}
+	video := &youtube.Video{Duration: 5 * time.Minute}
+	m4a := &jobState{Job: Job{MediaType: "audio", AudioFormat: "m4a"}}
+	if got := estimatedItemBudget(m4a, video, format, streamSelection{}); got != format.ContentLength {
+		t.Fatalf("M4A budget = %d, want source size %d", got, format.ContentLength)
+	}
+	mp3 := &jobState{Job: Job{MediaType: "audio", AudioFormat: "mp3", AudioBitrate: "192k"}}
+	if got := estimatedItemBudget(mp3, video, format, streamSelection{}); got <= format.ContentLength {
+		t.Fatalf("MP3 budget = %d, want source plus encoded output", got)
+	}
+}
+
 func TestHardStorageLimitAndEOF(t *testing.T) {
 	s := testServer(t, fixtureClient(2), func(c *config) { c.maxBytes = int64(len(fixtureData)) })
 	j := waitTerminal(t, s, createJob(t, s, testPlaylist).ID)

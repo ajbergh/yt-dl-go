@@ -22,13 +22,16 @@ type jobStore struct {
 }
 
 type AppSettings struct {
-	DefaultQuality         string   `json:"defaultQuality"`
-	MaxConcurrentDownloads int      `json:"maxConcurrentDownloads"`
-	DownloadLocation       string   `json:"downloadLocation"`
+	DefaultQuality             string   `json:"defaultQuality"`
+	MaxConcurrentDownloads     int      `json:"maxConcurrentDownloads"`
+	BandwidthLimitBytesPerSec int64    `json:"bandwidthLimitBytesPerSec"`
+	NotificationsEnabled     bool     `json:"notificationsEnabled"`
+	DownloadLocation         string   `json:"downloadLocation"`
 	NamingPattern          string   `json:"namingPattern"`
 	SubfolderSorting       string   `json:"subfolderSorting"`
 	DefaultCategory        string   `json:"defaultCategory"`
 	UserCategories         []string `json:"userCategories"`
+	StorageMode            string   `json:"storageMode"`
 }
 
 type storedJob struct {
@@ -131,7 +134,209 @@ func openJobStore(root string) (*jobStore, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("migrate state database: %w", err)
 	}
+	if err := store.migrateV6(); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("migrate state database: %w", err)
+	}
+	if err := store.migrateV7(); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("migrate state database: %w", err)
+	}
+	if err := store.migrateV8(); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("migrate state database: %w", err)
+	}
+	if err := store.migrateV9(); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("migrate state database: %w", err)
+	}
+	if err := store.migrateV10(); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("migrate state database: %w", err)
+	}
+	if err := store.migrateV11(); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("migrate state database: %w", err)
+	}
+	if err := store.migrateV12(); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("migrate state database: %w", err)
+	}
 	return store, nil
+}
+
+func (s *jobStore) migrateV12() error {
+	var version int
+	if err := s.db.QueryRow(`SELECT COALESCE(MAX(version), 0) FROM schema_migrations`).Scan(&version); err != nil {
+		return err
+	}
+	if version >= 12 {
+		return nil
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	for _, statement := range []string{
+		`ALTER TABLE app_settings ADD COLUMN notifications_enabled INTEGER NOT NULL DEFAULT 0`,
+		`INSERT INTO schema_migrations(version) VALUES (12)`,
+	} {
+		if _, err := tx.Exec(statement); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+func (s *jobStore) migrateV11() error {
+	var version int
+	if err := s.db.QueryRow(`SELECT COALESCE(MAX(version), 0) FROM schema_migrations`).Scan(&version); err != nil {
+		return err
+	}
+	if version >= 11 {
+		return nil
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	for _, statement := range []string{
+		`ALTER TABLE app_settings ADD COLUMN bandwidth_limit_bytes_per_sec INTEGER NOT NULL DEFAULT 0`,
+		`INSERT INTO schema_migrations(version) VALUES (11)`,
+	} {
+		if _, err := tx.Exec(statement); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+func (s *jobStore) migrateV10() error {
+	var version int
+	if err := s.db.QueryRow(`SELECT COALESCE(MAX(version), 0) FROM schema_migrations`).Scan(&version); err != nil {
+		return err
+	}
+	if version >= 10 {
+		return nil
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	for _, statement := range []string{
+		`ALTER TABLE jobs ADD COLUMN queue_position INTEGER NOT NULL DEFAULT 0`,
+		`UPDATE jobs SET queue_position=rowid WHERE queue_position=0`,
+		`INSERT INTO schema_migrations(version) VALUES (10)`,
+	} {
+		if _, err := tx.Exec(statement); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+func (s *jobStore) migrateV9() error {
+	var version int
+	if err := s.db.QueryRow(`SELECT COALESCE(MAX(version), 0) FROM schema_migrations`).Scan(&version); err != nil {
+		return err
+	}
+	if version >= 9 {
+		return nil
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	for _, statement := range []string{
+		`ALTER TABLE jobs ADD COLUMN audio_format TEXT NOT NULL DEFAULT ''`,
+		`UPDATE jobs SET audio_format='mp3' WHERE media_type='audio' AND audio_format=''`,
+		`INSERT INTO schema_migrations(version) VALUES (9)`,
+	} {
+		if _, err := tx.Exec(statement); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+func (s *jobStore) migrateV8() error {
+	var version int
+	if err := s.db.QueryRow(`SELECT COALESCE(MAX(version), 0) FROM schema_migrations`).Scan(&version); err != nil {
+		return err
+	}
+	if version >= 8 {
+		return nil
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	for _, statement := range []string{
+		`ALTER TABLE job_files ADD COLUMN thumbnail_mime_type TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE job_files ADD COLUMN thumbnail_local_available INTEGER NOT NULL DEFAULT 0`,
+		`INSERT INTO schema_migrations(version) VALUES (8)`,
+	} {
+		if _, err := tx.Exec(statement); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+func (s *jobStore) migrateV7() error {
+	var version int
+	if err := s.db.QueryRow(`SELECT COALESCE(MAX(version), 0) FROM schema_migrations`).Scan(&version); err != nil {
+		return err
+	}
+	if version >= 7 {
+		return nil
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	for _, statement := range []string{
+		`ALTER TABLE app_settings ADD COLUMN storage_mode TEXT NOT NULL DEFAULT 'managed-published'`,
+		`ALTER TABLE jobs ADD COLUMN storage_mode TEXT NOT NULL DEFAULT 'managed-published'`,
+		`INSERT INTO schema_migrations(version) VALUES (7)`,
+	} {
+		if _, err := tx.Exec(statement); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+func (s *jobStore) migrateV6() error {
+	var version int
+	if err := s.db.QueryRow(`SELECT COALESCE(MAX(version), 0) FROM schema_migrations`).Scan(&version); err != nil {
+		return err
+	}
+	if version >= 6 {
+		return nil
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	for _, statement := range []string{
+		`ALTER TABLE job_files ADD COLUMN managed_available INTEGER NOT NULL DEFAULT 1`,
+		`ALTER TABLE job_files ADD COLUMN published_available INTEGER NOT NULL DEFAULT 0`,
+		`UPDATE job_files SET published_available = CASE WHEN output_path <> '' THEN 1 ELSE 0 END`,
+		`INSERT INTO schema_migrations(version) VALUES (6)`,
+	} {
+		if _, err := tx.Exec(statement); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 // migrateV5 persists output preferences, each job's captured preferences, and
@@ -293,9 +498,9 @@ func (s *jobStore) saveConfig(c config) error {
 func (s *jobStore) loadAppSettings() (AppSettings, error) {
 	settings := defaultAppSettings()
 	var categories string
-	if err := s.db.QueryRow(`SELECT default_quality,max_concurrent_downloads,download_location,naming_pattern,subfolder_sorting,default_category,user_categories FROM app_settings WHERE id=1`).Scan(
-		&settings.DefaultQuality, &settings.MaxConcurrentDownloads, &settings.DownloadLocation, &settings.NamingPattern,
-		&settings.SubfolderSorting, &settings.DefaultCategory, &categories); err != nil {
+	if err := s.db.QueryRow(`SELECT default_quality,max_concurrent_downloads,bandwidth_limit_bytes_per_sec,notifications_enabled,download_location,naming_pattern,subfolder_sorting,default_category,user_categories,storage_mode FROM app_settings WHERE id=1`).Scan(
+		&settings.DefaultQuality, &settings.MaxConcurrentDownloads, &settings.BandwidthLimitBytesPerSec, &settings.NotificationsEnabled, &settings.DownloadLocation, &settings.NamingPattern,
+		&settings.SubfolderSorting, &settings.DefaultCategory, &categories, &settings.StorageMode); err != nil {
 		return settings, err
 	}
 	if err := json.Unmarshal([]byte(categories), &settings.UserCategories); err != nil {
@@ -314,9 +519,9 @@ func (s *jobStore) saveAppSettings(settings AppSettings) error {
 	if err != nil {
 		return err
 	}
-	_, err = s.db.Exec(`UPDATE app_settings SET default_quality=?,max_concurrent_downloads=?,download_location=?,naming_pattern=?,subfolder_sorting=?,default_category=?,user_categories=?,updated_at=? WHERE id=1`,
-		settings.DefaultQuality, settings.MaxConcurrentDownloads, settings.DownloadLocation, settings.NamingPattern,
-		settings.SubfolderSorting, settings.DefaultCategory, string(categories), time.Now().UnixNano())
+	_, err = s.db.Exec(`UPDATE app_settings SET default_quality=?,max_concurrent_downloads=?,bandwidth_limit_bytes_per_sec=?,notifications_enabled=?,download_location=?,naming_pattern=?,subfolder_sorting=?,default_category=?,user_categories=?,storage_mode=?,updated_at=? WHERE id=1`,
+		settings.DefaultQuality, settings.MaxConcurrentDownloads, settings.BandwidthLimitBytesPerSec, settings.NotificationsEnabled, settings.DownloadLocation, settings.NamingPattern,
+		settings.SubfolderSorting, settings.DefaultCategory, string(categories), settings.StorageMode, time.Now().UnixNano())
 	return err
 }
 
@@ -350,18 +555,18 @@ func (s *jobStore) saveJob(j *jobState) error {
 	}
 	defer func() { _ = tx.Rollback() }()
 	_, err = tx.Exec(`INSERT INTO jobs
-		(id,url,kind,quality,media_type,audio_bitrate,status,title,progress,current_item,completed_count,total_count,error,created_at,note,dir,cancel_requested,done_at,updated_at,queue_items,output_location,naming_pattern,subfolder_sorting,category)
-		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+		(id,url,kind,quality,media_type,audio_format,audio_bitrate,status,title,progress,current_item,completed_count,total_count,error,created_at,note,dir,cancel_requested,done_at,updated_at,queue_items,output_location,naming_pattern,subfolder_sorting,category,storage_mode,queue_position)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 		ON CONFLICT(id) DO UPDATE SET url=excluded.url,kind=excluded.kind,quality=excluded.quality,
-		media_type=excluded.media_type,audio_bitrate=excluded.audio_bitrate,
+		media_type=excluded.media_type,audio_format=excluded.audio_format,audio_bitrate=excluded.audio_bitrate,
 		status=excluded.status,title=excluded.title,progress=excluded.progress,current_item=excluded.current_item,
 		completed_count=excluded.completed_count,total_count=excluded.total_count,error=excluded.error,
 		created_at=excluded.created_at,note=excluded.note,dir=excluded.dir,cancel_requested=excluded.cancel_requested,
 		done_at=excluded.done_at,updated_at=excluded.updated_at,queue_items=excluded.queue_items,
-		output_location=excluded.output_location,naming_pattern=excluded.naming_pattern,subfolder_sorting=excluded.subfolder_sorting,category=excluded.category`,
-		j.ID, j.URL, j.Kind, j.Quality, j.MediaType, j.AudioBitrate, j.Status, j.Title, progress, j.CurrentItem, j.CompletedCount, total,
+		output_location=excluded.output_location,naming_pattern=excluded.naming_pattern,subfolder_sorting=excluded.subfolder_sorting,category=excluded.category,storage_mode=excluded.storage_mode,queue_position=excluded.queue_position`,
+		j.ID, j.URL, j.Kind, j.Quality, j.MediaType, j.AudioFormat, j.AudioBitrate, j.Status, j.Title, progress, j.CurrentItem, j.CompletedCount, total,
 		j.Error, j.CreatedAt, j.Note, j.dir, cancelRequested, done, time.Now().UnixNano(), string(queueItems),
-		j.DownloadLocation, j.NamingPattern, j.SubfolderSorting, j.Category)
+		j.DownloadLocation, j.NamingPattern, j.SubfolderSorting, j.Category, j.StorageMode, j.QueuePosition)
 	if err != nil {
 		return err
 	}
@@ -376,9 +581,19 @@ func (s *jobStore) saveJob(j *jobState) error {
 				break
 			}
 		}
-		if _, err = tx.Exec(`INSERT INTO job_files(job_id,item_index,file_id,name,size,height,mime_type,title,author,duration_seconds,thumbnail_url,publish_date,category,output_name,output_path,output_relative_path) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		managedAvailable, publishedAvailable, thumbnailLocalAvailable := 0, 0, 0
+		if file.ManagedAvailable {
+			managedAvailable = 1
+		}
+		if file.PublishedAvailable {
+			publishedAvailable = 1
+		}
+		if file.ThumbnailLocalAvailable {
+			thumbnailLocalAvailable = 1
+		}
+		if _, err = tx.Exec(`INSERT INTO job_files(job_id,item_index,file_id,name,size,height,mime_type,title,author,duration_seconds,thumbnail_url,thumbnail_mime_type,thumbnail_local_available,publish_date,category,output_name,output_path,output_relative_path,managed_available,published_available) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 			j.ID, itemIndex, file.ID, file.Name, file.Size, file.Height, file.MimeType, file.Title, file.Author,
-			file.DurationSeconds, file.ThumbnailURL, file.PublishDate, file.Category, file.OutputName, file.OutputPath, file.OutputRelativePath); err != nil {
+			file.DurationSeconds, file.ThumbnailURL, file.ThumbnailMimeType, thumbnailLocalAvailable, file.PublishDate, file.Category, file.OutputName, file.OutputPath, file.OutputRelativePath, managedAvailable, publishedAvailable); err != nil {
 			return err
 		}
 	}
@@ -388,6 +603,29 @@ func (s *jobStore) saveJob(j *jobState) error {
 	for _, failure := range j.Failures {
 		if _, err = tx.Exec(`INSERT INTO job_failures(job_id,item_index,error) VALUES(?,?,?)`, j.ID, failure.Index, failure.Error); err != nil {
 			return err
+		}
+	}
+	return tx.Commit()
+}
+
+func (s *jobStore) saveQueueOrder(jobIDs []string) error {
+	if s == nil {
+		return nil
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	now := time.Now().UnixNano()
+	for index, jobID := range jobIDs {
+		result, err := tx.Exec(`UPDATE jobs SET queue_position=?,updated_at=? WHERE id=?`, index+1, now, jobID)
+		if err != nil {
+			return err
+		}
+		affected, err := result.RowsAffected()
+		if err != nil || affected != 1 {
+			return errors.New("queue order referenced an unknown job")
 		}
 	}
 	return tx.Commit()
@@ -431,7 +669,7 @@ func (s *jobStore) loadJobs(root string) ([]*storedJob, error) {
 	if err != nil {
 		return nil, err
 	}
-	rows, err := s.db.Query(`SELECT id,url,kind,quality,media_type,audio_bitrate,status,title,progress,current_item,completed_count,total_count,error,created_at,note,dir,cancel_requested,done_at,queue_items,output_location,naming_pattern,subfolder_sorting,category FROM jobs ORDER BY created_at ASC`)
+	rows, err := s.db.Query(`SELECT id,url,kind,quality,media_type,audio_format,audio_bitrate,status,title,progress,current_item,completed_count,total_count,error,created_at,note,dir,cancel_requested,done_at,queue_items,output_location,naming_pattern,subfolder_sorting,category,storage_mode,queue_position FROM jobs ORDER BY created_at ASC`)
 	if err != nil {
 		return nil, err
 	}
@@ -451,9 +689,9 @@ func (s *jobStore) loadJobs(root string) ([]*storedJob, error) {
 		var cancelRequested int
 		var doneAt sql.NullInt64
 		var queueItems string
-		if err := rows.Scan(&j.ID, &j.URL, &j.Kind, &j.Quality, &j.MediaType, &j.AudioBitrate, &j.Status, &j.Title, &progress, &j.CurrentItem,
+		if err := rows.Scan(&j.ID, &j.URL, &j.Kind, &j.Quality, &j.MediaType, &j.AudioFormat, &j.AudioBitrate, &j.Status, &j.Title, &progress, &j.CurrentItem,
 			&j.CompletedCount, &totalCount, &j.Error, &j.CreatedAt, &j.Note, &dir, &cancelRequested, &doneAt, &queueItems,
-			&j.DownloadLocation, &j.NamingPattern, &j.SubfolderSorting, &j.Category); err != nil {
+			&j.DownloadLocation, &j.NamingPattern, &j.SubfolderSorting, &j.Category, &j.StorageMode, &j.QueuePosition); err != nil {
 			return nil, err
 		}
 		if err := json.Unmarshal([]byte(queueItems), &j.Items); err != nil {
@@ -470,6 +708,12 @@ func (s *jobStore) loadJobs(root string) ([]*storedJob, error) {
 		}
 		if j.Category == "" {
 			j.Category = currentSettings.DefaultCategory
+		}
+		if j.StorageMode == "" {
+			j.StorageMode = currentSettings.StorageMode
+		}
+		if j.MediaType == "audio" && j.AudioFormat == "" {
+			j.AudioFormat = "mp3"
 		}
 		if progress.Valid {
 			value := progress.Float64
@@ -515,18 +759,22 @@ func (s *jobStore) loadJobs(root string) ([]*storedJob, error) {
 				return nil, err
 			}
 		}
-		files, err := s.db.Query(`SELECT item_index,file_id,name,size,height,mime_type,title,author,duration_seconds,thumbnail_url,publish_date,category,output_name,output_path,output_relative_path FROM job_files WHERE job_id=? ORDER BY item_index`, j.ID)
+		files, err := s.db.Query(`SELECT item_index,file_id,name,size,height,mime_type,title,author,duration_seconds,thumbnail_url,thumbnail_mime_type,thumbnail_local_available,publish_date,category,output_name,output_path,output_relative_path,managed_available,published_available FROM job_files WHERE job_id=? ORDER BY item_index`, j.ID)
 		if err != nil {
 			return nil, err
 		}
 		for files.Next() {
 			var index int
 			var file mediaFile
+			var managedAvailable, publishedAvailable, thumbnailLocalAvailable int
 			if err := files.Scan(&index, &file.ID, &file.Name, &file.Size, &file.Height, &file.MimeType, &file.Title, &file.Author,
-				&file.DurationSeconds, &file.ThumbnailURL, &file.PublishDate, &file.Category, &file.OutputName, &file.OutputPath, &file.OutputRelativePath); err != nil {
+				&file.DurationSeconds, &file.ThumbnailURL, &file.ThumbnailMimeType, &thumbnailLocalAvailable, &file.PublishDate, &file.Category, &file.OutputName, &file.OutputPath, &file.OutputRelativePath, &managedAvailable, &publishedAvailable); err != nil {
 				_ = files.Close()
 				return nil, err
 			}
+			file.ManagedAvailable = managedAvailable != 0
+			file.PublishedAvailable = publishedAvailable != 0
+			file.ThumbnailLocalAvailable = thumbnailLocalAvailable != 0
 			loaded.items[index] = file
 			loaded.job.Files = append(loaded.job.Files, file)
 		}
