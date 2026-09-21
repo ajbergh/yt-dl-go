@@ -418,7 +418,7 @@ Add opt-in subtitle/caption download for owned/authorized content.
 
 ## P2.4 1440p and 2160p support
 
-**Status:** [~] Implemented; full CI validation pending
+**Status:** [x] Implemented
 
 This is an engineering project, not merely a quality-dropdown change. YouTube commonly uses VP9/AV1 video and Opus audio for higher resolutions, so the implementation adds an explicit codec/container strategy instead of pretending every quality can remain H.264/AAC MP4.
 
@@ -449,9 +449,9 @@ P2.5 remains the place for user-selectable codec/container preferences such as e
 
 #### Validation
 
-- Frontend type-check/build and Bun integration tests passed during development.
-- Earlier CI iterations exposed and fixed: the missing module checksum, a generated browser codec-script compile error, an interleaved WebM-reader test deadlock, YouTube JSON `contentLength` fixture encoding, and the legacy test that treated 2160p as unsupported.
-- Final full cross-platform CI validation is still required before this item is marked complete and merged.
+- PR CI run `35617803735` passed frontend type-check/build, Bun integration tests, Go tests, Go vet, real-browser E2E, Windows production build/package/upload, Linux amd64 + arm64 production package/upload, and macOS amd64 + arm64 production package/upload.
+- Earlier CI iterations exposed and fixed: the missing module checksum, a generated browser codec-script compile error, an interleaved WebM-reader test deadlock, YouTube JSON `contentLength` fixture encoding, the legacy test that treated 2160p as unsupported, and a pre-existing Windows timing limit in the 151-item playlist fixture. The Windows fix changes only test timeout/wait behavior, not production scheduler semantics.
+- The opt-in live-download harness already accepts `YTDL_LIVE_MIN_HEIGHT=1440` or `2160` for authorized real-media verification. It remains intentionally outside normal CI because it depends on current YouTube delivery behavior and downloads real media.
 
 ### P2.5 Advanced codec/container selection
 
