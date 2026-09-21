@@ -338,6 +338,11 @@ func selectFormatForStrategy(video *youtube.Video, quality, strategy string) (st
 
 	if strategy == "compatibility" {
 		compatibility := adaptiveMP4
+		if compatibility.video != nil {
+			// Strict compatibility may only fall back to a progressive stream
+			// that is itself verified as H.264/AAC MP4.
+			compatibility.progressive = compatibilityProgressive.video
+		}
 		if compatibilityProgressive.video != nil && (compatibility.video == nil || !betterVideoFormat(compatibility.video, compatibilityProgressive.video)) {
 			compatibility = compatibilityProgressive
 		}
