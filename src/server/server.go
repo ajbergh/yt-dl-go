@@ -352,6 +352,14 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.handleFolderSelection(w, r)
 		return
 	}
+	if r.URL.Path == "/api/queue/order" {
+		if r.Method != http.MethodPut {
+			fail(w, http.StatusMethodNotAllowed, "Method not allowed")
+			return
+		}
+		s.handleQueueOrder(w, r)
+		return
+	}
 	if r.URL.Path == "/api/jobs" {
 		switch r.Method {
 		case http.MethodPost:
@@ -376,6 +384,14 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if len(parts) == 2 && parts[1] == "retry" && r.Method == http.MethodPost {
 		s.retry(w, r, parts[0])
+		return
+	}
+	if len(parts) == 2 && parts[1] == "next" && r.Method == http.MethodPost {
+		s.handleDownloadNext(w, r, parts[0])
+		return
+	}
+	if len(parts) == 2 && parts[1] == "items" && r.Method == http.MethodPut {
+		s.handleItemOrder(w, r, parts[0])
 		return
 	}
 	if len(parts) == 2 && parts[1] == "filesystem" && r.Method == http.MethodPost {
@@ -513,6 +529,7 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			j.pauseRequested = false
 			j.cancelRequested = false
 			j.Status, j.Error, j.done = "queued", "", time.Time{}
+			j.QueuePosition = s.nextQueuePositionLocked()
 			s.refreshAllQueueItemsLocked(j)
 			s.persistJobLocked(j)
 			s.notifySchedulerLocked()
@@ -783,6 +800,7 @@ func (s *server) enqueueJob(w http.ResponseWriter, u, kind, quality, mediaType, 
 		Status: "queued", Title: "YouTube " + kind, Files: []mediaFile{}, Items: items, Failures: []itemFailure{},
 		Note: formatNote, CreatedAt: time.Now().UTC().Format(time.RFC3339Nano), DownloadLocation: outputSettings.DownloadLocation,
 		NamingPattern: outputSettings.NamingPattern, SubfolderSorting: outputSettings.SubfolderSorting, Category: category, StorageMode: storageMode,
+		QueuePosition: s.nextQueuePositionLocked(),
 	}, fileItems: map[int]mediaFile{}}
 	if kind == "playlist" {
 		j.Note += " " + playlistNote
