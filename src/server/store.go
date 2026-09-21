@@ -22,8 +22,9 @@ type jobStore struct {
 }
 
 type AppSettings struct {
-	DefaultQuality         string   `json:"defaultQuality"`
-	MaxConcurrentDownloads int      `json:"maxConcurrentDownloads"`
+	DefaultQuality             string   `json:"defaultQuality"`
+	MaxConcurrentDownloads     int      `json:"maxConcurrentDownloads"`
+	BandwidthLimitBytesPerSec   int64    `json:"bandwidthLimitBytesPerSec"`
 	DownloadLocation       string   `json:"downloadLocation"`
 	NamingPattern          string   `json:"namingPattern"`
 	SubfolderSorting       string   `json:"subfolderSorting"`
@@ -152,7 +153,35 @@ func openJobStore(root string) (*jobStore, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("migrate state database: %w", err)
 	}
+	if err := store.migrateV11(); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("migrate state database: %w", err)
+	}
 	return store, nil
+}
+
+func (s *jobStore) migrateV11() error {
+	var version int
+	if err := s.db.QueryRow(`SELECT COALESCE(MAX(version), 0) FROM schema_migrations`).Scan(&version); err != nil {
+		return err
+	}
+	if version >= 11 {
+		return nil
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	for _, statement := range []string{
+		`ALTER TABLE app_settings ADD COLUMN bandwidth_limit_bytes_per_sec INTEGER NOT NULL DEFAULT 0`,
+		`INSERT INTO schema_migrations(version) VALUES (11)`,
+	} {
+		if _, err := tx.Exec(statement); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 func (s *jobStore) migrateV10() error {
@@ -440,8 +469,8 @@ func (s *jobStore) saveConfig(c config) error {
 func (s *jobStore) loadAppSettings() (AppSettings, error) {
 	settings := defaultAppSettings()
 	var categories string
-	if err := s.db.QueryRow(`SELECT default_quality,max_concurrent_downloads,download_location,naming_pattern,subfolder_sorting,default_category,user_categories,storage_mode FROM app_settings WHERE id=1`).Scan(
-		&settings.DefaultQuality, &settings.MaxConcurrentDownloads, &settings.DownloadLocation, &settings.NamingPattern,
+	if err := s.db.QueryRow(`SELECT default_quality,max_concurrent_downloads,bandwidth_limit_bytes_per_sec,download_location,naming_pattern,subfolder_sorting,default_category,user_categories,storage_mode FROM app_settings WHERE id=1`).Scan(
+		&settings.DefaultQuality, &settings.MaxConcurrentDownloads, &settings.BandwidthLimitBytesPerSec, &settings.DownloadLocation, &settings.NamingPattern,
 		&settings.SubfolderSorting, &settings.DefaultCategory, &categories, &settings.StorageMode); err != nil {
 		return settings, err
 	}
@@ -461,8 +490,8 @@ func (s *jobStore) saveAppSettings(settings AppSettings) error {
 	if err != nil {
 		return err
 	}
-	_, err = s.db.Exec(`UPDATE app_settings SET default_quality=?,max_concurrent_downloads=?,download_location=?,naming_pattern=?,subfolder_sorting=?,default_category=?,user_categories=?,storage_mode=?,updated_at=? WHERE id=1`,
-		settings.DefaultQuality, settings.MaxConcurrentDownloads, settings.DownloadLocation, settings.NamingPattern,
+	_, err = s.db.Exec(`UPDATE app_settings SET default_quality=?,max_concurrent_downloads=?,bandwidth_limit_bytes_per_sec=?,download_location=?,naming_pattern=?,subfolder_sorting=?,default_category=?,user_categories=?,storage_mode=?,updated_at=? WHERE id=1`,
+		settings.DefaultQuality, settings.MaxConcurrentDownloads, settings.BandwidthLimitBytesPerSec, settings.DownloadLocation, settings.NamingPattern,
 		settings.SubfolderSorting, settings.DefaultCategory, string(categories), settings.StorageMode, time.Now().UnixNano())
 	return err
 }
