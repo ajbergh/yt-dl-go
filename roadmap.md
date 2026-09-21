@@ -394,7 +394,7 @@ Investigate whether a lightweight tray workflow improves long-running batch down
 
 ## P1.11 Subtitle/caption extraction
 
-**Status:** [T] Implemented; CI validation in progress
+**Status:** [x] Implemented
 
 Add opt-in subtitle/caption download for owned/authorized content.
 
@@ -414,7 +414,7 @@ Add opt-in subtitle/caption download for owned/authorized content.
 
 #### Validation
 
-- Branch CI is running for the completed implementation. Mark this item **[x]** only after the final branch HEAD passes frontend type-check/build/tests, Go tests/vet, and the Windows production build.
+- CI run `35559277729` passed frontend type-check/build, Bun integration tests, Go tests, Go vet, the Windows production build, and Windows artifact upload.
 
 ## P2.4 1440p and 2160p support
 
