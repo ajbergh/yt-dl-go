@@ -533,12 +533,13 @@ Implementation details:
 - `NO_BROWSER=1` supports headless/CI startup without invoking the OS URL handler.
 - CI runs `npm run e2e:browser` after the fast frontend/Go test layers.
 - The first browser pass exposed and fixed a real custom-loopback-port bug: Vite's `crossorigin` asset requests carried the listener origin, but only the hard-coded 5173/8080 origins were accepted. Loopback listeners now automatically trust their own exact HTTP origin at the configured port while network-visible listeners still require explicit allowlists.
+- Later full-matrix runs exposed a lifecycle ordering race: the asynchronous worker could publish `paused` over SSE before the Pause HTTP acknowledgement returned its older `downloading` snapshot, allowing the UI to regress to stale state. Job-action merging now preserves newer SSE lifecycle states for pause/cancel/resume, and Go coverage exercises pause during an active stream read.
 
-Validation note: CI run `35597381317` passed frontend type-check/build, Bun integration tests, Go tests, Go vet, the full Chrome E2E scenario, the Windows production build, and Windows artifact upload.
+Validation note: CI run `35601658829` passed frontend type-check/build, Bun integration tests (including stale-action state regression coverage), Go tests/vet (including active-stream pause/resume), and the full real-Chrome E2E scenario.
 
 ## P2.6 Cross-platform packaging
 
-**Status:** [T] Implemented; expanded CI validation in progress
+**Status:** [x] Implemented
 
 The CGO-free Go architecture now has reproducible packaging paths for Windows, Linux, and macOS.
 
@@ -555,7 +556,7 @@ Implemented:
 9. Added `docs/PACKAGING.md` covering package contents, architectures, runtime integration, release promotion, and signing/notarization requirements.
 10. Defined signing as a protected release-stage concern rather than ordinary branch CI: Windows Authenticode and macOS Developer ID/notarization require credentials that must not be stored in the repository.
 
-Acceptance: mark **[x]** after the expanded CI matrix builds/tests/packages all configured platform targets successfully.
+Validation note: CI run `35601658829` passed the full source/test/browser gate plus Windows production build/package, Linux `amd64`/`arm64` packages, and macOS `amd64`/`arm64` packages. Every configured package artifact and checksum upload completed successfully.
 
 ---
 
