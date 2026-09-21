@@ -188,6 +188,7 @@ export function HomePage() {
   const [notice, setNotice] = useState("");
   const [busyAction, setBusyAction] = useState("");
   const [actionError, setActionError] = useState("");
+  const [preview, setPreview] = useState<{ title: string; url: string; mimeType: string } | null>(null);
   const [queueFilter, setQueueFilter] = useState<QueueFilter>("all");
   const [search, setSearch] = useState("");
   const [libraryFilter, setLibraryFilter] = useState<LibraryFilter>("all");
@@ -544,6 +545,30 @@ export function HomePage() {
     finally { setBusyAction(""); }
   }
 
+  async function previewFile(job: DownloadJob, file: DownloadFile) {
+    if (!serviceReady || file.managedAvailable === false) return;
+    const key = `${job.id}:${file.id}:preview`;
+    setBusyAction(key);
+    setActionError("");
+    try {
+      const ticket = await api<{ path: string }>(connection, `/api/jobs/${encodeURIComponent(job.id)}/ticket`, {
+        method: "POST",
+        body: JSON.stringify({ fileId: file.id, inline: true }),
+        signal: AbortSignal.timeout(15000),
+      });
+      if (!/^\/api\/downloads\/[A-Za-z0-9_-]+$/.test(ticket.path)) throw new Error("The service returned an invalid preview link.");
+      setPreview({
+        title: file.title || file.outputName || file.name,
+        url: `${connection.base}${ticket.path}`,
+        mimeType: file.mimeType || (job.mediaType === "audio" ? "audio/mpeg" : "video/mp4"),
+      });
+    } catch (error) {
+      setActionError(errorMessage(error));
+    } finally {
+      setBusyAction("");
+    }
+  }
+
   async function saveFile(job: DownloadJob, fileId?: string) {
     if (!serviceReady) return;
     const key = `${job.id}:${fileId ?? "zip"}`;
@@ -887,6 +912,7 @@ export function HomePage() {
                     <div className="min-w-0 flex-1"><h4 className="truncate text-xs font-semibold text-neutral-200" title={file.title || file.outputName || file.name}>{file.title || file.outputName || file.name}</h4><p className="mt-1 truncate font-mono text-[10px] text-neutral-500" title={file.outputRelativePath || file.author || file.name}>{file.outputRelativePath || file.author || file.name}</p><p className="mt-1 text-[10px] text-neutral-600">{file.height ? `${file.height}p · ` : ""}{formatBytes(file.size)}{file.durationSeconds ? ` · ${durationLabel(file.durationSeconds)}` : ""}</p><div className="mt-1 flex flex-wrap gap-1">{file.managedAvailable === false && <span className="rounded bg-amber-950/60 px-1.5 py-0.5 text-[9px] text-amber-300">Managed copy removed</span>}{file.outputRelativePath && file.publishedAvailable === false && <span className="rounded bg-red-950/50 px-1.5 py-0.5 text-[9px] text-red-300">Published copy removed</span>}</div></div>
                     <div className="flex shrink-0 flex-wrap items-center justify-end gap-1.5">
                       {file.publishedAvailable !== false && file.outputRelativePath && <><button type="button" className={button} disabled={busyAction === `${job.id}:${file.id}:reveal`} onClick={() => void filesystemAction(job, file.id, "reveal")} aria-label={`Reveal ${file.title || file.name} in folder`} title="Reveal published file in its folder"><FolderTree className="size-3.5" aria-hidden="true" /><span className="hidden xl:inline">Reveal</span></button><button type="button" className={button} disabled={busyAction === `${job.id}:${file.id}:open-folder`} onClick={() => void filesystemAction(job, file.id, "open-folder")} aria-label={`Open folder for ${file.title || file.name}`} title="Open published output folder"><Folder className="size-3.5" aria-hidden="true" /><span className="hidden xl:inline">Folder</span></button><button type="button" className={button} disabled={busyAction === `${job.id}:${file.id}:copy-path`} onClick={() => void filesystemAction(job, file.id, "copy-path")} aria-label={`Copy path for ${file.title || file.name}`} title="Copy absolute published path"><FileText className="size-3.5" aria-hidden="true" /><span className="hidden xl:inline">Path</span></button></>}
+                      <button type="button" className={button} disabled={busyAction === `${job.id}:${file.id}:preview` || file.managedAvailable === false} onClick={() => void previewFile(job, file)} aria-label={`Preview ${file.title || file.name}`} title={file.managedAvailable === false ? "Preview requires an app-managed copy" : "Preview local media"}><Play className="size-3.5" aria-hidden="true" /><span className="hidden sm:inline">Preview</span></button>
                       <button type="button" className={button} disabled={busyAction === `${job.id}:${file.id}` || file.managedAvailable === false} onClick={() => void saveFile(job, file.id)} aria-label={`Save ${file.title || file.name}`} title={file.managedAvailable === false ? "The app-managed copy has been removed" : "Save a copy through the browser"}><ArrowDownToLine className="size-3.5" aria-hidden="true" /><span className="hidden sm:inline">Save</span></button>
                     </div>
                   </div>)}
@@ -1002,6 +1028,16 @@ export function HomePage() {
             <section className={`${panel} p-5`}><div className="flex items-start gap-3"><div className="grid size-9 shrink-0 place-items-center rounded-xl border border-blue-800/50 bg-blue-950/30 text-blue-300"><Gauge className="size-4" aria-hidden="true" /></div><div><h3 className="text-xs font-bold">What this backend supports</h3><ul className="mt-2 space-y-1.5 text-[11px] leading-relaxed text-neutral-400"><li>Video and playlist downloads, including adaptive MP4 remuxing and pure-Go MP3 conversion for AAC audio.</li><li>Up to six concurrent jobs, multi-routine stream transfers, pause/resume, retries, and live speed and ETA.</li><li>Quality ceilings: best, 1080p, 720p, or 480p. Actual output quality is reported after completion.</li><li>Files are copied to the selected destination and remain available in the private SQLite-backed library.</li></ul>{!mp3Supported && <p className="mt-3 flex items-start gap-1.5 text-[10px] leading-relaxed text-amber-300"><ShieldCheck className="mt-0.5 size-3 shrink-0" aria-hidden="true" />This backend does not support MP3 conversion.</p>}</div></div></section>
         </div>}
       </main>
+      {preview && <div role="dialog" aria-modal="true" aria-labelledby="media-preview-title" className="fixed inset-0 z-50 grid place-items-center bg-black/80 p-4" onMouseDown={event => { if (event.target === event.currentTarget) setPreview(null); }}>
+        <div className="w-full max-w-4xl overflow-hidden rounded-2xl border border-neutral-700 bg-neutral-950 shadow-2xl">
+          <div className="flex items-center justify-between gap-3 border-b border-neutral-800 px-4 py-3"><div className="min-w-0"><p className="text-[10px] font-bold uppercase tracking-wider text-rose-400">Local preview</p><h2 id="media-preview-title" className="truncate text-sm font-semibold text-white">{preview.title}</h2></div><button type="button" className={button} onClick={() => setPreview(null)} aria-label="Close media preview"><X className="size-4" aria-hidden="true" />Close</button></div>
+          <div className="bg-black p-3 sm:p-5">
+            {preview.mimeType.startsWith("audio/") ? <audio controls preload="metadata" src={preview.url} className="w-full">Your browser cannot play this audio format.</audio>
+              : <video controls preload="metadata" src={preview.url} className="max-h-[70vh] w-full rounded-lg bg-black">Your browser cannot play this video format.</video>}
+            <p className="mt-3 text-[10px] text-neutral-500">Preview uses a short-lived file-scoped ticket with HTTP Range support. Playback never starts automatically.</p>
+          </div>
+        </div>
+      </div>}
       <footer className="mx-auto flex max-w-7xl items-center justify-between gap-3 px-4 pb-8 text-[10px] text-neutral-600 sm:px-6"><span className="flex items-center gap-1.5"><Clock3 className="size-3" aria-hidden="true" />Live job updates from the Go service</span><span className="flex items-center gap-1.5"><HardDrive className="size-3" aria-hidden="true" />SQLite-backed history</span></footer>
     </div>
   );
