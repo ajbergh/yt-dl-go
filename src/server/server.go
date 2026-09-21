@@ -597,6 +597,7 @@ func (s *server) handleSettings(w http.ResponseWriter, r *http.Request) {
 			DefaultQuality         *string   `json:"defaultQuality"`
 			MaxConcurrentDownloads   *int      `json:"maxConcurrentDownloads"`
 			BandwidthLimitBytesPerSec *int64    `json:"bandwidthLimitBytesPerSec"`
+			NotificationsEnabled     *bool     `json:"notificationsEnabled"`
 			DownloadLocation         *string   `json:"downloadLocation"`
 			NamingPattern          *string   `json:"namingPattern"`
 			SubfolderSorting       *string   `json:"subfolderSorting"`
@@ -617,6 +618,9 @@ func (s *server) handleSettings(w http.ResponseWriter, r *http.Request) {
 		}
 		if patch.BandwidthLimitBytesPerSec != nil {
 			settings.BandwidthLimitBytesPerSec = *patch.BandwidthLimitBytesPerSec
+		}
+		if patch.NotificationsEnabled != nil {
+			settings.NotificationsEnabled = *patch.NotificationsEnabled
 		}
 		if patch.DownloadLocation != nil {
 			settings.DownloadLocation = *patch.DownloadLocation
