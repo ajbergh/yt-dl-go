@@ -469,6 +469,29 @@ export function HomePage() {
     finally { setBusyAction(""); }
   }
 
+  async function filesystemAction(job: DownloadJob, fileId: string, action: "copy-path" | "reveal" | "open-folder") {
+    if (!serviceReady) return;
+    const key = `${job.id}:${fileId}:${action}`;
+    setBusyAction(key);
+    setActionError("");
+    try {
+      const result = await api<{ path: string }>(connection, `/api/jobs/${encodeURIComponent(job.id)}/filesystem`, {
+        method: "POST", body: JSON.stringify({ fileId, action }), signal: AbortSignal.timeout(15000),
+      });
+      if (action === "copy-path") {
+        try {
+          await navigator.clipboard.writeText(result.path);
+          setNotice("Published file path copied to the clipboard.");
+        } catch {
+          setNotice(`Published file path: ${result.path}`);
+        }
+      } else {
+        setNotice(action === "reveal" ? "Opened the published file location." : "Opened the published output folder.");
+      }
+    } catch (error) { setActionError(errorMessage(error)); }
+    finally { setBusyAction(""); }
+  }
+
   async function batchAction(action: "pause" | "resume") {
     const eligible = jobs.filter(job => action === "pause"
       ? job.status === "queued" || job.status === "downloading" || job.status === "processing"
@@ -740,7 +763,10 @@ export function HomePage() {
                   {job.files.map(file => <div key={file.id} className="flex items-center gap-3 rounded-xl border border-neutral-800/80 bg-neutral-950/70 p-2.5">
                     {file.thumbnailUrl ? <img src={file.thumbnailUrl} alt="" referrerPolicy="no-referrer" className="aspect-video w-24 rounded-md bg-neutral-900 object-cover" /> : <div className="grid aspect-video w-24 shrink-0 place-items-center rounded-md bg-neutral-900 text-neutral-600">{job.mediaType === "audio" ? <Activity className="size-5" aria-hidden="true" /> : <Film className="size-5" aria-hidden="true" />}</div>}
                     <div className="min-w-0 flex-1"><h4 className="truncate text-xs font-semibold text-neutral-200" title={file.title || file.outputName || file.name}>{file.title || file.outputName || file.name}</h4><p className="mt-1 truncate font-mono text-[10px] text-neutral-500" title={file.outputRelativePath || file.author || file.name}>{file.outputRelativePath || file.author || file.name}</p><p className="mt-1 text-[10px] text-neutral-600">{file.height ? `${file.height}p · ` : ""}{formatBytes(file.size)}{file.durationSeconds ? ` · ${durationLabel(file.durationSeconds)}` : ""}</p><div className="mt-1 flex flex-wrap gap-1">{file.managedAvailable === false && <span className="rounded bg-amber-950/60 px-1.5 py-0.5 text-[9px] text-amber-300">Managed copy removed</span>}{file.outputRelativePath && file.publishedAvailable === false && <span className="rounded bg-red-950/50 px-1.5 py-0.5 text-[9px] text-red-300">Published copy removed</span>}</div></div>
-                    <button type="button" className={button} disabled={busyAction === `${job.id}:${file.id}` || file.managedAvailable === false} onClick={() => void saveFile(job, file.id)} aria-label={`Save ${file.title || file.name}`} title={file.managedAvailable === false ? "The app-managed copy has been removed" : "Save a copy through the browser"}><ArrowDownToLine className="size-3.5" aria-hidden="true" /><span className="hidden sm:inline">Save</span></button>
+                    <div className="flex shrink-0 flex-wrap items-center justify-end gap-1.5">
+                      {file.publishedAvailable !== false && file.outputRelativePath && <><button type="button" className={button} disabled={busyAction === `${job.id}:${file.id}:reveal`} onClick={() => void filesystemAction(job, file.id, "reveal")} aria-label={`Reveal ${file.title || file.name} in folder`} title="Reveal published file in its folder"><FolderTree className="size-3.5" aria-hidden="true" /><span className="hidden xl:inline">Reveal</span></button><button type="button" className={button} disabled={busyAction === `${job.id}:${file.id}:open-folder`} onClick={() => void filesystemAction(job, file.id, "open-folder")} aria-label={`Open folder for ${file.title || file.name}`} title="Open published output folder"><Folder className="size-3.5" aria-hidden="true" /><span className="hidden xl:inline">Folder</span></button><button type="button" className={button} disabled={busyAction === `${job.id}:${file.id}:copy-path`} onClick={() => void filesystemAction(job, file.id, "copy-path")} aria-label={`Copy path for ${file.title || file.name}`} title="Copy absolute published path"><FileText className="size-3.5" aria-hidden="true" /><span className="hidden xl:inline">Path</span></button></>}
+                      <button type="button" className={button} disabled={busyAction === `${job.id}:${file.id}` || file.managedAvailable === false} onClick={() => void saveFile(job, file.id)} aria-label={`Save ${file.title || file.name}`} title={file.managedAvailable === false ? "The app-managed copy has been removed" : "Save a copy through the browser"}><ArrowDownToLine className="size-3.5" aria-hidden="true" /><span className="hidden sm:inline">Save</span></button>
+                    </div>
                   </div>)}
                 </div>
                 <div className="flex flex-wrap items-center justify-between gap-2 border-t border-neutral-800 px-4 py-3">
