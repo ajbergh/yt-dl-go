@@ -534,6 +534,55 @@ func TestOriginalM4AAudioPreservesSourceBytes(t *testing.T) {
 	_ = os.Remove(outputPath)
 }
 
+func TestRetrySinglePlaylistItemPreservesSuccessfulFiles(t *testing.T) {
+	fake := fixtureClient(3)
+	var secondAttempts atomic.Int32
+	fake.videoFn = func(_ context.Context, id string) (*youtube.Video, error) {
+		if id == "00000000002" && secondAttempts.Add(1) == 1 {
+			return nil, errors.New("fixture item failure")
+		}
+		return fixtureVideo(id), nil
+	}
+	s := testServer(t, fake, nil)
+	initial := waitTerminal(t, s, createJob(t, s, testPlaylist).ID)
+	if initial.Status != "partial" || len(initial.Files) != 2 || len(initial.Items) != 3 || initial.Items[1].Status != "failed" {
+		t.Fatalf("playlist fixture did not produce one failed item: %+v", initial)
+	}
+	firstFileID, thirdFileID := initial.Items[0].FileID, initial.Items[2].FileID
+	if firstFileID == "" || thirdFileID == "" {
+		t.Fatalf("successful sibling files were not finalized: %+v", initial.Items)
+	}
+	if response := request(s, "POST", "/api/jobs/"+initial.ID+"/retry-item", `{"index":1}`, nil); response.Code != 409 {
+		t.Fatalf("completed playlist item was accepted for retry: %d %s", response.Code, response.Body.String())
+	}
+	response := request(s, "POST", "/api/jobs/"+initial.ID+"/retry-item", `{"index":2}`, nil)
+	var queued Job
+	if response.Code != 202 || json.Unmarshal(response.Body.Bytes(), &queued) != nil {
+		t.Fatalf("retry failed item: %d %s", response.Code, response.Body.String())
+	}
+	if queued.Status != "queued" || !queued.Items[1].RetryRequested || queued.Items[0].RetryRequested || queued.Items[2].RetryRequested {
+		t.Fatalf("single retry intent was not isolated: %+v", queued.Items)
+	}
+
+	completed := waitTerminal(t, s, initial.ID)
+	if completed.Status != "completed" || len(completed.Files) != 3 || len(completed.Failures) != 0 || secondAttempts.Load() != 2 {
+		t.Fatalf("single item retry did not complete cleanly: status=%s files=%d failures=%v attempts=%d error=%q",
+			completed.Status, len(completed.Files), completed.Failures, secondAttempts.Load(), completed.Error)
+	}
+	if completed.Items[0].FileID != firstFileID || completed.Items[2].FileID != thirdFileID {
+		t.Fatalf("successful sibling files changed during one-item retry: before=%q/%q after=%q/%q",
+			firstFileID, thirdFileID, completed.Items[0].FileID, completed.Items[2].FileID)
+	}
+	if completed.Items[1].FileID == "" || completed.Items[1].RetryRequested {
+		t.Fatalf("retried item did not finalize or retry intent survived: %+v", completed.Items[1])
+	}
+	for _, file := range completed.Files {
+		if path := trackedOutputPath(t, s, completed.ID, file.ID); path != "" {
+			_ = os.Remove(path)
+		}
+	}
+}
+
 func TestPlaylistItemSelectionPreservesOriginalPositions(t *testing.T) {
 	fake := fixtureClient(5)
 	var processed atomic.Int32
