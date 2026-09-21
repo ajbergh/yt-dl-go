@@ -85,7 +85,7 @@ Users can already create categories and use `{category}` in naming patterns and 
 
 ### P0.2 Batch “apply to all” controls
 
-**Status:** [~] In progress
+**Status:** [T] Implemented; runtime/test execution pending
 
 For multi-URL inspection and playlist workflows, add batch controls that can apply common settings without editing every card individually.
 
@@ -521,6 +521,17 @@ Validation note: source and tests were reviewed, but the test suite has not been
 
 ### P0.2 Batch “apply to all” controls
 
-**Status:** [~] In progress
+**Status:** [T] Implemented; runtime/test execution pending
 
-Implementation started after P0.1. The first pass will add inspection-level batch controls for media type, quality, MP3 bitrate, and category while preserving individual overrides afterward.
+Implemented:
+
+1. Added an inspection-level “Apply to all inspected items” toolbar when more than one draft is present.
+2. Added batch media-type selection; audio is applied only to eligible items and only when the backend reports MP3 support.
+3. Added batch video-quality selection; individual videos keep their prior value when the requested ceiling is not advertised as supported.
+4. Added batch MP3 bitrate selection for audio drafts.
+5. Added batch category selection.
+6. Kept all per-item controls active after batch application so users can override individual items.
+7. Added UI coverage for batch controls and the per-item override behavior.
+8. Made the Settings quality selector explicitly addressable and repaired a pre-existing brittle UI-test selector.
+
+Validation note: source and tests were reviewed, but the test suite has not been executed in this session. Keep [T] until CI/local execution confirms the branch.
