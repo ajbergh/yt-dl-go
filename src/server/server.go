@@ -91,6 +91,7 @@ type Job struct {
 	NamingPattern    string        `json:"-"`
 	SubfolderSorting string        `json:"-"`
 	Category         string        `json:"category,omitempty"`
+	StorageMode      string        `json:"storageMode"`
 }
 
 type jobState struct {
@@ -537,6 +538,7 @@ func (s *server) handleSettings(w http.ResponseWriter, r *http.Request) {
 			SubfolderSorting       *string   `json:"subfolderSorting"`
 			DefaultCategory        *string   `json:"defaultCategory"`
 			UserCategories         *[]string `json:"userCategories"`
+			StorageMode            *string   `json:"storageMode"`
 		}
 		if !decode(w, r, &patch) {
 			return
@@ -563,6 +565,9 @@ func (s *server) handleSettings(w http.ResponseWriter, r *http.Request) {
 		}
 		if patch.UserCategories != nil {
 			settings.UserCategories = *patch.UserCategories
+		}
+		if patch.StorageMode != nil {
+			settings.StorageMode = *patch.StorageMode
 		}
 		settings.DownloadLocation = filepath.Clean(strings.TrimSpace(settings.DownloadLocation))
 		if settings.DefaultQuality != "best" && settings.DefaultQuality != "1080" && settings.DefaultQuality != "720" && settings.DefaultQuality != "480" {
@@ -653,12 +658,12 @@ func (s *server) create(w http.ResponseWriter, r *http.Request) {
 		fail(w, 400, "audioBitrate must be 128k, 192k, 256k, or 320k")
 		return
 	}
-	s.enqueueJob(w, u, kind, request.Quality, request.MediaType, request.AudioBitrate, request.Category, request.Items)
+	s.enqueueJob(w, u, kind, request.Quality, request.MediaType, request.AudioBitrate, request.Category, "", request.Items)
 }
 
 // enqueueJob allocates private per-job storage, persists a queued job, and
 // returns 202 only after the job has entered the bounded worker queue.
-func (s *server) enqueueJob(w http.ResponseWriter, u, kind, quality, mediaType, audioBitrate, requestedCategory string, inspectedItems ...[]inspectedItem) {
+func (s *server) enqueueJob(w http.ResponseWriter, u, kind, quality, mediaType, audioBitrate, requestedCategory, requestedStorageMode string, inspectedItems ...[]inspectedItem) {
 	if s.engine == nil {
 		fail(w, 503, "Native download engine is not initialized")
 		return
@@ -699,11 +704,19 @@ func (s *server) enqueueJob(w http.ResponseWriter, u, kind, quality, mediaType, 
 		fail(w, 400, err.Error())
 		return
 	}
+	storageMode := requestedStorageMode
+	if storageMode == "" {
+		storageMode = outputSettings.StorageMode
+	}
+	if storageMode != "managed-published" && storageMode != "published-only" && storageMode != "managed-only" {
+		fail(w, 400, "storageMode must be managed-published, published-only, or managed-only")
+		return
+	}
 	j := &jobState{Job: Job{
 		ID: randomID(16), URL: u, Kind: kind, Quality: quality, MediaType: mediaType, AudioBitrate: audioBitrate,
 		Status: "queued", Title: "YouTube " + kind, Files: []mediaFile{}, Items: items, Failures: []itemFailure{},
 		Note: formatNote, CreatedAt: time.Now().UTC().Format(time.RFC3339Nano), DownloadLocation: outputSettings.DownloadLocation,
-		NamingPattern: outputSettings.NamingPattern, SubfolderSorting: outputSettings.SubfolderSorting, Category: category,
+		NamingPattern: outputSettings.NamingPattern, SubfolderSorting: outputSettings.SubfolderSorting, Category: category, StorageMode: storageMode,
 	}, fileItems: map[int]mediaFile{}}
 	if kind == "playlist" {
 		j.Note += " " + playlistNote
