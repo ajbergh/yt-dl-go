@@ -16,7 +16,7 @@ import (
 	"time"
 )
 
-var outputName = regexp.MustCompile(`^[0-9]{6,}-[A-Za-z0-9_-]{11}\.(mp4|webm|mp3)$`)
+var outputName = regexp.MustCompile(`^[0-9]{6,}-[A-Za-z0-9_-]{11}\.(mp4|webm|mp3|m4a)$`)
 
 // openFinal opens a finalized filename only if it is a safe child of the job
 // directory and is a regular file rather than a symlink or other file type.
