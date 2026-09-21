@@ -31,11 +31,17 @@ func (l *bandwidthLimiter) burstCapacityLocked() int64 {
 		return 0
 	}
 	capacity := l.limit / 20 // at most 50 ms of burst.
-	if capacity < 4*1024 {
-		capacity = 4 * 1024
+	if capacity < 1024 {
+		capacity = 1024
 	}
 	if capacity > 64*1024 {
 		capacity = 64 * 1024
+	}
+	if capacity > l.limit {
+		capacity = l.limit
+	}
+	if capacity < 1 {
+		capacity = 1
 	}
 	return capacity
 }
