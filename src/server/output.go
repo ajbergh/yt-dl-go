@@ -56,6 +56,20 @@ func mergeAppSettings(defaults, settings AppSettings) AppSettings {
 	return settings
 }
 
+func resolveJobCategory(settings AppSettings, requested string) (string, error) {
+	requested = strings.TrimSpace(requested)
+	if requested == "" {
+		requested = strings.TrimSpace(settings.DefaultCategory)
+	}
+	for _, category := range settings.UserCategories {
+		category = strings.TrimSpace(category)
+		if strings.EqualFold(category, requested) {
+			return category, nil
+		}
+	}
+	return "", errors.New("category must match an active user category")
+}
+
 func validateAppSettings(settings AppSettings) error {
 	location := strings.TrimSpace(settings.DownloadLocation)
 	if location == "" || len(location) > 32760 || strings.ContainsRune(location, '\x00') || !filepath.IsAbs(location) {
