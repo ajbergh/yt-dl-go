@@ -292,9 +292,11 @@ func removeManagedCopies(j *jobState) error {
 	}
 	for index := range j.Files {
 		j.Files[index].ManagedAvailable = false
+		j.Files[index].ThumbnailLocalAvailable = false
 	}
 	for itemIndex, saved := range j.fileItems {
 		saved.ManagedAvailable = false
+		saved.ThumbnailLocalAvailable = false
 		j.fileItems[itemIndex] = saved
 	}
 	return nil
