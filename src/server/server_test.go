@@ -250,7 +250,7 @@ func TestAPIContractAndSecurity(t *testing.T) {
 		Engine       string          `json:"engine"`
 		Capabilities map[string]bool `json:"capabilities"`
 	}
-	if json.Unmarshal(w.Body.Bytes(), &health) != nil || !health.Ready || health.Engine != "native-go" || string(health.Missing) != "[]" || len(health.Capabilities) != 5 || health.Capabilities["combinedStreamsOnly"] || !health.Capabilities["adaptiveStreamsSupported"] || health.Capabilities["externalBinariesRequired"] || !health.Capabilities["mp3AudioSupported"] || !health.Capabilities["pureGoAudioConversion"] {
+	if json.Unmarshal(w.Body.Bytes(), &health) != nil || !health.Ready || health.Engine != "native-go" || string(health.Missing) != "[]" || len(health.Capabilities) != 6 || health.Capabilities["combinedStreamsOnly"] || !health.Capabilities["adaptiveStreamsSupported"] || health.Capabilities["externalBinariesRequired"] || !health.Capabilities["mp3AudioSupported"] || !health.Capabilities["pureGoAudioConversion"] || !health.Capabilities["captionsSupported"] {
 		t.Fatalf("native health contract: %s", w.Body.String())
 	}
 	if body := request(s, "GET", "/api/jobs", "", nil).Body.String(); strings.TrimSpace(body) != `{"jobs":[]}` {
