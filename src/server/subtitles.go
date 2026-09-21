@@ -154,7 +154,9 @@ func (s *server) fetchCaptionTrack(ctx context.Context, track youtube.CaptionTra
 		return nil, err
 	}
 	req.Header.Set("User-Agent", youtube.AndroidClient.UserAgent)
-	resp, err := nativeHTTPClient(min(s.cfg.timeout, 30*time.Second)).Do(req)
+	client := nativeHTTPClient(min(s.cfg.timeout, 30*time.Second))
+	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	resp, err := client.Do(req)
 	if err != nil {
 		return nil, err
 	}
