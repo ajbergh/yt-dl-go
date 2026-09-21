@@ -47,6 +47,7 @@ export interface DownloadJob {
   kind: "video" | "playlist";
   quality: Quality;
   mediaType: "video" | "audio";
+  audioFormat?: "mp3" | "m4a";
   audioBitrate?: string;
   category?: string;
   storageMode?: "managed-published" | "published-only" | "managed-only";
