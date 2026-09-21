@@ -3,7 +3,7 @@
  * React UI uses its own origin for the service; address selection lives in the
  * page bootstrap, not in this client module.
  */
-export type Quality = "best" | "1080" | "720" | "480";
+export type Quality = "best" | "2160" | "1440" | "1080" | "720" | "480";
 export type JobStatus = "queued" | "downloading" | "processing" | "paused" | "completed" | "partial" | "failed" | "cancelled";
 export interface SubtitleFile {
   languageCode: string;
