@@ -90,6 +90,7 @@ func (s *server) applyQueueOrderLocked(jobIDs []string) error {
 	for index, id := range jobIDs {
 		if job := s.jobs[id]; job != nil {
 			job.QueuePosition = int64(index + 1)
+			s.publishJobEventLocked("job-status", job)
 		}
 	}
 	s.notifySchedulerLocked()
@@ -201,6 +202,7 @@ func (s *server) handleItemOrder(w http.ResponseWriter, r *http.Request, jobID s
 		fail(w, http.StatusInternalServerError, "Could not persist playlist item order")
 		return
 	}
+	s.publishJobEventLocked("job-status", job)
 	reply(w, http.StatusOK, snapshot(job))
 }
 
