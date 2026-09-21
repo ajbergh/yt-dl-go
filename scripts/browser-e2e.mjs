@@ -307,7 +307,9 @@ async function main() {
     await cdp.connect();
     await cdp.send("Runtime.enable");
     await cdp.send("Page.enable");
-    await cdp.send("Page.navigate", { url: `${baseURL}/` });
+    const navigation = await cdp.send("Page.navigate", { url: `${baseURL}/` });
+    if (navigation.errorText) throw new Error(`Chrome navigation failed: ${navigation.errorText}`);
+    await waitFor(cdp, `document.readyState === "complete"`, "browser document load");
     await waitFor(cdp, bodyIncludes("Service connected"), "service connection in browser");
 
     // 1-3: actual service startup, URL inspection, and queue creation.
@@ -382,6 +384,20 @@ async function main() {
     console.log("Browser E2E passed: startup, inspect, queue, pause/resume, completion, Library, settings, restart persistence, confirmation.");
   } catch (error) {
     console.error(error?.stack || error);
+    if (cdp) {
+      try {
+        const browserState = await cdp.evaluate(`({
+          url: location.href,
+          readyState: document.readyState,
+          title: document.title,
+          body: document.body?.innerText?.slice(0, 5000) ?? "",
+          html: document.documentElement?.outerHTML?.slice(0, 3000) ?? ""
+        })`, 5000);
+        console.error("\n--- browser state ---\n" + JSON.stringify(browserState, null, 2));
+      } catch (diagnosticError) {
+        console.error("\n--- browser diagnostics failed ---\n" + diagnosticError);
+      }
+    }
     console.error("\n--- service log ---\n" + serviceLog());
     console.error("\n--- chrome log ---\n" + chromeLog());
     process.exitCode = 1;
@@ -389,7 +405,18 @@ async function main() {
     cdp?.close();
     await stopProcess(service);
     await stopProcess(chrome);
-    await rm(tempRoot, { recursive: true, force: true });
+    for (let attempt = 0; attempt < 5; attempt++) {
+      try {
+        await rm(tempRoot, { recursive: true, force: true });
+        break;
+      } catch (cleanupError) {
+        if (attempt === 4) {
+          console.warn(`Could not fully remove E2E temp directory: ${cleanupError.message}`);
+          break;
+        }
+        await new Promise(resolve => setTimeout(resolve, 250));
+      }
+    }
   }
 }
 
