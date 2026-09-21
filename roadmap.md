@@ -247,7 +247,7 @@ Provide lightweight playback from finalized local media.
 
 ## P1.6 Playlist item selection before queueing
 
-**Status:** [T] Implemented; CI validation pending
+**Status:** [x] Complete
 
 Playlist inspection now allows users to choose which exposed items are queued.
 
@@ -265,6 +265,7 @@ Playlist inspection now allows users to choose which exposed items are queued.
 - Queue labels distinguish selection order from original playlist position.
 - Backend coverage includes input validation, subset processing, original-position naming, stale-selection rejection, retry preservation, and SQLite persistence.
 - Frontend coverage includes Select all/Clear all, per-item selection, request shaping, selected count, and MP3 aggregate estimates.
+- Validation: CI run `35551454898` passed frontend type-check/build, Bun integration tests, Go tests, Go vet, and Windows production build.
 
 ### P1.7 Queue reordering and priority
 
@@ -710,6 +711,6 @@ Published-only jobs intentionally do not stream their user-owned output back thr
 
 ### P1.6 Playlist item selection before queueing
 
-**Status:** [T] Implemented; CI validation pending
+**Status:** [x] Complete
 
 Implemented the playlist subset contract end to end: inspection selection UX, original-index persistence, fresh-metadata revalidation, contiguous scheduler indexes, original-position output naming/MP3 track metadata, retry/restart durability, and regression coverage. No new schema migration was required because queue items are already stored as JSON.
