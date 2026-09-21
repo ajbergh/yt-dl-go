@@ -228,7 +228,7 @@ export function HomePage() {
   const [serviceReady, setServiceReady] = useState(false);
   const [jobs, setJobs] = useState<DownloadJob[]>([]);
   const [settings, setSettings] = useState<AppSettings>({
-    defaultQuality: "best", maxConcurrentDownloads: 3, downloadLocation: "",
+    defaultQuality: "best", maxConcurrentDownloads: 3, bandwidthLimitBytesPerSec: 0, downloadLocation: "",
     namingPattern: "{channel} - {title} [{resolution}]", subfolderSorting: "channel",
     defaultCategory: "General", userCategories: ["Tech", "Science", "Coding", "Music", "Education", "Gaming", "Podcasts", "Archival", "General"],
     storageMode: "managed-published",
@@ -1260,13 +1260,17 @@ export function HomePage() {
                 </div>
               </div>
 
-              <div className="grid gap-4 border-t border-neutral-800 pt-4 sm:grid-cols-2">
+              <div className="grid gap-4 border-t border-neutral-800 pt-4 sm:grid-cols-3">
                 <label className="block text-xs font-medium text-neutral-300">Default maximum video quality
                   <select aria-label="Default maximum video quality" className={`${field} mt-1.5`} value={settings.defaultQuality} onChange={event => changeSetting("defaultQuality", event.target.value as Quality)}>{(Object.entries(qualityLabels) as [Quality, string][]).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select>
                 </label>
                 <label className="block text-xs font-medium text-neutral-300">Maximum concurrent downloads <span className="float-right font-mono text-rose-300">{settings.maxConcurrentDownloads}</span>
                   <input aria-label="Maximum concurrent downloads" type="range" min="1" max="6" step="1" value={settings.maxConcurrentDownloads} onChange={event => changeSetting("maxConcurrentDownloads", Number(event.target.value))} className="mt-2 w-full accent-rose-600" />
                   <span className="mt-1 flex justify-between text-[10px] text-neutral-500"><span>1 stream</span><span>6 streams</span></span>
+                </label>
+                <label className="block text-xs font-medium text-neutral-300">Global bandwidth limit <span className="float-right font-mono text-rose-300">{settings.bandwidthLimitBytesPerSec > 0 ? `${(settings.bandwidthLimitBytesPerSec / 1048576).toFixed(settings.bandwidthLimitBytesPerSec % 1048576 === 0 ? 0 : 2)} MiB/s` : "Unlimited"}</span>
+                  <input aria-label="Global bandwidth limit in MiB per second" type="number" min="0" max="1024" step="0.25" value={settings.bandwidthLimitBytesPerSec / 1048576} onChange={event => changeSetting("bandwidthLimitBytesPerSec", Math.max(0, Math.round((Number(event.target.value) || 0) * 1048576)))} className={`${field} mt-1.5`} />
+                  <span className="mt-1 block text-[10px] leading-relaxed text-neutral-500">0 = unlimited. The cap is shared fairly across active Go-managed transfers and applies immediately.</span>
                 </label>
               </div>
               {serviceError && <p role="alert" className="text-xs text-red-300">{serviceError}</p>}
@@ -1277,7 +1281,7 @@ export function HomePage() {
             </section>
           </form>
 
-            <section className={`${panel} p-5`}><div className="flex items-start gap-3"><div className="grid size-9 shrink-0 place-items-center rounded-xl border border-blue-800/50 bg-blue-950/30 text-blue-300"><Gauge className="size-4" aria-hidden="true" /></div><div><h3 className="text-xs font-bold">What this backend supports</h3><ul className="mt-2 space-y-1.5 text-[11px] leading-relaxed text-neutral-400"><li>Video and playlist downloads, including adaptive MP4 remuxing and pure-Go MP3 conversion for AAC audio.</li><li>Up to six concurrent jobs, multi-routine stream transfers, pause/resume, retries, and live speed and ETA.</li><li>Quality ceilings: best, 1080p, 720p, or 480p. Actual output quality is reported after completion.</li><li>Files are copied to the selected destination and remain available in the private SQLite-backed library.</li></ul>{!mp3Supported && <p className="mt-3 flex items-start gap-1.5 text-[10px] leading-relaxed text-amber-300"><ShieldCheck className="mt-0.5 size-3 shrink-0" aria-hidden="true" />This backend does not support MP3 conversion.</p>}</div></div></section>
+            <section className={`${panel} p-5`}><div className="flex items-start gap-3"><div className="grid size-9 shrink-0 place-items-center rounded-xl border border-blue-800/50 bg-blue-950/30 text-blue-300"><Gauge className="size-4" aria-hidden="true" /></div><div><h3 className="text-xs font-bold">What this backend supports</h3><ul className="mt-2 space-y-1.5 text-[11px] leading-relaxed text-neutral-400"><li>Video and playlist downloads, including adaptive MP4 remuxing and pure-Go MP3 conversion for AAC audio.</li><li>Up to six concurrent jobs, multi-routine stream transfers, fair global bandwidth limiting, pause/resume, retries, and live speed and ETA.</li><li>Quality ceilings: best, 1080p, 720p, or 480p. Actual output quality is reported after completion.</li><li>Files are copied to the selected destination and remain available in the private SQLite-backed library.</li></ul>{!mp3Supported && <p className="mt-3 flex items-start gap-1.5 text-[10px] leading-relaxed text-amber-300"><ShieldCheck className="mt-0.5 size-3 shrink-0" aria-hidden="true" />This backend does not support MP3 conversion.</p>}</div></div></section>
         </div>}
       </main>
       {preview && <div role="dialog" aria-modal="true" aria-labelledby="media-preview-title" className="fixed inset-0 z-50 grid place-items-center bg-black/80 p-4" onMouseDown={event => { if (event.target === event.currentTarget) setPreview(null); }}>
