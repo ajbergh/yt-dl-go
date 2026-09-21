@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 
 	"github.com/at-wat/ebml-go"
@@ -109,19 +110,38 @@ func TestMuxWebMInterleavesVP9AndOpus(t *testing.T) {
 		}
 	}()
 	counts := map[uint8]int{}
+	var countsMu sync.Mutex
+	errs := make(chan error, len(readers))
+	var wg sync.WaitGroup
 	for _, reader := range readers {
-		for {
-			data, _, _, err := reader.Read()
-			if errors.Is(err, io.EOF) {
-				break
+		reader := reader
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for {
+				data, _, _, err := reader.Read()
+				if errors.Is(err, io.EOF) {
+					return
+				}
+				if err != nil {
+					errs <- err
+					return
+				}
+				if len(data) == 0 {
+					errs <- errors.New("empty muxed frame")
+					return
+				}
+				countsMu.Lock()
+				counts[reader.TrackEntry().TrackType]++
+				countsMu.Unlock()
 			}
-			if err != nil {
-				t.Fatal(err)
-			}
-			if len(data) == 0 {
-				t.Fatal("empty muxed frame")
-			}
-			counts[reader.TrackEntry().TrackType]++
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatal(err)
 		}
 	}
 	if counts[1] != 2 || counts[2] != 3 {
