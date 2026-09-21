@@ -662,6 +662,7 @@ func makeQueueItem(index, playlistIndex int, entry *youtube.PlaylistEntry) queue
 }
 
 func (s *server) setQueueItems(j *jobState, work []playlistWorkItem, retryTargets map[int]struct{}) {
+	previous := append([]queueItem(nil), j.Items...)
 	items := make([]queueItem, len(work))
 	for index, selected := range work {
 		playlistIndex := 0
@@ -670,6 +671,14 @@ func (s *server) setQueueItems(j *jobState, work []playlistWorkItem, retryTarget
 		}
 		items[index] = makeQueueItem(index+1, playlistIndex, selected.entry)
 		_, items[index].RetryRequested = retryTargets[index+1]
+		if len(retryTargets) > 0 && !items[index].RetryRequested && index < len(previous) {
+			items[index].Status = previous[index].Status
+			items[index].Error = previous[index].Error
+			items[index].Progress = previous[index].Progress
+			items[index].DownloadedBytes = previous[index].DownloadedBytes
+			items[index].TotalBytes = previous[index].TotalBytes
+			items[index].FileID = previous[index].FileID
+		}
 	}
 	s.mu.Lock()
 	j.Items = items
@@ -1294,12 +1303,12 @@ func (s *server) finish(ctx context.Context, j *jobState, fatal error) {
 	default:
 		j.Status, j.Error = "completed", ""
 	}
+	s.refreshAllQueueItemsLocked(j)
 	if terminal(j.Status) {
 		for index := range j.Items {
 			j.Items[index].RetryRequested = false
 		}
 	}
-	s.refreshAllQueueItemsLocked(j)
 	s.persistJobLocked(j)
 }
 
