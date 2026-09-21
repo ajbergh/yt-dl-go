@@ -343,7 +343,20 @@ async function main() {
     const pauseSelector = '[aria-label^="Pause E2E Fixture Video"]';
     const resumeSelector = '[aria-label^="Resume E2E Fixture Video"]';
     await waitForEnabledSelector(cdp, pauseSelector, "enabled pause control");
+    const pauseResponsePromise = cdp.waitEvent(
+      "Network.responseReceived",
+      params => params?.response?.url?.endsWith("/pause") === true,
+      15000,
+    );
     await clickSelector(cdp, pauseSelector);
+    const pauseResponse = await pauseResponsePromise;
+    assert.equal(pauseResponse.response.status, 200, `pause API returned ${pauseResponse.response.status}`);
+    await waitFor(
+      cdp,
+      `fetch("/api/jobs").then(r => r.json()).then(data => data.jobs?.[0]?.status === "paused")`,
+      "paused backend job",
+      20000,
+    );
     await waitFor(cdp, bodyIncludes("Paused"), "paused job");
     await waitForEnabledSelector(cdp, resumeSelector, "enabled resume control");
     await clickSelector(cdp, resumeSelector);
@@ -425,6 +438,12 @@ async function main() {
           return true;
         });
         console.error("\n--- browser DevTools events ---\n" + JSON.stringify(interestingEvents, null, 2));
+        try {
+          const jobsState = await getJSON(`${baseURL}/api/jobs`);
+          console.error("\n--- backend jobs ---\n" + JSON.stringify(jobsState, null, 2));
+        } catch (jobsError) {
+          console.error("\n--- backend jobs diagnostic failed ---\n" + jobsError);
+        }
       } catch (diagnosticError) {
         console.error("\n--- browser diagnostics failed ---\n" + diagnosticError);
       }
