@@ -144,7 +144,36 @@ func openJobStore(root string) (*jobStore, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("migrate state database: %w", err)
 	}
+	if err := store.migrateV9(); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("migrate state database: %w", err)
+	}
 	return store, nil
+}
+
+func (s *jobStore) migrateV9() error {
+	var version int
+	if err := s.db.QueryRow(`SELECT COALESCE(MAX(version), 0) FROM schema_migrations`).Scan(&version); err != nil {
+		return err
+	}
+	if version >= 9 {
+		return nil
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	for _, statement := range []string{
+		`ALTER TABLE jobs ADD COLUMN audio_format TEXT NOT NULL DEFAULT ''`,
+		`UPDATE jobs SET audio_format='mp3' WHERE media_type='audio' AND audio_format=''`,
+		`INSERT INTO schema_migrations(version) VALUES (9)`,
+	} {
+		if _, err := tx.Exec(statement); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 func (s *jobStore) migrateV8() error {
@@ -439,16 +468,16 @@ func (s *jobStore) saveJob(j *jobState) error {
 	}
 	defer func() { _ = tx.Rollback() }()
 	_, err = tx.Exec(`INSERT INTO jobs
-		(id,url,kind,quality,media_type,audio_bitrate,status,title,progress,current_item,completed_count,total_count,error,created_at,note,dir,cancel_requested,done_at,updated_at,queue_items,output_location,naming_pattern,subfolder_sorting,category,storage_mode)
-		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+		(id,url,kind,quality,media_type,audio_format,audio_bitrate,status,title,progress,current_item,completed_count,total_count,error,created_at,note,dir,cancel_requested,done_at,updated_at,queue_items,output_location,naming_pattern,subfolder_sorting,category,storage_mode)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 		ON CONFLICT(id) DO UPDATE SET url=excluded.url,kind=excluded.kind,quality=excluded.quality,
-		media_type=excluded.media_type,audio_bitrate=excluded.audio_bitrate,
+		media_type=excluded.media_type,audio_format=excluded.audio_format,audio_bitrate=excluded.audio_bitrate,
 		status=excluded.status,title=excluded.title,progress=excluded.progress,current_item=excluded.current_item,
 		completed_count=excluded.completed_count,total_count=excluded.total_count,error=excluded.error,
 		created_at=excluded.created_at,note=excluded.note,dir=excluded.dir,cancel_requested=excluded.cancel_requested,
 		done_at=excluded.done_at,updated_at=excluded.updated_at,queue_items=excluded.queue_items,
 		output_location=excluded.output_location,naming_pattern=excluded.naming_pattern,subfolder_sorting=excluded.subfolder_sorting,category=excluded.category,storage_mode=excluded.storage_mode`,
-		j.ID, j.URL, j.Kind, j.Quality, j.MediaType, j.AudioBitrate, j.Status, j.Title, progress, j.CurrentItem, j.CompletedCount, total,
+		j.ID, j.URL, j.Kind, j.Quality, j.MediaType, j.AudioFormat, j.AudioBitrate, j.Status, j.Title, progress, j.CurrentItem, j.CompletedCount, total,
 		j.Error, j.CreatedAt, j.Note, j.dir, cancelRequested, done, time.Now().UnixNano(), string(queueItems),
 		j.DownloadLocation, j.NamingPattern, j.SubfolderSorting, j.Category, j.StorageMode)
 	if err != nil {
@@ -530,7 +559,7 @@ func (s *jobStore) loadJobs(root string) ([]*storedJob, error) {
 	if err != nil {
 		return nil, err
 	}
-	rows, err := s.db.Query(`SELECT id,url,kind,quality,media_type,audio_bitrate,status,title,progress,current_item,completed_count,total_count,error,created_at,note,dir,cancel_requested,done_at,queue_items,output_location,naming_pattern,subfolder_sorting,category,storage_mode FROM jobs ORDER BY created_at ASC`)
+	rows, err := s.db.Query(`SELECT id,url,kind,quality,media_type,audio_format,audio_bitrate,status,title,progress,current_item,completed_count,total_count,error,created_at,note,dir,cancel_requested,done_at,queue_items,output_location,naming_pattern,subfolder_sorting,category,storage_mode FROM jobs ORDER BY created_at ASC`)
 	if err != nil {
 		return nil, err
 	}
@@ -550,7 +579,7 @@ func (s *jobStore) loadJobs(root string) ([]*storedJob, error) {
 		var cancelRequested int
 		var doneAt sql.NullInt64
 		var queueItems string
-		if err := rows.Scan(&j.ID, &j.URL, &j.Kind, &j.Quality, &j.MediaType, &j.AudioBitrate, &j.Status, &j.Title, &progress, &j.CurrentItem,
+		if err := rows.Scan(&j.ID, &j.URL, &j.Kind, &j.Quality, &j.MediaType, &j.AudioFormat, &j.AudioBitrate, &j.Status, &j.Title, &progress, &j.CurrentItem,
 			&j.CompletedCount, &totalCount, &j.Error, &j.CreatedAt, &j.Note, &dir, &cancelRequested, &doneAt, &queueItems,
 			&j.DownloadLocation, &j.NamingPattern, &j.SubfolderSorting, &j.Category, &j.StorageMode); err != nil {
 			return nil, err
@@ -572,6 +601,9 @@ func (s *jobStore) loadJobs(root string) ([]*storedJob, error) {
 		}
 		if j.StorageMode == "" {
 			j.StorageMode = currentSettings.StorageMode
+		}
+		if j.MediaType == "audio" && j.AudioFormat == "" {
+			j.AudioFormat = "mp3"
 		}
 		if progress.Valid {
 			value := progress.Float64
