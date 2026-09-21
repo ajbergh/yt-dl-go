@@ -160,10 +160,26 @@ func (s *server) retry(w http.ResponseWriter, r *http.Request, id string) {
 		return
 	}
 	jobURL, quality, mediaType, audioFormat, audioBitrate, category, storageMode := original.URL, original.Quality, original.MediaType, original.AudioFormat, original.AudioBitrate, original.Category, original.StorageMode
+	selectedItems := []inspectedItem{}
+	if original.Kind == "playlist" {
+		for _, item := range original.Items {
+			if item.PlaylistIndex < 1 || !videoID.MatchString(item.VideoID) {
+				continue
+			}
+			selectedItems = append(selectedItems, inspectedItem{
+				Index: item.PlaylistIndex, ID: item.VideoID, Title: item.Title, Author: item.Author,
+				DurationSeconds: item.DurationSeconds, ThumbnailURL: item.ThumbnailURL,
+			})
+		}
+	}
 	s.mu.Unlock()
 	canonical, kind, err := canonicalURL(jobURL)
 	if err != nil {
 		fail(w, 409, "The saved job URL is no longer valid")
+		return
+	}
+	if kind == "playlist" && len(selectedItems) > 0 {
+		s.enqueueJob(w, canonical, kind, quality, mediaType, audioFormat, audioBitrate, category, storageMode, selectedItems)
 		return
 	}
 	s.enqueueJob(w, canonical, kind, quality, mediaType, audioFormat, audioBitrate, category, storageMode)
