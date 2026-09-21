@@ -1,0 +1,241 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: write
+  id-token: write
+  attestations: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    name: Validate release source
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Validate release tag
+        shell: bash
+        run: |
+          if [[ ! "${GITHUB_REF_NAME}" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+            echo "Release tags must use stable semantic version format vMAJOR.MINOR.PATCH." >&2
+            exit 1
+          fi
+
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+          cache: npm
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2.2.0
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version: "1.26.x"
+          cache-dependency-path: src/server/go.sum
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Type-check frontend
+        run: npm run typecheck
+
+      - name: Build embedded frontend
+        run: npm run build -- --outDir src/server/dist
+
+      - name: Run frontend integration tests
+        run: bun test src/downloader.test.mjs src/ui.test.mjs
+
+      - name: Run Go tests and vet
+        working-directory: src/server
+        run: |
+          go test ./...
+          go vet ./...
+
+      - name: Run browser end-to-end tests
+        run: npm run e2e:browser
+
+  windows:
+    name: Windows release package
+    needs: validate
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+          cache: npm
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version: "1.26.x"
+          cache-dependency-path: src/server/go.sum
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Set release metadata
+        shell: pwsh
+        run: |
+          "VERSION=${{ github.ref_name }}" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "COMMIT=${{ github.sha }}" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          $buildDate = (git show -s --format=%cI "${{ github.sha }}").Trim()
+          "BUILD_DATE=$buildDate" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Build Windows executable
+        shell: pwsh
+        run: ./scripts/build-windows.ps1 -OutputPath dist/release/youtube-downloader.exe
+
+      - name: Detect Windows architecture
+        id: platform
+        shell: pwsh
+        run: '"arch=$(go env GOARCH)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8'
+
+      - name: Package Windows executable
+        shell: pwsh
+        run: ./scripts/package-windows.ps1 -ExecutablePath dist/release/youtube-downloader.exe -Architecture "${{ steps.platform.outputs.arch }}" -ArchivePath "dist/release/youtube-downloader-windows-${{ steps.platform.outputs.arch }}.zip"
+
+      - name: Attest Windows release package
+        uses: actions/attest-build-provenance@v4.2.2
+        with:
+          subject-path: dist/release/youtube-downloader-windows-${{ steps.platform.outputs.arch }}.zip
+
+      - name: Upload Windows release package
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-windows-${{ steps.platform.outputs.arch }}
+          path: |
+            dist/release/youtube-downloader-windows-${{ steps.platform.outputs.arch }}.zip
+            dist/release/youtube-downloader-windows-${{ steps.platform.outputs.arch }}.zip.sha256
+          if-no-files-found: error
+          retention-days: 7
+
+  unix:
+    name: ${{ matrix.label }} release package
+    needs: validate
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            target: linux
+            arch: amd64
+            label: Linux amd64
+          - runner: ubuntu-latest
+            target: linux
+            arch: arm64
+            label: Linux arm64
+          - runner: macos-latest
+            target: darwin
+            arch: amd64
+            label: macOS amd64
+          - runner: macos-latest
+            target: darwin
+            arch: arm64
+            label: macOS arm64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 35
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+          cache: npm
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version: "1.26.x"
+          cache-dependency-path: src/server/go.sum
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Set release metadata
+        shell: bash
+        run: |
+          echo "VERSION=${GITHUB_REF_NAME}" >> "$GITHUB_ENV"
+          echo "COMMIT=${GITHUB_SHA}" >> "$GITHUB_ENV"
+          echo "BUILD_DATE=$(git show -s --format=%cI "${GITHUB_SHA}")" >> "$GITHUB_ENV"
+
+      - name: Build and package ${{ matrix.label }}
+        shell: bash
+        env:
+          TARGET_OS: ${{ matrix.target }}
+          TARGET_ARCH: ${{ matrix.arch }}
+        run: bash ./scripts/build-unix.sh "dist/release/youtube-downloader-${{ matrix.target }}-${{ matrix.arch }}"
+
+      - name: Attest ${{ matrix.label }} release package
+        uses: actions/attest-build-provenance@v4.2.2
+        with:
+          subject-path: dist/release/youtube-downloader-${{ matrix.target }}-${{ matrix.arch }}.tar.gz
+
+      - name: Upload ${{ matrix.label }} release package
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-${{ matrix.target }}-${{ matrix.arch }}
+          path: |
+            dist/release/youtube-downloader-${{ matrix.target }}-${{ matrix.arch }}.tar.gz
+            dist/release/youtube-downloader-${{ matrix.target }}-${{ matrix.arch }}.tar.gz.sha256
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    name: Publish GitHub Release
+    needs:
+      - windows
+      - unix
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Download release packages
+        uses: actions/download-artifact@v8
+        with:
+          pattern: release-*
+          path: dist/release
+          merge-multiple: true
+
+      - name: Verify checksums and create manifest
+        shell: bash
+        run: |
+          cd dist/release
+          for checksum in *.sha256; do
+            sha256sum -c "$checksum"
+          done
+          cat *.sha256 | sort > SHA256SUMS.txt
+          test "$(wc -l < SHA256SUMS.txt)" -eq 5
+
+      - name: Attest release checksum manifest
+        uses: actions/attest-build-provenance@v4.2.2
+        with:
+          subject-path: dist/release/SHA256SUMS.txt
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          gh release create "${GITHUB_REF_NAME}"             --verify-tag             --title "${GITHUB_REF_NAME}"             --generate-notes             dist/release/*.zip             dist/release/*.tar.gz             dist/release/*.sha256             dist/release/SHA256SUMS.txt
