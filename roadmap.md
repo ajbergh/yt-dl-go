@@ -214,7 +214,7 @@ Benefits: lower CPU use, faster completion, and no additional lossy generation.
 
 ### P1.4 Library folder/category navigation
 
-**Status:** [ ] Planned
+**Status:** [T] Implemented; CI validation pending
 
 Promote the Library from a job-results list to a true local media browser.
 
@@ -662,3 +662,21 @@ Implemented:
 11. Updated API documentation.
 
 This path remains limited to compatible AAC-in-MP4 audio streams already selected by the native YouTube format selector; it does not introduce Opus/WebM conversion or FFmpeg.
+
+
+### P1.4 Library folder/category navigation
+
+**Status:** [T] Implemented; CI validation pending
+
+Implemented:
+
+1. Added category and channel facets derived from persisted finalized-file metadata.
+2. Added file counts per category/channel in filter options.
+3. Expanded Library search across job title, source URL, category, audio format, file title, creator/channel, filename, published filename, and relative output path.
+4. Added logical media, managed-copy, and published-copy storage summaries so users can see the effect of storage policy and scoped deletion.
+5. Added visible-job counts and a one-click filter reset.
+6. Preserved existing video/audio filtering and filesystem actions alongside the new facets.
+7. Persisted the user's Grid/List Library preference in local browser storage.
+8. Added UI regression coverage for category/channel filtering, storage summaries, and layout persistence.
+
+The facet implementation remains frontend-derived from SQLite-backed job/file metadata; no duplicate category or channel index is introduced in the database.
