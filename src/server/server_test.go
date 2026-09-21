@@ -708,6 +708,28 @@ func ticketPath(t *testing.T, s *server, id, body string) string {
 	return result.Path
 }
 
+func TestInlinePreviewTicketSupportsRanges(t *testing.T) {
+	s := testServer(t, fixtureClient(1), nil)
+	j := waitTerminal(t, s, createJob(t, s, testVideo).ID)
+	if j.Status != "completed" || len(j.Files) != 1 {
+		t.Fatalf("preview fixture failed: %+v", j)
+	}
+	if response := request(s, "POST", "/api/jobs/"+j.ID+"/ticket", `{"inline":true}`, nil); response.Code != 400 {
+		t.Fatalf("inline archive ticket accepted: %d %s", response.Code, response.Body.String())
+	}
+	path := ticketPath(t, s, j.ID, `{"fileId":"`+j.Files[0].ID+`","inline":true}`)
+	response := request(s, "GET", path, "", map[string]string{"Authorization": "", "Range": "bytes=0-6"})
+	if response.Code != 206 || response.Body.String() != "fixture" {
+		t.Fatalf("inline preview range: %d %q", response.Code, response.Body.String())
+	}
+	if disposition := response.Header().Get("Content-Disposition"); !strings.HasPrefix(disposition, "inline") {
+		t.Fatalf("preview disposition = %q", disposition)
+	}
+	if response.Header().Get("Content-Type") != j.Files[0].MimeType {
+		t.Fatalf("preview MIME = %q, want %q", response.Header().Get("Content-Type"), j.Files[0].MimeType)
+	}
+}
+
 func TestDownloadsAndRetention(t *testing.T) {
 	s := testServer(t, fixtureClient(2), nil)
 	j := waitTerminal(t, s, createJob(t, s, testPlaylist).ID)
