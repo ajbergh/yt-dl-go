@@ -116,10 +116,20 @@ jobs:
         include:
           - runner: ubuntu-latest
             target: linux
-            label: Linux
+            arch: amd64
+            label: Linux amd64
+          - runner: ubuntu-latest
+            target: linux
+            arch: arm64
+            label: Linux arm64
           - runner: macos-latest
             target: darwin
-            label: macOS
+            arch: amd64
+            label: macOS amd64
+          - runner: macos-latest
+            target: darwin
+            arch: arm64
+            label: macOS arm64
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
     steps:
@@ -141,24 +151,19 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci
 
-      - name: Detect target architecture
-        id: unix-platform
-        shell: bash
-        run: echo "arch=$(go env GOARCH)" >> "$GITHUB_OUTPUT"
-
       - name: Build and package ${{ matrix.label }}
         shell: bash
         env:
           TARGET_OS: ${{ matrix.target }}
-          TARGET_ARCH: ${{ steps.unix-platform.outputs.arch }}
-        run: bash ./scripts/build-unix.sh "dist/ci/youtube-downloader-${{ matrix.target }}-${{ steps.unix-platform.outputs.arch }}"
+          TARGET_ARCH: ${{ matrix.arch }}
+        run: bash ./scripts/build-unix.sh "dist/ci/youtube-downloader-${{ matrix.target }}-${{ matrix.arch }}"
 
       - name: Upload ${{ matrix.label }} package
         uses: actions/upload-artifact@v4
         with:
-          name: youtube-downloader-${{ matrix.target }}-${{ steps.unix-platform.outputs.arch }}
+          name: youtube-downloader-${{ matrix.target }}-${{ matrix.arch }}
           path: |
-            dist/ci/youtube-downloader-${{ matrix.target }}-${{ steps.unix-platform.outputs.arch }}.tar.gz
-            dist/ci/youtube-downloader-${{ matrix.target }}-${{ steps.unix-platform.outputs.arch }}.tar.gz.sha256
+            dist/ci/youtube-downloader-${{ matrix.target }}-${{ matrix.arch }}.tar.gz
+            dist/ci/youtube-downloader-${{ matrix.target }}-${{ matrix.arch }}.tar.gz.sha256
           if-no-files-found: error
           retention-days: 7
