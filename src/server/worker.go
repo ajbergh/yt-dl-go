@@ -798,10 +798,12 @@ func (s *server) processItem(ctx context.Context, j *jobState, entry *youtube.Pl
 	if err != nil {
 		return err
 	}
-	applyVideoMetadata(&file, video)
-	file.Category = j.Category
-	file.ManagedAvailable = true
-	s.captureThumbnail(ctx, j, &file)
+	if j.MediaType != "audio" {
+		applyVideoMetadata(&file, video)
+		file.Category = j.Category
+		file.ManagedAvailable = true
+		s.captureThumbnail(ctx, j, &file)
+	}
 	if j.StorageMode != "managed-only" {
 		if err := s.publishOutput(j, &file); err != nil {
 			_ = os.Remove(filepath.Join(j.dir, file.Name))
@@ -865,6 +867,18 @@ func (s *server) transferAudio(ctx context.Context, j *jobState, engine nativeCl
 		return result, errLimit
 	}
 	result = mediaFile{ID: randomID(16), Name: fmt.Sprintf("%06d-%s.mp3", index, video.ID), MimeType: "audio/mpeg", MediaType: "audio"}
+	applyVideoMetadata(&result, video)
+	result.Category = j.Category
+	result.ManagedAvailable = true
+	s.captureThumbnail(ctx, j, &result)
+	defer func() {
+		if err != nil && result.ThumbnailLocalAvailable {
+			if path, pathErr := thumbnailPath(j, result); pathErr == nil {
+				_ = os.Remove(path)
+			}
+			result.ThumbnailLocalAvailable = false
+		}
+	}()
 	finalPath := filepath.Join(j.dir, result.Name)
 	sourcePath := filepath.Join(j.dir, fmt.Sprintf("%06d-%s.source.%s", index, video.ID, extension))
 	outputPart := finalPath + ".part"
@@ -961,7 +975,11 @@ func (s *server) transferAudio(ctx context.Context, j *jobState, engine nativeCl
 		_ = output.Close()
 		return result, errStorage
 	}
-	outputSize, convertErr := convertAACToMP3(ctx, source, output, j.AudioBitrate, outputBudget, func(written int64) {
+	tag, tagErr := buildID3v23Tag(mp3MetadataFor(j, result, video.ID, index))
+	if tagErr != nil {
+		tag = nil // Metadata is best-effort; never fail playable audio over tags.
+	}
+	outputSize, convertErr := convertAACToMP3Tagged(ctx, source, output, j.AudioBitrate, outputBudget, tag, func(written int64) {
 		s.updateProgress(j, index, sourceSize+written, 0)
 	})
 	sourceCloseErr := source.Close()
