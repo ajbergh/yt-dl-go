@@ -118,12 +118,15 @@ function statusClass(status: DownloadJob["status"]): string {
   return "border-neutral-700 bg-neutral-800 text-neutral-300";
 }
 
-function SortableQueueOrderRow({ id, label, detail, children }: { id: string; label: string; detail?: string; children?: React.ReactNode }) {
+function SortableQueueOrderRow({ id, label, detail, children, below }: { id: string; label: string; detail?: string; children?: React.ReactNode; below?: React.ReactNode }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id });
-  return <div ref={setNodeRef} style={{ transform: CSS.Transform.toString(transform), transition }} className={`flex items-center gap-2 rounded-lg border border-neutral-800 bg-neutral-950/80 p-2 ${isDragging ? "z-20 opacity-70 shadow-xl" : ""}`}>
-    <button type="button" aria-label={`Drag ${label}`} title="Drag to reorder" className="grid size-8 shrink-0 cursor-grab place-items-center rounded-md border border-neutral-800 bg-neutral-900 text-neutral-500 hover:text-neutral-200 active:cursor-grabbing" {...attributes} {...listeners}><GripVertical className="size-4" aria-hidden="true" /></button>
-    <div className="min-w-0 flex-1"><p className="truncate text-[11px] font-semibold text-neutral-200">{label}</p>{detail && <p className="mt-0.5 truncate text-[10px] text-neutral-500">{detail}</p>}</div>
-    {children}
+  return <div ref={setNodeRef} style={{ transform: CSS.Transform.toString(transform), transition }} className={`rounded-lg border border-neutral-800 bg-neutral-950/80 p-2 ${isDragging ? "z-20 opacity-70 shadow-xl" : ""}`}>
+    <div className="flex items-center gap-2">
+      <button type="button" aria-label={`Drag ${label}`} title="Drag to reorder" className="grid size-8 shrink-0 cursor-grab place-items-center rounded-md border border-neutral-800 bg-neutral-900 text-neutral-500 hover:text-neutral-200 active:cursor-grabbing" {...attributes} {...listeners}><GripVertical className="size-4" aria-hidden="true" /></button>
+      <div className="min-w-0 flex-1"><p className="truncate text-[11px] font-semibold text-neutral-200">{label}</p>{detail && <p className="mt-0.5 truncate text-[10px] text-neutral-500">{detail}</p>}</div>
+      {children}
+    </div>
+    {below && <div className="mt-2 border-t border-neutral-800 pt-2">{below}</div>}
   </div>;
 }
 
@@ -1015,6 +1018,31 @@ export function HomePage() {
                 <div className="flex items-center gap-2 text-neutral-300"><span className={`size-2 rounded-full ${activeCount > 0 ? "animate-pulse bg-rose-500" : "bg-neutral-600"}`} /><span className="font-semibold">{activeCount > 0 ? "Batch in progress" : queuedCount > 0 ? "Queue ready" : "Queue idle"}</span><span className="text-neutral-500">{activeCount} active · {queuedCount} queued</span></div>
                 <div className="flex items-center gap-4 font-mono text-[11px]"><span className="text-emerald-300">{formatBytes(totalCurrentSpeed)}/s</span><span className="text-neutral-500">Max parallel: {settings.maxConcurrentDownloads}</span></div>
               </div>
+
+              {queuedJobsOrdered.length > 0 && <div className={`${panel} space-y-3 p-3`}>
+                <div className="flex flex-wrap items-start justify-between gap-2"><div><p className="text-[11px] font-bold uppercase tracking-wider text-neutral-300">Queued work order</p><p className="mt-1 text-[10px] text-neutral-500">Drag queued jobs or playlist items. Active downloads stay in place.</p></div><span className="rounded-full bg-neutral-800 px-2 py-1 text-[10px] text-neutral-300">{queuedJobsOrdered.length} queued job{queuedJobsOrdered.length === 1 ? "" : "s"}</span></div>
+                <DndContext sensors={queueSensors} collisionDetection={closestCenter} onDragEnd={event => void reorderQueuedJobs(event)}>
+                  <SortableContext items={queuedJobsOrdered.map(job => `job:${job.id}`)} strategy={verticalListSortingStrategy}>
+                    <div className="space-y-2">
+                      {queuedJobsOrdered.map((job, jobIndex) => {
+                        const playlistItems = (job.items ?? []).filter(item => (item.playlistIndex ?? 0) > 0);
+                        const nested = job.kind === "playlist" && playlistItems.length > 1
+                          ? <DndContext sensors={queueSensors} collisionDetection={closestCenter} onDragEnd={event => void reorderPlaylistItems(job, event)}>
+                              <SortableContext items={playlistItems.map(item => `item:${job.id}:${item.playlistIndex}`)} strategy={verticalListSortingStrategy}>
+                                <div className="space-y-1.5">
+                                  {playlistItems.map(item => <SortableQueueOrderRow key={item.playlistIndex} id={`item:${job.id}:${item.playlistIndex}`} label={item.title} detail={`Original playlist #${item.playlistIndex} · queue item ${item.index}`} />)}
+                                </div>
+                              </SortableContext>
+                            </DndContext>
+                          : undefined;
+                        return <SortableQueueOrderRow key={job.id} id={`job:${job.id}`} label={job.title} detail={`Queue #${jobIndex + 1} · ${job.kind === "playlist" ? `${job.items?.length ?? 0} selected items` : "single video"}`} below={nested}>
+                          <button type="button" className={button} disabled={jobIndex === 0 || busyAction === `${job.id}:next`} onClick={() => void downloadNext(job)}>Download next</button>
+                        </SortableQueueOrderRow>;
+                      })}
+                    </div>
+                  </SortableContext>
+                </DndContext>
+              </div>}
 
               <div className={`${panel} flex flex-wrap items-center justify-between gap-3 p-3`}>
                 <div className="flex flex-wrap gap-1 rounded-lg border border-neutral-800 bg-neutral-950 p-1">
