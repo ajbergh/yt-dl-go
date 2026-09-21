@@ -80,8 +80,9 @@ try {
     $version = if ([string]::IsNullOrWhiteSpace($env:VERSION)) { 'dev' } else { $env:VERSION.Trim() }
     $commit = if ([string]::IsNullOrWhiteSpace($env:COMMIT)) { 'unknown' } else { $env:COMMIT.Trim() }
     $buildDate = if ([string]::IsNullOrWhiteSpace($env:BUILD_DATE)) { 'unknown' } else { $env:BUILD_DATE.Trim() }
-    foreach ($metadata in @($version, $commit, $buildDate)) {
-        if ($metadata -notmatch '^[A-Za-z0-9:._+\-]+
+    foreach ($metadataValue in @($version, $commit, $buildDate)) {
+        if ($metadataValue -notmatch '^[A-Za-z0-9:._+\-]+    try {
+        $env:CGO_ENABLED = '0'
         if ([string]::IsNullOrWhiteSpace($env:GOCACHE)) {
             # Keep the default build cache in a user-writable temp location.
             $env:GOCACHE = Join-Path ([IO.Path]::GetTempPath()) 'yt-dl-go-go-build-cache'
@@ -120,7 +121,7 @@ try {
     Set-Location $originalLocation
 }
 ) {
-            throw "VERSION, COMMIT, and BUILD_DATE must contain only release-metadata-safe characters: $metadata"
+            throw "VERSION, COMMIT, and BUILD_DATE must contain only release-metadata-safe characters: $metadataValue"
         }
     }
     $ldflags = "-s -w -X main.buildVersion=$version -X main.buildCommit=$commit -X main.buildDate=$buildDate"
