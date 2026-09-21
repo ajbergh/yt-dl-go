@@ -17,6 +17,10 @@ let rows;
 let missing;
 let healthEngine;
 let liveEvent;
+let notificationsEnabled;
+let notificationPermission;
+let notificationPermissionRequests;
+let notifications;
 
 const job = {
   id: "fixture-job", url: "https://www.youtube.com/playlist?list=PL_example",
@@ -42,15 +46,33 @@ beforeEach(async () => {
   missing = [];
   healthEngine = "native-go";
   liveEvent = null;
+  notificationsEnabled = false;
+  notificationPermission = "granted";
+  notificationPermissionRequests = 0;
+  notifications = [];
+  class TestNotification {
+    static get permission() { return notificationPermission; }
+    static async requestPermission() {
+      notificationPermissionRequests++;
+      notificationPermission = "granted";
+      return notificationPermission;
+    }
+    constructor(title, options = {}) { notifications.push({ title, options }); }
+  }
+  Object.defineProperty(testWindow, "Notification", { configurable: true, value: TestNotification });
   globalThis.fetch = async (url, init = {}) => {
     const path = new URL(url).pathname;
     requests.push({ url: String(url), path, ...init });
     if (path === "/api/health") return Response.json({ ready: missing.length === 0, missing, engine: healthEngine, capabilities: { combinedStreamsOnly: false, adaptiveStreamsSupported: true, externalBinariesRequired: false, mp3AudioSupported: true } });
-    if (path === "/api/settings" && init.method === "PUT") return Response.json({ settings: JSON.parse(init.body) });
+    if (path === "/api/settings" && init.method === "PUT") {
+      const settings = JSON.parse(init.body);
+      notificationsEnabled = settings.notificationsEnabled === true;
+      return Response.json({ settings });
+    }
     if (path === "/api/folders/select" && init.method === "POST") return Response.json({ path: "C:\\Media\\YouTube" });
-    if (path === "/api/settings") return Response.json({ settings: { defaultQuality: "best", maxConcurrentDownloads: 3, bandwidthLimitBytesPerSec: 0, downloadLocation: "C:\\Downloads\\YouTube_Vault", namingPattern: "{channel} - {title} [{resolution}]", subfolderSorting: "channel", defaultCategory: "General", userCategories: ["General", "Music"], storageMode: "managed-published" } });
+    if (path === "/api/settings") return Response.json({ settings: { defaultQuality: "best", maxConcurrentDownloads: 3, bandwidthLimitBytesPerSec: 0, notificationsEnabled, downloadLocation: "C:\\Downloads\\YouTube_Vault", namingPattern: "{channel} - {title} [{resolution}]", subfolderSorting: "channel", defaultCategory: "General", userCategories: ["General", "Music"], storageMode: "managed-published" } });
     if (path === "/api/events") {
-      const settings = { defaultQuality: "best", maxConcurrentDownloads: 3, bandwidthLimitBytesPerSec: 0, downloadLocation: "C:\\Downloads\\YouTube_Vault", namingPattern: "{channel} - {title} [{resolution}]", subfolderSorting: "channel", defaultCategory: "General", userCategories: ["General", "Music"], storageMode: "managed-published" };
+      const settings = { defaultQuality: "best", maxConcurrentDownloads: 3, bandwidthLimitBytesPerSec: 0, notificationsEnabled, downloadLocation: "C:\\Downloads\\YouTube_Vault", namingPattern: "{channel} - {title} [{resolution}]", subfolderSorting: "channel", defaultCategory: "General", userCategories: ["General", "Music"], storageMode: "managed-published" };
       const events = [{ type: "snapshot", jobs: rows, settings }, ...(liveEvent ? [liveEvent] : [])];
       const body = events.map((event, index) => `id: ${index + 1}\nevent: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`).join("");
       return new Response(body, { headers: { "Content-Type": "text/event-stream" } });
@@ -275,7 +297,7 @@ describe("Downloader UI and Go API integration", () => {
     });
     await click(button("Save preferences"));
     const save = requests.find(item => item.path === "/api/settings" && item.method === "PUT");
-    expect(JSON.parse(save.body)).toEqual({ defaultQuality: "720", maxConcurrentDownloads: 3, bandwidthLimitBytesPerSec: 0, downloadLocation: "C:\\Downloads\\YouTube_Vault", namingPattern: "{channel} - {title} [{resolution}]", subfolderSorting: "channel", defaultCategory: "General", userCategories: ["General", "Music"], storageMode: "managed-published" });
+    expect(JSON.parse(save.body)).toEqual({ defaultQuality: "720", maxConcurrentDownloads: 3, bandwidthLimitBytesPerSec: 0, notificationsEnabled: false, downloadLocation: "C:\\Downloads\\YouTube_Vault", namingPattern: "{channel} - {title} [{resolution}]", subfolderSorting: "channel", defaultCategory: "General", userCategories: ["General", "Music"], storageMode: "managed-published" });
     expect(container.textContent).toContain("Saved to SQLite");
   });
   test("persists a global bandwidth limit in MiB per second", async () => {
@@ -288,6 +310,55 @@ describe("Downloader UI and Go API integration", () => {
     await click(button("Save preferences"));
     const saves = requests.filter(item => item.path === "/api/settings" && item.method === "PUT");
     expect(JSON.parse(saves.at(-1).body).bandwidthLimitBytesPerSec).toBe(5 * 1024 * 1024);
+  });
+
+  test("requests notification permission only when explicitly enabled and persists the choice", async () => {
+    notificationPermission = "default";
+    await click(button("Settings"));
+    const toggle = container.querySelector('button[role="switch"][aria-label="System notifications"]');
+    expect(toggle).toBeTruthy();
+    expect(toggle.getAttribute("aria-checked")).toBe("false");
+    expect(notificationPermissionRequests).toBe(0);
+    await click(toggle);
+    expect(notificationPermissionRequests).toBe(1);
+    expect(toggle.getAttribute("aria-checked")).toBe("true");
+    expect(container.textContent).toContain("System notifications enabled");
+    await click(button("Save preferences"));
+    const saves = requests.filter(item => item.path === "/api/settings" && item.method === "PUT");
+    expect(JSON.parse(saves.at(-1).body).notificationsEnabled).toBe(true);
+  });
+
+  test("emits a system notification only for a live terminal transition", async () => {
+    notificationsEnabled = true;
+    notificationPermission = "granted";
+    rows = [{
+      ...job,
+      id: "notify-job",
+      kind: "video",
+      mediaType: "video",
+      title: "Notification fixture",
+      status: "downloading",
+      progress: 50,
+      totalCount: 1,
+      items: [{ index: 1, videoId: "abcdefghijk", title: "Notification fixture", status: "downloading", progress: 50, downloadedBytes: 500, totalBytes: 1000, speedBytesPerSec: 100, etaSeconds: 5 }],
+    }];
+    liveEvent = {
+      type: "job-status",
+      job: {
+        ...rows[0],
+        status: "completed",
+        progress: 100,
+        completedCount: 1,
+        files: [{ id: "done-file", name: "done.mp4", size: 1000 }],
+        items: [{ ...rows[0].items[0], status: "completed", progress: 100, downloadedBytes: 1000, totalBytes: 1000, speedBytesPerSec: 0, etaSeconds: 0, fileId: "done-file" }],
+      },
+    };
+    await remount();
+    await connect();
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 20)); });
+    expect(notifications).toHaveLength(1);
+    expect(notifications[0].title).toBe("Download completed");
+    expect(notifications[0].options.body).toContain("Notification fixture");
   });
 
   test("uses the native folder picker for download location", async () => {
