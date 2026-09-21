@@ -140,6 +140,7 @@ func (s *server) publishOutput(j *jobState, file *mediaFile) error {
 	if strings.TrimSpace(category) == "" {
 		category = "General"
 	}
+	file.Category = category
 	resolution := "audio"
 	if file.Height > 0 {
 		resolution = fmt.Sprintf("%dp", file.Height)
