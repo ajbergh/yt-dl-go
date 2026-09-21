@@ -417,15 +417,42 @@ Revisit native tray UI when:
 
 Until then, the supported background/no-browser mode provides long-running batch operation without introducing a fragile desktop shell dependency.
 
-### P2.3 Automatic updater and signed releases (Deferred)
+### P2.3 Release metadata, update notification, and automatic updater
 
-**Status:** [ ] Deferred
+**Status:** [~] Safe release foundation implemented; automatic self-update deferred
 
-- version metadata
-- signed release artifacts
-- update notification
-- optional automatic update flow
-- rollback-safe behavior
+#### Implemented
+
+- immutable build metadata (`version`, source `commit`, `buildDate`) exposed through `/api/health`
+- release metadata injected by both Windows and Unix build scripts; local/branch builds remain `dev`
+- bounded authenticated `GET /api/update` latest-release discovery
+- development builds skip external update checks entirely
+- stable semantic-version comparison and draft/prerelease rejection
+- strict release-link allowlist for this repository's GitHub Releases
+- Settings UI showing current build metadata, latest stable version, and update-available link
+- update discovery is non-blocking and never affects downloader/service readiness
+- tag-driven `vMAJOR.MINOR.PATCH` release workflow
+- full source/test/browser validation before release packaging
+- Windows, Linux amd64/arm64, and macOS amd64/arm64 release packages
+- individual SHA-256 files plus canonical `SHA256SUMS.txt`
+- GitHub OIDC build-provenance attestations for release archives and checksum manifest
+- unit coverage for semantic versions, development-build network suppression, response-size limits, stable-release validation, unsafe URL rejection, and development API metadata
+- frontend integration coverage for build metadata and update-available UI
+
+#### Intentionally deferred
+
+Automatic download/replacement is **not** implemented. GitHub provenance attestations are signed supply-chain evidence but are not substitutes for Windows Authenticode or Apple Developer ID/notarization.
+
+Before self-update can be enabled, require:
+
+1. OS-native signing/notarization credentials and verification;
+2. checksum plus signature/provenance verification of the downloaded platform artifact;
+3. atomic replacement semantics for Windows/Linux/macOS;
+4. preservation of the known-good previous executable;
+5. restart health verification and automatic rollback;
+6. explicit user update policy/opt-in and actionable recovery errors.
+
+Until those conditions are satisfied, an available update opens the validated GitHub Release for manual installation rather than modifying the running executable.
 
 ---
 
