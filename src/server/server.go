@@ -88,7 +88,7 @@ type Job struct {
 	DownloadLocation string        `json:"-"`
 	NamingPattern    string        `json:"-"`
 	SubfolderSorting string        `json:"-"`
-	Category         string        `json:"-"`
+	Category         string        `json:"category,omitempty"`
 }
 
 type jobState struct {
@@ -554,6 +554,7 @@ func (s *server) create(w http.ResponseWriter, r *http.Request) {
 		Quality         string          `json:"quality"`
 		MediaType       string          `json:"mediaType"`
 		AudioBitrate    string          `json:"audioBitrate"`
+		Category        string          `json:"category"`
 		RightsConfirmed bool            `json:"rightsConfirmed"`
 		Items           []inspectedItem `json:"items"`
 	}
@@ -591,12 +592,12 @@ func (s *server) create(w http.ResponseWriter, r *http.Request) {
 		fail(w, 400, "audioBitrate must be 128k, 192k, 256k, or 320k")
 		return
 	}
-	s.enqueueJob(w, u, kind, request.Quality, request.MediaType, request.AudioBitrate, request.Items)
+	s.enqueueJob(w, u, kind, request.Quality, request.MediaType, request.AudioBitrate, request.Category, request.Items)
 }
 
 // enqueueJob allocates private per-job storage, persists a queued job, and
 // returns 202 only after the job has entered the bounded worker queue.
-func (s *server) enqueueJob(w http.ResponseWriter, u, kind, quality, mediaType, audioBitrate string, inspectedItems ...[]inspectedItem) {
+func (s *server) enqueueJob(w http.ResponseWriter, u, kind, quality, mediaType, audioBitrate, requestedCategory string, inspectedItems ...[]inspectedItem) {
 	if s.engine == nil {
 		fail(w, 503, "Native download engine is not initialized")
 		return
@@ -632,11 +633,16 @@ func (s *server) enqueueJob(w http.ResponseWriter, u, kind, quality, mediaType, 
 		}
 	}
 	outputSettings := mergeAppSettings(defaultAppSettings(), s.settings)
+	category, err := resolveJobCategory(outputSettings, requestedCategory)
+	if err != nil {
+		fail(w, 400, err.Error())
+		return
+	}
 	j := &jobState{Job: Job{
 		ID: randomID(16), URL: u, Kind: kind, Quality: quality, MediaType: mediaType, AudioBitrate: audioBitrate,
 		Status: "queued", Title: "YouTube " + kind, Files: []mediaFile{}, Items: items, Failures: []itemFailure{},
 		Note: formatNote, CreatedAt: time.Now().UTC().Format(time.RFC3339Nano), DownloadLocation: outputSettings.DownloadLocation,
-		NamingPattern: outputSettings.NamingPattern, SubfolderSorting: outputSettings.SubfolderSorting, Category: outputSettings.DefaultCategory,
+		NamingPattern: outputSettings.NamingPattern, SubfolderSorting: outputSettings.SubfolderSorting, Category: category,
 	}, fileItems: map[int]mediaFile{}}
 	if kind == "playlist" {
 		j.Note += " " + playlistNote
