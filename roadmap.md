@@ -2,9 +2,9 @@
 
 > Durable roadmap for the `yt-dl-go` product. This file is the source of truth for roadmap scope, sequencing, implementation status, acceptance criteria, and follow-up work.
 >
-> **Branch:** `roadmap/media-library-batch-v1`
+> **Branch:** `roadmap/cross-platform-packaging-v1`
 >
-> **Last updated:** 2026-09-20
+> **Last updated:** 2026-09-21
 
 ## Product direction
 
@@ -394,17 +394,27 @@ Investigate whether a lightweight tray workflow improves long-running batch down
 
 ## P1.11 Subtitle/caption extraction
 
-**Status:** [ ] Planned
+**Status:** [x] Implemented
 
 Add opt-in subtitle/caption download for owned/authorized content.
 
-#### Scope
+#### Implemented scope
 
-- Enumerate available caption tracks.
-- Select language.
-- SRT/VTT output.
-- Optional sidecar organization with media.
-- Playlist support.
+- Video inspection enumerates validated YouTube caption tracks and exposes language labels plus auto-generated/manual status to the UI.
+- Download drafts can opt into one caption language and choose WebVTT or SubRip (SRT); no caption is downloaded unless explicitly selected.
+- Manual captions are preferred over auto-generated ASR when YouTube exposes both for the same language.
+- WebVTT is fetched through the guarded native HTTP path with a strict HTTPS YouTube timed-text allowlist, redirect rejection, a 5 MiB response ceiling, and no signed caption URL persistence.
+- SRT conversion is implemented in-process in Go; no FFmpeg or other caption binary is required.
+- Caption sidecars are stored beside the managed media name and, when output publishing is enabled, beside the published media using the same resolved output basename.
+- Managed job ZIP downloads include finalized caption sidecars.
+- Playlist inspection samples an accessible item for caption language choices; the worker resolves the selected language independently for each item. Missing or failed captions are recorded as per-file warnings and do not discard otherwise valid media.
+- Caption configuration and finalized sidecar metadata persist through SQLite schema migration v13 and are retained by retry/restart flows.
+- Managed/published deletion semantics, storage accounting, restart byte-budget accounting, Library search/stats/status badges, and health capability reporting include caption sidecars.
+- Backend tests cover language/URL validation, manual-vs-ASR selection, WebVTT-to-SRT conversion, publishing, ZIP inclusion, and unsafe language rejection. Frontend integration coverage verifies caption selection and job payloads.
+
+#### Validation
+
+- CI run `35559277729` passed frontend type-check/build, Bun integration tests, Go tests, Go vet, the Windows production build, and Windows artifact upload.
 
 ## P2.4 1440p and 2160p support
 
@@ -445,71 +455,108 @@ Do not expose codec complexity until format selection and compatibility checks a
 
 ## P1.12 Decompose `src/pages/home.tsx`
 
-**Status:** [ ] Planned
+**Status:** [x] Implemented
 
-The production page currently owns service initialization, polling, queue state, inspection, settings, library state, and most rendering.
+The production page previously owned service initialization, polling, queue state, inspection, settings, library state, job actions, and nearly all rendering in one ~1,479-line file.
 
-#### Target structure
+#### Implemented structure
 
 ```text
 src/
   pages/
+    home.tsx
     queue.tsx
     library.tsx
     settings.tsx
   components/downloader/
-    add-download.tsx
-    inspection-card.tsx
-    batch-controls.tsx
-    queue-toolbar.tsx
-    queue-item.tsx
-    library-card.tsx
-    output-settings.tsx
+    view-model.tsx
   hooks/
     use-service.ts
     use-jobs.ts
     use-settings.ts
 ```
 
-The exact boundaries may evolve, but new major features should not continue expanding a single page component indefinitely.
+- `queue.tsx` owns add/inspect controls, batch controls, queue filters, queue rendering, and drag/drop presentation.
+- `library.tsx` owns Library filtering/layout, file cards, preview/save/filesystem controls, and scoped-delete presentation.
+- `settings.tsx` owns service status and all preference/output configuration rendering.
+- `use-service.ts` owns backend bootstrap, SQLite hydration, SSE updates, reconciliation, readiness/error state, and terminal notifications.
+- `use-jobs.ts` owns queue/job mutations, retries, preview/save tickets, filesystem actions, queue/playlist reordering, batch actions, and cleared-completed persistence.
+- `use-settings.ts` owns settings mutation/save behavior, folder selection, notification permission flow, and user-category management.
+- `view-model.tsx` centralizes downloader-specific view types, labels, formatting/selection helpers, thumbnail loading, and the sortable queue row.
+- `home.tsx` is reduced to roughly 450 lines and primarily coordinates derived queue/library state, inspection submission, top-level navigation/messages, and page composition.
+- Existing DOM labels/test selectors were intentionally preserved so the refactor remains behavior-compatible.
+
+#### Validation
+
+- CI run `35565686299` passed frontend type-check/build, Bun integration tests, Go tests, Go vet, the Windows production build, and Windows artifact upload.
 
 ## P1.13 Frontend dependency cleanup
 
-**Status:** [ ] Planned
+**Status:** [x] Implemented
 
-Audit root dependencies and remove unused scaffold packages after the UI structure stabilizes.
+Audited the production frontend graph after P1.12 and removed the generated scaffold that was no longer part of the downloader application.
+
+Implemented:
+
+1. Reduced direct runtime dependencies to React/ReactDOM, React Router, Tailwind, Geist, Lucide, and the three DnD packages used by the queue UI.
+2. Removed unused QueryClient, MotionConfig, Sonner, Radix confirmation-provider, Zustand placeholder-store, and generated shadcn-style UI layers from the production shell.
+3. Deleted 55 orphaned scaffold/helper files that were not reachable from the downloader entrypoint.
+4. Removed unused TanStack/managed-app aliases and dependency pre-bundling from Vite.
+5. Synchronized npm and Bun lockfile root dependency manifests.
+6. Preserved router/error-boundary/preview-diagnostic behavior and the downloader's existing DOM/test contract.
+
+Validation note: CI run `35566160345` passed frontend type-check/build, Bun integration tests, Go tests, Go vet, the Windows production build, and Windows artifact upload.
 
 ## P1.14 Browser end-to-end testing
 
-**Status:** [ ] Planned
+**Status:** [x] Implemented
 
-Add a Playwright-style E2E layer covering:
+Added a real-browser E2E layer using headless Chrome plus the Chrome DevTools Protocol, avoiding another simulated DOM layer or a heavyweight browser-test runtime dependency.
 
-1. service startup
-2. URL inspection
-3. queue creation
-4. pause/resume
-5. completion
-6. Library appearance
-7. settings persistence
-8. restart persistence
-9. destructive-action confirmations
+Coverage:
 
-Existing Go and Bun tests remain the fast unit/integration layer.
+1. starts the actual Go executable against a private temporary data directory
+2. inspects a deterministic test-only YouTube fixture URL
+3. creates a real queued download through the browser UI
+4. pauses and resumes the live fixture stream through UI controls
+5. waits for real worker completion
+6. verifies the completed item appears in Library
+7. changes and saves settings through the UI/API
+8. restarts the Go service against the same SQLite/data directory and verifies settings + Library persistence after browser reload
+9. verifies destructive “Delete everywhere” opens an explicit browser confirmation before mutation and removes history only after acceptance
+
+Implementation details:
+
+- `scripts/browser-e2e.mjs` launches a tagged E2E service binary and drives installed Chrome/Chromium over CDP.
+- `src/server/e2e_fixture.go` is compiled only with the `e2e` build tag and supplies deterministic media metadata/bytes.
+- `src/server/e2e_fixture_disabled.go` makes the production build incapable of enabling the fixture through environment variables.
+- `NO_BROWSER=1` supports headless/CI startup without invoking the OS URL handler.
+- CI runs `npm run e2e:browser` after the fast frontend/Go test layers.
+- The first browser pass exposed and fixed a real custom-loopback-port bug: Vite's `crossorigin` asset requests carried the listener origin, but only the hard-coded 5173/8080 origins were accepted. Loopback listeners now automatically trust their own exact HTTP origin at the configured port while network-visible listeners still require explicit allowlists.
+- Later full-matrix runs exposed a lifecycle ordering race: the asynchronous worker could publish `paused` over SSE before the Pause HTTP acknowledgement returned its older `downloading` snapshot, allowing the UI to regress to stale state. Job-action merging now preserves newer SSE lifecycle states for pause/cancel/resume, and Go coverage exercises pause during an active stream read.
+
+Validation note: CI run `35601658829` passed frontend type-check/build, Bun integration tests (including stale-action state regression coverage), Go tests/vet (including active-stream pause/resume), and the full real-Chrome E2E scenario.
 
 ## P2.6 Cross-platform packaging
 
-**Status:** [ ] Planned
+**Status:** [x] Implemented
 
-The Go architecture is suitable for expansion beyond Windows.
+The CGO-free Go architecture now has reproducible packaging paths for Windows, Linux, and macOS.
 
-Investigate:
+Implemented:
 
-- macOS build and browser discovery
-- Linux build and browser discovery
-- filesystem reveal/open semantics
-- release packaging
-- code signing/notarization
+1. Added `scripts/build-unix.sh` to rebuild the embedded React UI, run native-host Go tests/vet, cross-build a requested Linux/macOS architecture with `CGO_ENABLED=0`, and create a tar.gz + SHA-256 checksum.
+2. Added `scripts/package-windows.ps1` to package the checked Windows executable with README/third-party notices and produce a ZIP + SHA-256 checksum.
+3. Expanded CI packaging to Windows plus Linux `amd64`/`arm64` and macOS `amd64`/`arm64` artifacts.
+4. Kept Chrome/Chromium external: browser-assisted HD uses chromedp platform discovery or the existing explicit `CHROME_PATH` override.
+5. Refactored browser-launch, native-folder-picker, and reveal/open command selection into testable platform helpers.
+6. Added platform-independent tests covering Windows, macOS, and Linux command semantics.
+7. Documented Linux's intentional reveal fallback: `xdg-open` opens the containing folder because freedesktop environments do not provide one portable file-selection command.
+8. Documented Linux's `zenity` dependency for the native **Browse** button; manual absolute-path entry remains available without it.
+9. Added `docs/PACKAGING.md` covering package contents, architectures, runtime integration, release promotion, and signing/notarization requirements.
+10. Defined signing as a protected release-stage concern rather than ordinary branch CI: Windows Authenticode and macOS Developer ID/notarization require credentials that must not be stored in the repository.
+
+Validation note: CI run `35601658829` passed the full source/test/browser gate plus Windows production build/package, Linux `amd64`/`arm64` packages, and macOS `amd64`/`arm64` packages. Every configured package artifact and checksum upload completed successfully.
 
 ---
 

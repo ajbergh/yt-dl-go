@@ -22,22 +22,25 @@ func browserURL(addr string) string {
 	return "http://" + net.JoinHostPort(host, port) + "/"
 }
 
+// browserOpenCommand keeps platform launch semantics testable on every CI OS.
+func browserOpenCommand(goos, target string) (string, []string, bool) {
+	switch goos {
+	case "windows":
+		return "rundll32.exe", []string{"url.dll,FileProtocolHandler", target}, true
+	case "darwin":
+		return "open", []string{target}, true
+	case "linux":
+		return "xdg-open", []string{target}, true
+	default:
+		return "", nil, false
+	}
+}
+
 // openBrowser starts the platform URL handler without waiting for the browser.
 // Unsupported platforms intentionally return nil without launching anything.
 func openBrowser(target string) error {
-	var command string
-	var args []string
-	switch runtime.GOOS {
-	case "windows":
-		command = "rundll32.exe"
-		args = []string{"url.dll,FileProtocolHandler", target}
-	case "darwin":
-		command = "open"
-		args = []string{target}
-	case "linux":
-		command = "xdg-open"
-		args = []string{target}
-	default:
+	command, args, supported := browserOpenCommand(runtime.GOOS, target)
+	if !supported {
 		return nil
 	}
 	if err := exec.Command(command, args...).Start(); err != nil {

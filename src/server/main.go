@@ -67,8 +67,15 @@ func loadConfig() (config, error) {
 		c.origins[origin] = true
 	}
 	if loopback {
+		// The bundled UI is same-origin with the configured listener. Vite emits
+		// crossorigin attributes for hashed assets, so browsers may send an Origin
+		// header even when loading those same-origin files. Always allow the
+		// listener's loopback authorities at its actual port; network-visible
+		// bindings still require explicit ALLOWED_ORIGINS/ALLOWED_HOSTS.
 		for _, h := range []string{"localhost", "127.0.0.1", "::1", host} {
-			c.hosts[strings.ToLower(net.JoinHostPort(h, port))] = true
+			authority := strings.ToLower(net.JoinHostPort(h, port))
+			c.hosts[authority] = true
+			c.origins["http://"+authority] = true
 		}
 	}
 	for _, h := range strings.Split(os.Getenv("ALLOWED_HOSTS"), ",") {
@@ -153,6 +160,10 @@ func newServer(c config) (*server, error) {
 			return newChromeBrowserProvider(ctx, c.browserPath)
 		},
 	}
+	// Browser E2E fixtures are compiled only with the e2e build tag. The normal
+	// production executable links a no-op implementation and therefore cannot
+	// switch away from the native YouTube client through environment variables.
+	configureE2EFixture(s)
 	s.stop = func() {
 		cancel()
 		s.wg.Wait()
@@ -203,8 +214,10 @@ func main() {
 	result := make(chan error, 1)
 	go func() { result <- h.Serve(listener) }()
 	log.Printf("Downloader API listening on %s", c.addr)
-	if err := openBrowser(browserURL(c.addr)); err != nil {
-		log.Printf("Could not open web UI automatically: %v", err)
+	if os.Getenv("NO_BROWSER") != "1" {
+		if err := openBrowser(browserURL(c.addr)); err != nil {
+			log.Printf("Could not open web UI automatically: %v", err)
+		}
 	}
 	select {
 	case <-stopping.Done():

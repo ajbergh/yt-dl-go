@@ -260,27 +260,54 @@ func validateOutputCopy(j *jobState, file mediaFile) error {
 	return nil
 }
 
+func validateSubtitleOutputCopy(j *jobState, subtitle subtitleFile) error {
+	if subtitle.OutputPath == "" || subtitle.OutputName == "" || subtitle.OutputRelativePath == "" || !filepath.IsAbs(j.DownloadLocation) {
+		return errors.New("job contains invalid caption output metadata")
+	}
+	relative := filepath.FromSlash(subtitle.OutputRelativePath)
+	if filepath.IsAbs(relative) || filepath.Clean(relative) != relative || relative == "." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+		return errors.New("job contains an unsafe caption output path")
+	}
+	expected := filepath.Join(j.DownloadLocation, relative)
+	if filepath.Clean(subtitle.OutputPath) != expected || filepath.Base(subtitle.OutputPath) != subtitle.OutputName {
+		return errors.New("job caption output path does not match its recorded destination")
+	}
+	return validateSubtitleManagedName(subtitle.OutputName, subtitle.Format)
+}
+
 func removeOutputCopies(j *jobState) error {
 	for _, file := range j.Files {
-		if !file.PublishedAvailable {
-			continue
+		if file.PublishedAvailable {
+			if err := validateOutputCopy(j, file); err != nil {
+				return err
+			}
 		}
-		if err := validateOutputCopy(j, file); err != nil {
-			return err
+		if file.Subtitle != nil && file.Subtitle.PublishedAvailable {
+			if err := validateSubtitleOutputCopy(j, *file.Subtitle); err != nil {
+				return err
+			}
 		}
 	}
 	for index := range j.Files {
 		file := &j.Files[index]
-		if !file.PublishedAvailable {
-			continue
+		if file.Subtitle != nil && file.Subtitle.PublishedAvailable {
+			if err := os.Remove(file.Subtitle.OutputPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+				return err
+			}
+			file.Subtitle.PublishedAvailable = false
 		}
-		if err := os.Remove(file.OutputPath); err != nil && !errors.Is(err, os.ErrNotExist) {
-			return err
+		if file.PublishedAvailable {
+			if err := os.Remove(file.OutputPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+				return err
+			}
+			file.PublishedAvailable = false
 		}
-		file.PublishedAvailable = false
 		for itemIndex, saved := range j.fileItems {
 			if saved.ID == file.ID {
-				saved.PublishedAvailable = false
+				saved.PublishedAvailable = file.PublishedAvailable
+				if saved.Subtitle != nil && file.Subtitle != nil {
+					saved.Subtitle.PublishedAvailable = file.Subtitle.PublishedAvailable
+				}
 				j.fileItems[itemIndex] = saved
 				break
 			}
@@ -296,10 +323,16 @@ func removeManagedCopies(j *jobState) error {
 	for index := range j.Files {
 		j.Files[index].ManagedAvailable = false
 		j.Files[index].ThumbnailLocalAvailable = false
+		if j.Files[index].Subtitle != nil {
+			j.Files[index].Subtitle.ManagedAvailable = false
+		}
 	}
 	for itemIndex, saved := range j.fileItems {
 		saved.ManagedAvailable = false
 		saved.ThumbnailLocalAvailable = false
+		if saved.Subtitle != nil {
+			saved.Subtitle.ManagedAvailable = false
+		}
 		j.fileItems[itemIndex] = saved
 	}
 	return nil

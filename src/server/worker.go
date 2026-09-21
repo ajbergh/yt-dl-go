@@ -395,6 +395,9 @@ func (s *server) run(ctx context.Context, j *jobState) {
 	var used int64
 	for _, file := range j.Files {
 		used += file.Size
+		if file.Subtitle != nil {
+			used += file.Subtitle.Size
+		}
 	}
 	s.mu.Unlock()
 	tracker := newJobBudget(s.cfg.maxBytes, used)
@@ -525,35 +528,53 @@ func (b *jobBudget) release(amount, completed int64) error {
 	return nil
 }
 
+func (b *jobBudget) reserveOptional(maximum int64) int64 {
+	if maximum <= 0 {
+		return 0
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	available := b.limit - b.used - b.reserved
+	if available <= 0 {
+		return 0
+	}
+	amount := min(maximum, available)
+	b.reserved += amount
+	return amount
+}
+
 func estimatedItemBudget(j *jobState, video *youtube.Video, format *youtube.Format, selection streamSelection) int64 {
+	var estimated int64
 	if j.MediaType == "audio" {
 		if format == nil || format.ContentLength <= 0 {
 			return 0
 		}
 		if j.AudioFormat == "m4a" {
-			return format.ContentLength
+			estimated = format.ContentLength
+		} else {
+			if video == nil || video.Duration <= 0 {
+				return 0
+			}
+			bitrate, _ := strconv.Atoi(strings.TrimSuffix(j.AudioBitrate, "k"))
+			if bitrate <= 0 {
+				bitrate = 192
+			}
+			encoded := int64(float64(bitrate*1000) * video.Duration.Seconds() / 8)
+			margin := max(int64(64*1024), encoded/20)
+			estimated = format.ContentLength + encoded + margin
 		}
-		if video == nil || video.Duration <= 0 {
-			return 0
-		}
-		bitrate, _ := strconv.Atoi(strings.TrimSuffix(j.AudioBitrate, "k"))
-		if bitrate <= 0 {
-			bitrate = 192
-		}
-		encoded := int64(float64(bitrate*1000) * video.Duration.Seconds() / 8)
-		margin := max(int64(64*1024), encoded/20)
-		return format.ContentLength + encoded + margin
-	}
-	if selection.audio != nil {
+	} else if selection.audio != nil {
 		if selection.video.ContentLength <= 0 || selection.progressive == nil || selection.progressive.ContentLength <= 0 {
 			return 0
 		}
-		return selection.video.ContentLength + selection.progressive.ContentLength
+		estimated = selection.video.ContentLength + selection.progressive.ContentLength
+	} else {
+		if format == nil || format.ContentLength <= 0 {
+			return 0
+		}
+		estimated = format.ContentLength
 	}
-	if format == nil || format.ContentLength <= 0 {
-		return 0
-	}
-	return format.ContentLength
+	return estimated
 }
 
 func (s *server) acquireItemSlot(ctx context.Context, j *jobState, index int, title string) bool {
@@ -943,6 +964,36 @@ func (s *server) processItem(ctx context.Context, j *jobState, entry *youtube.Pl
 			_ = os.Remove(file.OutputPath)
 		}
 		return err
+	}
+	if j.SubtitleLanguage != "" {
+		captionBudget := tracker.reserveOptional(maxCaptionBytes)
+		if captionBudget == 0 {
+			file.SubtitleError = "Caption sidecar was skipped because the job storage limit is exhausted"
+		} else {
+			subtitleSize := s.captureSubtitle(ctx, j, &file, video, captionBudget)
+			if file.Subtitle != nil && file.Subtitle.ManagedAvailable && j.StorageMode != "managed-only" {
+				if err := publishSubtitleOutput(j, &file); err != nil {
+					file.SubtitleError = "Caption sidecar was saved in the Library but could not be published next to the media file"
+				}
+			}
+			if file.Subtitle != nil && file.Subtitle.ManagedAvailable && j.StorageMode == "published-only" {
+				if err := os.Remove(filepath.Join(j.dir, file.Subtitle.Name)); err != nil && !errors.Is(err, os.ErrNotExist) {
+					file.SubtitleError = "Published caption sidecar exists, but its temporary managed copy could not be removed"
+				} else {
+					file.Subtitle.ManagedAvailable = false
+				}
+			}
+			if releaseErr := tracker.release(captionBudget, subtitleSize); releaseErr != nil {
+				if file.Subtitle != nil && file.Subtitle.ManagedAvailable {
+					_ = os.Remove(filepath.Join(j.dir, file.Subtitle.Name))
+				}
+				if file.Subtitle != nil && file.Subtitle.PublishedAvailable {
+					_ = os.Remove(file.Subtitle.OutputPath)
+				}
+				file.Subtitle = nil
+				file.SubtitleError = "Caption sidecar was skipped because the job storage limit was exceeded"
+			}
+		}
 	}
 	s.mu.Lock()
 	j.fileItems[current] = file

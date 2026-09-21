@@ -24,7 +24,7 @@ npm run typecheck
 npm run build
 ~~~
 
-The UI tests are written for Bun and can be run with `bun test src/downloader.test.mjs src/ui.test.mjs`. `npm run lint` checks the whole repository, including the separate mock project under `dev_mock_new_ui`; lint currently reports unused imports and conditional-hook errors in that mock.
+The UI tests are written for Bun and can be run with `bun test src/downloader.test.mjs src/ui.test.mjs`. CI also runs `npm run e2e:browser`, which requires Chrome/Chromium and Go, builds the service with the test-only `e2e` build tag, and exercises the real browser/service/SQLite workflow. The fixture build is never used by the production executable. `npm run lint` checks the whole repository, including the separate mock project under `dev_mock_new_ui`; lint currently reports unused imports and conditional-hook errors in that mock.
 
 `npm run build` emits the static SPA to root `dist` and empties that directory first. The Go program embeds assets from `src/server/dist`, so copy the build there before compiling the executable. Do not put `DATA_DIR` under root `dist`; a build removes its contents.
 
@@ -37,13 +37,13 @@ Vite empties root `dist` on each build. If that directory also contains `youtube
 
 ## UI/service contract
 
-The frontend uses the fixed `http://127.0.0.1:8080` origin when running on Vite's configured development port `5173`, and the current page origin in the packaged executable. It checks the service at startup, loads jobs and preferences, retries failed startup checks every 2.5 seconds, then refreshes the job list approximately every 1.8 seconds. The UI has no endpoint or API-token prompt. With `API_TOKEN` set, its protected requests fail authentication; unset it for the bundled UI. It calls:
+The frontend uses the fixed `http://127.0.0.1:8080` origin when running on Vite's configured development port `5173`, and the current page origin in the packaged executable. It checks the service at startup, loads jobs and preferences, retries failed startup checks every 2.5 seconds, then consumes authenticated Server-Sent Events for live job/settings updates with a 30-second full-job reconciliation as a safety net. The UI has no endpoint or API-token prompt. With `API_TOKEN` set, its protected requests fail authentication; unset it for the bundled UI. It calls:
 
 - `GET /api/health` to confirm a native Go service is ready.
 - `POST /api/inspect` to retrieve metadata and supported qualities before queuing.
 - `GET /api/settings` and `PUT /api/settings` to load and save the default quality in SQLite.
 - `POST /api/jobs` to create a video or playlist job.
-- `GET /api/jobs` to load and poll job state; `GET /api/jobs/{id}` is part of the API contract but is not needed by the current page.
+- `GET /api/jobs` to load and periodically reconcile job state; `GET /api/events` supplies the normal live job/settings stream. `GET /api/jobs/{id}` remains part of the API contract but is not needed by the current UI.
 - `POST /api/jobs/{id}/pause`, `/resume`, `/cancel`, and `/retry`, plus `DELETE /api/jobs/{id}`, for job management.
 - `POST /api/jobs/{id}/ticket` to obtain a five-minute link for a ZIP or individual file.
 - `GET /api/downloads/{ticket}` to stream the ticketed file or ZIP. Ticket URLs are capabilities and do not contain the API bearer token.
@@ -54,9 +54,15 @@ The quality choices are maximum heights. A completed file reports its actual `he
 
 | Location | Responsibility |
 | --- | --- |
-| `pages/home.tsx` | Downloader workflow and visible job state |
-| `lib/downloader.ts` | YouTube URL parsing, API types/client, and formatting helpers |
-| `components/` | Reusable interface components and states |
+| `pages/home.tsx` | Top-level orchestration, derived queue/library state, inspection submission, navigation, and page composition |
+| `pages/queue.tsx` | Add/inspect workflow, batch controls, queue filters, queue cards, and drag/drop presentation |
+| `pages/library.tsx` | Library filtering/layout, file cards, preview/save/filesystem controls, and scoped-delete presentation |
+| `pages/settings.tsx` | Service status plus preference/output configuration UI |
+| `hooks/use-service.ts` | Backend bootstrap, SQLite hydration, SSE updates, reconciliation, readiness/errors, and terminal notifications |
+| `hooks/use-jobs.ts` | Job mutations, retries, tickets, filesystem actions, queue/playlist ordering, batch actions, and cleared-queue persistence |
+| `hooks/use-settings.ts` | Settings save/mutation behavior, folder selection, notification permission, and category management |
+| `components/downloader/view-model.tsx` | Downloader view types, labels, formatting/selection helpers, thumbnail loading, and sortable queue-row UI |
+| `lib/downloader.ts` | YouTube URL parsing, API types/client, service-event streaming, and formatting helpers |
 | `downloader.test.mjs`, `ui.test.mjs` | Bun tests for URL/API helpers and the React page/API integration |
 | `index.css` | Theme and Tailwind styles |
 

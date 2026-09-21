@@ -129,6 +129,14 @@ func (s *server) download(w http.ResponseWriter, r *http.Request) {
 			fail(w, 409, "Finalized output has changed")
 			return
 		}
+		if entry.Subtitle != nil && entry.Subtitle.ManagedAvailable {
+			sidecar, sidecarErr := openSubtitleManaged(j.dir, *entry.Subtitle)
+			if sidecarErr != nil {
+				fail(w, 409, "Caption sidecar is no longer available")
+				return
+			}
+			_ = sidecar.Close()
+		}
 	}
 	_ = http.NewResponseController(w).SetWriteDeadline(time.Now().Add(s.cfg.timeout))
 	if t.fileID != "" {
@@ -176,6 +184,20 @@ func (s *server) download(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			// Never send a valid-looking, silently incomplete ZIP after a stream error.
 			panic(http.ErrAbortHandler)
+		}
+		if entry.Subtitle != nil && entry.Subtitle.ManagedAvailable {
+			sidecar, sidecarErr := openSubtitleManaged(j.dir, *entry.Subtitle)
+			if sidecarErr != nil {
+				panic(http.ErrAbortHandler)
+			}
+			sidecarOut, sidecarErr := archive.CreateHeader(&zip.FileHeader{Name: entry.Subtitle.Name, Method: zip.Deflate})
+			if sidecarErr == nil {
+				_, sidecarErr = io.Copy(sidecarOut, sidecar)
+			}
+			_ = sidecar.Close()
+			if sidecarErr != nil {
+				panic(http.ErrAbortHandler)
+			}
 		}
 	}
 	if archive.Close() != nil {

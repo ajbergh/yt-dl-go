@@ -44,7 +44,11 @@ func fixtureVideo(id string) *youtube.Video {
 	return &youtube.Video{
 		ID: id, Title: "Fixture video", Author: "Fixture channel", Duration: 5 * time.Minute,
 		Thumbnails: youtube.Thumbnails{{URL: "https://i.ytimg.com/vi/fixture/hqdefault.jpg"}},
-		Formats:    youtube.FormatList{{ItagNo: 18, MimeType: `video/mp4; codecs="avc1.42001E, mp4a.40.2"`, Height: 360, Width: 640, FPS: 30, AudioChannels: 2, ContentLength: int64(len(fixtureData))}},
+		CaptionTracks: []youtube.CaptionTrack{
+			captionTrack("en", "English", "", "https://www.youtube.com/api/timedtext?v=fixture&lang=en"),
+			captionTrack("es", "Spanish (auto-generated)", "asr", "https://www.youtube.com/api/timedtext?v=fixture&lang=es"),
+		},
+		Formats: youtube.FormatList{{ItagNo: 18, MimeType: `video/mp4; codecs="avc1.42001E, mp4a.40.2"`, Height: 360, Width: 640, FPS: 30, AudioChannels: 2, ContentLength: int64(len(fixtureData))}},
 	}
 }
 
@@ -200,6 +204,28 @@ func assertFinalFiles(t *testing.T, s *server, j Job) {
 	}
 }
 
+func TestLoadConfigAllowsCurrentLoopbackOrigin(t *testing.T) {
+	t.Setenv("ADDR", "127.0.0.1:49152")
+	t.Setenv("ALLOWED_ORIGINS", "http://localhost:5173")
+	t.Setenv("ALLOWED_HOSTS", "")
+	c, err := loadConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, origin := range []string{
+		"http://127.0.0.1:49152",
+		"http://localhost:49152",
+		"http://[::1]:49152",
+	} {
+		if !c.origins[origin] {
+			t.Fatalf("current loopback origin %q was not automatically allowed", origin)
+		}
+	}
+	if !c.hosts["127.0.0.1:49152"] {
+		t.Fatal("current loopback host was not automatically allowed")
+	}
+}
+
 func TestCanonicalURL(t *testing.T) {
 	for _, raw := range []string{testVideo, "https://youtu.be/dQw4w9WgXcQ?si=ignored", "https://m.youtube.com/shorts/dQw4w9WgXcQ", "https://youtube.com/live/dQw4w9WgXcQ"} {
 		got, kind, err := canonicalURL(raw)
@@ -246,7 +272,7 @@ func TestAPIContractAndSecurity(t *testing.T) {
 		Engine       string          `json:"engine"`
 		Capabilities map[string]bool `json:"capabilities"`
 	}
-	if json.Unmarshal(w.Body.Bytes(), &health) != nil || !health.Ready || health.Engine != "native-go" || string(health.Missing) != "[]" || len(health.Capabilities) != 5 || health.Capabilities["combinedStreamsOnly"] || !health.Capabilities["adaptiveStreamsSupported"] || health.Capabilities["externalBinariesRequired"] || !health.Capabilities["mp3AudioSupported"] || !health.Capabilities["pureGoAudioConversion"] {
+	if json.Unmarshal(w.Body.Bytes(), &health) != nil || !health.Ready || health.Engine != "native-go" || string(health.Missing) != "[]" || len(health.Capabilities) != 6 || health.Capabilities["combinedStreamsOnly"] || !health.Capabilities["adaptiveStreamsSupported"] || health.Capabilities["externalBinariesRequired"] || !health.Capabilities["mp3AudioSupported"] || !health.Capabilities["pureGoAudioConversion"] || !health.Capabilities["captionsSupported"] {
 		t.Fatalf("native health contract: %s", w.Body.String())
 	}
 	if body := request(s, "GET", "/api/jobs", "", nil).Body.String(); strings.TrimSpace(body) != `{"jobs":[]}` {
@@ -310,6 +336,74 @@ func TestAPIContractAndSecurity(t *testing.T) {
 	}
 }
 
+func TestSubtitleSidecarDownloadAndPublishing(t *testing.T) {
+	fake := fixtureClient(1)
+	s := testServer(t, fake, nil)
+	s.captionFetcher = func(_ context.Context, track youtube.CaptionTrack, format string) ([]byte, error) {
+		if track.LanguageCode != "en" || format != "srt" {
+			return nil, errors.New("unexpected caption request")
+		}
+		return []byte("1\n00:00:00,000 --> 00:00:01,000\nFixture caption\n\n"), nil
+	}
+
+	body, _ := json.Marshal(map[string]any{
+		"url": testVideo, "quality": "best", "rightsConfirmed": true,
+		"subtitleLanguage": "en", "subtitleFormat": "srt",
+	})
+	created := request(s, "POST", "/api/jobs", string(body), nil)
+	if created.Code != 202 {
+		t.Fatalf("create subtitle job: %d %s", created.Code, created.Body.String())
+	}
+	var queued Job
+	if err := json.Unmarshal(created.Body.Bytes(), &queued); err != nil {
+		t.Fatal(err)
+	}
+	completed := waitTerminal(t, s, queued.ID)
+	if completed.Status != "completed" || len(completed.Files) != 1 {
+		t.Fatalf("subtitle job did not complete: %+v", completed)
+	}
+	file := completed.Files[0]
+	if file.Subtitle == nil || file.Subtitle.LanguageCode != "en" || file.Subtitle.Format != "srt" || !file.Subtitle.ManagedAvailable || !file.Subtitle.PublishedAvailable || file.SubtitleError != "" {
+		t.Fatalf("caption sidecar metadata missing: %+v", file)
+	}
+	managed, err := os.ReadFile(filepath.Join(s.cfg.root, completed.ID, file.Subtitle.Name))
+	if err != nil || !strings.Contains(string(managed), "Fixture caption") {
+		t.Fatalf("managed caption sidecar missing: %v %q", err, string(managed))
+	}
+	publishedPath := filepath.Join(s.settings.DownloadLocation, filepath.FromSlash(file.Subtitle.OutputRelativePath))
+	published, err := os.ReadFile(publishedPath)
+	if err != nil || string(published) != string(managed) {
+		t.Fatalf("published caption sidecar missing: %v", err)
+	}
+
+	archiveTicket := request(s, "POST", "/api/jobs/"+completed.ID+"/ticket", `{}`, nil)
+	var ticket map[string]string
+	if archiveTicket.Code != 200 || json.Unmarshal(archiveTicket.Body.Bytes(), &ticket) != nil {
+		t.Fatalf("archive ticket: %d %s", archiveTicket.Code, archiveTicket.Body.String())
+	}
+	archiveResponse := request(s, "GET", ticket["path"], "", nil)
+	if archiveResponse.Code != 200 {
+		t.Fatalf("archive download: %d %s", archiveResponse.Code, archiveResponse.Body.String())
+	}
+	zr, err := zip.NewReader(bytes.NewReader(archiveResponse.Body.Bytes()), int64(archiveResponse.Body.Len()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	foundSidecar := false
+	for _, entry := range zr.File {
+		if entry.Name == file.Subtitle.Name {
+			foundSidecar = true
+		}
+	}
+	if !foundSidecar {
+		t.Fatal("archive omitted managed caption sidecar")
+	}
+
+	if w := request(s, "POST", "/api/jobs", `{"url":"`+testVideo+`","quality":"best","rightsConfirmed":true,"subtitleLanguage":"../en","subtitleFormat":"vtt"}`, nil); w.Code != 400 {
+		t.Fatalf("unsafe subtitle language accepted: %d %s", w.Code, w.Body.String())
+	}
+}
+
 func TestInspectionPreferencesRetryAndRemoval(t *testing.T) {
 	fake := fixtureClient(3)
 	s := testServer(t, fake, nil)
@@ -319,8 +413,8 @@ func TestInspectionPreferencesRetryAndRemoval(t *testing.T) {
 	if inspectionResponse.Code != 200 || json.Unmarshal(inspectionResponse.Body.Bytes(), &inspected) != nil {
 		t.Fatalf("inspect video: %d %s", inspectionResponse.Code, inspectionResponse.Body.String())
 	}
-	if inspected.Title != "Fixture video" || inspected.Author != "Fixture channel" || inspected.DurationSeconds != 300 || inspected.ThumbnailURL == "" || len(inspected.AvailableQuality) == 0 {
-		t.Fatalf("inspection omitted native metadata or supported quality: %+v", inspected)
+	if inspected.Title != "Fixture video" || inspected.Author != "Fixture channel" || inspected.DurationSeconds != 300 || inspected.ThumbnailURL == "" || len(inspected.AvailableQuality) == 0 || len(inspected.CaptionTracks) != 2 {
+		t.Fatalf("inspection omitted native metadata, captions, or supported quality: %+v", inspected)
 	}
 	playlistResponse := request(s, "POST", "/api/inspect", `{"url":"`+testPlaylist+`"}`, nil)
 	var playlistInspection inspection
@@ -768,6 +862,73 @@ func TestTrackedFilesystemActions(t *testing.T) {
 	}
 	if request(s, "POST", "/api/jobs/"+j.ID+"/filesystem", `{"fileId":"`+file.ID+`","action":"reveal"}`, nil).Code != 409 {
 		t.Fatal("filesystem action accepted removed published media")
+	}
+}
+
+type activePauseTestStream struct {
+	ctx       context.Context
+	remaining int
+	started   chan<- struct{}
+}
+
+func (r *activePauseTestStream) Read(p []byte) (int, error) {
+	if r.remaining <= 0 {
+		return 0, io.EOF
+	}
+	select {
+	case r.started <- struct{}{}:
+	default:
+	}
+	select {
+	case <-r.ctx.Done():
+		return 0, r.ctx.Err()
+	case <-time.After(12 * time.Millisecond):
+	}
+	n := min(len(p), 8192, r.remaining)
+	copy(p[:n], bytes.Repeat([]byte{0x2a}, n))
+	r.remaining -= n
+	return n, nil
+}
+
+func (r *activePauseTestStream) Close() error { return nil }
+
+func TestPauseDuringActiveStreamRead(t *testing.T) {
+	const size = 2 << 20
+	fake := fixtureClient(1)
+	started := make(chan struct{}, 1)
+	var streamCalls atomic.Int32
+	fake.videoFn = func(_ context.Context, id string) (*youtube.Video, error) {
+		video := fixtureVideo(id)
+		video.Formats[0].ContentLength = size
+		return video, nil
+	}
+	fake.streamFn = func(ctx context.Context, _ *youtube.Video, _ *youtube.Format) (io.ReadCloser, int64, error) {
+		if streamCalls.Add(1) == 1 {
+			return &activePauseTestStream{ctx: ctx, remaining: size, started: started}, size, nil
+		}
+		return io.NopCloser(bytes.NewReader(bytes.Repeat([]byte{0x2a}, size))), size, nil
+	}
+
+	s := testServer(t, fake, func(c *config) { c.maxBytes = 4 << 20 })
+	job := createJob(t, s, testVideo)
+	select {
+	case <-started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("active stream did not begin reading")
+	}
+	if response := request(s, "POST", "/api/jobs/"+job.ID+"/pause", "", nil); response.Code != 200 {
+		t.Fatalf("pause active stream: %d %s", response.Code, response.Body.String())
+	}
+	paused := waitJob(t, s, job.ID, func(value Job) bool { return value.Status == "paused" })
+	if len(paused.Failures) != 0 {
+		t.Fatalf("active-stream pause was recorded as failure: %+v", paused.Failures)
+	}
+	if response := request(s, "POST", "/api/jobs/"+job.ID+"/resume", "", nil); response.Code != 200 {
+		t.Fatalf("resume active stream: %d %s", response.Code, response.Body.String())
+	}
+	completed := waitTerminal(t, s, job.ID)
+	if completed.Status != "completed" || streamCalls.Load() < 2 {
+		t.Fatalf("active-stream resume did not complete: status=%s calls=%d", completed.Status, streamCalls.Load())
 	}
 }
 
