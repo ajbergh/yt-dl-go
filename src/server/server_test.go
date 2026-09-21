@@ -311,6 +311,9 @@ func TestInspectionPreferencesRetryAndRemoval(t *testing.T) {
 	if request(s, "PUT", "/api/settings", `{"defaultQuality":"2160"}`, nil).Code != 400 {
 		t.Fatal("unsupported quality preference was accepted")
 	}
+	if request(s, "PUT", "/api/settings", `{"storageMode":"unknown"}`, nil).Code != 400 {
+		t.Fatal("unsupported storage mode was accepted")
+	}
 
 	fake.videoFn = func(context.Context, string) (*youtube.Video, error) { return nil, errors.New("fixture failure") }
 	failed := waitTerminal(t, s, createJob(t, s, testVideo).ID)
@@ -411,6 +414,52 @@ func TestScopedMediaDeletion(t *testing.T) {
 		t.Fatalf("delete everywhere retained published media: %v", err)
 	}
 	_ = os.Remove(managedPath)
+}
+
+func TestStoragePolicies(t *testing.T) {
+	for _, tt := range []struct {
+		mode                 string
+		managed, published   bool
+	}{
+		{mode: "managed-published", managed: true, published: true},
+		{mode: "published-only", managed: false, published: true},
+		{mode: "managed-only", managed: true, published: false},
+	} {
+		t.Run(tt.mode, func(t *testing.T) {
+			s := testServer(t, fixtureClient(1), nil)
+			settings := request(s, "PUT", "/api/settings", `{"storageMode":"`+tt.mode+`"}`, nil)
+			if settings.Code != 200 {
+				t.Fatalf("set storage mode: %d %s", settings.Code, settings.Body.String())
+			}
+			j := waitTerminal(t, s, createJob(t, s, testVideo).ID)
+			if j.StorageMode != tt.mode || len(j.Files) != 1 {
+				t.Fatalf("storage policy not captured: %+v", j)
+			}
+			file := j.Files[0]
+			if file.ManagedAvailable != tt.managed || file.PublishedAvailable != tt.published {
+				t.Fatalf("availability for %s = managed:%t published:%t", tt.mode, file.ManagedAvailable, file.PublishedAvailable)
+			}
+			managedPath := filepath.Join(s.cfg.root, j.ID, file.Name)
+			_, managedErr := os.Stat(managedPath)
+			if tt.managed && managedErr != nil {
+				t.Fatalf("managed copy missing for %s: %v", tt.mode, managedErr)
+			}
+			if !tt.managed && !errors.Is(managedErr, os.ErrNotExist) {
+				t.Fatalf("managed copy unexpectedly retained for %s: %v", tt.mode, managedErr)
+			}
+			if tt.published {
+				if file.OutputPath == "" {
+					t.Fatalf("published output path missing for %s", tt.mode)
+				}
+				if _, err := os.Stat(file.OutputPath); err != nil {
+					t.Fatalf("published copy missing for %s: %v", tt.mode, err)
+				}
+				_ = os.Remove(file.OutputPath)
+			} else if file.OutputPath != "" {
+				t.Fatalf("managed-only job unexpectedly published to %q", file.OutputPath)
+			}
+		})
+	}
 }
 
 func TestPauseAndResumeJob(t *testing.T) {
