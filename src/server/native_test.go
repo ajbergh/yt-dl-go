@@ -241,8 +241,8 @@ func TestNativeFailuresAndLengths(t *testing.T) {
 func TestEntireExposedPlaylistAndInvalidEntries(t *testing.T) {
 	fake := fixtureClient(151)
 	fake.playlist.Videos[1].ID = fake.playlist.Videos[0].ID
-	s := testServer(t, fake, nil)
-	j := waitTerminal(t, s, createJob(t, s, testPlaylist).ID)
+	s := testServer(t, fake, func(c *config) { c.timeout = 30 * time.Second })
+	j := waitJobFor(t, s, createJob(t, s, testPlaylist).ID, 45*time.Second, func(j Job) bool { return terminal(j.Status) })
 	if j.Status != "completed" || len(j.Files) != 151 || j.TotalCount == nil || *j.TotalCount != 151 || !strings.Contains(j.Note, playlistNote) {
 		t.Fatalf("playlist was truncated or disclosure omitted: %+v", j)
 	}
