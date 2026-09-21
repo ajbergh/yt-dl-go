@@ -2,27 +2,31 @@ package main
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 )
 
 func TestRuntimeBackgroundOptions(t *testing.T) {
 	tests := []struct {
-		name      string
-		args      []string
-		env       string
-		noBrowser bool
-		wantErr   bool
+		name        string
+		args        []string
+		env         string
+		wantNoUI    bool
+		wantHelp    bool
+		wantErr     bool
 	}{
 		{name: "default opens browser"},
-		{name: "legacy env", env: "1", noBrowser: true},
-		{name: "no-browser flag", args: []string{"--no-browser"}, noBrowser: true},
-		{name: "background alias", args: []string{"--background"}, noBrowser: true},
-		{name: "flag overrides empty env", args: []string{"--background"}, env: "0", noBrowser: true},
+		{name: "legacy env", env: "1", wantNoUI: true},
+		{name: "no-browser flag", args: []string{"--no-browser"}, wantNoUI: true},
+		{name: "background alias", args: []string{"--background"}, wantNoUI: true},
+		{name: "flag wins with nonlegacy env value", args: []string{"--background"}, env: "0", wantNoUI: true},
+		{name: "help short", args: []string{"-h"}, wantHelp: true},
+		{name: "help long", args: []string{"--help"}, wantHelp: true},
 		{name: "unknown argument rejected", args: []string{"--tray"}, wantErr: true},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			options, err := parseRuntimeOptions(test.args, test.env)
+			options, err := parseRuntimeOptions(test.args)
 			if test.wantErr {
 				if err == nil {
 					t.Fatal("expected unsupported argument error")
@@ -32,10 +36,17 @@ func TestRuntimeBackgroundOptions(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if options.noBrowser != test.noBrowser {
-				t.Fatalf("noBrowser = %v; want %v", options.noBrowser, test.noBrowser)
+			if options.help != test.wantHelp {
+				t.Fatalf("help = %v; want %v", options.help, test.wantHelp)
+			}
+			gotNoUI := !automaticBrowserEnabled(options, test.env)
+			if gotNoUI != test.wantNoUI {
+				t.Fatalf("no-browser behavior = %v; want %v", gotNoUI, test.wantNoUI)
 			}
 		})
+	}
+	if usage := runtimeUsage(); !strings.Contains(usage, "--background") || !strings.Contains(usage, "--no-browser") {
+		t.Fatalf("runtime usage does not document supported flags: %q", usage)
 	}
 }
 
