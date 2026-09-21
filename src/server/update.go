@@ -79,15 +79,11 @@ func checkLatestRelease(ctx context.Context, client *http.Client, endpoint strin
 		io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
 		return status, fmt.Errorf("check latest release: GitHub returned HTTP %d", resp.StatusCode)
 	}
-	var release githubRelease
-	decoder := json.NewDecoder(io.LimitReader(resp.Body, 64<<10))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&release); err != nil {
-		// GitHub's release schema contains many fields, so retry with the bounded
-		// body and ordinary decoding while still retaining strict post-validation.
-		return decodeGitHubReleaseResponse(status, resp, nil)
+	body, err := io.ReadAll(io.LimitReader(resp.Body, (64<<10)+1))
+	if err != nil {
+		return status, errors.New("latest release response could not be read")
 	}
-	return finalizeUpdateStatus(status, release)
+	return decodeGitHubReleaseBody(status, body)
 }
 
 func decodeGitHubReleaseBody(status updateStatus, body []byte) (updateStatus, error) {
@@ -99,15 +95,6 @@ func decodeGitHubReleaseBody(status updateStatus, body []byte) (updateStatus, er
 		return status, errors.New("latest release response is invalid JSON")
 	}
 	return finalizeUpdateStatus(status, release)
-}
-
-func decodeGitHubReleaseResponse(status updateStatus, _ *http.Response, body []byte) (updateStatus, error) {
-	// This helper exists for unit-level decoding. Network callers use the
-	// bounded read path below rather than trusting arbitrary response size.
-	if body == nil {
-		return status, errors.New("latest release response contained unsupported fields")
-	}
-	return decodeGitHubReleaseBody(status, body)
 }
 
 func finalizeUpdateStatus(status updateStatus, release githubRelease) (updateStatus, error) {
