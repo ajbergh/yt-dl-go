@@ -82,6 +82,7 @@ class CDP {
     this.nextId = 1;
     this.pending = new Map();
     this.waiters = new Map();
+    this.events = [];
   }
 
   async connect() {
@@ -107,6 +108,10 @@ class CDP {
         if (message.error) pending.reject(new Error(message.error.message));
         else pending.resolve(message.result);
         return;
+      }
+      if (["Runtime.exceptionThrown", "Runtime.consoleAPICalled", "Log.entryAdded", "Network.loadingFailed", "Network.responseReceived"].includes(message.method)) {
+        this.events.push({ method: message.method, params: message.params });
+        if (this.events.length > 100) this.events.shift();
       }
       const listeners = this.waiters.get(message.method);
       if (!listeners?.length) return;
@@ -307,6 +312,8 @@ async function main() {
     await cdp.connect();
     await cdp.send("Runtime.enable");
     await cdp.send("Page.enable");
+    await cdp.send("Log.enable");
+    await cdp.send("Network.enable");
     const navigation = await cdp.send("Page.navigate", { url: `${baseURL}/` });
     if (navigation.errorText) throw new Error(`Chrome navigation failed: ${navigation.errorText}`);
     await waitFor(cdp, `document.readyState === "complete"`, "browser document load");
@@ -394,6 +401,14 @@ async function main() {
           html: document.documentElement?.outerHTML?.slice(0, 3000) ?? ""
         })`, 5000);
         console.error("\n--- browser state ---\n" + JSON.stringify(browserState, null, 2));
+        const interestingEvents = cdp.events.filter(event => {
+          if (event.method === "Network.responseReceived") {
+            const response = event.params?.response;
+            return response && (response.status >= 400 || response.url?.includes("/assets/"));
+          }
+          return true;
+        });
+        console.error("\n--- browser DevTools events ---\n" + JSON.stringify(interestingEvents, null, 2));
       } catch (diagnosticError) {
         console.error("\n--- browser diagnostics failed ---\n" + diagnosticError);
       }
