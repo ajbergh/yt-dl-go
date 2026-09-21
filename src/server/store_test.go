@@ -17,6 +17,9 @@ func persistentTestConfig(root string) config {
 
 func TestPersistentHistoryAndQueueResume(t *testing.T) {
 	root := t.TempDir()
+	if err := os.Chmod(root, 0700); err != nil {
+		t.Fatal(err)
+	}
 	c := persistentTestConfig(root)
 	s, err := newServer(c)
 	if err != nil {
