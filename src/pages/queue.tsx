@@ -25,6 +25,7 @@ type QueuePageProps = {
   inspecting: boolean;
   inspectLinks: () => void | Promise<void>;
   formError: string;
+  setFormError: Dispatch<SetStateAction<string>>;
   mp3Supported: boolean;
   settings: AppSettings;
   applyMediaTypeToAll: (mediaType: Draft["mediaType"]) => void;
@@ -57,17 +58,18 @@ type QueuePageProps = {
   setSearch: Dispatch<SetStateAction<string>>;
   filteredQueue: QueueRow[];
   retryPlaylistItem: (job: DownloadJob, item: QueueItem) => void | Promise<void>;
+  saveFile: (job: DownloadJob, fileId?: string) => void | Promise<void>;
   jobAction: (job: DownloadJob, action: QueueJobAction) => void | Promise<void>;
 };
 
 export function QueuePage({
   url, setUrl, batchMode, setBatchMode, drafts, setDrafts, serviceReady, inspecting, inspectLinks,
-  formError, mp3Supported, settings, applyMediaTypeToAll, applyQualityToAll, applyAudioFormatToAll,
+  formError, setFormError, mp3Supported, settings, applyMediaTypeToAll, applyQualityToAll, applyAudioFormatToAll,
   applyAudioBitrateToAll, applyCategoryToAll, updatePlaylistSelection, togglePlaylistEntry,
   rightsConfirmed, setRightsConfirmed, submitting, addDownloads, visibleQueueRows, activeCount,
   totalCurrentSpeed, completedQueueCount, queuedCount, jobs, batchAction, clearCompleted,
   queuedJobsOrdered, reorderQueuedJobs, reorderPlaylistItems, busyAction, downloadNext, queueFilter,
-  setQueueFilter, search, setSearch, filteredQueue, retryPlaylistItem, jobAction,
+  setQueueFilter, search, setSearch, filteredQueue, retryPlaylistItem, saveFile, jobAction,
 }: QueuePageProps) {
   const queueSensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
