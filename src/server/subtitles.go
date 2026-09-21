@@ -309,15 +309,33 @@ func (s *server) captureSubtitle(ctx context.Context, j *jobState, file *mediaFi
 	return int64(len(data))
 }
 
+func openSubtitleManaged(dir string, subtitle subtitleFile) (*os.File, error) {
+	if err := validateSubtitleManagedName(subtitle.Name, subtitle.Format); err != nil {
+		return nil, err
+	}
+	path := filepath.Join(dir, subtitle.Name)
+	before, err := os.Lstat(path)
+	if err != nil || !before.Mode().IsRegular() || before.Size() != subtitle.Size || before.Size() <= 0 {
+		return nil, errors.New("caption sidecar unavailable")
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, errors.New("caption sidecar unavailable")
+	}
+	after, err := file.Stat()
+	if err != nil || !os.SameFile(before, after) {
+		_ = file.Close()
+		return nil, errors.New("caption sidecar changed")
+	}
+	return file, nil
+}
+
 func publishSubtitleOutput(j *jobState, file *mediaFile) error {
 	if file.Subtitle == nil || !file.Subtitle.ManagedAvailable || !file.PublishedAvailable {
 		return nil
 	}
 	subtitle := file.Subtitle
-	if err := validateSubtitleManagedName(subtitle.Name, subtitle.Format); err != nil {
-		return err
-	}
-	source, err := openFinal(j.dir, subtitle.Name)
+	source, err := openSubtitleManaged(j.dir, *subtitle)
 	if err != nil {
 		return err
 	}
