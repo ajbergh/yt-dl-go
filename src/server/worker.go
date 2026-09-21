@@ -801,14 +801,29 @@ func (s *server) processItem(ctx context.Context, j *jobState, entry *youtube.Pl
 	applyVideoMetadata(&file, video)
 	file.Category = j.Category
 	file.ManagedAvailable = true
-	if err := s.publishOutput(j, &file); err != nil {
-		_ = os.Remove(filepath.Join(j.dir, file.Name))
-		return errStorage
+	if j.StorageMode != "managed-only" {
+		if err := s.publishOutput(j, &file); err != nil {
+			_ = os.Remove(filepath.Join(j.dir, file.Name))
+			return errStorage
+		}
+	}
+	if j.StorageMode == "published-only" {
+		if err := os.Remove(filepath.Join(j.dir, file.Name)); err != nil && !errors.Is(err, os.ErrNotExist) {
+			if file.PublishedAvailable {
+				_ = os.Remove(file.OutputPath)
+			}
+			return errStorage
+		}
+		file.ManagedAvailable = false
 	}
 	leaseOpen = false
 	if err := tracker.release(budget, file.Size); err != nil {
-		_ = os.Remove(filepath.Join(j.dir, file.Name))
-		_ = os.Remove(file.OutputPath)
+		if file.ManagedAvailable {
+			_ = os.Remove(filepath.Join(j.dir, file.Name))
+		}
+		if file.PublishedAvailable {
+			_ = os.Remove(file.OutputPath)
+		}
 		return err
 	}
 	s.mu.Lock()
@@ -978,20 +993,30 @@ func (s *server) transferAudio(ctx context.Context, j *jobState, engine nativeCl
 }
 
 func (s *server) validCompletedFile(j *jobState, file mediaFile) bool {
-	f, err := openFinal(j.dir, file.Name)
-	if err != nil {
-		return false
+	available := false
+	if file.ManagedAvailable {
+		f, err := openFinal(j.dir, file.Name)
+		if err != nil {
+			return false
+		}
+		info, err := f.Stat()
+		_ = f.Close()
+		if err != nil || info.Size() != file.Size {
+			return false
+		}
+		available = true
 	}
-	info, err := f.Stat()
-	_ = f.Close()
-	if err != nil || info.Size() != file.Size {
-		return false
-	}
-	if file.OutputPath != "" {
+	if file.PublishedAvailable {
+		if err := validateOutputCopy(j, file); err != nil {
+			return false
+		}
 		output, statErr := os.Lstat(file.OutputPath)
-		return statErr == nil && output.Mode().IsRegular() && output.Size() == file.Size
+		if statErr != nil || !output.Mode().IsRegular() || output.Size() != file.Size {
+			return false
+		}
+		available = true
 	}
-	return true
+	return available
 }
 
 func (s *server) keepPartial(j *jobState) bool {
