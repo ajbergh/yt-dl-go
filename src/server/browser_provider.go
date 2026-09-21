@@ -190,7 +190,7 @@ func (p *chromeBrowserProvider) CaptureTrack(ctx context.Context, id string, for
 		}
 		return 0, errBrowserUnavailable
 	}
-	if err := p.forceH264Playback(); err != nil {
+	if err := p.configurePlaybackCodec(format); err != nil {
 		if os.Getenv("YTDL_TRACE_SABR") != "" {
 			log.Printf("browser codec setup failed: %v", err)
 		}
@@ -361,13 +361,37 @@ func (p *chromeBrowserProvider) normalizeHeadlessIdentity() error {
 	return p.uaErr
 }
 
-func (p *chromeBrowserProvider) forceH264Playback() error {
+func (p *chromeBrowserProvider) configurePlaybackCodec(format *youtube.Format) error {
+	if format == nil {
+		return errBrowserUnavailable
+	}
+	kind, codecs, ok := formatType(format)
+	if !ok {
+		return errBrowserUnavailable
+	}
+	family := codecFamily(codecs)
+	unsupported := ""
+	av1Preference := ""
+	switch {
+	case kind == "video/mp4" && family == "h264":
+		unsupported = "(?:av01|av1|vp09|vp9|vp8)"
+		av1Preference = "480"
+	case kind == "video/webm" && family == "vp9":
+		unsupported = "(?:av01|av1)"
+		av1Preference = "480"
+	case kind == "video/webm" && family == "av1":
+		unsupported = "(?:vp09|vp9|vp8)"
+	case kind == "audio/webm" && family == "opus":
+		unsupported = "(?:mp4a|audio\\/mp4)"
+	default:
+		return errBrowserUnavailable
+	}
 	execCtx, err := p.targetContext()
 	if err != nil {
 		return err
 	}
-	const script = `(() => {
-  const unsupported = /(?:av01|av1|vp09|vp9|vp8)/i;
+	script := `(() => {
+  const unsupported = new RegExp(${strconv.Quote(unsupported)}, 'i');
   if (window.MediaSource && typeof window.MediaSource.isTypeSupported === 'function') {
     const originalIsTypeSupported = window.MediaSource.isTypeSupported.bind(window.MediaSource);
     window.MediaSource.isTypeSupported = type => unsupported.test(type || '') ? false : originalIsTypeSupported(type);
@@ -378,7 +402,12 @@ func (p *chromeBrowserProvider) forceH264Playback() error {
       return unsupported.test(type || '') ? '' : originalCanPlayType.call(this, type);
     };
   }
-  try { localStorage.setItem('yt-player-av1-pref', '480'); } catch (_) {}
+  ` + func() string {
+		if av1Preference == "" {
+			return ""
+		}
+		return "try { localStorage.setItem('yt-player-av1-pref', " + strconv.Quote(av1Preference) + "); } catch (_) {}"
+	}() + `
 })()`
 	_, err = page.AddScriptToEvaluateOnNewDocument(script).WithRunImmediately(true).Do(execCtx)
 	return err
