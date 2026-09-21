@@ -112,6 +112,58 @@ func TestPersistentQueueOrderControlsSchedulerPriority(t *testing.T) {
 	}
 }
 
+func TestRetryItemIntentPersistsAcrossRestart(t *testing.T) {
+	root := t.TempDir()
+	if err := os.Chmod(root, 0700); err != nil {
+		t.Fatal(err)
+	}
+	c := persistentTestConfig(root)
+	s, err := newServer(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.engine = fixtureClient(2)
+	body := `{"url":"` + testPlaylist + `","quality":"best","rightsConfirmed":true,"items":[{"index":1,"id":"00000000001","title":"Item 1"},{"index":2,"id":"00000000002","title":"Item 2"}]}`
+	response := request(s, "POST", "/api/jobs", body, nil)
+	var created Job
+	if response.Code != 202 || json.Unmarshal(response.Body.Bytes(), &created) != nil {
+		t.Fatalf("create retry fixture: %d %s", response.Code, response.Body.String())
+	}
+
+	s.mu.Lock()
+	job := s.jobs[created.ID]
+	job.Status = "partial"
+	job.Items[0].Status = "completed"
+	job.Items[1].Status = "failed"
+	job.Items[1].Error = errMetadata.Error()
+	job.Failures = []itemFailure{{Index: 2, Error: errMetadata.Error()}}
+	if err := s.store.saveJob(job); err != nil {
+		s.mu.Unlock()
+		t.Fatal(err)
+	}
+	s.mu.Unlock()
+
+	retry := request(s, "POST", "/api/jobs/"+created.ID+"/retry-item", `{"index":2}`, nil)
+	var queued Job
+	if retry.Code != 202 || json.Unmarshal(retry.Body.Bytes(), &queued) != nil {
+		t.Fatalf("queue item retry: %d %s", retry.Code, retry.Body.String())
+	}
+	if !queued.Items[1].RetryRequested {
+		t.Fatalf("retry intent missing before restart: %+v", queued.Items)
+	}
+	s.stop()
+
+	reloaded, err := newServer(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reloaded.stop()
+	stored := reloaded.jobs[created.ID]
+	if stored == nil || stored.Status != "queued" || len(stored.Items) != 2 || !stored.Items[1].RetryRequested || stored.Items[0].RetryRequested {
+		t.Fatalf("single-item retry intent did not persist: %+v", stored)
+	}
+}
+
 func TestPersistentHistoryAndQueueResume(t *testing.T) {
 	root := t.TempDir()
 	if err := os.Chmod(root, 0700); err != nil {
