@@ -2,7 +2,7 @@
  * Production downloader screen. The bundled page connects to the Go API served
  * by the same executable, then uses that API for jobs and SQLite preferences.
  */
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   DndContext, KeyboardSensor, PointerSensor, closestCenter, useSensor, useSensors,
   type DragEndEvent,
@@ -67,6 +67,31 @@ function errorMessage(error: unknown): string {
   return error instanceof TypeError
     ? "Could not reach the built-in Go service. Retrying automatically."
     : error instanceof Error ? error.message : "Something went wrong. Please try again.";
+}
+
+function notificationAPI(): typeof Notification | null {
+  return typeof window !== "undefined" && "Notification" in window ? window.Notification : null;
+}
+
+function terminalNotification(job: DownloadJob): { title: string; body: string } | null {
+  const error = (job.error || "").trim();
+  if ((job.status === "failed" || job.status === "partial") && /storage|output|disk|filesystem/i.test(error)) {
+    return { title: "Download storage error", body: `${job.title}: ${error || "A storage/output error stopped the download."}`.slice(0, 240) };
+  }
+  if (job.status === "completed") {
+    return {
+      title: job.kind === "playlist" ? "Batch completed" : "Download completed",
+      body: `${job.title} finished successfully.`.slice(0, 240),
+    };
+  }
+  if (job.status === "partial") {
+    const count = job.totalCount == null ? `${job.completedCount} files completed` : `${job.completedCount} of ${job.totalCount} files completed`;
+    return { title: "Playlist partially completed", body: `${job.title}: ${count}. ${error}`.trim().slice(0, 240) };
+  }
+  if (job.status === "failed") {
+    return { title: "Download failed", body: `${job.title}: ${error || "The download could not be completed."}`.slice(0, 240) };
+  }
+  return null;
 }
 
 function durationLabel(seconds?: number): string {
@@ -228,11 +253,12 @@ export function HomePage() {
   const [serviceReady, setServiceReady] = useState(false);
   const [jobs, setJobs] = useState<DownloadJob[]>([]);
   const [settings, setSettings] = useState<AppSettings>({
-    defaultQuality: "best", maxConcurrentDownloads: 3, bandwidthLimitBytesPerSec: 0, downloadLocation: "",
+    defaultQuality: "best", maxConcurrentDownloads: 3, bandwidthLimitBytesPerSec: 0, notificationsEnabled: false, downloadLocation: "",
     namingPattern: "{channel} - {title} [{resolution}]", subfolderSorting: "channel",
     defaultCategory: "General", userCategories: ["Tech", "Science", "Coding", "Music", "Education", "Gaming", "Podcasts", "Archival", "General"],
     storageMode: "managed-published",
   });
+  const knownJobStatuses = useRef<Map<string, DownloadJob["status"]>>(new Map());
   const [newCategoryInput, setNewCategoryInput] = useState("");
   const [mp3Supported, setMp3Supported] = useState(false);
   const [serviceError, setServiceError] = useState("");
@@ -382,10 +408,12 @@ export function HomePage() {
         ]);
         if (controller.signal.aborted) return;
         setJobs(jobResult.jobs);
+        knownJobStatuses.current = new Map(jobResult.jobs.map(job => [job.id, job.status]));
         setSettings({
           ...settingResult.settings,
           maxConcurrentDownloads: settingResult.settings.maxConcurrentDownloads || 3,
           bandwidthLimitBytesPerSec: settingResult.settings.bandwidthLimitBytesPerSec ?? 0,
+          notificationsEnabled: settingResult.settings.notificationsEnabled ?? false,
           namingPattern: settingResult.settings.namingPattern || "{channel} - {title} [{resolution}]",
           subfolderSorting: settingResult.settings.subfolderSorting || "channel",
           defaultCategory: settingResult.settings.defaultCategory || "General",
@@ -417,16 +445,37 @@ export function HomePage() {
         ? previous.map(item => item.id === job.id ? job : item)
         : [job, ...previous]);
     };
+    const maybeNotifyTerminal = (job: DownloadJob) => {
+      const previousStatus = knownJobStatuses.current.get(job.id);
+      const changed = previousStatus !== undefined && previousStatus !== job.status;
+      knownJobStatuses.current.set(job.id, job.status);
+      if (!changed || !settings.notificationsEnabled) return;
+      const notification = terminalNotification(job);
+      const NotificationAPI = notificationAPI();
+      if (!notification || !NotificationAPI || NotificationAPI.permission !== "granted") return;
+      try {
+        new NotificationAPI(notification.title, {
+          body: notification.body,
+          tag: `yt-dl-go:${job.id}:${job.status}`,
+        });
+      } catch {
+        // Notification support is optional; job state remains authoritative.
+      }
+    };
     const applyLiveEvent = (event: ServiceEvent) => {
       if (controller.signal.aborted) return;
       if (event.type === "snapshot") {
-        if (event.jobs) setJobs(event.jobs);
+        if (event.jobs) {
+          for (const job of event.jobs) maybeNotifyTerminal(job);
+          setJobs(event.jobs);
+        }
         if (event.settings) {
           setSettings(previous => ({
             ...previous,
             ...event.settings,
             maxConcurrentDownloads: event.settings?.maxConcurrentDownloads || 3,
             bandwidthLimitBytesPerSec: event.settings?.bandwidthLimitBytesPerSec ?? 0,
+            notificationsEnabled: event.settings?.notificationsEnabled ?? false,
             namingPattern: event.settings?.namingPattern || "{channel} - {title} [{resolution}]",
             subfolderSorting: event.settings?.subfolderSorting || "channel",
             defaultCategory: event.settings?.defaultCategory || "General",
@@ -435,14 +484,17 @@ export function HomePage() {
           }));
         }
       } else if (event.type === "job-deleted" && event.jobId) {
+        knownJobStatuses.current.delete(event.jobId);
         setJobs(previous => previous.filter(job => job.id !== event.jobId));
       } else if (event.type === "settings-changed" && event.settings) {
         setSettings(previous => ({
           ...previous,
           ...event.settings,
           bandwidthLimitBytesPerSec: event.settings?.bandwidthLimitBytesPerSec ?? 0,
+          notificationsEnabled: event.settings?.notificationsEnabled ?? false,
         }));
       } else if (event.job) {
+        maybeNotifyTerminal(event.job);
         mergeLiveJob(event.job);
       }
       setPollError("");
@@ -453,7 +505,10 @@ export function HomePage() {
         const result = await api<{ jobs: DownloadJob[] }>(connection, "/api/jobs", {
           signal: AbortSignal.any([controller.signal, AbortSignal.timeout(10000)]),
         });
-        if (!controller.signal.aborted) setJobs(result.jobs);
+        if (!controller.signal.aborted) {
+          for (const job of result.jobs) maybeNotifyTerminal(job);
+          setJobs(result.jobs);
+        }
       } catch (error) {
         if (!controller.signal.aborted) setPollError(errorMessage(error));
       }
@@ -477,7 +532,7 @@ export function HomePage() {
       clearTimeout(reconnectTimer);
       clearInterval(reconcileTimer);
     };
-  }, [connection, serviceReady]);
+  }, [connection, serviceReady, settings.notificationsEnabled]);
 
   async function inspectLinks() {
     setFormError("");
@@ -647,6 +702,30 @@ export function HomePage() {
   function changeSetting<K extends keyof AppSettings>(key: K, value: AppSettings[K]) {
     setSettings(previous => ({ ...previous, [key]: value }));
     setSettingsSaved(false);
+  }
+
+  async function toggleNotifications() {
+    if (settings.notificationsEnabled) {
+      changeSetting("notificationsEnabled", false);
+      return;
+    }
+    const NotificationAPI = notificationAPI();
+    if (!NotificationAPI) {
+      setServiceError("System notifications are not supported by this browser.");
+      return;
+    }
+    let permission = NotificationAPI.permission;
+    if (permission === "default") {
+      try { permission = await NotificationAPI.requestPermission(); }
+      catch { permission = "denied"; }
+    }
+    if (permission !== "granted") {
+      setServiceError("Notification permission was not granted. Enable it in your browser/OS settings to use system notifications.");
+      return;
+    }
+    setServiceError("");
+    changeSetting("notificationsEnabled", true);
+    setNotice("System notifications enabled. Save preferences to keep this setting.");
   }
 
   function addCategory() {
