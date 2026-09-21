@@ -73,6 +73,7 @@ func (s *server) handleRetryItem(w http.ResponseWriter, r *http.Request, jobID s
 		fail(w, http.StatusInternalServerError, "Could not persist item retry state")
 		return
 	}
+	s.publishJobEventLocked("job-status", job)
 	s.notifySchedulerLocked()
 	reply(w, http.StatusAccepted, snapshot(job))
 }
