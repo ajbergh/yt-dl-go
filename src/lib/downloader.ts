@@ -20,6 +20,8 @@ export interface DownloadFile {
   mediaType?: "video" | "audio";
   outputName?: string;
   outputRelativePath?: string;
+  managedAvailable?: boolean;
+  publishedAvailable?: boolean;
 }
 export interface QueueItem {
   index: number;
