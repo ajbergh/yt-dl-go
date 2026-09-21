@@ -157,7 +157,7 @@ describe("Downloader UI and Go API integration", () => {
   });
   test("persists only a supported preference through the service API", async () => {
     await click(button("Settings"));
-    const quality = container.querySelector('select');
+    const quality = container.querySelector('select[aria-label="Default maximum video quality"]');
     await act(async () => {
       Object.getOwnPropertyDescriptor(testWindow.HTMLSelectElement.prototype, "value").set.call(quality, "720");
       quality.dispatchEvent(new testWindow.Event("change", { bubbles: true }));
