@@ -41,6 +41,7 @@ export interface QueueItem {
   etaSeconds: number;
   error?: string;
   fileId?: string;
+  retryRequested?: boolean;
 }
 export interface DownloadJob {
   id: string;
