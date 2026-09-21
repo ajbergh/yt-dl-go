@@ -200,6 +200,7 @@ func (s *server) publishOutput(j *jobState, file *mediaFile) error {
 		file.OutputName = name
 		file.OutputPath = destination
 		file.OutputRelativePath = filepath.ToSlash(filepath.Join(filepath.Base(folder), name))
+		file.PublishedAvailable = true
 		if j.SubfolderSorting == "flat" {
 			file.OutputRelativePath = name
 		}
@@ -234,25 +235,60 @@ func sanitizePathComponent(value string) string {
 	return clean
 }
 
+func validateOutputCopy(j *jobState, file mediaFile) error {
+	if file.OutputPath == "" || file.OutputName == "" || file.OutputRelativePath == "" || !filepath.IsAbs(j.DownloadLocation) {
+		return errors.New("job contains invalid output metadata")
+	}
+	relative := filepath.FromSlash(file.OutputRelativePath)
+	if filepath.IsAbs(relative) || filepath.Clean(relative) != relative || relative == "." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+		return errors.New("job contains an unsafe output path")
+	}
+	expected := filepath.Join(j.DownloadLocation, relative)
+	if filepath.Clean(file.OutputPath) != expected || filepath.Base(file.OutputPath) != file.OutputName {
+		return errors.New("job output path does not match its recorded destination")
+	}
+	return nil
+}
+
 func removeOutputCopies(j *jobState) error {
 	for _, file := range j.Files {
-		if file.OutputPath == "" {
+		if !file.PublishedAvailable {
 			continue
 		}
-		if file.OutputName == "" || file.OutputRelativePath == "" || !filepath.IsAbs(j.DownloadLocation) {
-			return errors.New("job contains invalid output metadata")
+		if err := validateOutputCopy(j, file); err != nil {
+			return err
 		}
-		relative := filepath.FromSlash(file.OutputRelativePath)
-		if filepath.IsAbs(relative) || filepath.Clean(relative) != relative || relative == "." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
-			return errors.New("job contains an unsafe output path")
-		}
-		expected := filepath.Join(j.DownloadLocation, relative)
-		if filepath.Clean(file.OutputPath) != expected || filepath.Base(file.OutputPath) != file.OutputName {
-			return errors.New("job output path does not match its recorded destination")
+	}
+	for index := range j.Files {
+		file := &j.Files[index]
+		if !file.PublishedAvailable {
+			continue
 		}
 		if err := os.Remove(file.OutputPath); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return err
 		}
+		file.PublishedAvailable = false
+		for itemIndex, saved := range j.fileItems {
+			if saved.ID == file.ID {
+				saved.PublishedAvailable = false
+				j.fileItems[itemIndex] = saved
+				break
+			}
+		}
+	}
+	return nil
+}
+
+func removeManagedCopies(j *jobState) error {
+	if err := os.RemoveAll(j.dir); err != nil {
+		return err
+	}
+	for index := range j.Files {
+		j.Files[index].ManagedAvailable = false
+	}
+	for itemIndex, saved := range j.fileItems {
+		saved.ManagedAvailable = false
+		j.fileItems[itemIndex] = saved
 	}
 	return nil
 }
