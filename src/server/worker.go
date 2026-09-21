@@ -1883,6 +1883,7 @@ func (s *server) prune(now time.Time) {
 			// Published output belongs to the user and must survive pruning.
 			if removeManagedCopies(j) == nil && s.store.deleteJob(id) == nil {
 				delete(s.jobs, id)
+				s.publishDeletedEventLocked(id)
 				continue
 			}
 		}
