@@ -526,34 +526,40 @@ func (b *jobBudget) release(amount, completed int64) error {
 }
 
 func estimatedItemBudget(j *jobState, video *youtube.Video, format *youtube.Format, selection streamSelection) int64 {
+	var estimated int64
 	if j.MediaType == "audio" {
 		if format == nil || format.ContentLength <= 0 {
 			return 0
 		}
 		if j.AudioFormat == "m4a" {
-			return format.ContentLength
+			estimated = format.ContentLength
+		} else {
+			if video == nil || video.Duration <= 0 {
+				return 0
+			}
+			bitrate, _ := strconv.Atoi(strings.TrimSuffix(j.AudioBitrate, "k"))
+			if bitrate <= 0 {
+				bitrate = 192
+			}
+			encoded := int64(float64(bitrate*1000) * video.Duration.Seconds() / 8)
+			margin := max(int64(64*1024), encoded/20)
+			estimated = format.ContentLength + encoded + margin
 		}
-		if video == nil || video.Duration <= 0 {
-			return 0
-		}
-		bitrate, _ := strconv.Atoi(strings.TrimSuffix(j.AudioBitrate, "k"))
-		if bitrate <= 0 {
-			bitrate = 192
-		}
-		encoded := int64(float64(bitrate*1000) * video.Duration.Seconds() / 8)
-		margin := max(int64(64*1024), encoded/20)
-		return format.ContentLength + encoded + margin
-	}
-	if selection.audio != nil {
+	} else if selection.audio != nil {
 		if selection.video.ContentLength <= 0 || selection.progressive == nil || selection.progressive.ContentLength <= 0 {
 			return 0
 		}
-		return selection.video.ContentLength + selection.progressive.ContentLength
+		estimated = selection.video.ContentLength + selection.progressive.ContentLength
+	} else {
+		if format == nil || format.ContentLength <= 0 {
+			return 0
+		}
+		estimated = format.ContentLength
 	}
-	if format == nil || format.ContentLength <= 0 {
-		return 0
+	if j.SubtitleLanguage != "" {
+		estimated += maxCaptionBytes
 	}
-	return format.ContentLength
+	return estimated
 }
 
 func (s *server) acquireItemSlot(ctx context.Context, j *jobState, index int, title string) bool {
@@ -919,10 +925,19 @@ func (s *server) processItem(ctx context.Context, j *jobState, entry *youtube.Pl
 		file.ManagedAvailable = true
 		s.captureThumbnail(ctx, j, &file)
 	}
+	subtitleSize := s.captureSubtitle(ctx, j, &file, video, max(int64(0), budget-file.Size))
 	if j.StorageMode != "managed-only" {
 		if err := s.publishOutput(j, &file); err != nil {
 			_ = os.Remove(filepath.Join(j.dir, file.Name))
+			if file.Subtitle != nil && file.Subtitle.ManagedAvailable {
+				_ = os.Remove(filepath.Join(j.dir, file.Subtitle.Name))
+			}
 			return errStorage
+		}
+		if file.Subtitle != nil && file.Subtitle.ManagedAvailable {
+			if err := publishSubtitleOutput(j, &file); err != nil {
+				file.SubtitleError = "Caption sidecar was saved in the Library but could not be published next to the media file"
+			}
 		}
 	}
 	if j.StorageMode == "published-only" {
@@ -930,17 +945,32 @@ func (s *server) processItem(ctx context.Context, j *jobState, entry *youtube.Pl
 			if file.PublishedAvailable {
 				_ = os.Remove(file.OutputPath)
 			}
+			if file.Subtitle != nil && file.Subtitle.PublishedAvailable {
+				_ = os.Remove(file.Subtitle.OutputPath)
+			}
 			return errStorage
 		}
 		file.ManagedAvailable = false
+		if file.Subtitle != nil && file.Subtitle.ManagedAvailable {
+			if err := os.Remove(filepath.Join(j.dir, file.Subtitle.Name)); err != nil && !errors.Is(err, os.ErrNotExist) {
+				return errStorage
+			}
+			file.Subtitle.ManagedAvailable = false
+		}
 	}
 	leaseOpen = false
-	if err := tracker.release(budget, file.Size); err != nil {
+	if err := tracker.release(budget, file.Size+subtitleSize); err != nil {
 		if file.ManagedAvailable {
 			_ = os.Remove(filepath.Join(j.dir, file.Name))
 		}
+		if file.Subtitle != nil && file.Subtitle.ManagedAvailable {
+			_ = os.Remove(filepath.Join(j.dir, file.Subtitle.Name))
+		}
 		if file.PublishedAvailable {
 			_ = os.Remove(file.OutputPath)
+		}
+		if file.Subtitle != nil && file.Subtitle.PublishedAvailable {
+			_ = os.Remove(file.Subtitle.OutputPath)
 		}
 		return err
 	}
