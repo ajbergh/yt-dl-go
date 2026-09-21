@@ -103,6 +103,21 @@ func TestFormatSelection(t *testing.T) {
 		t.Fatalf("invalid strategy error = %v", err)
 	}
 
+	// Best quality preserves the P2.4 safety invariant that adaptive MP4 only
+	// participates in automatic selection when a progressive MP4 fallback is
+	// available. Explicit Compatibility MP4 may still choose the adaptive pair.
+	noMP4Fallback := fixtureVideo("dQw4w9WgXcQ")
+	noMP4Fallback.Formats[0].MimeType = `video/webm; codecs="vp9, opus"`
+	noMP4Fallback.Formats = append(noMP4Fallback.Formats, h264, aac)
+	automaticWithoutFallback, err := selectFormatForStrategy(noMP4Fallback, "best", "best")
+	if err != nil || automaticWithoutFallback.video == nil || automaticWithoutFallback.video.Height != noMP4Fallback.Formats[0].Height {
+		t.Fatalf("automatic policy changed without progressive MP4 fallback: %+v %v", automaticWithoutFallback, err)
+	}
+	compatWithoutFallback, err := selectFormatForStrategy(noMP4Fallback, "best", "compatibility")
+	if err != nil || compatWithoutFallback.video == nil || compatWithoutFallback.video.Height != 1080 || compatWithoutFallback.audio == nil {
+		t.Fatalf("explicit compatibility strategy did not select adaptive MP4: %+v %v", compatWithoutFallback, err)
+	}
+
 	for quality, wantHeight := range map[string]int{"1080": 1080, "1440": 1440, "2160": 2160, "best": 2160} {
 		selected, err := selectFormat(high, quality)
 		if err != nil || selected.video == nil || selected.video.Height != wantHeight {
