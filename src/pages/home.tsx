@@ -357,6 +357,7 @@ export function HomePage() {
           inspecting={inspecting}
           inspectLinks={inspectLinks}
           formError={formError}
+          setFormError={setFormError}
           mp3Supported={mp3Supported}
           settings={settings}
           applyMediaTypeToAll={applyMediaTypeToAll}
@@ -389,10 +390,12 @@ export function HomePage() {
           setSearch={setSearch}
           filteredQueue={filteredQueue}
           retryPlaylistItem={retryPlaylistItem}
+          saveFile={saveFile}
           jobAction={jobAction}
         />}
 
         {tab === "library" && <LibraryPage
+          libraryJobs={libraryJobs}
           visibleLibraryJobs={visibleLibraryJobs}
           librarySearch={librarySearch}
           setLibrarySearch={setLibrarySearch}
