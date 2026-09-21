@@ -455,7 +455,7 @@ P2.5 remains the place for user-selectable codec/container preferences such as e
 
 ### P2.5 Advanced codec/container selection
 
-**Status:** [ ] Planned
+**Status:** [~] In progress
 
 Potential user-facing modes:
 
@@ -465,7 +465,7 @@ Potential user-facing modes:
 - VP9 preferred
 - Original audio
 
-Do not expose codec complexity until format selection and compatibility checks are robust.
+Implementation is now building on the validated P2.4 codec/container layer. The goal is a small durable output-strategy model that persists with each job and drives format selection without exposing raw itags or signed media URLs.
 
 ---
 
