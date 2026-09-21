@@ -462,6 +462,28 @@ func TestStoragePolicies(t *testing.T) {
 	}
 }
 
+func TestNativeFolderSelectionEndpoint(t *testing.T) {
+	s := testServer(t, fixtureClient(1), nil)
+	selected := filepath.Join(s.cfg.root, "chosen-output")
+	s.folderSelector = func(context.Context) (string, error) { return selected, nil }
+	response := request(s, "POST", "/api/folders/select", `{}`, nil)
+	var result struct{ Path string `json:"path"` }
+	if response.Code != 200 || json.Unmarshal(response.Body.Bytes(), &result) != nil || result.Path != selected {
+		t.Fatalf("folder selection: %d %s", response.Code, response.Body.String())
+	}
+	if request(s, "GET", "/api/folders/select", "", nil).Code != 405 {
+		t.Fatal("folder selector accepted unsupported method")
+	}
+	s.folderSelector = func(context.Context) (string, error) { return "", errFolderSelectionCancelled }
+	if response = request(s, "POST", "/api/folders/select", `{}`, nil); response.Code != 204 {
+		t.Fatalf("cancelled folder selection: %d %s", response.Code, response.Body.String())
+	}
+	s.folderSelector = func(context.Context) (string, error) { return "relative/path", nil }
+	if response = request(s, "POST", "/api/folders/select", `{}`, nil); response.Code != 500 {
+		t.Fatal("folder selector accepted a relative path")
+	}
+}
+
 func TestTrackedFilesystemActions(t *testing.T) {
 	s := testServer(t, fixtureClient(1), nil)
 	j := waitTerminal(t, s, createJob(t, s, testVideo).ID)
