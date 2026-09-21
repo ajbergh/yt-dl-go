@@ -260,6 +260,9 @@ func TestAPIContractAndSecurity(t *testing.T) {
 		{name: "rights", body: strings.Replace(valid, "true", "false", 1), code: 400},
 		{name: "category", body: strings.Replace(valid, `"Music"`, `"Not configured"`, 1), code: 400},
 		{name: "audio-format", body: `{"url":"` + testVideo + `","quality":"best","mediaType":"audio","audioFormat":"flac","rightsConfirmed":true}`, code: 400},
+		{name: "video-items", body: `{"url":"` + testVideo + `","quality":"best","rightsConfirmed":true,"items":[{"index":1,"id":"dQw4w9WgXcQ","title":"Item"}]}`, code: 400},
+		{name: "playlist-invalid-item", body: `{"url":"` + testPlaylist + `","quality":"best","rightsConfirmed":true,"items":[{"index":0,"id":"00000000001","title":"Item"}]}`, code: 400},
+		{name: "playlist-duplicate-index", body: `{"url":"` + testPlaylist + `","quality":"best","rightsConfirmed":true,"items":[{"index":1,"id":"00000000001","title":"One"},{"index":1,"id":"00000000002","title":"Two"}]}`, code: 400},
 		{name: "unknown", body: strings.Replace(valid, `"quality"`, `"unknown":1,"quality"`, 1), code: 400},
 		{name: "trailing", body: valid + `{}`, code: 400}, {name: "null", body: "null", code: 400},
 		{name: "oversized", body: `{"url":"` + strings.Repeat("x", 5000) + `"}`, code: 400},
@@ -529,6 +532,67 @@ func TestOriginalM4AAudioPreservesSourceBytes(t *testing.T) {
 		t.Fatal("M4A output was not published")
 	}
 	_ = os.Remove(outputPath)
+}
+
+func TestPlaylistItemSelectionPreservesOriginalPositions(t *testing.T) {
+	fake := fixtureClient(5)
+	var processed atomic.Int32
+	fake.videoFn = func(_ context.Context, id string) (*youtube.Video, error) {
+		processed.Add(1)
+		return fixtureVideo(id), nil
+	}
+	s := testServer(t, fake, nil)
+	body := `{"url":"` + testPlaylist + `","quality":"best","rightsConfirmed":true,"items":[{"index":2,"id":"00000000002","title":"Item 2"},{"index":4,"id":"00000000004","title":"Item 4"}]}`
+	response := request(s, "POST", "/api/jobs", body, nil)
+	var created Job
+	if response.Code != 202 || json.Unmarshal(response.Body.Bytes(), &created) != nil {
+		t.Fatalf("create selected playlist: %d %s", response.Code, response.Body.String())
+	}
+	if len(created.Items) != 2 || created.Items[0].Index != 1 || created.Items[0].PlaylistIndex != 2 || created.Items[1].Index != 2 || created.Items[1].PlaylistIndex != 4 {
+		t.Fatalf("queued selection did not preserve indexes: %+v", created.Items)
+	}
+	j := waitTerminal(t, s, created.ID)
+	if j.Status != "completed" || j.TotalCount == nil || *j.TotalCount != 2 || len(j.Files) != 2 || processed.Load() != 2 {
+		t.Fatalf("selected playlist did not complete only two items: status=%s total=%v files=%d processed=%d error=%q", j.Status, j.TotalCount, len(j.Files), processed.Load(), j.Error)
+	}
+	if !strings.HasPrefix(j.Files[0].Name, "000002-") || !strings.HasPrefix(j.Files[1].Name, "000004-") {
+		t.Fatalf("original playlist positions were not retained in filenames: %+v", j.Files)
+	}
+	if len(j.Items) != 2 || j.Items[0].Index != 1 || j.Items[0].PlaylistIndex != 2 || j.Items[1].Index != 2 || j.Items[1].PlaylistIndex != 4 {
+		t.Fatalf("final queue indexes are not contiguous/original-position aware: %+v", j.Items)
+	}
+	if !strings.Contains(j.Note, playlistSelectionNote) {
+		t.Fatalf("selection note missing: %q", j.Note)
+	}
+	for _, file := range j.Files {
+		if path := trackedOutputPath(t, s, j.ID, file.ID); path != "" {
+			_ = os.Remove(path)
+		}
+	}
+}
+
+func TestPlaylistItemSelectionRejectsStaleMetadata(t *testing.T) {
+	s := testServer(t, fixtureClient(3), nil)
+	body := `{"url":"` + testPlaylist + `","quality":"best","rightsConfirmed":true,"items":[{"index":2,"id":"00000000003","title":"Stale item"}]}`
+	response := request(s, "POST", "/api/jobs", body, nil)
+	var created Job
+	if response.Code != 202 || json.Unmarshal(response.Body.Bytes(), &created) != nil {
+		t.Fatalf("create stale selection: %d %s", response.Code, response.Body.String())
+	}
+	j := waitTerminal(t, s, created.ID)
+	if j.Status != "failed" || len(j.Files) != 0 || !strings.Contains(j.Error, errPlaylistSelection.Error()) {
+		t.Fatalf("stale playlist selection was not rejected: %+v", j)
+	}
+
+	retry := request(s, "POST", "/api/jobs/"+j.ID+"/retry", `{"rightsConfirmed":true}`, nil)
+	var retried Job
+	if retry.Code != 202 || json.Unmarshal(retry.Body.Bytes(), &retried) != nil {
+		t.Fatalf("retry stale selection: %d %s", retry.Code, retry.Body.String())
+	}
+	if len(retried.Items) != 1 || retried.Items[0].PlaylistIndex != 2 || retried.Items[0].VideoID != "00000000003" {
+		t.Fatalf("retry did not preserve playlist selection: %+v", retried.Items)
+	}
+	waitTerminal(t, s, retried.ID)
 }
 
 func TestLocalThumbnailCapturePersistenceAndServing(t *testing.T) {
