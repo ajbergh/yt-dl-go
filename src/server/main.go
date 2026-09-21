@@ -34,12 +34,14 @@ type config struct {
 type runtimeOptions struct {
 	noBrowser bool
 	help      bool
+	version   bool
 }
 
 func runtimeUsage() string {
-	return "Usage: youtube-downloader [--background|--no-browser]\n\n" +
+	return "Usage: youtube-downloader [--background|--no-browser|--version]\n\n" +
 		"  --background  Run the local service without opening the UI automatically.\n" +
 		"  --no-browser  Alias for --background; useful for scripts and CI.\n" +
+		"  --version     Print embedded version/build metadata and exit.\n" +
 		"  -h, --help    Show this help text.\n"
 }
 
@@ -51,6 +53,8 @@ func parseRuntimeOptions(args []string) (runtimeOptions, error) {
 			options.noBrowser = true
 		case "-h", "--help":
 			options.help = true
+		case "--version":
+			options.version = true
 		default:
 			return runtimeOptions{}, fmt.Errorf("unknown argument %q", arg)
 		}
@@ -232,6 +236,11 @@ func main() {
 	}
 	if options.help {
 		fmt.Print(runtimeUsage())
+		return
+	}
+	if options.version {
+		build := currentBuildInfo()
+		fmt.Printf("youtube-downloader %s (commit %s, built %s)\n", build.Version, build.Commit, build.Date)
 		return
 	}
 
