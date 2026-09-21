@@ -16,6 +16,7 @@ let requests;
 let rows;
 let missing;
 let healthEngine;
+let liveEvent;
 
 const job = {
   id: "fixture-job", url: "https://www.youtube.com/playlist?list=PL_example",
@@ -40,6 +41,7 @@ beforeEach(async () => {
   rows = [];
   missing = [];
   healthEngine = "native-go";
+  liveEvent = null;
   globalThis.fetch = async (url, init = {}) => {
     const path = new URL(url).pathname;
     requests.push({ url: String(url), path, ...init });
@@ -47,6 +49,12 @@ beforeEach(async () => {
     if (path === "/api/settings" && init.method === "PUT") return Response.json({ settings: JSON.parse(init.body) });
     if (path === "/api/folders/select" && init.method === "POST") return Response.json({ path: "C:\\Media\\YouTube" });
     if (path === "/api/settings") return Response.json({ settings: { defaultQuality: "best", maxConcurrentDownloads: 3, bandwidthLimitBytesPerSec: 0, downloadLocation: "C:\\Downloads\\YouTube_Vault", namingPattern: "{channel} - {title} [{resolution}]", subfolderSorting: "channel", defaultCategory: "General", userCategories: ["General", "Music"], storageMode: "managed-published" } });
+    if (path === "/api/events") {
+      const settings = { defaultQuality: "best", maxConcurrentDownloads: 3, bandwidthLimitBytesPerSec: 0, downloadLocation: "C:\\Downloads\\YouTube_Vault", namingPattern: "{channel} - {title} [{resolution}]", subfolderSorting: "channel", defaultCategory: "General", userCategories: ["General", "Music"], storageMode: "managed-published" };
+      const events = [{ type: "snapshot", jobs: rows, settings }, ...(liveEvent ? [liveEvent] : [])];
+      const body = events.map((event, index) => `id: ${index + 1}\nevent: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`).join("");
+      return new Response(body, { headers: { "Content-Type": "text/event-stream" } });
+    }
     if (path === "/api/inspect") return Response.json(inspection);
     if (path === "/api/jobs" && init.method === "POST") return Response.json(job, { status: 202 });
     if (path === "/api/jobs") return Response.json({ jobs: rows });
@@ -298,6 +306,39 @@ describe("Downloader UI and Go API integration", () => {
     expect(JSON.parse(saves.at(-1).body).storageMode).toBe("published-only");
     expect(container.textContent).toContain("Published only");
   });
+  test("applies live SSE job progress without repeated full-list polling", async () => {
+    rows = [{
+      ...job,
+      id: "live-job",
+      kind: "video",
+      title: "Live video",
+      status: "queued",
+      mediaType: "video",
+      progress: null,
+      totalCount: 1,
+      items: [{ index: 1, videoId: "abcdefghijk", title: "Live video", status: "queued", progress: null, downloadedBytes: 0, totalBytes: 1000, speedBytesPerSec: 0, etaSeconds: 0 }],
+    }];
+    liveEvent = {
+      type: "job-progress",
+      job: {
+        ...rows[0],
+        status: "downloading",
+        progress: 50,
+        downloadedBytes: 500,
+        totalBytes: 1000,
+        speedBytesPerSec: 100,
+        etaSeconds: 5,
+        items: [{ ...rows[0].items[0], status: "downloading", progress: 50, downloadedBytes: 500, speedBytesPerSec: 100, etaSeconds: 5 }],
+      },
+    };
+    await remount();
+    await connect();
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 20)); });
+    expect(container.textContent).toContain("Downloading 50%");
+    expect(requests.some(item => item.path === "/api/events")).toBe(true);
+    expect(requests.filter(item => item.path === "/api/jobs" && !item.method)).toHaveLength(1);
+  });
+
   test("renders persisted queue order and moves a queued job next", async () => {
     rows = [
       { ...job, id: "job-a", title: "First queued", status: "queued", queuePosition: 1, createdAt: "2026-01-01T00:00:00Z", items: [{ index: 1, playlistIndex: 2, videoId: "abcdefghijk", title: "Item 2", status: "queued", progress: null, downloadedBytes: 0, totalBytes: 0, speedBytesPerSec: 0, etaSeconds: 0 }, { index: 2, playlistIndex: 4, videoId: "lmnopqrstuv", title: "Item 4", status: "queued", progress: null, downloadedBytes: 0, totalBytes: 0, speedBytesPerSec: 0, etaSeconds: 0 }] },
