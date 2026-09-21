@@ -800,6 +800,7 @@ func (s *server) processItem(ctx context.Context, j *jobState, entry *youtube.Pl
 	}
 	applyVideoMetadata(&file, video)
 	file.Category = j.Category
+	file.ManagedAvailable = true
 	if err := s.publishOutput(j, &file); err != nil {
 		_ = os.Remove(filepath.Join(j.dir, file.Name))
 		return errStorage
