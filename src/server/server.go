@@ -131,7 +131,8 @@ type server struct {
 	engine          nativeClient
 	browserFactory  browserProviderFactory
 	filesystemOpener filesystemOpener
-	store           *jobStore
+	folderSelector   folderSelector
+	store            *jobStore
 }
 
 func terminal(status string) bool {
@@ -333,6 +334,14 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if r.URL.Path == "/api/settings" {
 		s.handleSettings(w, r)
+		return
+	}
+	if r.URL.Path == "/api/folders/select" {
+		if r.Method != http.MethodPost {
+			fail(w, 405, "Method not allowed")
+			return
+		}
+		s.handleFolderSelection(w, r)
 		return
 	}
 	if r.URL.Path == "/api/jobs" {
