@@ -2,7 +2,7 @@
 
 > Durable roadmap for the `yt-dl-go` product. This file is the source of truth for roadmap scope, sequencing, implementation status, acceptance criteria, and follow-up work.
 >
-> **Branch:** `roadmap/media-library-batch-v1`
+> **Branch:** `roadmap/subtitle-captions-v1`
 >
 > **Last updated:** 2026-09-20
 
@@ -394,17 +394,27 @@ Investigate whether a lightweight tray workflow improves long-running batch down
 
 ## P1.11 Subtitle/caption extraction
 
-**Status:** [ ] Planned
+**Status:** [T] Implemented; CI validation in progress
 
 Add opt-in subtitle/caption download for owned/authorized content.
 
-#### Scope
+#### Implemented scope
 
-- Enumerate available caption tracks.
-- Select language.
-- SRT/VTT output.
-- Optional sidecar organization with media.
-- Playlist support.
+- Video inspection enumerates validated YouTube caption tracks and exposes language labels plus auto-generated/manual status to the UI.
+- Download drafts can opt into one caption language and choose WebVTT or SubRip (SRT); no caption is downloaded unless explicitly selected.
+- Manual captions are preferred over auto-generated ASR when YouTube exposes both for the same language.
+- WebVTT is fetched through the guarded native HTTP path with a strict HTTPS YouTube timed-text allowlist, redirect rejection, a 5 MiB response ceiling, and no signed caption URL persistence.
+- SRT conversion is implemented in-process in Go; no FFmpeg or other caption binary is required.
+- Caption sidecars are stored beside the managed media name and, when output publishing is enabled, beside the published media using the same resolved output basename.
+- Managed job ZIP downloads include finalized caption sidecars.
+- Playlist inspection samples an accessible item for caption language choices; the worker resolves the selected language independently for each item. Missing or failed captions are recorded as per-file warnings and do not discard otherwise valid media.
+- Caption configuration and finalized sidecar metadata persist through SQLite schema migration v13 and are retained by retry/restart flows.
+- Managed/published deletion semantics, storage accounting, restart byte-budget accounting, Library search/stats/status badges, and health capability reporting include caption sidecars.
+- Backend tests cover language/URL validation, manual-vs-ASR selection, WebVTT-to-SRT conversion, publishing, ZIP inclusion, and unsafe language rejection. Frontend integration coverage verifies caption selection and job payloads.
+
+#### Validation
+
+- Branch CI is running for the completed implementation. Mark this item **[x]** only after the final branch HEAD passes frontend type-check/build/tests, Go tests/vet, and the Windows production build.
 
 ## P2.4 1440p and 2160p support
 
