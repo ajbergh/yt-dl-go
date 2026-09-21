@@ -17,6 +17,8 @@ $env:CHROME_PATH = 'C:\Program Files\Google\Chrome\Application\chrome.exe'
 
 Downloads are stored in `downloads` under the process's current working directory (normally beside the executable when it is launched directly). Open the UI, paste an approved YouTube URL, choose a maximum quality, confirm your rights, and download. `best`, `1080`, `720`, and `480` are maximum heights—not upscale requests or guarantees. The actual height and MIME type are shown for each completed file.
 
+After inspection, you can optionally choose an available caption language and save it as a WebVTT (`.vtt`) or SubRip (`.srt`) sidecar. Caption extraction is best-effort: if a selected language is unavailable for one playlist item or YouTube's timed-text request fails, the media download still succeeds and the Library records a caption warning. Published sidecars are written next to their media file; app-managed sidecars are included in whole-job ZIP downloads.
+
 ## How HD downloads work
 
 YouTube commonly serves 1080p video as separate adaptive video and audio tracks. When a compatible H.264/AAC stream is available, the app launches a temporary headless Chrome-compatible session and lets YouTube issue the short-lived, browser-scoped authorization needed for that session. It captures only the selected video track through its declared final fragment, retrieves audio, and remuxes the result into an MP4 in Go.
