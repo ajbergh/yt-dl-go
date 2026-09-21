@@ -159,14 +159,14 @@ func (s *server) retry(w http.ResponseWriter, r *http.Request, id string) {
 		fail(w, 409, "Only failed, partial, or cancelled jobs can be retried")
 		return
 	}
-	jobURL, quality, mediaType, audioBitrate := original.URL, original.Quality, original.MediaType, original.AudioBitrate
+	jobURL, quality, mediaType, audioBitrate, category := original.URL, original.Quality, original.MediaType, original.AudioBitrate, original.Category
 	s.mu.Unlock()
 	canonical, kind, err := canonicalURL(jobURL)
 	if err != nil {
 		fail(w, 409, "The saved job URL is no longer valid")
 		return
 	}
-	s.enqueueJob(w, canonical, kind, quality, mediaType, audioBitrate)
+	s.enqueueJob(w, canonical, kind, quality, mediaType, audioBitrate, category)
 }
 
 // safeThumbnailURL returns the last HTTPS thumbnail hosted on an approved
