@@ -79,11 +79,17 @@ On Windows the executable result remains `dist\youtube-downloader.exe`. Unix pac
 
 ### Releases and update checks
 
-Tagged stable releases use `.github/workflows/release.yml`. A tag in `vMAJOR.MINOR.PATCH` form runs the full frontend/Go/browser validation suite, builds the Windows/Linux/macOS package matrix, verifies each archive checksum, creates a canonical `SHA256SUMS.txt`, attaches GitHub build-provenance attestations, and publishes the assets to a GitHub Release.
+Tagged stable releases use `.github/workflows/release.yml`. A tag must use `vMAJOR.MINOR.PATCH` form **and exactly match `package.json`**. The workflow runs the full frontend/Go/browser validation suite, builds the Windows/Linux/macOS package matrix, verifies each archive checksum, creates a canonical `SHA256SUMS.txt`, attaches GitHub build-provenance attestations, and creates a **draft** GitHub Release. Draft releases are intentionally invisible to update discovery until a human completes the publication gate.
 
-Release builds embed immutable `version`, source commit, and build-date metadata through Go linker variables. Local/ordinary CI builds remain `dev / unknown`. The Settings page shows this metadata and release builds perform a non-blocking check of the repository's latest stable GitHub Release. Development builds skip that external request entirely.
+Release builds embed immutable `version`, source commit, and build-date metadata through Go linker variables. Local/ordinary CI builds remain `dev / unknown`. The Settings page shows this metadata, and packaged binaries can report the same identity without starting the service:
 
-Update discovery is advisory only. The app links to the validated GitHub Release when a newer stable version exists; it does **not** download or replace its own executable. Automatic self-update remains disabled until Windows Authenticode signing, macOS Developer ID/notarization, post-download verification, and rollback-safe replacement are implemented.
+~~~text
+youtube-downloader --version
+~~~
+
+Release builds perform a non-blocking check of the repository's latest stable **published** GitHub Release. Development builds skip that external request entirely.
+
+Update discovery is advisory only. The app links to the validated GitHub Release when a newer stable version exists; it does **not** download or replace its own executable. Automatic self-update remains disabled until Windows Authenticode signing, macOS Developer ID/notarization, post-download verification, and rollback-safe replacement are implemented. See [Release and update policy](docs/RELEASES.md) for the draft publication, provenance, signing, and rollback gates.
 
 ## Configuration
 
@@ -153,4 +159,5 @@ The race detector may require a C compiler on Windows, depending on the Go toolc
 - [Backend guide](src/server/README.md): service configuration, behavior, and API contract.
 - [Third-party notices](src/server/THIRD_PARTY_NOTICES.md): distribution attribution and licenses.
 - [Packaging guide](docs/PACKAGING.md): Windows/Linux/macOS packages, checksums, runtime integration, and signing/notarization requirements.
+- [Release and update policy](docs/RELEASES.md): versioning, draft publication, provenance, native signing gates, and rollback requirements.
 - [UI reference mock](dev_mock_new_ui/README.md): the supplied design mock; it is not the production UI or backend.
