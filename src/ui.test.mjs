@@ -227,6 +227,37 @@ describe("Downloader UI and Go API integration", () => {
     await click(button("Pause batch"));
     expect(requests.some(item => item.path.endsWith("/pause") && item.method === "POST")).toBe(true);
   });
+  test("filters the Library by category and channel and persists layout preference", async () => {
+    rows = [
+      { ...job, id: "music-job", status: "completed", title: "Road Trip", category: "Music", mediaType: "audio", audioFormat: "m4a", completedCount: 1, totalCount: 1, files: [
+        { id: "music-file", name: "001-song.m4a", title: "Song", author: "Channel A", category: "Music", size: 1024, managedAvailable: true, publishedAvailable: true, outputRelativePath: "Channel A/Song.m4a" },
+      ] },
+      { ...job, id: "coding-job", status: "completed", title: "Go Tutorial", category: "Coding", mediaType: "video", completedCount: 1, totalCount: 1, files: [
+        { id: "coding-file", name: "001-code.mp4", title: "Pointers", author: "Channel B", category: "Coding", size: 2048, managedAvailable: true, publishedAvailable: false },
+      ] },
+    ];
+    await remount();
+    await connect();
+    await click(button("Library"));
+    expect(container.textContent).toContain("2 of 2 jobs visible");
+    expect(container.textContent).toContain("Managed copies");
+    expect(container.textContent).toContain("Published copies");
+
+    await setSelect(container.querySelector('select[aria-label="Filter library by category"]'), "Music");
+    expect(container.querySelectorAll('section[aria-labelledby="library-heading"] article')).toHaveLength(1);
+    expect(container.textContent).toContain("Road Trip");
+
+    await setSelect(container.querySelector('select[aria-label="Filter library by channel"]'), "Channel A");
+    expect(container.querySelectorAll('section[aria-labelledby="library-heading"] article')).toHaveLength(1);
+
+    await click(button("List"));
+    expect(window.localStorage.getItem("yt-dl-go:library-layout")).toBe("list");
+    await remount();
+    await click(button("Library"));
+    expect(button("List").getAttribute("aria-pressed")).toBe("true");
+    window.localStorage.removeItem("yt-dl-go:library-layout");
+  });
+
   test("prefers authenticated local thumbnails and retains remote artwork as fallback metadata", async () => {
     rows = [{ ...job, status: "completed", completedCount: 1, totalCount: 1, files: [
       { id: "file-thumb", name: "001-test.mp4", size: 1024, thumbnailUrl: "https://i.ytimg.com/vi/fixture/hqdefault.jpg", thumbnailLocalAvailable: true, thumbnailMimeType: "image/jpeg", managedAvailable: true, publishedAvailable: false },
