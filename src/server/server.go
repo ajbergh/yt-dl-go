@@ -377,6 +377,10 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.handleFilesystem(w, r, parts[0])
 		return
 	}
+	if len(parts) == 2 && parts[1] == "thumbnail" && (r.Method == http.MethodGet || r.Method == http.MethodHead) {
+		s.serveThumbnail(w, r, parts[0])
+		return
+	}
 	var requested struct {
 		FileID json.RawMessage `json:"fileId"`
 	}
