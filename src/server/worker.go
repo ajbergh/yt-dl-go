@@ -1044,7 +1044,7 @@ func (s *server) transferAudio(ctx context.Context, j *jobState, engine nativeCl
 	if openErr != nil {
 		return result, errStorage
 	}
-	sourceSize, copyErr := copyStream(ctx, source, stream, budget, expected, func(written int64) {
+	sourceSize, copyErr := copyStream(ctx, source, s.bandwidthReader(ctx, stream), budget, expected, func(written int64) {
 		s.updateProgress(j, queueIndex, written, expected)
 	})
 	if copyErr != nil {
@@ -1192,7 +1192,7 @@ func (s *server) transferOriginalAudio(ctx context.Context, j *jobState, engine 
 			}
 		}
 	}()
-	result.Size, err = copyStream(ctx, output, stream, budget, expected, func(written int64) {
+	result.Size, err = copyStream(ctx, output, s.bandwidthReader(ctx, stream), budget, expected, func(written int64) {
 		s.updateProgress(j, queueIndex, written, expected)
 	})
 	if err != nil {
@@ -1388,7 +1388,7 @@ func (s *server) transferProgressive(ctx context.Context, j *jobState, engine na
 			}
 		}
 	}()
-	result.Size, err = copyStream(ctx, f, stream, budget, expected, func(written int64) {
+	result.Size, err = copyStream(ctx, f, s.bandwidthReader(ctx, stream), budget, expected, func(written int64) {
 		s.updateProgress(j, queueIndex, written, expected)
 	})
 	closeStream()
@@ -1454,7 +1454,7 @@ func (s *server) transferAdaptive(ctx context.Context, j *jobState, engine nativ
 		}
 	}()
 	var browserProvider browserMediaProvider
-	if s.browserFactory != nil {
+	if s.browserFactory != nil && !s.bandwidthLimited() {
 		if provider, providerErr := s.browserFactory(ctx); providerErr == nil && provider != nil {
 			defer provider.Close()
 			browserProvider = provider
@@ -1619,7 +1619,7 @@ func (s *server) downloadAdaptiveRanges(ctx context.Context, j *jobState, engine
 			}
 			_, _ = f.Seek(start, io.SeekStart)
 			_ = f.Truncate(start)
-			written, copyErr := io.Copy(f, io.LimitReader(resp.Body, chunkSize+1))
+			written, copyErr := io.Copy(f, io.LimitReader(s.bandwidthReader(ctx, resp.Body), chunkSize+1))
 			_ = resp.Body.Close()
 			if copyErr == nil && written == chunkSize && (resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusPartialContent) {
 				chunkOK = true
@@ -1722,7 +1722,7 @@ func (s *server) downloadSource(ctx context.Context, j *jobState, engine nativeC
 	if progress == nil {
 		progress = func(int64) {}
 	}
-	result, err = copyStream(ctx, f, stream, budget, expected, progress)
+	result, err = copyStream(ctx, f, s.bandwidthReader(ctx, stream), budget, expected, progress)
 	closeStream()
 	if ctx.Err() != nil {
 		return result, ctx.Err()
