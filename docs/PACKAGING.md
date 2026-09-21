@@ -91,13 +91,16 @@ Pushing a stable semantic-version tag such as `v1.2.3` triggers `.github/workflo
 
 The workflow:
 
-1. validates the tag format and reruns frontend type-check/build, Bun tests, Go tests/vet, and browser E2E;
-2. builds the Windows package plus Linux/macOS amd64 and arm64 packages;
-3. injects `VERSION`, `COMMIT`, and `BUILD_DATE` into the Go executable via linker variables;
-4. verifies every per-package SHA-256 checksum;
-5. produces a canonical `SHA256SUMS.txt`;
-6. creates GitHub build-provenance attestations for each release archive and the checksum manifest using OIDC;
-7. publishes all archives, individual checksums, and the combined manifest to the immutable tag's GitHub Release.
+1. validates the stable tag format and requires it to equal `v<package.json version>`;
+2. reruns frontend type-check/build, Bun tests, Go tests/vet, and browser E2E;
+3. builds the Windows package plus Linux/macOS amd64 and arm64 packages;
+4. injects `VERSION`, `COMMIT`, and `BUILD_DATE` into the Go executable via linker variables;
+5. verifies every per-package SHA-256 checksum;
+6. produces a canonical `SHA256SUMS.txt`;
+7. creates GitHub build-provenance attestations for each release archive and the checksum manifest using OIDC;
+8. creates a **draft** GitHub Release containing the archives and checksum files.
+
+The draft is the release-publication safety gate: it is not returned by GitHub's latest-release endpoint, so the app cannot advertise the release until a human publishes it after the required review/signing steps in [RELEASES.md](RELEASES.md).
 
 For local release-like builds, the package scripts accept these optional environment variables:
 
