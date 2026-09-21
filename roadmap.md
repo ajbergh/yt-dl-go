@@ -269,7 +269,7 @@ Playlist inspection now allows users to choose which exposed items are queued.
 
 ### P1.7 Queue reordering and priority
 
-**Status:** [T] Implemented; CI validation pending
+**Status:** [x] Complete
 
 Implemented explicit, durable queue ordering using the repository's existing `@dnd-kit` dependencies.
 
@@ -287,6 +287,7 @@ Implemented explicit, durable queue ordering using the repository's existing `@d
 - Added nested `@dnd-kit` sortable surfaces for queued jobs and queued playlist items, with keyboard-accessible drag handles.
 - Added backend regression coverage for scheduler priority, “Download next,” queue persistence, and playlist item-order persistence.
 - Added frontend coverage for persisted queue rendering, drag handles, and “Download next.”
+- Validation: CI run `35551920569` passed frontend type-check/build, Bun integration tests, Go tests, Go vet, and Windows production build.
 
 ### P1.8 Retry one playlist item
 
