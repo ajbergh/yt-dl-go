@@ -99,6 +99,9 @@ func validateAppSettings(settings AppSettings) error {
 	if settings.StorageMode != "managed-published" && settings.StorageMode != "published-only" && settings.StorageMode != "managed-only" {
 		return errors.New("storageMode must be managed-published, published-only, or managed-only")
 	}
+	if settings.BandwidthLimitBytesPerSec < 0 || settings.BandwidthLimitBytesPerSec > maxBandwidthLimitBytesPerSec {
+		return errors.New("bandwidthLimitBytesPerSec must be between 0 and 1073741824")
+	}
 	if len(settings.UserCategories) == 0 || len(settings.UserCategories) > 50 {
 		return errors.New("userCategories must contain between 1 and 50 categories")
 	}
