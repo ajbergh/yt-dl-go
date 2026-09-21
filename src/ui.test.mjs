@@ -46,7 +46,7 @@ beforeEach(async () => {
     if (path === "/api/health") return Response.json({ ready: missing.length === 0, missing, engine: healthEngine, capabilities: { combinedStreamsOnly: false, adaptiveStreamsSupported: true, externalBinariesRequired: false, mp3AudioSupported: true } });
     if (path === "/api/settings" && init.method === "PUT") return Response.json({ settings: JSON.parse(init.body) });
     if (path === "/api/folders/select" && init.method === "POST") return Response.json({ path: "C:\\Media\\YouTube" });
-    if (path === "/api/settings") return Response.json({ settings: { defaultQuality: "best", maxConcurrentDownloads: 3, downloadLocation: "C:\\Downloads\\YouTube_Vault", namingPattern: "{channel} - {title} [{resolution}]", subfolderSorting: "channel", defaultCategory: "General", userCategories: ["General", "Music"], storageMode: "managed-published" } });
+    if (path === "/api/settings") return Response.json({ settings: { defaultQuality: "best", maxConcurrentDownloads: 3, bandwidthLimitBytesPerSec: 0, downloadLocation: "C:\\Downloads\\YouTube_Vault", namingPattern: "{channel} - {title} [{resolution}]", subfolderSorting: "channel", defaultCategory: "General", userCategories: ["General", "Music"], storageMode: "managed-published" } });
     if (path === "/api/inspect") return Response.json(inspection);
     if (path === "/api/jobs" && init.method === "POST") return Response.json(job, { status: 202 });
     if (path === "/api/jobs") return Response.json({ jobs: rows });
@@ -267,9 +267,21 @@ describe("Downloader UI and Go API integration", () => {
     });
     await click(button("Save preferences"));
     const save = requests.find(item => item.path === "/api/settings" && item.method === "PUT");
-    expect(JSON.parse(save.body)).toEqual({ defaultQuality: "720", maxConcurrentDownloads: 3, downloadLocation: "C:\\Downloads\\YouTube_Vault", namingPattern: "{channel} - {title} [{resolution}]", subfolderSorting: "channel", defaultCategory: "General", userCategories: ["General", "Music"], storageMode: "managed-published" });
+    expect(JSON.parse(save.body)).toEqual({ defaultQuality: "720", maxConcurrentDownloads: 3, bandwidthLimitBytesPerSec: 0, downloadLocation: "C:\\Downloads\\YouTube_Vault", namingPattern: "{channel} - {title} [{resolution}]", subfolderSorting: "channel", defaultCategory: "General", userCategories: ["General", "Music"], storageMode: "managed-published" });
     expect(container.textContent).toContain("Saved to SQLite");
   });
+  test("persists a global bandwidth limit in MiB per second", async () => {
+    await click(button("Settings"));
+    const bandwidth = container.querySelector('input[aria-label="Global bandwidth limit in MiB per second"]');
+    expect(bandwidth).toBeTruthy();
+    expect(bandwidth.value).toBe("0");
+    await setInput(bandwidth, "5");
+    expect(container.textContent).toContain("5 MiB/s");
+    await click(button("Save preferences"));
+    const saves = requests.filter(item => item.path === "/api/settings" && item.method === "PUT");
+    expect(JSON.parse(saves.at(-1).body).bandwidthLimitBytesPerSec).toBe(5 * 1024 * 1024);
+  });
+
   test("uses the native folder picker for download location", async () => {
     await click(button("Settings"));
     await click(button("Browse"));
