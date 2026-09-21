@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -174,11 +175,21 @@ func TestPersistentHistoryAndQueueResume(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s.engine = fixtureClient(1)
-	queued := createJob(t, s, testVideo)
-	if err := s.store.saveAppSettings(AppSettings{DefaultQuality: "720", BandwidthLimitBytesPerSec: 5 * 1024 * 1024, NotificationsEnabled: true}); err != nil {
+	s.settings.DownloadLocation = filepath.Join(root, "published")
+	if err := s.store.saveAppSettings(s.settings); err != nil {
+		s.stop()
 		t.Fatal(err)
 	}
+	s.engine = fixtureClient(1)
+	queued := createJob(t, s, testVideo)
+	settings := s.settings
+	settings.DefaultQuality = "720"
+	settings.BandwidthLimitBytesPerSec = 5 * 1024 * 1024
+	settings.NotificationsEnabled = true
+	if err := s.store.saveAppSettings(settings); err != nil {
+		t.Fatal(err)
+	}
+	s.settings = settings
 	s.stop()
 
 	resumed, err := newServer(c)

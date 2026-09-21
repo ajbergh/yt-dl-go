@@ -77,7 +77,7 @@ func (f *fakeClient) GetStreamContext(ctx context.Context, video *youtube.Video,
 func testServer(t *testing.T, engine nativeClient, change func(*config)) *server {
 	t.Helper()
 	c := config{
-		addr: "127.0.0.1:8080", root: ".fixture-" + randomID(8), token: strings.Repeat("a", 32),
+		addr: "127.0.0.1:8080", root: filepath.Join(t.TempDir(), "private"), token: strings.Repeat("a", 32),
 		origins: map[string]bool{"http://localhost:5173": true}, hosts: map[string]bool{"127.0.0.1:8080": true},
 		maxJobs: 8, maxBytes: 1024 * 1024, timeout: 10 * time.Second, retain: 10 * time.Minute,
 	}
@@ -88,11 +88,6 @@ func testServer(t *testing.T, engine nativeClient, change func(*config)) *server
 	if err != nil {
 		t.Fatal(err)
 	}
-	s.engine = engine
-	s.thumbnailFetcher = func(context.Context, string, string) (string, error) {
-		return "", errors.New("thumbnail capture disabled in generic fixture")
-	}
-	s.start()
 	t.Cleanup(func() {
 		s.stop()
 		s.wg.Wait()
@@ -100,6 +95,15 @@ func testServer(t *testing.T, engine nativeClient, change func(*config)) *server
 			t.Error(err)
 		}
 	})
+	s.settings.DownloadLocation = filepath.Join(s.cfg.root, "published")
+	if err := s.store.saveAppSettings(s.settings); err != nil {
+		t.Fatal(err)
+	}
+	s.engine = engine
+	s.thumbnailFetcher = func(context.Context, string, string) (string, error) {
+		return "", errors.New("thumbnail capture disabled in generic fixture")
+	}
+	s.start()
 	return s
 }
 
