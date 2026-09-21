@@ -165,7 +165,7 @@ The current browser-hosted SPA cannot directly expose arbitrary local filesystem
 
 ## P1.1 Preserve thumbnails locally
 
-**Status:** [~] In progress
+**Status:** [T] Implemented; CI validation pending
 
 Remote thumbnail URLs are not durable library metadata.
 
@@ -604,6 +604,21 @@ Implemented:
 
 ### P1.1 Preserve thumbnails locally
 
-**Status:** [~] In progress
+**Status:** [T] Implemented; CI validation pending
 
-Next implementation focus: persist validated thumbnail artwork into app-managed storage so Library visuals no longer depend on remote YouTube image URLs. Published sidecar artwork will remain optional and should follow the job storage policy.
+Implemented:
+
+1. Added best-effort thumbnail capture during media finalization without making artwork failure fatal to the download.
+2. Restricted thumbnail sources and redirects to approved YouTube image hosts and routed downloads through the existing guarded public-HTTPS client.
+3. Added a 5 MiB limit and restricted stored image types to JPEG, PNG, or WebP.
+4. Stored local artwork inside private per-job managed storage; absolute artwork paths are never exposed by the API.
+5. Added SQLite migration v8 for local-thumbnail availability and MIME metadata.
+6. Added an authenticated job-scoped thumbnail endpoint keyed by persisted file ID.
+7. Added reader guards and regular-file validation so thumbnail serving cannot race managed-storage deletion.
+8. Kept the approved remote YouTube thumbnail URL as fallback metadata.
+9. Updated the Library to fetch local artwork with authenticated blob requests and fall back to the remote thumbnail if local artwork is unavailable.
+10. Ensured managed-copy deletion clears local artwork availability, while published-only storage may retain the lightweight local artwork/metadata until Library retention or removal.
+11. Added backend persistence/serving tests and frontend local-thumbnail preference coverage.
+12. Updated API documentation.
+
+Published sidecar artwork remains intentionally deferred; P1.1's durable-Library goal is satisfied by private local artwork without creating additional user-visible files.
