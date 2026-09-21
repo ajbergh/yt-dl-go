@@ -224,52 +224,50 @@ func selectAudioFormat(video *youtube.Video) (*youtube.Format, string, error) {
 }
 
 // start launches the bounded download scheduler and periodic retention pruning.
+// The queue channel is only a wake-up signal; persisted QueuePosition selects
+// which queued job starts next.
 func (s *server) start() {
 	s.wg.Add(2)
 	go func() {
 		defer s.wg.Done()
-		var pending string
 		for {
-			if pending == "" {
-				select {
-				case <-s.ctx.Done():
-					return
-				case pending = <-s.queue:
-				}
-			}
 			s.mu.Lock()
-			j := s.jobs[pending]
-			if j == nil || j.Status != "queued" {
-				pending = ""
+			if s.ctx.Err() != nil {
 				s.mu.Unlock()
-				continue
+				return
 			}
-			if s.activeDownloads >= s.settings.MaxConcurrentDownloads {
-				changed := s.scheduleChanged
-				s.mu.Unlock()
-				select {
-				case <-s.ctx.Done():
-					return
-				case <-changed:
+			limit := s.settings.MaxConcurrentDownloads
+			if limit < 1 {
+				limit = 1
+			}
+			if s.activeDownloads < limit {
+				if j := s.nextQueuedJobLocked(); j != nil {
+					s.activeDownloads++
+					ctx, cancel := context.WithTimeout(s.ctx, s.cfg.timeout)
+					j.Status, j.cancel = "downloading", cancel
+					s.persistJobLocked(j)
+					s.mu.Unlock()
+					s.wg.Add(1)
+					go func(job *jobState, jobCtx context.Context, jobCancel context.CancelFunc) {
+						defer s.wg.Done()
+						defer jobCancel()
+						s.run(jobCtx, job)
+						s.mu.Lock()
+						s.activeDownloads--
+						s.notifySchedulerLocked()
+						s.mu.Unlock()
+					}(j, ctx, cancel)
+					continue
 				}
-				continue
 			}
-			s.activeDownloads++
-			ctx, cancel := context.WithTimeout(s.ctx, s.cfg.timeout)
-			j.Status, j.cancel = "downloading", cancel
-			s.persistJobLocked(j)
+			changed := s.scheduleChanged
 			s.mu.Unlock()
-			pending = ""
-			s.wg.Add(1)
-			go func(job *jobState, jobCtx context.Context, jobCancel context.CancelFunc) {
-				defer s.wg.Done()
-				defer jobCancel()
-				s.run(jobCtx, job)
-				s.mu.Lock()
-				s.activeDownloads--
-				s.notifySchedulerLocked()
-				s.mu.Unlock()
-			}(j, ctx, cancel)
+			select {
+			case <-s.ctx.Done():
+				return
+			case <-s.queue:
+			case <-changed:
+			}
 		}
 	}()
 	go func() {
@@ -329,7 +327,6 @@ func playlistWorkItems(playlist *youtube.Playlist, requested []queueItem) ([]pla
 		}
 		work = append(work, playlistWorkItem{entry: entry, playlistIndex: item.PlaylistIndex})
 	}
-	sort.Slice(work, func(i, k int) bool { return work[i].playlistIndex < work[k].playlistIndex })
 	if len(work) == 0 {
 		return nil, errPlaylistSelection
 	}
