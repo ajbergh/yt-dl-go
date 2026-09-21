@@ -340,21 +340,26 @@ Optional application-level bandwidth control is now available for long-running b
 
 ## P1.10 Server-Sent Events for job updates
 
-**Status:** [ ] Planned
+**Status:** [x] Complete
 
-The UI currently polls the full job list approximately every 1.8 seconds.
+The UI now uses authenticated Server-Sent Events for near-real-time job/settings updates instead of polling the full job list approximately every 1.8 seconds.
 
-#### Proposed events
+#### Implemented
 
-- job-created
-- job-progress
-- job-status
-- job-file-finalized
-- job-error
-- job-deleted
-- settings-changed
-
-Use SSE rather than WebSockets unless bidirectional real-time messaging becomes necessary.
+- Added a bounded in-process event broker with monotonically increasing event IDs.
+- Added authenticated `GET /api/events` using `text/event-stream`.
+- Every connection receives an initial `snapshot` with current jobs and persisted settings.
+- Emits `job-created`, throttled `job-progress`, `job-status`, `job-file-finalized`, `job-error`, `job-deleted`, and `settings-changed`.
+- Progress events are throttled per active item to avoid turning transfer callbacks into an event flood.
+- Added 20-second heartbeat comments for idle connections.
+- Slow clients use a bounded buffer; an overloaded client drops older state rather than blocking download workers.
+- Frontend consumes SSE through authenticated `fetch`, preserving bearer-header support that native `EventSource` cannot provide.
+- The previous 1.8-second polling loop is removed; a 30-second full-job reconciliation remains as repair/fallback for dropped events.
+- Stream closure/protocol failure triggers automatic reconnect with visible degraded-state messaging.
+- SSE streams are exempt from the normal 30-second response write deadline; a regression test protects long-lived connections.
+- Added backend coverage for authentication, framing, initial snapshot, job-created delivery, and streaming lifetime.
+- Added frontend coverage proving live progress is applied without repeated full-list polling.
+- Validation: CI run `35555097968` passed frontend type-check/build, Bun integration tests, Go tests, Go vet, and Windows production build.
 
 ### P2.1 System notifications
 
