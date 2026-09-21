@@ -208,7 +208,7 @@ jobs:
           retention-days: 7
 
   publish:
-    name: Publish GitHub Release
+    name: Prepare draft GitHub Release
     needs:
       - windows
       - unix
