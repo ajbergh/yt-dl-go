@@ -13,7 +13,7 @@ type serviceEvent struct {
 	Type     string       `json:"type"`
 	Job      *Job         `json:"job,omitempty"`
 	JobID    string       `json:"jobId,omitempty"`
-	Jobs     []Job        `json:"jobs,omitempty"`
+	Jobs     *[]Job       `json:"jobs,omitempty"`
 	Settings *AppSettings `json:"settings,omitempty"`
 }
 
@@ -140,7 +140,7 @@ func (s *server) serveEvents(w http.ResponseWriter, r *http.Request) {
 	}
 	settings := mergeAppSettings(defaultAppSettings(), s.settings)
 	s.mu.Unlock()
-	initial := serviceEvent{Type: "snapshot", Jobs: jobs, Settings: &settings}
+	initial := serviceEvent{Type: "snapshot", Jobs: &jobs, Settings: &settings}
 	if err := writeSSE(w, initial); err != nil {
 		return
 	}
