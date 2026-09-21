@@ -525,6 +525,21 @@ func (b *jobBudget) release(amount, completed int64) error {
 	return nil
 }
 
+func (b *jobBudget) reserveOptional(maximum int64) int64 {
+	if maximum <= 0 {
+		return 0
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	available := b.limit - b.used - b.reserved
+	if available <= 0 {
+		return 0
+	}
+	amount := min(maximum, available)
+	b.reserved += amount
+	return amount
+}
+
 func estimatedItemBudget(j *jobState, video *youtube.Video, format *youtube.Format, selection streamSelection) int64 {
 	var estimated int64
 	if j.MediaType == "audio" {
@@ -555,9 +570,6 @@ func estimatedItemBudget(j *jobState, video *youtube.Video, format *youtube.Form
 			return 0
 		}
 		estimated = format.ContentLength
-	}
-	if j.SubtitleLanguage != "" {
-		estimated += maxCaptionBytes
 	}
 	return estimated
 }
@@ -925,19 +937,10 @@ func (s *server) processItem(ctx context.Context, j *jobState, entry *youtube.Pl
 		file.ManagedAvailable = true
 		s.captureThumbnail(ctx, j, &file)
 	}
-	subtitleSize := s.captureSubtitle(ctx, j, &file, video, max(int64(0), budget-file.Size))
 	if j.StorageMode != "managed-only" {
 		if err := s.publishOutput(j, &file); err != nil {
 			_ = os.Remove(filepath.Join(j.dir, file.Name))
-			if file.Subtitle != nil && file.Subtitle.ManagedAvailable {
-				_ = os.Remove(filepath.Join(j.dir, file.Subtitle.Name))
-			}
 			return errStorage
-		}
-		if file.Subtitle != nil && file.Subtitle.ManagedAvailable {
-			if err := publishSubtitleOutput(j, &file); err != nil {
-				file.SubtitleError = "Caption sidecar was saved in the Library but could not be published next to the media file"
-			}
 		}
 	}
 	if j.StorageMode == "published-only" {
@@ -945,34 +948,49 @@ func (s *server) processItem(ctx context.Context, j *jobState, entry *youtube.Pl
 			if file.PublishedAvailable {
 				_ = os.Remove(file.OutputPath)
 			}
-			if file.Subtitle != nil && file.Subtitle.PublishedAvailable {
-				_ = os.Remove(file.Subtitle.OutputPath)
-			}
 			return errStorage
 		}
 		file.ManagedAvailable = false
-		if file.Subtitle != nil && file.Subtitle.ManagedAvailable {
-			if err := os.Remove(filepath.Join(j.dir, file.Subtitle.Name)); err != nil && !errors.Is(err, os.ErrNotExist) {
-				return errStorage
-			}
-			file.Subtitle.ManagedAvailable = false
-		}
 	}
 	leaseOpen = false
-	if err := tracker.release(budget, file.Size+subtitleSize); err != nil {
+	if err := tracker.release(budget, file.Size); err != nil {
 		if file.ManagedAvailable {
 			_ = os.Remove(filepath.Join(j.dir, file.Name))
-		}
-		if file.Subtitle != nil && file.Subtitle.ManagedAvailable {
-			_ = os.Remove(filepath.Join(j.dir, file.Subtitle.Name))
 		}
 		if file.PublishedAvailable {
 			_ = os.Remove(file.OutputPath)
 		}
-		if file.Subtitle != nil && file.Subtitle.PublishedAvailable {
-			_ = os.Remove(file.Subtitle.OutputPath)
-		}
 		return err
+	}
+	if j.SubtitleLanguage != "" {
+		captionBudget := tracker.reserveOptional(maxCaptionBytes)
+		if captionBudget == 0 {
+			file.SubtitleError = "Caption sidecar was skipped because the job storage limit is exhausted"
+		} else {
+			subtitleSize := s.captureSubtitle(ctx, j, &file, video, captionBudget)
+			if file.Subtitle != nil && file.Subtitle.ManagedAvailable && j.StorageMode != "managed-only" {
+				if err := publishSubtitleOutput(j, &file); err != nil {
+					file.SubtitleError = "Caption sidecar was saved in the Library but could not be published next to the media file"
+				}
+			}
+			if file.Subtitle != nil && file.Subtitle.ManagedAvailable && j.StorageMode == "published-only" {
+				if err := os.Remove(filepath.Join(j.dir, file.Subtitle.Name)); err != nil && !errors.Is(err, os.ErrNotExist) {
+					file.SubtitleError = "Published caption sidecar exists, but its temporary managed copy could not be removed"
+				} else {
+					file.Subtitle.ManagedAvailable = false
+				}
+			}
+			if releaseErr := tracker.release(captionBudget, subtitleSize); releaseErr != nil {
+				if file.Subtitle != nil && file.Subtitle.ManagedAvailable {
+					_ = os.Remove(filepath.Join(j.dir, file.Subtitle.Name))
+				}
+				if file.Subtitle != nil && file.Subtitle.PublishedAvailable {
+					_ = os.Remove(file.Subtitle.OutputPath)
+				}
+				file.Subtitle = nil
+				file.SubtitleError = "Caption sidecar was skipped because the job storage limit was exceeded"
+			}
+		}
 	}
 	s.mu.Lock()
 	j.fileItems[current] = file
