@@ -2,6 +2,7 @@ import { afterEach, beforeAll, beforeEach, describe, expect, test } from "bun:te
 import { Window } from "happy-dom";
 import { act, createElement } from "react";
 import { HomePage } from "./pages/home";
+import { mergeJobActionResult } from "./hooks/use-jobs";
 
 const testWindow = new Window({ url: "http://localhost:5173/" });
 for (const key of ["window", "document", "HTMLElement", "HTMLInputElement", "Node", "Event", "MouseEvent"]) {
@@ -481,6 +482,18 @@ describe("Downloader UI and Go API integration", () => {
     expect(container.textContent).toContain('Retrying only "Failed sibling"');
     expect(container.querySelector('button[aria-label="Retry item Failed sibling"]')).toBeFalsy();
     expect(rows[0].items[0].fileId).toBe("file-1");
+  });
+
+  test("does not regress newer SSE lifecycle state with stale action acknowledgements", () => {
+    const active = { ...job, status: "downloading" };
+    const paused = { ...active, status: "paused", error: "Paused." };
+    const cancelled = { ...active, status: "cancelled", error: "Cancelled." };
+    const resumed = { ...active, status: "downloading", error: "" };
+
+    expect(mergeJobActionResult(paused, { ...active, error: "Pausing..." }, "pause")).toEqual(paused);
+    expect(mergeJobActionResult(cancelled, { ...active, error: "Cancelling..." }, "cancel")).toEqual(cancelled);
+    expect(mergeJobActionResult(resumed, { ...active, status: "queued" }, "resume")).toEqual(resumed);
+    expect(mergeJobActionResult(active, paused, "pause")).toEqual(paused);
   });
 
   test("pauses a running job through the backend", async () => {
