@@ -77,6 +77,14 @@ Pop-Location
 
 On Windows the executable result remains `dist\youtube-downloader.exe`. Unix package names include the target OS and architecture. `CGO_ENABLED=0` keeps the Go program self-contained; Chrome remains an external runtime dependency only for browser-assisted adaptive HD downloads.
 
+### Releases and update checks
+
+Tagged stable releases use `.github/workflows/release.yml`. A tag in `vMAJOR.MINOR.PATCH` form runs the full frontend/Go/browser validation suite, builds the Windows/Linux/macOS package matrix, verifies each archive checksum, creates a canonical `SHA256SUMS.txt`, attaches GitHub build-provenance attestations, and publishes the assets to a GitHub Release.
+
+Release builds embed immutable `version`, source commit, and build-date metadata through Go linker variables. Local/ordinary CI builds remain `dev / unknown`. The Settings page shows this metadata and release builds perform a non-blocking check of the repository's latest stable GitHub Release. Development builds skip that external request entirely.
+
+Update discovery is advisory only. The app links to the validated GitHub Release when a newer stable version exists; it does **not** download or replace its own executable. Automatic self-update remains disabled until Windows Authenticode signing, macOS Developer ID/notarization, post-download verification, and rollback-safe replacement are implemented.
+
 ## Configuration
 
 All settings are optional environment variables. The default loopback configuration is suitable for a single local user.
