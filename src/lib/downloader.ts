@@ -274,10 +274,11 @@ export async function streamServiceEvents(
     const { value, done } = await reader.read();
     const text = lineBuffer + decoder.decode(value ?? new Uint8Array(), { stream: !done });
     const lines = text.split("\n");
-    lineBuffer = done ? "" : (lines.pop() ?? "");
+    const remainder = lines.pop() ?? "";
+    lineBuffer = done ? "" : remainder;
     for (const line of lines) processLine(line);
     if (done) {
-      if (lineBuffer) processLine(lineBuffer);
+      if (remainder) processLine(remainder);
       if (dataLines.length) dispatch();
       return;
     }
