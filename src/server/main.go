@@ -67,8 +67,15 @@ func loadConfig() (config, error) {
 		c.origins[origin] = true
 	}
 	if loopback {
+		// The bundled UI is same-origin with the configured listener. Vite emits
+		// crossorigin attributes for hashed assets, so browsers may send an Origin
+		// header even when loading those same-origin files. Always allow the
+		// listener's loopback authorities at its actual port; network-visible
+		// bindings still require explicit ALLOWED_ORIGINS/ALLOWED_HOSTS.
 		for _, h := range []string{"localhost", "127.0.0.1", "::1", host} {
-			c.hosts[strings.ToLower(net.JoinHostPort(h, port))] = true
+			authority := strings.ToLower(net.JoinHostPort(h, port))
+			c.hosts[authority] = true
+			c.origins["http://"+authority] = true
 		}
 	}
 	for _, h := range strings.Split(os.Getenv("ALLOWED_HOSTS"), ",") {
