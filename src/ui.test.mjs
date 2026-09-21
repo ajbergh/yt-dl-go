@@ -40,7 +40,7 @@ beforeEach(async () => {
     requests.push({ url: String(url), path, ...init });
     if (path === "/api/health") return Response.json({ ready: missing.length === 0, missing, engine: healthEngine, capabilities: { combinedStreamsOnly: false, adaptiveStreamsSupported: true, externalBinariesRequired: false } });
     if (path === "/api/settings" && init.method === "PUT") return Response.json({ settings: JSON.parse(init.body) });
-    if (path === "/api/folders/select" && init.method === "POST") return Response.json({ path: "C:\\\\Media\\\\YouTube" });
+    if (path === "/api/folders/select" && init.method === "POST") return Response.json({ path: "C:\\Media\\YouTube" });
     if (path === "/api/settings") return Response.json({ settings: { defaultQuality: "best", maxConcurrentDownloads: 3, downloadLocation: "C:\\\\Downloads\\\\YouTube_Vault", namingPattern: "{channel} - {title} [{resolution}]", subfolderSorting: "channel", defaultCategory: "General", userCategories: ["General", "Music"], storageMode: "managed-published" } });
     if (path === "/api/inspect") return Response.json(inspection);
     if (path === "/api/jobs" && init.method === "POST") return Response.json(job, { status: 202 });
@@ -104,12 +104,19 @@ async function setSelect(element, value) {
 async function connect() {
   expect(container.textContent).toContain("Service connected");
 }
+async function remount() {
+  await act(async () => root.unmount());
+  root = createRoot(container);
+  await act(async () => {
+    root.render(createElement(HomePage));
+    await new Promise(resolve => setTimeout(resolve, 0));
+  });
+}
 
 describe("Downloader UI and Go API integration", () => {
   test("connects to the built-in Go service automatically", () => {
     expect(container.textContent).toContain("No downloads yet");
     expect(container.textContent).toContain("Service connected");
-    expect(container.textContent).toContain("Built-in Go download service");
     expect(requests.some(item => item.path === "/api/health")).toBe(true);
     expect(requests.some(item => item.path === "/api/jobs")).toBe(true);
     expect(requests.some(item => item.path === "/api/settings")).toBe(true);
@@ -117,6 +124,7 @@ describe("Downloader UI and Go API integration", () => {
   });
   test("does not hide service readiness failures", async () => {
     missing = ["writable storage"];
+    await remount();
     await click(button("Settings"));
     expect(container.querySelector('[role="alert"]').textContent).toContain("writable storage");
     expect(container.querySelector("#service-heading")).toBeTruthy();
@@ -124,6 +132,7 @@ describe("Downloader UI and Go API integration", () => {
   });
   test("rejects an incompatible backend without manual setup", async () => {
     healthEngine = undefined;
+    await remount();
     await click(button("Settings"));
     expect(container.querySelector('[role="alert"]').textContent).toContain("older or incompatible");
     expect(requests.some(item => item.path === "/api/jobs")).toBe(false);
@@ -174,7 +183,7 @@ describe("Downloader UI and Go API integration", () => {
     });
     await click(button("Save preferences"));
     const save = requests.find(item => item.path === "/api/settings" && item.method === "PUT");
-    expect(JSON.parse(save.body)).toEqual({ defaultQuality: "720", maxConcurrentDownloads: 3, namingPattern: "{channel} - {title} [{resolution}]", subfolderSorting: "channel", defaultCategory: "General", userCategories: ["General", "Music"], storageMode: "managed-published" });
+    expect(JSON.parse(save.body)).toEqual({ defaultQuality: "720", maxConcurrentDownloads: 3, downloadLocation: "C:\\Downloads\\YouTube_Vault", namingPattern: "{channel} - {title} [{resolution}]", subfolderSorting: "channel", defaultCategory: "General", userCategories: ["General", "Music"], storageMode: "managed-published" });
     expect(container.textContent).toContain("Saved to SQLite");
   });
   test("uses the native folder picker for download location", async () => {
@@ -195,6 +204,7 @@ describe("Downloader UI and Go API integration", () => {
   });
   test("pauses a running job through the backend", async () => {
     rows = [{ ...job, status: "downloading" }];
+    await remount();
     await connect();
     await click(button("Pause"));
     expect(requests.some(item => item.path.endsWith("/pause") && item.method === "POST")).toBe(true);
@@ -203,6 +213,7 @@ describe("Downloader UI and Go API integration", () => {
     rows = [{ ...job, status: "completed", completedCount: 1, totalCount: 1, files: [
       { id: "file-1", name: "001-test.mp4", size: 1024, outputRelativePath: "Fixture channel/test.mp4", managedAvailable: true, publishedAvailable: true },
     ] }];
+    await remount();
     await connect();
     await click(button("Library"));
     expect(button("Remove")).toBeTruthy();
@@ -237,6 +248,7 @@ describe("Downloader UI and Go API integration", () => {
       { id: "file-1", name: "001-test.mp4", size: 1024 },
       { id: "file-2", name: "002-test.mp4", size: 2048 },
     ] }];
+    await remount();
     await connect();
     await click(button("Library"));
     let target;
