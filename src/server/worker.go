@@ -67,6 +67,7 @@ type itemProgress struct {
 	processing    bool
 	progressAt    time.Time
 	progressBytes int64
+	eventAt       time.Time
 }
 
 type synchronizedNativeClient struct {
@@ -578,6 +579,7 @@ func (s *server) acquireItemSlot(ctx context.Context, j *jobState, index int, ti
 			j.itemProgress[index] = &itemProgress{title: title, progressAt: time.Now()}
 			s.refreshQueueItemLocked(j, index)
 			s.refreshProgressLocked(j)
+			s.publishJobEventLocked("job-status", j)
 			s.mu.Unlock()
 			return true
 		}
@@ -602,6 +604,7 @@ func (s *server) releaseItemSlot(j *jobState, index int) {
 	}
 	s.refreshQueueItemLocked(j, index)
 	s.refreshProgressLocked(j)
+	s.publishJobEventLocked("job-progress", j)
 	s.notifySchedulerLocked()
 	s.mu.Unlock()
 }
@@ -644,6 +647,7 @@ func (s *server) setProcessing(j *jobState, index int, processing bool) {
 		j.Status = "downloading"
 	}
 	s.refreshQueueItemLocked(j, index)
+	s.publishJobEventLocked("job-status", j)
 	s.mu.Unlock()
 }
 
@@ -834,6 +838,10 @@ func (s *server) updateProgress(j *jobState, index int, downloaded, total int64)
 	}
 	s.refreshQueueItemLocked(j, index)
 	s.refreshProgressLocked(j)
+	if item.eventAt.IsZero() || now.Sub(item.eventAt) >= 200*time.Millisecond || (total > 0 && downloaded >= total) {
+		item.eventAt = now
+		s.publishJobEventLocked("job-progress", j)
+	}
 }
 
 func (s *server) processItem(ctx context.Context, j *jobState, entry *youtube.PlaylistEntry, current, outputIndex int, tracker *jobBudget) error {
@@ -943,6 +951,7 @@ func (s *server) processItem(ctx context.Context, j *jobState, entry *youtube.Pl
 	progress := 100.0
 	j.Progress = &progress
 	s.persistJobLocked(j)
+	s.publishJobEventLocked("job-file-finalized", j)
 	s.mu.Unlock()
 	return nil
 }
@@ -1273,6 +1282,7 @@ func (s *server) recordFailure(j *jobState, index int, err error) {
 	j.Failures[position] = itemFailure{Index: index, Error: message}
 	s.refreshQueueItemLocked(j, index)
 	s.persistJobLocked(j)
+	s.publishJobEventLocked("job-error", j)
 	s.mu.Unlock()
 }
 
@@ -1310,6 +1320,9 @@ func (s *server) finish(ctx context.Context, j *jobState, fatal error) {
 		}
 	}
 	s.persistJobLocked(j)
+	if j.Error != "" {
+		s.publishJobEventLocked("job-error", j)
+	}
 }
 
 func (s *server) transfer(ctx context.Context, j *jobState, engine nativeClient, video *youtube.Video, selection streamSelection, queueIndex, outputIndex int, budget int64) (mediaFile, error) {
