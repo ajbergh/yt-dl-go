@@ -130,6 +130,7 @@ type server struct {
 	wg              sync.WaitGroup
 	engine          nativeClient
 	browserFactory  browserProviderFactory
+	filesystemOpener filesystemOpener
 	store           *jobStore
 }
 
@@ -360,6 +361,10 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.retry(w, r, parts[0])
 		return
 	}
+	if len(parts) == 2 && parts[1] == "filesystem" && r.Method == http.MethodPost {
+		s.handleFilesystem(w, r, parts[0])
+		return
+	}
 	var requested struct {
 		FileID json.RawMessage `json:"fileId"`
 	}
@@ -421,6 +426,10 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case len(parts) == 2 && parts[1] == "published" && r.Method == http.MethodDelete:
 		if !terminal(j.Status) {
 			fail(w, 409, "Only stopped jobs can have published copies deleted")
+			return
+		}
+		if j.readers > 0 {
+			fail(w, 409, "This job has an active file or filesystem operation")
 			return
 		}
 		if err := removeOutputCopies(j); err != nil {
