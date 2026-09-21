@@ -64,6 +64,7 @@ type queueItem struct {
 	ETASeconds       int64    `json:"etaSeconds"`
 	Error            string   `json:"error,omitempty"`
 	FileID           string   `json:"fileId,omitempty"`
+	RetryRequested   bool     `json:"retryRequested,omitempty"`
 }
 
 type Job struct {
