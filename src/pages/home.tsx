@@ -29,10 +29,6 @@ import {
 } from "../components/downloader/view-model";
 
 export function HomePage() {
-  const queueSensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
-    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
-  );
   const [tab, setTab] = useState<Tab>("queue");
   const [connection] = useState<ServiceConnection>(builtInServiceConnection);
   const [serviceReady, setServiceReady] = useState(false);
