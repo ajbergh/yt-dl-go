@@ -17,9 +17,9 @@ import {
   GripVertical, Pause, Play, Plus, RefreshCw, Search, Settings, ShieldCheck, Sparkles, Trash2, X,
 } from "lucide-react";
 import {
-  api, apiBlob, formatBytes, isActive, parseYouTubeURL,
+  api, apiBlob, formatBytes, isActive, parseYouTubeURL, streamServiceEvents,
   type AppSettings, type DownloadFile, type DownloadJob, type Inspection, type QueueItem, type Quality,
-  type ServiceConnection, type ServiceHealth,
+  type ServiceConnection, type ServiceEvent, type ServiceHealth,
 } from "../lib/downloader";
 
 type Tab = "queue" | "library" | "settings";
@@ -385,6 +385,7 @@ export function HomePage() {
         setSettings({
           ...settingResult.settings,
           maxConcurrentDownloads: settingResult.settings.maxConcurrentDownloads || 3,
+          bandwidthLimitBytesPerSec: settingResult.settings.bandwidthLimitBytesPerSec ?? 0,
           namingPattern: settingResult.settings.namingPattern || "{channel} - {title} [{resolution}]",
           subfolderSorting: settingResult.settings.subfolderSorting || "channel",
           defaultCategory: settingResult.settings.defaultCategory || "General",
@@ -407,27 +408,75 @@ export function HomePage() {
 
   useEffect(() => {
     if (!serviceReady) return;
-    // Refresh jobs immediately and then about every 1.8 seconds while mounted.
-    // A failed poll is shown without stopping later polling attempts.
     const controller = new AbortController();
-    let timer: ReturnType<typeof setTimeout>;
-    async function refresh() {
+    let reconnectTimer: ReturnType<typeof setTimeout>;
+    let reconcileTimer: ReturnType<typeof setInterval>;
+
+    const mergeLiveJob = (job: DownloadJob) => {
+      setJobs(previous => previous.some(item => item.id === job.id)
+        ? previous.map(item => item.id === job.id ? job : item)
+        : [job, ...previous]);
+    };
+    const applyLiveEvent = (event: ServiceEvent) => {
+      if (controller.signal.aborted) return;
+      if (event.type === "snapshot") {
+        if (event.jobs) setJobs(event.jobs);
+        if (event.settings) {
+          setSettings(previous => ({
+            ...previous,
+            ...event.settings,
+            maxConcurrentDownloads: event.settings?.maxConcurrentDownloads || 3,
+            bandwidthLimitBytesPerSec: event.settings?.bandwidthLimitBytesPerSec ?? 0,
+            namingPattern: event.settings?.namingPattern || "{channel} - {title} [{resolution}]",
+            subfolderSorting: event.settings?.subfolderSorting || "channel",
+            defaultCategory: event.settings?.defaultCategory || "General",
+            userCategories: event.settings?.userCategories?.length ? event.settings.userCategories : previous.userCategories,
+            storageMode: event.settings?.storageMode || "managed-published",
+          }));
+        }
+      } else if (event.type === "job-deleted" && event.jobId) {
+        setJobs(previous => previous.filter(job => job.id !== event.jobId));
+      } else if (event.type === "settings-changed" && event.settings) {
+        setSettings(previous => ({
+          ...previous,
+          ...event.settings,
+          bandwidthLimitBytesPerSec: event.settings?.bandwidthLimitBytesPerSec ?? 0,
+        }));
+      } else if (event.job) {
+        mergeLiveJob(event.job);
+      }
+      setPollError("");
+    };
+
+    async function reconcile() {
       try {
         const result = await api<{ jobs: DownloadJob[] }>(connection, "/api/jobs", {
           signal: AbortSignal.any([controller.signal, AbortSignal.timeout(10000)]),
         });
-        if (!controller.signal.aborted) {
-          setJobs(result.jobs);
-          setPollError("");
-        }
+        if (!controller.signal.aborted) setJobs(result.jobs);
       } catch (error) {
         if (!controller.signal.aborted) setPollError(errorMessage(error));
-      } finally {
-        if (!controller.signal.aborted) timer = setTimeout(refresh, 1800);
       }
     }
-    void refresh();
-    return () => { controller.abort(); clearTimeout(timer); };
+
+    async function connect() {
+      try {
+        await streamServiceEvents(connection, applyLiveEvent, controller.signal);
+        if (!controller.signal.aborted) throw new Error("Live job updates disconnected.");
+      } catch (error) {
+        if (controller.signal.aborted) return;
+        setPollError(`${errorMessage(error)} Reconnecting…`);
+        reconnectTimer = setTimeout(() => { void connect(); }, 1500);
+      }
+    }
+
+    void connect();
+    reconcileTimer = setInterval(() => { void reconcile(); }, 30000);
+    return () => {
+      controller.abort();
+      clearTimeout(reconnectTimer);
+      clearInterval(reconcileTimer);
+    };
   }, [connection, serviceReady]);
 
   async function inspectLinks() {
