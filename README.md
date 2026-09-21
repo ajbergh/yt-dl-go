@@ -93,7 +93,20 @@ All settings are optional environment variables. The default loopback configurat
 | `MAX_JOB_BYTES` | `10737418240` | Per-job media byte limit (10 GiB) |
 | `JOB_TIMEOUT` | `6h` | Whole-job deadline |
 | `RETENTION` | `24h` | Retention period after a job reaches a terminal state |
-| `NO_BROWSER` | unset | Set to `1` to suppress automatic UI browser launch (useful for CI/headless service startup) |
+| `NO_BROWSER` | unset | Backward-compatible environment switch; set to `1` to suppress automatic UI browser launch |
+
+### Background / no-browser mode
+
+The packaged executable normally starts the local service and opens its embedded UI in your default browser. For long-running or headless use, start the same executable with either supported alias:
+
+```
+youtube-downloader --background
+youtube-downloader --no-browser
+```
+
+Both modes keep the Go service and download workers running in the foreground process but suppress automatic browser launch. Open the logged local URL (normally `http://127.0.0.1:8080/`) whenever you want the UI. Stop the service with the normal process signal / Ctrl+C. `NO_BROWSER=1` remains supported for CI and older automation.
+
+This is intentionally **not** a detached daemon or native system-tray process: the foreground lifetime keeps shutdown/recovery behavior explicit and avoids invisible orphan services.
 
 For a network-visible deployment, set a random `API_TOKEN` of at least 32 characters, exact `ALLOWED_ORIGINS`, and exact `ALLOWED_HOSTS`; place the service behind TLS and appropriate network controls. The built-in UI cannot authenticate to a token-protected API, so use an external client that can send the bearer token. This program is designed as a trusted local/single-user tool, not a public multi-tenant download service.
 

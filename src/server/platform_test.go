@@ -2,8 +2,53 @@ package main
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 )
+
+func TestRuntimeBackgroundOptions(t *testing.T) {
+	tests := []struct {
+		name        string
+		args        []string
+		env         string
+		wantNoUI    bool
+		wantHelp    bool
+		wantErr     bool
+	}{
+		{name: "default opens browser"},
+		{name: "legacy env", env: "1", wantNoUI: true},
+		{name: "no-browser flag", args: []string{"--no-browser"}, wantNoUI: true},
+		{name: "background alias", args: []string{"--background"}, wantNoUI: true},
+		{name: "flag wins with nonlegacy env value", args: []string{"--background"}, env: "0", wantNoUI: true},
+		{name: "help short", args: []string{"-h"}, wantHelp: true},
+		{name: "help long", args: []string{"--help"}, wantHelp: true},
+		{name: "unknown argument rejected", args: []string{"--tray"}, wantErr: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			options, err := parseRuntimeOptions(test.args)
+			if test.wantErr {
+				if err == nil {
+					t.Fatal("expected unsupported argument error")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if options.help != test.wantHelp {
+				t.Fatalf("help = %v; want %v", options.help, test.wantHelp)
+			}
+			gotNoUI := !automaticBrowserEnabled(options, test.env)
+			if gotNoUI != test.wantNoUI {
+				t.Fatalf("no-browser behavior = %v; want %v", gotNoUI, test.wantNoUI)
+			}
+		})
+	}
+	if usage := runtimeUsage(); !strings.Contains(usage, "--background") || !strings.Contains(usage, "--no-browser") {
+		t.Fatalf("runtime usage does not document supported flags: %q", usage)
+	}
+}
 
 func TestBrowserOpenCommands(t *testing.T) {
 	target := "http://127.0.0.1:8080/"
@@ -87,5 +132,52 @@ func TestBrowserURLUsesLoopbackForWildcardListeners(t *testing.T) {
 		if got := browserURL(addr); got != "http://127.0.0.1:8080/" {
 			t.Fatalf("browserURL(%q) = %q", addr, got)
 		}
+	}
+}
+
+func TestRuntimeOptions(t *testing.T) {
+	tests := []struct {
+		name      string
+		args      []string
+		noBrowser bool
+		help      bool
+		wantErr   bool
+	}{
+		{name: "default"},
+		{name: "background", args: []string{"--background"}, noBrowser: true},
+		{name: "no browser", args: []string{"--no-browser"}, noBrowser: true},
+		{name: "aliases together", args: []string{"--background", "--no-browser"}, noBrowser: true},
+		{name: "short help", args: []string{"-h"}, help: true},
+		{name: "long help", args: []string{"--help"}, help: true},
+		{name: "unknown", args: []string{"--tray"}, wantErr: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			options, err := parseRuntimeOptions(test.args)
+			if (err != nil) != test.wantErr {
+				t.Fatalf("parseRuntimeOptions(%v) err=%v wantErr=%v", test.args, err, test.wantErr)
+			}
+			if err != nil {
+				return
+			}
+			if options.noBrowser != test.noBrowser || options.help != test.help {
+				t.Fatalf("parseRuntimeOptions(%v) = %+v, want noBrowser=%v help=%v", test.args, options, test.noBrowser, test.help)
+			}
+		})
+	}
+}
+
+func TestAutomaticBrowserEnabled(t *testing.T) {
+	if !automaticBrowserEnabled(runtimeOptions{}, "") {
+		t.Fatal("default startup should open the UI")
+	}
+	if automaticBrowserEnabled(runtimeOptions{noBrowser: true}, "") {
+		t.Fatal("--background should suppress automatic browser launch")
+	}
+	if automaticBrowserEnabled(runtimeOptions{}, "1") {
+		t.Fatal("NO_BROWSER=1 should suppress automatic browser launch")
+	}
+	if !automaticBrowserEnabled(runtimeOptions{}, "true") {
+		t.Fatal("legacy NO_BROWSER semantics should remain exact: only value 1 suppresses launch")
 	}
 }

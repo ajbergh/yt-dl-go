@@ -61,6 +61,14 @@ Adaptive-HD authorization uses chromedp's platform browser discovery when `CHROM
 
 The application does not bundle Chrome/Chromium. Progressive downloads that do not require the browser-assisted adaptive path remain handled by the native Go engine.
 
+### Background/no-browser operation
+
+All platform packages support `--background` and `--no-browser`. These suppress the automatic URL-handler launch but do **not** detach the process: the local service, queue, and workers continue in the foreground until the executable receives its normal shutdown signal. The process logs the UI URL for later manual access.
+
+`NO_BROWSER=1` remains available for CI/headless automation. No current package installs a login item, service manager unit, or native tray icon.
+
+A native tray dependency was investigated for P2.2. The leading zero-CGO candidate, `github.com/gogpu/systray`, satisfies the single-binary/cross-platform build model but is still young and, as of September 2026, has unresolved menu-dispatch and macOS interaction issues upstream. The repository therefore does not make that dependency part of production packages yet.
+
 ### Folder selection
 
 - Windows: PowerShell + `System.Windows.Forms.FolderBrowserDialog`
