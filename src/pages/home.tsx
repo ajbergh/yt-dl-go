@@ -15,7 +15,7 @@ import {
 } from "../lib/downloader";
 
 type Tab = "queue" | "library" | "settings";
-type Draft = Inspection & { selectedQuality: Quality; mediaType: "video" | "audio"; audioBitrate: string };
+type Draft = Inspection & { selectedQuality: Quality; mediaType: "video" | "audio"; audioBitrate: string; category: string };
 type QueueFilter = "all" | "active" | "queued" | "completed";
 type LibraryFilter = "all" | "video" | "audio";
 type QueueRow = { job: DownloadJob; item: QueueItem };
@@ -301,7 +301,7 @@ export function HomePage() {
         const selectedQuality = qualities.some(option => option.value === settings.defaultQuality)
           ? settings.defaultQuality
           : qualities[0]?.value ?? settings.defaultQuality;
-        return { ...result, selectedQuality, mediaType: "video" as const, audioBitrate: "192k" };
+        return { ...result, selectedQuality, mediaType: "video" as const, audioBitrate: "192k", category: settings.defaultCategory || settings.userCategories[0] || "General" };
       }));
       setDrafts(results);
       if (results.length === 1 && results[0].kind === "video") setNotice("Video metadata and supported qualities loaded from YouTube.");
@@ -322,7 +322,7 @@ export function HomePage() {
       for (const draft of drafts) {
         const job = await api<DownloadJob>(connection, "/api/jobs", {
           method: "POST",
-          body: JSON.stringify({ url: draft.url, quality: draft.selectedQuality, mediaType: draft.mediaType, audioBitrate: draft.audioBitrate, rightsConfirmed: true, ...(draft.kind === "playlist" && draft.entries?.length ? { items: draft.entries } : {}) }),
+          body: JSON.stringify({ url: draft.url, quality: draft.selectedQuality, mediaType: draft.mediaType, audioBitrate: draft.audioBitrate, category: draft.category, rightsConfirmed: true, ...(draft.kind === "playlist" && draft.entries?.length ? { items: draft.entries } : {}) }),
           signal: AbortSignal.timeout(15000),
         });
         added.push(job);
@@ -566,6 +566,11 @@ export function HomePage() {
                               : [{ value: "best" as const, label: "Best available", height: 0 }])).map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
                           </select>
                         </label>}
+                        <label className="block text-[11px] font-medium text-neutral-400">Category
+                          <select aria-label={`Category for ${draft.title || `item ${index + 1}`}`} value={draft.category} onChange={event => setDrafts(previous => previous.map((item, itemIndex) => itemIndex === index ? { ...item, category: event.target.value } : item))} className={`${field} mt-1.5 py-2 text-xs`}>
+                            {settings.userCategories.map(category => <option key={category} value={category}>{category}</option>)}
+                          </select>
+                        </label>
                       </div>
                     </article>)}
                     <label className="flex cursor-pointer items-start gap-2.5 border-t border-neutral-800 pt-3 text-xs text-neutral-300">
@@ -628,7 +633,7 @@ export function HomePage() {
                         <div className="mb-1.5 flex flex-wrap items-center gap-2">
                           <span className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold ${statusClass(item.status)}`}>{statusLabels[item.status]}</span>
                           <span className="text-[10px] text-rose-300">{item.author || "YouTube"}</span>
-                          <span className="rounded bg-neutral-800 px-2 py-0.5 text-[10px] text-neutral-400">{label}</span>
+                          <span className="rounded bg-neutral-800 px-2 py-0.5 text-[10px] text-neutral-400">{label}</span>{job.category && <span className="rounded bg-neutral-800 px-2 py-0.5 text-[10px] text-neutral-400">{job.category}</span>}
                         </div>
                         <h3 className="truncate text-sm font-semibold text-white" title={item.title}>{item.title}</h3>
                         <p className="mt-1 truncate text-[10px] text-neutral-500" title={job.url}>{job.kind === "playlist" ? `${job.title} · Video ${item.index}${job.totalCount ? ` of ${job.totalCount}` : ""}` : job.url}</p>
@@ -672,7 +677,7 @@ export function HomePage() {
             : <div className={`grid gap-4 ${libraryLayout === "grid" ? "md:grid-cols-2" : "grid-cols-1"}`}>
               {visibleLibraryJobs.map(job => <article key={job.id} className={`${panel} overflow-hidden`}>
                 <div className="flex items-start justify-between gap-3 border-b border-neutral-800 p-4">
-                  <div className="min-w-0"><div className="mb-1.5 flex flex-wrap gap-2"><span className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold ${statusClass(job.status)}`}>{statusLabels[job.status]}</span><span className="text-[10px] text-neutral-500">{job.kind} · {qualityLabels[job.quality]}</span></div><h3 className="truncate text-sm font-bold text-white">{job.title}</h3><p className="mt-1 text-[10px] text-neutral-500">{dateLabel(job.createdAt)} · {job.files.length} file{job.files.length === 1 ? "" : "s"}</p></div>
+                  <div className="min-w-0"><div className="mb-1.5 flex flex-wrap gap-2"><span className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold ${statusClass(job.status)}`}>{statusLabels[job.status]}</span><span className="text-[10px] text-neutral-500">{job.kind} · {qualityLabels[job.quality]}{job.category ? ` · ${job.category}` : ""}</span></div><h3 className="truncate text-sm font-bold text-white">{job.title}</h3><p className="mt-1 text-[10px] text-neutral-500">{dateLabel(job.createdAt)} · {job.files.length} file{job.files.length === 1 ? "" : "s"}</p></div>
                   <button type="button" className={button} disabled={busyAction === job.id} onClick={() => void jobAction(job, "remove")} title="Delete downloaded files and history"><Trash2 className="size-3.5" aria-hidden="true" /><span className="hidden sm:inline">Delete</span></button>
                 </div>
                 <div className="space-y-2 p-3">
