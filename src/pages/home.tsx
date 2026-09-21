@@ -6,6 +6,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { LibraryPage } from "./library";
 import { QueuePage } from "./queue";
 import { SettingsPage } from "./settings";
+import { useService } from "../hooks/use-service";
 import type { DragEndEvent } from "@dnd-kit/core";
 import { arrayMove } from "@dnd-kit/sortable";
 import {
@@ -30,23 +31,13 @@ import {
 
 export function HomePage() {
   const [tab, setTab] = useState<Tab>("queue");
-  const [connection] = useState<ServiceConnection>(builtInServiceConnection);
-  const [serviceReady, setServiceReady] = useState(false);
-  const [jobs, setJobs] = useState<DownloadJob[]>([]);
-  const [settings, setSettings] = useState<AppSettings>({
-    defaultQuality: "best", maxConcurrentDownloads: 3, bandwidthLimitBytesPerSec: 0, notificationsEnabled: false, downloadLocation: "",
-    namingPattern: "{channel} - {title} [{resolution}]", subfolderSorting: "channel",
-    defaultCategory: "General", userCategories: ["Tech", "Science", "Coding", "Music", "Education", "Gaming", "Podcasts", "Archival", "General"],
-    storageMode: "managed-published",
-  });
-  const knownJobStatuses = useRef<Map<string, DownloadJob["status"]>>(new Map());
-  const notificationsEnabledRef = useRef(false);
+  const {
+    connection, serviceReady, jobs, setJobs, settings, setSettings, mp3Supported,
+    serviceError, setServiceError, pollError,
+  } = useService();
   const [newCategoryInput, setNewCategoryInput] = useState("");
-  const [mp3Supported, setMp3Supported] = useState(false);
-  const [serviceError, setServiceError] = useState("");
   const [savingSettings, setSavingSettings] = useState(false);
   const [settingsSaved, setSettingsSaved] = useState(false);
-  const [pollError, setPollError] = useState("");
   const [url, setUrl] = useState("");
   const [batchMode, setBatchMode] = useState(false);
   const [rightsConfirmed, setRightsConfirmed] = useState(false);
@@ -160,167 +151,6 @@ export function HomePage() {
     try { window.localStorage.setItem(libraryLayoutKey, libraryLayout); }
     catch { /* Layout persistence is optional; keep the current session state. */ }
   }, [libraryLayout]);
-
-  useEffect(() => {
-    notificationsEnabledRef.current = settings.notificationsEnabled;
-  }, [settings.notificationsEnabled]);
-
-  useEffect(() => {
-    // Check the bundled Go service first, then hydrate the page from its
-    // SQLite-backed job and preference APIs. Failed startup checks retry every
-    // 2.5 seconds; unmounting aborts requests and cancels the pending retry.
-    const controller = new AbortController();
-    let retryTimer: ReturnType<typeof setTimeout>;
-
-    async function initialize() {
-      try {
-        const health = await api<ServiceHealth>(connection, "/api/health", {
-          signal: AbortSignal.any([controller.signal, AbortSignal.timeout(10000)]),
-        });
-        if (health.engine !== "native-go" || health.capabilities?.externalBinariesRequired !== false) {
-          throw new Error("The built-in service is an older or incompatible version.");
-        }
-        if (!health.ready) {
-          throw new Error(health.missing.length
-            ? `The Go service is not ready: ${health.missing.join(", ")}.`
-            : "The Go service is starting up.");
-        }
-        setMp3Supported(health.capabilities?.mp3AudioSupported === true);
-        const [jobResult, settingResult] = await Promise.all([
-          api<{ jobs: DownloadJob[] }>(connection, "/api/jobs", {
-            signal: AbortSignal.any([controller.signal, AbortSignal.timeout(10000)]),
-          }),
-          api<{ settings: AppSettings }>(connection, "/api/settings", {
-            signal: AbortSignal.any([controller.signal, AbortSignal.timeout(10000)]),
-          }),
-        ]);
-        if (controller.signal.aborted) return;
-        setJobs(jobResult.jobs);
-        knownJobStatuses.current = new Map(jobResult.jobs.map(job => [job.id, job.status]));
-        setSettings({
-          ...settingResult.settings,
-          maxConcurrentDownloads: settingResult.settings.maxConcurrentDownloads || 3,
-          bandwidthLimitBytesPerSec: settingResult.settings.bandwidthLimitBytesPerSec ?? 0,
-          notificationsEnabled: settingResult.settings.notificationsEnabled ?? false,
-          namingPattern: settingResult.settings.namingPattern || "{channel} - {title} [{resolution}]",
-          subfolderSorting: settingResult.settings.subfolderSorting || "channel",
-          defaultCategory: settingResult.settings.defaultCategory || "General",
-          userCategories: settingResult.settings.userCategories?.length ? settingResult.settings.userCategories : ["Tech", "Science", "Coding", "Music", "Education", "Gaming", "Podcasts", "Archival", "General"],
-          storageMode: settingResult.settings.storageMode || "managed-published",
-        });
-        setServiceError("");
-        setServiceReady(true);
-      } catch (error) {
-        if (controller.signal.aborted) return;
-        setServiceReady(false);
-        setServiceError(errorMessage(error));
-        retryTimer = setTimeout(() => { void initialize(); }, 2500);
-      }
-    }
-
-    void initialize();
-    return () => { controller.abort(); clearTimeout(retryTimer); };
-  }, [connection]);
-
-  useEffect(() => {
-    if (!serviceReady) return;
-    const controller = new AbortController();
-    let reconnectTimer: ReturnType<typeof setTimeout>;
-    let reconcileTimer: ReturnType<typeof setInterval>;
-
-    const mergeLiveJob = (job: DownloadJob) => {
-      setJobs(previous => previous.some(item => item.id === job.id)
-        ? previous.map(item => item.id === job.id ? job : item)
-        : [job, ...previous]);
-    };
-    const maybeNotifyTerminal = (job: DownloadJob) => {
-      const previousStatus = knownJobStatuses.current.get(job.id);
-      const changed = previousStatus !== undefined && previousStatus !== job.status;
-      knownJobStatuses.current.set(job.id, job.status);
-      if (!changed || !notificationsEnabledRef.current) return;
-      const notification = terminalNotification(job);
-      const NotificationAPI = notificationAPI();
-      if (!notification || !NotificationAPI || NotificationAPI.permission !== "granted") return;
-      try {
-        new NotificationAPI(notification.title, {
-          body: notification.body,
-          tag: `yt-dl-go:${job.id}:${job.status}`,
-        });
-      } catch {
-        // Notification support is optional; job state remains authoritative.
-      }
-    };
-    const applyLiveEvent = (event: ServiceEvent) => {
-      if (controller.signal.aborted) return;
-      if (event.type === "snapshot") {
-        if (event.jobs) {
-          for (const job of event.jobs) maybeNotifyTerminal(job);
-          setJobs(event.jobs);
-        }
-        if (event.settings) {
-          setSettings(previous => ({
-            ...previous,
-            ...event.settings,
-            maxConcurrentDownloads: event.settings?.maxConcurrentDownloads || 3,
-            bandwidthLimitBytesPerSec: event.settings?.bandwidthLimitBytesPerSec ?? 0,
-            notificationsEnabled: event.settings?.notificationsEnabled ?? false,
-            namingPattern: event.settings?.namingPattern || "{channel} - {title} [{resolution}]",
-            subfolderSorting: event.settings?.subfolderSorting || "channel",
-            defaultCategory: event.settings?.defaultCategory || "General",
-            userCategories: event.settings?.userCategories?.length ? event.settings.userCategories : previous.userCategories,
-            storageMode: event.settings?.storageMode || "managed-published",
-          }));
-        }
-      } else if (event.type === "job-deleted" && event.jobId) {
-        knownJobStatuses.current.delete(event.jobId);
-        setJobs(previous => previous.filter(job => job.id !== event.jobId));
-      } else if (event.type === "settings-changed" && event.settings) {
-        setSettings(previous => ({
-          ...previous,
-          ...event.settings,
-          bandwidthLimitBytesPerSec: event.settings?.bandwidthLimitBytesPerSec ?? 0,
-          notificationsEnabled: event.settings?.notificationsEnabled ?? false,
-        }));
-      } else if (event.job) {
-        maybeNotifyTerminal(event.job);
-        mergeLiveJob(event.job);
-      }
-      setPollError("");
-    };
-
-    async function reconcile() {
-      try {
-        const result = await api<{ jobs: DownloadJob[] }>(connection, "/api/jobs", {
-          signal: AbortSignal.any([controller.signal, AbortSignal.timeout(10000)]),
-        });
-        if (!controller.signal.aborted) {
-          for (const job of result.jobs) maybeNotifyTerminal(job);
-          setJobs(result.jobs);
-        }
-      } catch (error) {
-        if (!controller.signal.aborted) setPollError(errorMessage(error));
-      }
-    }
-
-    async function connect() {
-      try {
-        await streamServiceEvents(connection, applyLiveEvent, controller.signal);
-        if (!controller.signal.aborted) throw new Error("Live job updates disconnected.");
-      } catch (error) {
-        if (controller.signal.aborted) return;
-        setPollError(`${errorMessage(error)} Reconnecting…`);
-        reconnectTimer = setTimeout(() => { void connect(); }, 1500);
-      }
-    }
-
-    void connect();
-    reconcileTimer = setInterval(() => { void reconcile(); }, 30000);
-    return () => {
-      controller.abort();
-      clearTimeout(reconnectTimer);
-      clearInterval(reconcileTimer);
-    };
-  }, [connection, serviceReady]);
 
   async function inspectLinks() {
     setFormError("");
