@@ -8,10 +8,51 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"time"
 )
 
 type filesystemOpener func(context.Context, string, string) error
+type folderSelector func(context.Context) (string, error)
+
+var errFolderSelectionCancelled = errors.New("folder selection cancelled")
+
+func selectNativeFolder(ctx context.Context) (string, error) {
+	var command *exec.Cmd
+	switch runtime.GOOS {
+	case "windows":
+		script := `Add-Type -AssemblyName System.Windows.Forms; $d = New-Object System.Windows.Forms.FolderBrowserDialog; $d.Description = 'Choose download folder'; if ($d.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { [Console]::Write($d.SelectedPath) }`
+		command = exec.CommandContext(ctx, "powershell.exe", "-NoProfile", "-STA", "-Command", script)
+	case "darwin":
+		command = exec.CommandContext(ctx, "osascript", "-e", `POSIX path of (choose folder with prompt "Choose download folder")`)
+	case "linux":
+		path, err := exec.LookPath("zenity")
+		if err != nil {
+			return "", errors.New("native folder selection requires zenity on Linux")
+		}
+		command = exec.CommandContext(ctx, path, "--file-selection", "--directory", "--title=Choose download folder")
+	default:
+		return "", errors.New("native folder selection is not supported on this platform")
+	}
+	output, err := command.Output()
+	if err != nil {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 {
+			return "", errFolderSelectionCancelled
+		}
+		return "", err
+	}
+	selected := strings.TrimSpace(string(output))
+	if selected == "" {
+		return "", errFolderSelectionCancelled
+	}
+	selected = filepath.Clean(selected)
+	if !filepath.IsAbs(selected) || filepath.Dir(selected) == selected || len(selected) > 32760 || strings.ContainsRune(selected, '\x00') {
+		return "", errors.New("folder picker returned an invalid path")
+	}
+	return selected, nil
+}
+
 
 func openTrackedOutput(ctx context.Context, action, path string) error {
 	info, err := os.Lstat(path)
@@ -123,6 +164,35 @@ func (s *server) handleFilesystem(w http.ResponseWriter, r *http.Request, jobID 
 	defer cancel()
 	if err := opener(ctx, request.Action, path); err != nil {
 		fail(w, 500, "Could not open the tracked filesystem location")
+		return
+	}
+	reply(w, 200, map[string]string{"path": path})
+}
+
+
+func (s *server) handleFolderSelection(w http.ResponseWriter, r *http.Request) {
+	var request struct{}
+	if !decode(w, r, &request) {
+		return
+	}
+	selector := s.folderSelector
+	if selector == nil {
+		selector = selectNativeFolder
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Minute)
+	defer cancel()
+	path, err := selector(ctx)
+	if errors.Is(err, errFolderSelectionCancelled) {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	if err != nil {
+		fail(w, 500, "Could not open the native folder picker")
+		return
+	}
+	path = filepath.Clean(strings.TrimSpace(path))
+	if !filepath.IsAbs(path) || filepath.Dir(path) == path || len(path) > 32760 || strings.ContainsRune(path, '\x00') {
+		fail(w, 500, "The native folder picker returned an invalid path")
 		return
 	}
 	reply(w, 200, map[string]string{"path": path})
