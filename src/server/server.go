@@ -96,6 +96,7 @@ type Job struct {
 	SubfolderSorting string        `json:"-"`
 	Category         string        `json:"category,omitempty"`
 	StorageMode      string        `json:"storageMode"`
+	QueuePosition    int64         `json:"queuePosition,omitempty"`
 }
 
 type jobState struct {
