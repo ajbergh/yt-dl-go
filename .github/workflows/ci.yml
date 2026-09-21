@@ -38,6 +38,12 @@ jobs:
           go-version: "1.26.x"
           cache-dependency-path: src/server/go.sum
 
+      - name: Resolve WebM module checksum
+        working-directory: src/server
+        run: |
+          go mod download github.com/at-wat/ebml-go@v0.19.3
+          grep 'github.com/at-wat/ebml-go v0.19.3' go.sum
+
       - name: Install frontend dependencies
         run: npm ci
 
