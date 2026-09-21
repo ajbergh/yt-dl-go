@@ -395,6 +395,9 @@ func (s *server) run(ctx context.Context, j *jobState) {
 	var used int64
 	for _, file := range j.Files {
 		used += file.Size
+		if file.Subtitle != nil {
+			used += file.Subtitle.Size
+		}
 	}
 	s.mu.Unlock()
 	tracker := newJobBudget(s.cfg.maxBytes, used)
