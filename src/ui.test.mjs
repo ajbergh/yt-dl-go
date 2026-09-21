@@ -320,8 +320,9 @@ describe("Downloader UI and Go API integration", () => {
     expect(toggle.getAttribute("aria-checked")).toBe("false");
     expect(notificationPermissionRequests).toBe(0);
     await click(toggle);
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)); });
     expect(notificationPermissionRequests).toBe(1);
-    expect(toggle.getAttribute("aria-checked")).toBe("true");
+    expect(container.querySelector('button[role="switch"][aria-label="System notifications"]').getAttribute("aria-checked")).toBe("true");
     expect(container.textContent).toContain("System notifications enabled");
     await click(button("Save preferences"));
     const saves = requests.filter(item => item.path === "/api/settings" && item.method === "PUT");
