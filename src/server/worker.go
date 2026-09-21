@@ -117,10 +117,60 @@ func formatType(f *youtube.Format) (string, string, bool) {
 	return kind, strings.ToLower(params["codecs"]), true
 }
 
+func codecFamily(codecs string) string {
+	codecs = strings.ToLower(codecs)
+	switch {
+	case strings.Contains(codecs, "av01") || strings.Contains(codecs, "av1"):
+		return "av1"
+	case strings.Contains(codecs, "vp09") || strings.Contains(codecs, "vp9"):
+		return "vp9"
+	case strings.Contains(codecs, "avc1") || strings.Contains(codecs, "h264"):
+		return "h264"
+	case strings.Contains(codecs, "opus"):
+		return "opus"
+	case strings.Contains(codecs, "mp4a"):
+		return "aac"
+	default:
+		return ""
+	}
+}
+
 func betterVideoFormat(candidate, current *youtube.Format) bool {
 	return current == nil || candidate.Height > current.Height ||
 		(candidate.Height == current.Height && (candidate.FPS > current.FPS ||
 			(candidate.FPS == current.FPS && candidate.Bitrate > current.Bitrate)))
+}
+
+func betterWebMVideoFormat(candidate, current *youtube.Format) bool {
+	if current == nil {
+		return true
+	}
+	if candidate.Height != current.Height {
+		return candidate.Height > current.Height
+	}
+	if candidate.FPS != current.FPS {
+		return candidate.FPS > current.FPS
+	}
+	candidateCodec := ""
+	currentCodec := ""
+	if _, codecs, ok := formatType(candidate); ok {
+		candidateCodec = codecFamily(codecs)
+	}
+	if _, codecs, ok := formatType(current); ok {
+		currentCodec = codecFamily(codecs)
+	}
+	// At equal resolution/frame rate prefer VP9 over AV1 for broader native
+	// decoder compatibility. AV1 remains fully supported when it is the better
+	// or only high-resolution WebM representation.
+	if candidateCodec != currentCodec {
+		if candidateCodec == "vp9" {
+			return true
+		}
+		if currentCodec == "vp9" {
+			return false
+		}
+	}
+	return candidate.Bitrate > current.Bitrate
 }
 
 func betterAudioFormat(candidate, current *youtube.Format) bool {
@@ -129,8 +179,12 @@ func betterAudioFormat(candidate, current *youtube.Format) bool {
 }
 
 // selectFormat chooses a compatible stream under the requested maximum height.
-// It prefers adaptive H.264/AAC only when its video outranks the best combined
-// stream by height, frame rate, or bitrate; otherwise it uses the combined file.
+//
+// Existing progressive streams and H.264/AAC adaptive MP4 remain the preferred
+// compatibility path through 1080p. Higher resolutions may use WebM adaptive
+// VP9/AV1 video with Opus audio; the worker remuxes those tracks without
+// transcoding. "quality" is a ceiling, so a lower supported representation may
+// still be returned when the exact requested height is unavailable.
 func selectFormat(video *youtube.Video, quality string) (streamSelection, error) {
 	if video == nil {
 		return streamSelection{}, errMetadata
@@ -155,41 +209,71 @@ func selectFormat(video *youtube.Video, quality string) (streamSelection, error)
 		}
 	}
 
-	var audio *youtube.Format
+	var aacAudio *youtube.Format
+	var opusAudio *youtube.Format
 	for i := range video.Formats {
 		f := &video.Formats[i]
 		kind, codecs, ok := formatType(f)
-		if !ok || kind != "audio/mp4" || !strings.Contains(codecs, "mp4a") || f.AudioChannels <= 0 || f.Height != 0 || f.InitRange == nil || f.IndexRange == nil {
+		if !ok || f.AudioChannels <= 0 || f.Height != 0 || f.InitRange == nil || f.IndexRange == nil {
 			continue
 		}
-		if betterAudioFormat(f, audio) {
-			audio = f
+		switch {
+		case kind == "audio/mp4" && codecFamily(codecs) == "aac":
+			if betterAudioFormat(f, aacAudio) {
+				aacAudio = f
+			}
+		case kind == "audio/webm" && codecFamily(codecs) == "opus":
+			if betterAudioFormat(f, opusAudio) {
+				opusAudio = f
+			}
 		}
 	}
 
-	var adaptive streamSelection
+	var adaptiveMP4 streamSelection
 	progressiveMP4 := progressiveMP4Selection.video
-	if audio != nil && progressiveMP4 != nil {
+	if aacAudio != nil && progressiveMP4 != nil {
 		for i := range video.Formats {
 			f := &video.Formats[i]
 			kind, codecs, ok := formatType(f)
-			if !ok || kind != "video/mp4" || !strings.Contains(codecs, "avc1") || f.AudioChannels != 0 || f.Height <= 0 || f.Width <= 0 || f.InitRange == nil || f.IndexRange == nil || (maxHeight > 0 && f.Height > maxHeight) {
+			if !ok || kind != "video/mp4" || codecFamily(codecs) != "h264" || f.AudioChannels != 0 || f.Height <= 0 || f.Width <= 0 || f.InitRange == nil || f.IndexRange == nil || (maxHeight > 0 && f.Height > maxHeight) {
 				continue
 			}
-			if betterVideoFormat(f, adaptive.video) {
-				adaptive = streamSelection{video: f, audio: audio, progressive: progressiveMP4, kind: kind}
+			if betterVideoFormat(f, adaptiveMP4.video) {
+				adaptiveMP4 = streamSelection{video: f, audio: aacAudio, progressive: progressiveMP4, kind: kind}
 			}
 		}
 	}
 
-	if adaptive.video != nil && betterVideoFormat(adaptive.video, progressive.video) {
-		return adaptive, nil
+	var adaptiveWebM streamSelection
+	if opusAudio != nil {
+		for i := range video.Formats {
+			f := &video.Formats[i]
+			kind, codecs, ok := formatType(f)
+			if !ok || kind != "video/webm" || f.AudioChannels != 0 || f.Height <= 0 || f.Width <= 0 || f.InitRange == nil || f.IndexRange == nil || (maxHeight > 0 && f.Height > maxHeight) {
+				continue
+			}
+			family := codecFamily(codecs)
+			if family != "vp9" && family != "av1" {
+				continue
+			}
+			if betterWebMVideoFormat(f, adaptiveWebM.video) {
+				adaptiveWebM = streamSelection{video: f, audio: opusAudio, progressive: progressiveMP4, kind: kind}
+			}
+		}
+	}
+
+	bestAdaptive := adaptiveMP4
+	if adaptiveWebM.video != nil && (bestAdaptive.video == nil || betterVideoFormat(adaptiveWebM.video, bestAdaptive.video)) {
+		bestAdaptive = adaptiveWebM
+	}
+	if bestAdaptive.video != nil && betterVideoFormat(bestAdaptive.video, progressive.video) {
+		return bestAdaptive, nil
 	}
 	if progressive.video != nil {
 		return progressive, nil
 	}
-	if adaptive.video != nil {
-		return adaptive, nil
+	if bestAdaptive.video != nil {
+		return bestAdaptive, nil
 	}
 	if video.HLSManifestURL != "" || video.DASHManifestURL != "" {
 		return streamSelection{}, errManifest
