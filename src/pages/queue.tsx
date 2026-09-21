@@ -162,7 +162,7 @@ export function QueuePage({
                           <select aria-label={`MP3 bitrate for ${draft.title || `item ${index + 1}`}`} value={draft.audioBitrate} onChange={event => setDrafts(previous => previous.map((item, itemIndex) => itemIndex === index ? { ...item, audioBitrate: event.target.value } : item))} className={`${field} mt-1.5 py-2 text-xs`}>
                             {["128k", "192k", "256k", "320k"].map(value => <option key={value} value={value}>{value}</option>)}
                           </select>
-                        </label>}</> : <label className="block text-[11px] font-medium text-neutral-400">Maximum quality
+                        </label>}</> : <><label className="block text-[11px] font-medium text-neutral-400">Maximum quality
                           <select aria-label={`Quality for ${draft.title || `item ${index + 1}`}`} value={draft.selectedQuality} onChange={event => setDrafts(previous => previous.map((item, itemIndex) => itemIndex === index ? { ...item, selectedQuality: event.target.value as Quality } : item))} className={`${field} mt-1.5 py-2 text-xs`}>
                             {(draft.availableQualities ?? (draft.kind === "playlist"
                               ? (Object.entries(qualityLabels) as [Quality, string][]).map(([value, label]) => ({ value, label, height: 0 }))
@@ -174,7 +174,7 @@ export function QueuePage({
                             {(Object.entries(videoStrategyLabels) as [Draft["selectedVideoStrategy"], string][]).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
                           </select>
                           <span className="mt-1 block text-[10px] leading-relaxed text-neutral-500">{draft.selectedVideoStrategy === "compatibility" ? "Strict MP4 output; may use a lower resolution when H.264/AAC is the highest compatible option." : draft.selectedVideoStrategy === "best" ? "Automatically chooses the highest-quality supported MP4 or WebM representation." : `Prefers ${draft.selectedVideoStrategy.toUpperCase()} WebM; falls back transparently when unavailable.`}</span>
-
+                        </label></>}
                         <label className="block text-[11px] font-medium text-neutral-400">Captions
                           <select aria-label={`Captions for ${draft.title || `item ${index + 1}`}`} value={draft.subtitleLanguage} onChange={event => setDrafts(previous => previous.map((item, itemIndex) => itemIndex === index ? { ...item, subtitleLanguage: event.target.value } : item))} className={`${field} mt-1.5 py-2 text-xs`}>
                             <option value="">None</option>
