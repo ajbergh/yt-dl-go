@@ -269,17 +269,24 @@ Playlist inspection now allows users to choose which exposed items are queued.
 
 ### P1.7 Queue reordering and priority
 
-**Status:** [ ] Planned
+**Status:** [T] Implemented; CI validation pending
 
-The repository already includes `@dnd-kit`; use it for explicit user queue ordering.
+Implemented explicit, durable queue ordering using the repository's existing `@dnd-kit` dependencies.
 
-#### Scope
+#### Implemented
 
-- Drag-to-reorder queued jobs/items.
-- “Download next” action.
-- Persist queue priority/order.
-- Preserve ordering across restart.
-- Do not reorder already-active work unexpectedly.
+- Added persisted per-job `queuePosition` with SQLite migration v10.
+- Converted the queue channel into a scheduler wake signal; the scheduler now starts the lowest-position queued job.
+- Added atomic `PUT /api/queue/order` exact-set reordering for queued jobs.
+- Added `POST /api/jobs/{id}/next` for an explicit “Download next” priority action.
+- Added `PUT /api/jobs/{id}/items` for exact-set playlist item reordering using durable original playlist indexes.
+- Reordered playlist items keep contiguous runtime queue indexes while original playlist indexes continue to drive filenames and MP3 track metadata.
+- Queue order and playlist item order persist across restart.
+- Resumed paused jobs join the end of the queued-job order.
+- Reorder APIs reject active/non-queued work, so already-active downloads are never moved unexpectedly.
+- Added nested `@dnd-kit` sortable surfaces for queued jobs and queued playlist items, with keyboard-accessible drag handles.
+- Added backend regression coverage for scheduler priority, “Download next,” queue persistence, and playlist item-order persistence.
+- Added frontend coverage for persisted queue rendering, drag handles, and “Download next.”
 
 ### P1.8 Retry one playlist item
 
