@@ -204,6 +204,28 @@ func assertFinalFiles(t *testing.T, s *server, j Job) {
 	}
 }
 
+func TestLoadConfigAllowsCurrentLoopbackOrigin(t *testing.T) {
+	t.Setenv("ADDR", "127.0.0.1:49152")
+	t.Setenv("ALLOWED_ORIGINS", "http://localhost:5173")
+	t.Setenv("ALLOWED_HOSTS", "")
+	c, err := loadConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, origin := range []string{
+		"http://127.0.0.1:49152",
+		"http://localhost:49152",
+		"http://[::1]:49152",
+	} {
+		if !c.origins[origin] {
+			t.Fatalf("current loopback origin %q was not automatically allowed", origin)
+		}
+	}
+	if !c.hosts["127.0.0.1:49152"] {
+		t.Fatal("current loopback host was not automatically allowed")
+	}
+}
+
 func TestCanonicalURL(t *testing.T) {
 	for _, raw := range []string{testVideo, "https://youtu.be/dQw4w9WgXcQ?si=ignored", "https://m.youtube.com/shorts/dQw4w9WgXcQ", "https://youtube.com/live/dQw4w9WgXcQ"} {
 		got, kind, err := canonicalURL(raw)
