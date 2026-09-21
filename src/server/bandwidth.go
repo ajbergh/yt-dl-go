@@ -99,6 +99,30 @@ func (l *bandwidthLimiter) removeWaiterLocked(waiter *bandwidthWaiter) {
 	}
 }
 
+func (l *bandwidthLimiter) tryGrantLocked(waiter *bandwidthWaiter, requested int, now time.Time) int {
+	if l.limit <= 0 {
+		l.removeWaiterLocked(waiter)
+		return requested
+	}
+	l.refillLocked(now)
+	if len(l.queue) == 0 || l.queue[0] != waiter || l.tokens < 1 {
+		return 0
+	}
+	grant := requested
+	if capacity := int(l.burstCapacityLocked()); grant > capacity {
+		grant = capacity
+	}
+	if available := int(l.tokens); grant > available {
+		grant = available
+	}
+	if grant < 1 {
+		grant = 1
+	}
+	l.tokens -= float64(grant)
+	l.queue = l.queue[1:]
+	return grant
+}
+
 // acquire grants read capacity in FIFO order. Each caller re-enters the queue
 // after every grant, producing round-robin sharing among concurrent transfers.
 func (l *bandwidthLimiter) acquire(ctx context.Context, requested int) (int, error) {
@@ -127,29 +151,11 @@ func (l *bandwidthLimiter) acquire(ctx context.Context, requested int) (int, err
 			return 0, err
 		}
 		l.mu.Lock()
-		if l.limit <= 0 {
-			l.removeWaiterLocked(waiter)
-			l.mu.Unlock()
-			return requested, nil
-		}
-		l.refillLocked(time.Now())
-		if len(l.queue) > 0 && l.queue[0] == waiter && l.tokens >= 1 {
-			grant := requested
-			if capacity := int(l.burstCapacityLocked()); grant > capacity {
-				grant = capacity
-			}
-			if available := int(l.tokens); grant > available {
-				grant = available
-			}
-			if grant < 1 {
-				grant = 1
-			}
-			l.tokens -= float64(grant)
-			l.queue = l.queue[1:]
-			l.mu.Unlock()
+		grant := l.tryGrantLocked(waiter, requested, time.Now())
+		l.mu.Unlock()
+		if grant > 0 {
 			return grant, nil
 		}
-		l.mu.Unlock()
 
 		select {
 		case <-ctx.Done():
