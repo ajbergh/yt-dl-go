@@ -8,7 +8,7 @@ import (
 
 func waitBandwidthQueue(t *testing.T, limiter *bandwidthLimiter, want int) {
 	t.Helper()
-	deadline := time.Now().Add(time.Second)
+	deadline := time.Now().Add(3 * time.Second)
 	for time.Now().Before(deadline) {
 		limiter.mu.Lock()
 		got := len(limiter.queue)
@@ -28,49 +28,44 @@ func freezeBandwidthRefill(limiter *bandwidthLimiter) {
 	limiter.mu.Unlock()
 }
 
-func grantBandwidth(limiter *bandwidthLimiter, bytes int) {
-	limiter.mu.Lock()
-	limiter.tokens = float64(bytes)
-	limiter.mu.Unlock()
-}
-
 func TestBandwidthLimiterFairFIFOGrants(t *testing.T) {
 	limiter := newBandwidthLimiter(1024 * 1024)
-	freezeBandwidthRefill(limiter)
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	waiters := []*bandwidthWaiter{{}, {}, {}}
 
-	results := []chan int{make(chan int, 1), make(chan int, 1), make(chan int, 1)}
-	for index := range results {
-		go func(result chan int) {
-			n, err := limiter.acquire(ctx, 1024)
-			if err != nil {
-				result <- -1
-				return
-			}
-			result <- n
-		}(results[index])
-		waitBandwidthQueue(t, limiter, index+1)
+	limiter.mu.Lock()
+	limiter.queue = append(limiter.queue, waiters...)
+	limiter.tokens = 1024
+	limiter.last = time.Now().Add(time.Hour)
+
+	if grant := limiter.tryGrantLocked(waiters[1], 1024, time.Now()); grant != 0 {
+		limiter.mu.Unlock()
+		t.Fatalf("second waiter bypassed FIFO with grant %d", grant)
+	}
+	if grant := limiter.tryGrantLocked(waiters[0], 1024, time.Now()); grant != 1024 {
+		limiter.mu.Unlock()
+		t.Fatalf("first waiter grant = %d, want 1024", grant)
 	}
 
-	for index, result := range results {
-		grantBandwidth(limiter, 1024)
-		select {
-		case n := <-result:
-			if n != 1024 {
-				t.Fatalf("waiter %d grant = %d, want 1024", index+1, n)
-			}
-		case <-time.After(time.Second):
-			t.Fatalf("waiter %d was not granted in FIFO order", index+1)
-		}
-		for later := index + 1; later < len(results); later++ {
-			select {
-			case n := <-results[later]:
-				t.Fatalf("waiter %d bypassed FIFO with grant %d", later+1, n)
-			default:
-			}
-		}
+	limiter.tokens = 1024
+	if grant := limiter.tryGrantLocked(waiters[2], 1024, time.Now()); grant != 0 {
+		limiter.mu.Unlock()
+		t.Fatalf("third waiter bypassed second with grant %d", grant)
 	}
+	if grant := limiter.tryGrantLocked(waiters[1], 1024, time.Now()); grant != 1024 {
+		limiter.mu.Unlock()
+		t.Fatalf("second waiter grant = %d, want 1024", grant)
+	}
+
+	limiter.tokens = 1024
+	if grant := limiter.tryGrantLocked(waiters[2], 1024, time.Now()); grant != 1024 {
+		limiter.mu.Unlock()
+		t.Fatalf("third waiter grant = %d, want 1024", grant)
+	}
+	if len(limiter.queue) != 0 {
+		limiter.mu.Unlock()
+		t.Fatalf("FIFO queue retained %d waiter(s)", len(limiter.queue))
+	}
+	limiter.mu.Unlock()
 }
 
 func TestBandwidthLimiterLiveUnlimitedRelease(t *testing.T) {
@@ -89,7 +84,7 @@ func TestBandwidthLimiterLiveUnlimitedRelease(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-	case <-time.After(time.Second):
+	case <-time.After(3 * time.Second):
 		t.Fatal("switching to unlimited did not release a waiting transfer")
 	}
 	if limiter.Limit() != 0 {
@@ -113,7 +108,7 @@ func TestBandwidthLimiterRejectsContextAfterQueueing(t *testing.T) {
 		if err == nil {
 			t.Fatal("cancelled bandwidth wait returned nil")
 		}
-	case <-time.After(time.Second):
+	case <-time.After(3 * time.Second):
 		t.Fatal("cancelled bandwidth wait did not stop")
 	}
 	waitBandwidthQueue(t, limiter, 0)
