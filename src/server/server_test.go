@@ -158,9 +158,9 @@ func createJob(t *testing.T, s *server, raw string) Job {
 	return j
 }
 
-func waitJob(t *testing.T, s *server, id string, accept func(Job) bool) Job {
+func waitJobFor(t *testing.T, s *server, id string, timeout time.Duration, accept func(Job) bool) Job {
 	t.Helper()
-	until := time.Now().Add(15 * time.Second)
+	until := time.Now().Add(timeout)
 	for time.Now().Before(until) {
 		w := request(s, "GET", "/api/jobs/"+id, "", nil)
 		var j Job
@@ -174,6 +174,10 @@ func waitJob(t *testing.T, s *server, id string, accept func(Job) bool) Job {
 	}
 	t.Fatal("job did not reach the expected state")
 	return Job{}
+}
+
+func waitJob(t *testing.T, s *server, id string, accept func(Job) bool) Job {
+	return waitJobFor(t, s, id, 15*time.Second, accept)
 }
 
 func waitTerminal(t *testing.T, s *server, id string) Job {
