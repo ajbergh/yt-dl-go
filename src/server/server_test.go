@@ -462,6 +462,44 @@ func TestStoragePolicies(t *testing.T) {
 	}
 }
 
+func TestTrackedFilesystemActions(t *testing.T) {
+	s := testServer(t, fixtureClient(1), nil)
+	j := waitTerminal(t, s, createJob(t, s, testVideo).ID)
+	if len(j.Files) != 1 || !j.Files[0].PublishedAvailable {
+		t.Fatalf("fixture did not publish media: %+v", j.Files)
+	}
+	file := j.Files[0]
+	var openedAction, openedPath string
+	s.filesystemOpener = func(_ context.Context, action, path string) error {
+		openedAction, openedPath = action, path
+		return nil
+	}
+
+	response := request(s, "POST", "/api/jobs/"+j.ID+"/filesystem", `{"fileId":"`+file.ID+`","action":"reveal"}`, nil)
+	if response.Code != 200 || openedAction != "reveal" || openedPath != file.OutputPath {
+		t.Fatalf("reveal tracked output: %d action=%q path=%q body=%s", response.Code, openedAction, openedPath, response.Body.String())
+	}
+
+	openedAction, openedPath = "", ""
+	response = request(s, "POST", "/api/jobs/"+j.ID+"/filesystem", `{"fileId":"`+file.ID+`","action":"copy-path"}`, nil)
+	var copied struct{ Path string `json:"path"` }
+	if response.Code != 200 || json.Unmarshal(response.Body.Bytes(), &copied) != nil || copied.Path != file.OutputPath || openedAction != "" {
+		t.Fatalf("copy tracked path: %d %+v opener=%q", response.Code, copied, openedAction)
+	}
+	if request(s, "POST", "/api/jobs/"+j.ID+"/filesystem", `{"fileId":"../other","action":"reveal"}`, nil).Code != 404 {
+		t.Fatal("filesystem action accepted unknown file")
+	}
+	if request(s, "POST", "/api/jobs/"+j.ID+"/filesystem", `{"fileId":"`+file.ID+`","action":"execute"}`, nil).Code != 400 {
+		t.Fatal("filesystem action accepted unsupported operation")
+	}
+	if request(s, "DELETE", "/api/jobs/"+j.ID+"/published", "", nil).Code != 200 {
+		t.Fatal("could not remove published fixture")
+	}
+	if request(s, "POST", "/api/jobs/"+j.ID+"/filesystem", `{"fileId":"`+file.ID+`","action":"reveal"}`, nil).Code != 409 {
+		t.Fatal("filesystem action accepted removed published media")
+	}
+}
+
 func TestPauseAndResumeJob(t *testing.T) {
 	fake := fixtureClient(1)
 	var streamCalls atomic.Int32
