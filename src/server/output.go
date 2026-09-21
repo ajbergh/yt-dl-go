@@ -132,7 +132,7 @@ func (s *server) publishOutput(j *jobState, file *mediaFile) error {
 		return errors.New("job contains an invalid output directory")
 	}
 	extension := filepath.Ext(file.Name)
-	if extension != ".mp4" && extension != ".webm" && extension != ".mp3" {
+	if extension != ".mp4" && extension != ".webm" && extension != ".mp3" && extension != ".m4a" {
 		return errors.New("download has an unsupported output type")
 	}
 	channel := file.Author
