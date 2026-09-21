@@ -366,6 +366,21 @@ export function HomePage() {
     } finally { setSubmitting(false); }
   }
 
+  async function selectDownloadFolder() {
+    if (!serviceReady) return;
+    setServiceError("");
+    try {
+      const result = await api<{ path: string } | undefined>(connection, "/api/folders/select", {
+        method: "POST", body: "{}", signal: AbortSignal.timeout(5 * 60 * 1000),
+      });
+      if (!result?.path) return;
+      changeSetting("downloadLocation", result.path);
+      setNotice("Download folder selected. Save preferences to apply it to newly queued jobs.");
+    } catch (error) {
+      setServiceError(errorMessage(error));
+    }
+  }
+
   async function savePreferences(event: React.FormEvent) {
     event.preventDefault();
     if (!serviceReady) { setServiceError("The built-in Go service is still starting. It will connect automatically."); return; }
@@ -802,7 +817,7 @@ export function HomePage() {
               <div className="rounded-xl border border-neutral-800 bg-neutral-950/60 p-4">
                 <div className="mb-3 flex items-center gap-3"><span className="grid size-9 place-items-center rounded-lg border border-amber-700/40 bg-amber-950/30 text-amber-300"><Folder className="size-4" aria-hidden="true" /></span><div><h4 className="text-xs font-bold">Download directory location</h4><p className="mt-0.5 text-[11px] text-neutral-400">Finished media is copied to this local or external folder.</p></div></div>
                 <label className="block text-[11px] font-medium text-neutral-300" htmlFor="download-location">Absolute folder path</label>
-                <div className="mt-1 flex gap-2"><input id="download-location" type="text" autoComplete="off" className={`${field} font-mono text-xs`} value={settings.downloadLocation} onChange={event => changeSetting("downloadLocation", event.target.value)} placeholder="C:\\Users\\you\\Downloads\\YouTube_Vault" /><button type="button" className={button} onClick={() => document.getElementById("download-location")?.focus()} title="Focus the path field for editing">Edit path</button></div>
+                <div className="mt-1 flex gap-2"><input id="download-location" type="text" autoComplete="off" className={`${field} font-mono text-xs`} value={settings.downloadLocation} onChange={event => changeSetting("downloadLocation", event.target.value)} placeholder="C:\\Users\\you\\Downloads\\YouTube_Vault" /><button type="button" className={button} onClick={() => void selectDownloadFolder()} disabled={!serviceReady} title="Choose a folder with the operating system picker"><Folder className="size-3.5 text-amber-400" aria-hidden="true" />Browse</button></div>
                 <p className="mt-2 text-[10px] text-neutral-500">Enter an absolute path. The app creates the folder when the first download finishes. Existing files stay in their original locations.</p>
                 <div className="mt-3 flex flex-wrap items-center gap-1.5 text-[10px]">
                   <span className="mr-1 text-neutral-500">Quick paths:</span>
