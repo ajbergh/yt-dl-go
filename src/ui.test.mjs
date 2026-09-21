@@ -50,6 +50,28 @@ beforeEach(async () => {
     if (path === "/api/inspect") return Response.json(inspection);
     if (path === "/api/jobs" && init.method === "POST") return Response.json(job, { status: 202 });
     if (path === "/api/jobs") return Response.json({ jobs: rows });
+    if (path === "/api/queue/order" && init.method === "PUT") {
+      const { jobIds } = JSON.parse(init.body);
+      const ordered = jobIds.map((id, index) => ({ ...rows.find(item => item.id === id), queuePosition: index + 1 }));
+      rows = rows.map(item => ordered.find(updated => updated.id === item.id) ?? item);
+      return Response.json({ jobs: ordered });
+    }
+    if (path.endsWith("/next") && init.method === "POST") {
+      const id = path.split("/").at(-2);
+      const queued = rows.filter(item => item.status === "queued").sort((a, b) => (a.queuePosition ?? 999) - (b.queuePosition ?? 999));
+      const ordered = [queued.find(item => item.id === id), ...queued.filter(item => item.id !== id)].filter(Boolean).map((item, index) => ({ ...item, queuePosition: index + 1 }));
+      rows = rows.map(item => ordered.find(updated => updated.id === item.id) ?? item);
+      return Response.json({ jobs: ordered });
+    }
+    if (path.endsWith("/items") && init.method === "PUT") {
+      const id = path.split("/").at(-2);
+      const current = rows.find(item => item.id === id) ?? job;
+      const { playlistIndexes } = JSON.parse(init.body);
+      const items = playlistIndexes.map((playlistIndex, index) => ({ ...current.items.find(item => item.playlistIndex === playlistIndex), index: index + 1 }));
+      const updated = { ...current, items };
+      rows = rows.map(item => item.id === id ? updated : item);
+      return Response.json(updated);
+    }
     if (path.endsWith("/cancel")) return Response.json({ ...job, status: "cancelled" });
     if (path.endsWith("/pause")) return Response.json({ ...job, status: "paused" });
     if (path.endsWith("/resume")) return Response.json({ ...job, status: "queued" });
@@ -248,6 +270,25 @@ describe("Downloader UI and Go API integration", () => {
     expect(JSON.parse(saves.at(-1).body).storageMode).toBe("published-only");
     expect(container.textContent).toContain("Published only");
   });
+  test("renders persisted queue order and moves a queued job next", async () => {
+    rows = [
+      { ...job, id: "job-a", title: "First queued", status: "queued", queuePosition: 1, createdAt: "2026-01-01T00:00:00Z", items: [{ index: 1, playlistIndex: 2, videoId: "abcdefghijk", title: "Item 2", status: "queued", progress: null, downloadedBytes: 0, totalBytes: 0, speedBytesPerSec: 0, etaSeconds: 0 }, { index: 2, playlistIndex: 4, videoId: "lmnopqrstuv", title: "Item 4", status: "queued", progress: null, downloadedBytes: 0, totalBytes: 0, speedBytesPerSec: 0, etaSeconds: 0 }] },
+      { ...job, id: "job-b", title: "Second queued", status: "queued", queuePosition: 2, createdAt: "2026-01-01T00:01:00Z", kind: "video", items: [{ index: 1, videoId: "abcdefghijk", title: "Video B", status: "queued", progress: null, downloadedBytes: 0, totalBytes: 0, speedBytesPerSec: 0, etaSeconds: 0 }] },
+    ];
+    await remount();
+    await connect();
+    expect(container.textContent).toContain("Queued work order");
+    expect(container.querySelector('button[aria-label="Drag First queued"]')).toBeTruthy();
+    expect(container.querySelector('button[aria-label="Drag Item 2"]')).toBeTruthy();
+    expect(container.querySelector('button[aria-label="Drag Item 4"]')).toBeTruthy();
+    const nextButtons = [...container.querySelectorAll("button")].filter(item => item.textContent.trim() === "Download next");
+    expect(nextButtons).toHaveLength(2);
+    expect(nextButtons[0].disabled).toBe(true);
+    await click(nextButtons[1]);
+    expect(requests.some(item => item.path === "/api/jobs/job-b/next" && item.method === "POST")).toBe(true);
+    expect(container.textContent).toContain('"Second queued" will be the next queued job to start.');
+  });
+
   test("pauses a running job through the backend", async () => {
     rows = [{ ...job, status: "downloading" }];
     await remount();
