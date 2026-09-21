@@ -2,7 +2,7 @@
 
 > Durable roadmap for the `yt-dl-go` product. This file is the source of truth for roadmap scope, sequencing, implementation status, acceptance criteria, and follow-up work.
 >
-> **Branch:** `roadmap/cross-platform-packaging-v1`
+> **Branch:** `roadmap/release-publication-gates-v1`
 >
 > **Last updated:** 2026-09-21
 
@@ -431,7 +431,10 @@ Until then, the supported background/no-browser mode provides long-running batch
 - strict release-link allowlist for this repository's GitHub Releases
 - Settings UI showing current build metadata, latest stable version, and update-available link
 - update discovery is non-blocking and never affects downloader/service readiness
-- tag-driven `vMAJOR.MINOR.PATCH` release workflow
+- tag-driven `vMAJOR.MINOR.PATCH` release workflow that requires the tag to exactly match `package.json`
+- release workflow stops at a draft GitHub Release so update discovery cannot advertise packages before human publication review
+- packaged `--version` command reports embedded version, source commit, and build timestamp without starting the service
+- durable `docs/RELEASES.md` runbook covering provenance verification, native signing/notarization gates, publication, and rollback
 - full source/test/browser validation before release packaging
 - Windows, Linux amd64/arm64, and macOS amd64/arm64 release packages
 - individual SHA-256 files plus canonical `SHA256SUMS.txt`
@@ -458,7 +461,9 @@ Until those conditions are satisfied, an available update opens the validated Gi
 
 CI run `35659497292` passed frontend type-check/build, Bun integration tests, Go tests, Go vet, real-browser E2E, Windows production build/package/upload, Linux amd64 + arm64 packages, and macOS amd64 + arm64 packages. This run includes the release-metadata linker injection path on every platform build script.
 
-The tag-only `.github/workflows/release.yml` is intentionally not executed by branch CI; it reuses the same validated build scripts and adds stable-tag validation, package checksum verification, GitHub OIDC provenance attestations, canonical `SHA256SUMS.txt`, and GitHub Release publication.
+The tag-only `.github/workflows/release.yml` is intentionally not executed by branch CI; it reuses the same validated build scripts and adds exact tag/package-version validation, package checksum verification, GitHub OIDC provenance attestations, canonical `SHA256SUMS.txt`, and **draft** GitHub Release creation. A human publication step is required before update discovery can surface the release.
+
+Follow-up release-publication hardening adds regression coverage for the `--version` runtime option; ordinary branch CI validates the Go/frontend behavior while the tag-only publication path remains gated to release tags.
 
 ---
 
