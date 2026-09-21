@@ -15,7 +15,7 @@ $env:CHROME_PATH = 'C:\Program Files\Google\Chrome\Application\chrome.exe'
 .\youtube-downloader.exe
 ~~~
 
-Downloads are stored in `downloads` under the process's current working directory (normally beside the executable when it is launched directly). Open the UI, paste an approved YouTube URL, choose a maximum quality, confirm your rights, and download. `best`, `2160`, `1440`, `1080`, `720`, and `480` are maximum heights—not upscale requests or guarantees. The actual height and MIME type are shown for each completed file.
+Downloads are stored in `downloads` under the process's current working directory (normally beside the executable when it is launched directly). Open the UI, paste an approved YouTube URL, choose a maximum quality and video-format strategy, confirm your rights, and download. `best`, `2160`, `1440`, `1080`, `720`, and `480` are maximum heights—not upscale requests or guarantees. Video format can be **Best quality**, strict **Compatibility MP4** (H.264/AAC), **Prefer VP9**, or **Prefer AV1**. VP9/AV1 preferences fall back to the automatic best-supported format when the preferred codec is unavailable and disclose that fallback in the job note. The actual height and MIME type are shown for each completed file.
 
 ## Linux and macOS
 
@@ -29,7 +29,7 @@ After inspection, you can optionally choose an available caption language and sa
 
 ## How HD downloads work
 
-YouTube commonly serves HD and 4K video as separate adaptive video and audio tracks. The compatibility path remuxes H.264/AAC into MP4. For 1440p/2160p, the app can select adaptive VP9 or AV1 video with Opus audio and remux the tracks into WebM entirely in Go, without transcoding or FFmpeg. When YouTube requires browser-scoped authorization, the app launches a temporary headless Chrome-compatible session, targets the selected codec/quality, captures only the selected tracks through their declared final fragments, and discards the temporary browser profile when the download ends.
+YouTube commonly serves HD and 4K video as separate adaptive video and audio tracks. The Compatibility MP4 strategy is strict: it selects progressive MP4 or adaptive H.264/AAC MP4 and never silently emits WebM. Best quality keeps the automatic policy. VP9 preferred and AV1 preferred select the requested WebM codec when available under the quality ceiling and otherwise fall back to the automatic best-supported format with an explicit job note. For 1440p/2160p, VP9/AV1 video is paired with Opus audio and remuxed into WebM entirely in Go, without transcoding or FFmpeg. When YouTube requires browser-scoped authorization, the app launches a temporary headless Chrome-compatible session, targets the selected codec/quality, captures only the selected tracks through their declared final fragments, and discards the temporary browser profile when the download ends.
 
 The app does not ask you to provide an account token or import cookies from your normal browser profile. YouTube may issue short-lived authorization to the temporary browser session used for adaptive capture; that profile is discarded when the download ends. This is separate from the Go API's optional `API_TOKEN` setting: the built-in UI does not prompt for or send that token, so leave `API_TOKEN` unset when using the bundled UI. If adaptive HD cannot be completed, the app uses the highest verified compatible progressive MP4 when available and records that fallback in the job note. YouTube availability and delivery rules can change, so no downloader can promise a particular resolution for every video.
 
