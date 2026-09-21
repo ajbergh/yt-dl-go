@@ -20,6 +20,7 @@ type QueueFilter = "all" | "active" | "queued" | "completed";
 type LibraryFilter = "all" | "video" | "audio";
 type QueueRow = { job: DownloadJob; item: QueueItem };
 const clearedQueueItemsKey = "yt-dl-go:cleared-completed-queue-items";
+const libraryLayoutKey = "yt-dl-go:library-layout";
 
 function queueItemKey({ job, item }: QueueRow): string {
   return `${job.id}:${item.index}`;
@@ -191,7 +192,12 @@ export function HomePage() {
   const [search, setSearch] = useState("");
   const [libraryFilter, setLibraryFilter] = useState<LibraryFilter>("all");
   const [librarySearch, setLibrarySearch] = useState("");
-  const [libraryLayout, setLibraryLayout] = useState<"grid" | "list">("grid");
+  const [libraryCategory, setLibraryCategory] = useState("all");
+  const [libraryChannel, setLibraryChannel] = useState("all");
+  const [libraryLayout, setLibraryLayout] = useState<"grid" | "list">(() => {
+    try { return window.localStorage.getItem(libraryLayoutKey) === "list" ? "list" : "grid"; }
+    catch { return "grid"; }
+  });
   const [clearedQueueItems, setClearedQueueItems] = useState<string[]>(() => {
     try {
       const stored = window.localStorage.getItem(clearedQueueItemsKey);
@@ -221,11 +227,48 @@ export function HomePage() {
     () => jobs.filter(job => ["completed", "partial", "failed", "cancelled"].includes(job.status) && job.files.length > 0),
     [jobs],
   );
+  const libraryCategories = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const job of libraryJobs) {
+      const category = job.category || job.files.find(file => file.category)?.category || "Uncategorized";
+      counts.set(category, (counts.get(category) ?? 0) + job.files.length);
+    }
+    return [...counts.entries()].sort(([a], [b]) => a.localeCompare(b));
+  }, [libraryJobs]);
+  const libraryChannels = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const job of libraryJobs) {
+      for (const file of job.files) {
+        const channel = file.author?.trim() || "Unknown channel";
+        counts.set(channel, (counts.get(channel) ?? 0) + 1);
+      }
+    }
+    return [...counts.entries()].sort(([a], [b]) => a.localeCompare(b));
+  }, [libraryJobs]);
+  const libraryStats = useMemo(() => libraryJobs.reduce((stats, job) => {
+    for (const file of job.files) {
+      stats.files += 1;
+      stats.logicalBytes += file.size;
+      if (file.managedAvailable !== false) stats.managedBytes += file.size;
+      if (file.publishedAvailable !== false && file.outputRelativePath) stats.publishedBytes += file.size;
+    }
+    return stats;
+  }, { files: 0, logicalBytes: 0, managedBytes: 0, publishedBytes: 0 }), [libraryJobs]);
   const visibleLibraryJobs = useMemo(() => libraryJobs.filter(job => {
     const query = librarySearch.trim().toLowerCase();
-    const text = `${job.title} ${job.url} ${job.files.map(file => `${file.title ?? ""} ${file.author ?? ""} ${file.name}`).join(" ")}`.toLowerCase();
-    return (!query || text.includes(query)) && (libraryFilter === "all" || (job.mediaType ?? "video") === libraryFilter);
-  }), [libraryJobs, libraryFilter, librarySearch]);
+    const category = job.category || job.files.find(file => file.category)?.category || "Uncategorized";
+    const channels = job.files.map(file => file.author?.trim() || "Unknown channel");
+    const text = `${job.title} ${job.url} ${job.category ?? ""} ${job.audioFormat ?? ""} ${job.files.map(file => `${file.title ?? ""} ${file.author ?? ""} ${file.category ?? ""} ${file.name} ${file.outputName ?? ""} ${file.outputRelativePath ?? ""}`).join(" ")}`.toLowerCase();
+    return (!query || text.includes(query))
+      && (libraryFilter === "all" || (job.mediaType ?? "video") === libraryFilter)
+      && (libraryCategory === "all" || category === libraryCategory)
+      && (libraryChannel === "all" || channels.includes(libraryChannel));
+  }), [libraryJobs, libraryFilter, librarySearch, libraryCategory, libraryChannel]);
+
+  useEffect(() => {
+    try { window.localStorage.setItem(libraryLayoutKey, libraryLayout); }
+    catch { /* Layout persistence is optional; keep the current session state. */ }
+  }, [libraryLayout]);
 
   useEffect(() => {
     // Check the bundled Go service first, then hydrate the page from its
@@ -807,11 +850,28 @@ export function HomePage() {
         )}
 
         {tab === "library" && <section aria-labelledby="library-heading" className="space-y-4">
-          <div className="flex flex-wrap items-end justify-between gap-3"><div><p className="mb-1 text-[11px] font-bold uppercase tracking-[0.16em] text-neutral-500">Saved output</p><h2 id="library-heading" className="text-2xl font-bold">Download library</h2><p className="mt-1 text-xs text-neutral-400">Finalized files are served through short-lived, file- or job-scoped download tickets.</p></div><div className="flex items-center gap-2 rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-xs text-neutral-400"><HardDrive className="size-3.5 text-amber-400" aria-hidden="true" />{finishedFiles} finalized file{finishedFiles === 1 ? "" : "s"}</div></div>
-          <div className={`${panel} flex flex-wrap items-center justify-between gap-3 p-3`}>
-            <div className="flex gap-1 rounded-lg border border-neutral-800 bg-neutral-950 p-1">{(["all", "video", "audio"] as const).map(value => <button key={value} type="button" aria-pressed={libraryFilter === value} onClick={() => setLibraryFilter(value)} className={`rounded-md px-2.5 py-1.5 text-[11px] font-semibold capitalize ${libraryFilter === value ? "bg-neutral-800 text-white" : "text-neutral-400 hover:text-neutral-200"}`}>{value}</button>)}</div>
-            <label className="relative min-w-48 flex-1 sm:max-w-xs"><Search className="absolute left-3 top-1/2 size-3.5 -translate-y-1/2 text-neutral-500" aria-hidden="true" /><input aria-label="Search library" className={`${field} py-2 pl-9 text-xs`} value={librarySearch} onChange={event => setLibrarySearch(event.target.value)} placeholder="Search titles or channels" /></label>
-            <div className="flex gap-1 rounded-lg border border-neutral-800 bg-neutral-950 p-1"><button type="button" aria-pressed={libraryLayout === "grid"} onClick={() => setLibraryLayout("grid")} className={`rounded-md px-2.5 py-1.5 text-[11px] font-semibold ${libraryLayout === "grid" ? "bg-neutral-800 text-white" : "text-neutral-400"}`}>Grid</button><button type="button" aria-pressed={libraryLayout === "list"} onClick={() => setLibraryLayout("list")} className={`rounded-md px-2.5 py-1.5 text-[11px] font-semibold ${libraryLayout === "list" ? "bg-neutral-800 text-white" : "text-neutral-400"}`}>List</button></div>
+          <div className="flex flex-wrap items-end justify-between gap-3"><div><p className="mb-1 text-[11px] font-bold uppercase tracking-[0.16em] text-neutral-500">Saved output</p><h2 id="library-heading" className="text-2xl font-bold">Download library</h2><p className="mt-1 text-xs text-neutral-400">Browse finalized media by type, category, channel, or tracked output metadata.</p></div><div className="flex items-center gap-2 rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-xs text-neutral-400"><HardDrive className="size-3.5 text-amber-400" aria-hidden="true" />{visibleLibraryJobs.length} of {libraryJobs.length} jobs visible</div></div>
+          <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+            <div className={`${panel} px-4 py-3`}><p className="text-[10px] uppercase tracking-wider text-neutral-500">Files</p><p className="mt-1 text-lg font-bold text-white">{libraryStats.files}</p></div>
+            <div className={`${panel} px-4 py-3`}><p className="text-[10px] uppercase tracking-wider text-neutral-500">Logical media</p><p className="mt-1 text-lg font-bold text-white">{formatBytes(libraryStats.logicalBytes)}</p></div>
+            <div className={`${panel} px-4 py-3`}><p className="text-[10px] uppercase tracking-wider text-neutral-500">Managed copies</p><p className="mt-1 text-lg font-bold text-white">{formatBytes(libraryStats.managedBytes)}</p></div>
+            <div className={`${panel} px-4 py-3`}><p className="text-[10px] uppercase tracking-wider text-neutral-500">Published copies</p><p className="mt-1 text-lg font-bold text-white">{formatBytes(libraryStats.publishedBytes)}</p></div>
+          </div>
+          <div className={`${panel} space-y-3 p-3`}>
+            <div className="flex flex-wrap items-center gap-3">
+              <div className="flex gap-1 rounded-lg border border-neutral-800 bg-neutral-950 p-1">{(["all", "video", "audio"] as const).map(value => <button key={value} type="button" aria-pressed={libraryFilter === value} onClick={() => setLibraryFilter(value)} className={`rounded-md px-2.5 py-1.5 text-[11px] font-semibold capitalize ${libraryFilter === value ? "bg-neutral-800 text-white" : "text-neutral-400 hover:text-neutral-200"}`}>{value}</button>)}</div>
+              <label className="relative min-w-52 flex-1"><Search className="absolute left-3 top-1/2 size-3.5 -translate-y-1/2 text-neutral-500" aria-hidden="true" /><input aria-label="Search library" className={`${field} py-2 pl-9 text-xs`} value={librarySearch} onChange={event => setLibrarySearch(event.target.value)} placeholder="Search title, channel, category, filename, or path" /></label>
+              <div className="flex gap-1 rounded-lg border border-neutral-800 bg-neutral-950 p-1"><button type="button" aria-pressed={libraryLayout === "grid"} onClick={() => setLibraryLayout("grid")} className={`rounded-md px-2.5 py-1.5 text-[11px] font-semibold ${libraryLayout === "grid" ? "bg-neutral-800 text-white" : "text-neutral-400"}`}>Grid</button><button type="button" aria-pressed={libraryLayout === "list"} onClick={() => setLibraryLayout("list")} className={`rounded-md px-2.5 py-1.5 text-[11px] font-semibold ${libraryLayout === "list" ? "bg-neutral-800 text-white" : "text-neutral-400"}`}>List</button></div>
+            </div>
+            <div className="grid gap-2 sm:grid-cols-[1fr_1fr_auto]">
+              <select aria-label="Filter library by category" value={libraryCategory} onChange={event => setLibraryCategory(event.target.value)} className={`${field} py-2 text-xs`}>
+                <option value="all">All categories ({libraryStats.files})</option>{libraryCategories.map(([category, count]) => <option key={category} value={category}>{category} ({count})</option>)}
+              </select>
+              <select aria-label="Filter library by channel" value={libraryChannel} onChange={event => setLibraryChannel(event.target.value)} className={`${field} py-2 text-xs`}>
+                <option value="all">All channels</option>{libraryChannels.map(([channel, count]) => <option key={channel} value={channel}>{channel} ({count})</option>)}
+              </select>
+              <button type="button" className={button} disabled={!librarySearch && libraryFilter === "all" && libraryCategory === "all" && libraryChannel === "all"} onClick={() => { setLibrarySearch(""); setLibraryFilter("all"); setLibraryCategory("all"); setLibraryChannel("all"); }}>Reset filters</button>
+            </div>
           </div>
           {libraryJobs.length === 0 ? <div className={`${panel} px-5 py-14 text-center`}><Film className="mx-auto mb-3 size-8 text-neutral-600" aria-hidden="true" /><h3 className="text-sm font-semibold text-neutral-200">Your library is empty</h3><p className="mt-1 text-xs text-neutral-500">Finalized downloads will appear here, with metadata and secure save links.</p></div>
             : visibleLibraryJobs.length === 0 ? <div className={`${panel} px-5 py-12 text-center text-xs text-neutral-400`}>No saved downloads match this search and media filter.</div>
