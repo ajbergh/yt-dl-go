@@ -49,6 +49,14 @@ beforeEach(async () => {
     if (path.endsWith("/resume")) return Response.json({ ...job, status: "queued" });
     if (path.endsWith("/retry")) return Response.json({ ...job, id: "retried-job" }, { status: 202 });
     if (path.endsWith("/ticket")) return Response.json({ path: "/api/downloads/test-ticket" });
+    if (init.method === "DELETE" && path.endsWith("/published")) {
+      const current = rows[0] ?? job;
+      return Response.json({ ...current, files: (current.files ?? []).map(file => ({ ...file, publishedAvailable: false })) });
+    }
+    if (init.method === "DELETE" && path.endsWith("/managed")) {
+      const current = rows[0] ?? job;
+      return Response.json({ ...current, files: (current.files ?? []).map(file => ({ ...file, managedAvailable: false })) });
+    }
     if (init.method === "DELETE") return new Response(null, { status: 204 });
     return Response.json({ error: "Not found." }, { status: 404 });
   };
@@ -173,6 +181,32 @@ describe("Downloader UI and Go API integration", () => {
     await click(button("Pause"));
     expect(requests.some(item => item.path.endsWith("/pause") && item.method === "POST")).toBe(true);
   });
+  test("separates Library removal from managed and published media deletion", async () => {
+    rows = [{ ...job, status: "completed", completedCount: 1, totalCount: 1, files: [
+      { id: "file-1", name: "001-test.mp4", size: 1024, outputRelativePath: "Fixture channel/test.mp4", managedAvailable: true, publishedAvailable: true },
+    ] }];
+    await connect();
+    await click(button("Library"));
+    expect(button("Remove")).toBeTruthy();
+    expect(button("Managed copy")).toBeTruthy();
+    expect(button("Published copy")).toBeTruthy();
+    expect(button("Delete everywhere")).toBeTruthy();
+
+    const originalConfirm = testWindow.confirm;
+    testWindow.confirm = () => true;
+    try {
+      await click(button("Published copy"));
+      expect(requests.some(item => item.path.endsWith("/published") && item.method === "DELETE")).toBe(true);
+      expect(container.textContent).toContain("Published output files deleted");
+
+      await click(button("Managed copy"));
+      expect(requests.some(item => item.path.endsWith("/managed") && item.method === "DELETE")).toBe(true);
+      expect(container.textContent).toContain("App-managed media copies deleted");
+    } finally {
+      testWindow.confirm = originalConfirm;
+    }
+  });
+
   test("requests an archive ticket and a native browser download", async () => {
     rows = [{ ...job, status: "completed", completedCount: 2, totalCount: 2, files: [
       { id: "file-1", name: "001-test.mp4", size: 1024 },
