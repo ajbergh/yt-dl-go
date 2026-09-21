@@ -509,21 +509,31 @@ Validation note: CI run `35566160345` passed frontend type-check/build, Bun inte
 
 ## P1.14 Browser end-to-end testing
 
-**Status:** [ ] Planned
+**Status:** [T] Implemented; CI validation in progress
 
-Add a Playwright-style E2E layer covering:
+Added a real-browser E2E layer using headless Chrome plus the Chrome DevTools Protocol, avoiding another simulated DOM layer or a heavyweight browser-test runtime dependency.
 
-1. service startup
-2. URL inspection
-3. queue creation
-4. pause/resume
-5. completion
-6. Library appearance
-7. settings persistence
-8. restart persistence
-9. destructive-action confirmations
+Coverage:
 
-Existing Go and Bun tests remain the fast unit/integration layer.
+1. starts the actual Go executable against a private temporary data directory
+2. inspects a deterministic test-only YouTube fixture URL
+3. creates a real queued download through the browser UI
+4. pauses and resumes the live fixture stream through UI controls
+5. waits for real worker completion
+6. verifies the completed item appears in Library
+7. changes and saves settings through the UI/API
+8. restarts the Go service against the same SQLite/data directory and verifies settings + Library persistence after browser reload
+9. verifies destructive “Delete everywhere” opens an explicit browser confirmation before mutation and removes history only after acceptance
+
+Implementation details:
+
+- `scripts/browser-e2e.mjs` launches a tagged E2E service binary and drives installed Chrome/Chromium over CDP.
+- `src/server/e2e_fixture.go` is compiled only with the `e2e` build tag and supplies deterministic media metadata/bytes.
+- `src/server/e2e_fixture_disabled.go` makes the production build incapable of enabling the fixture through environment variables.
+- `NO_BROWSER=1` supports headless/CI startup without invoking the OS URL handler.
+- CI runs `npm run e2e:browser` after the fast frontend/Go test layers.
+
+Existing Go and Bun tests remain the fast unit/integration layer; mark this item **[x]** only after the browser scenario and existing Windows build both pass.
 
 ## P2.6 Cross-platform packaging
 
