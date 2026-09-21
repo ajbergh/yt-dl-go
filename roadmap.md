@@ -179,7 +179,7 @@ Remote thumbnail URLs are not durable library metadata.
 
 ### P1.2 MP3 ID3 metadata and artwork
 
-**Status:** [ ] Planned
+**Status:** [T] Implemented; CI validation pending
 
 The pure-Go MP3 path currently emits audio without ID3 tags.
 
@@ -622,3 +622,22 @@ Implemented:
 12. Updated API documentation.
 
 Published sidecar artwork remains intentionally deferred; P1.1's durable-Library goal is satisfied by private local artwork without creating additional user-visible files.
+
+
+### P1.2 MP3 ID3 metadata and artwork
+
+**Status:** [T] Implemented; CI validation pending
+
+Implemented:
+
+1. Added a dependency-free ID3v2.3 writer in pure Go.
+2. Writes Unicode-safe title, artist/channel, playlist album, track number/total, publish year plus full publish-date metadata, and canonical YouTube source URL.
+3. Embeds the locally captured thumbnail as front-cover APIC artwork when it is JPEG/PNG/WebP and no larger than 1 MiB.
+4. Integrates tag writing directly into the existing AAC-to-MP3 conversion stream before MP3 frames, preserving atomic finalization and hard output-budget accounting.
+5. Captures audio metadata and artwork before conversion so cover art can be embedded without rewriting the finalized MP3.
+6. Keeps metadata best-effort: tag construction problems cannot fail an otherwise valid audio conversion.
+7. Preserves the existing untagged converter entry point for compatibility with lower-level tests/callers.
+8. Added unit coverage for ID3v2.3 framing, syncsafe tag sizing, Unicode fields, playlist track metadata, source URL, publish date, supported artwork, and oversized/unsupported artwork exclusion.
+9. Updated the server documentation.
+
+No new runtime dependency, CGO dependency, or FFmpeg requirement was introduced.
