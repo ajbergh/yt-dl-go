@@ -50,6 +50,7 @@ beforeEach(async () => {
     if (path.endsWith("/resume")) return Response.json({ ...job, status: "queued" });
     if (path.endsWith("/retry")) return Response.json({ ...job, id: "retried-job" }, { status: 202 });
     if (path.endsWith("/ticket")) return Response.json({ path: "/api/downloads/test-ticket" });
+    if (path.endsWith("/thumbnail") && init.method !== "POST") return new Response(new Blob(["local-thumbnail"], { type: "image/jpeg" }), { status: 200, headers: { "Content-Type": "image/jpeg" } });
     if (path.endsWith("/filesystem") && init.method === "POST") return Response.json({ path: "C:\\Media\\test.mp4" });
     if (init.method === "DELETE" && path.endsWith("/published")) {
       const current = rows[0] ?? job;
@@ -210,6 +211,18 @@ describe("Downloader UI and Go API integration", () => {
     await click(button("Pause batch"));
     expect(requests.some(item => item.path.endsWith("/pause") && item.method === "POST")).toBe(true);
   });
+  test("prefers authenticated local thumbnails and retains remote artwork as fallback metadata", async () => {
+    rows = [{ ...job, status: "completed", completedCount: 1, totalCount: 1, files: [
+      { id: "file-thumb", name: "001-test.mp4", size: 1024, thumbnailUrl: "https://i.ytimg.com/vi/fixture/hqdefault.jpg", thumbnailLocalAvailable: true, thumbnailMimeType: "image/jpeg", managedAvailable: true, publishedAvailable: false },
+    ] }];
+    await remount();
+    await connect();
+    await click(button("Library"));
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 10)); });
+    expect(requests.some(item => item.path.endsWith("/thumbnail") && item.url.includes("fileId=file-thumb"))).toBe(true);
+    expect(container.querySelector('img[data-local-thumbnail="preferred"]')).toBeTruthy();
+  });
+
   test("separates Library removal from managed and published media deletion", async () => {
     rows = [{ ...job, status: "completed", completedCount: 1, totalCount: 1, files: [
       { id: "file-1", name: "001-test.mp4", size: 1024, outputRelativePath: "Fixture channel/test.mp4", managedAvailable: true, publishedAvailable: true },
