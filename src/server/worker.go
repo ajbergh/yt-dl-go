@@ -24,6 +24,7 @@ import (
 
 const formatNote = "Native Go engine: progressive MP4/WebM, remuxed MP4, and MP3 audio-only downloads. Quality is a maximum, not a guarantee; HLS/DASH manifest and live sources are unsupported."
 const playlistNote = "Playlist totals cover all entries exposed by YouTube, not independently verified hidden entries."
+const playlistSelectionNote = "Only the selected exposed playlist items are queued; original playlist positions are preserved."
 const unknownLengthNote = "An unknown-length stream is complete only at clean EOF; its original size cannot be independently verified."
 const adaptiveFallbackNote = "YouTube rejected the adaptive HD stream; the highest verified progressive MP4 stream was downloaded instead."
 const browserAdaptiveNote = "Adaptive HD media was streamed through a temporary browser session."
@@ -31,6 +32,7 @@ const browserAdaptiveNote = "Adaptive HD media was streamed through a temporary 
 var (
 	errMetadata     = errors.New("Video metadata is unavailable or invalid")
 	errPlaylist     = errors.New("Playlist enumeration failed; completeness could not be verified")
+	errPlaylistSelection = errors.New("Selected playlist items no longer match the inspected playlist")
 	errCombined     = errors.New("No compatible combined or adaptive MP4 stream fits the requested maximum height")
 	errManifest     = errors.New("HLS/DASH manifest or live sources are unsupported")
 	errRead         = errors.New("Media stream could not be read completely")
@@ -285,9 +287,55 @@ func (s *server) start() {
 	}()
 }
 
-// run processes one video or every playlist entry exposed by the upstream
-// library, reuses validated finalized items, records per-item failures, and
-// finalizes job status even if an unexpected panic occurs.
+// run processes one video or the selected playlist entries exposed by the
+// upstream library, reuses validated finalized items, records per-item failures,
+// and finalizes job status even if an unexpected panic occurs.
+type playlistWorkItem struct {
+	entry         *youtube.PlaylistEntry
+	playlistIndex int
+}
+
+func playlistWorkItems(playlist *youtube.Playlist, requested []queueItem) ([]playlistWorkItem, error) {
+	if playlist == nil {
+		return nil, errPlaylist
+	}
+	hasSelection := false
+	for _, item := range requested {
+		if item.PlaylistIndex > 0 {
+			hasSelection = true
+			break
+		}
+	}
+	if !hasSelection {
+		work := make([]playlistWorkItem, 0, len(playlist.Videos))
+		for index, entry := range playlist.Videos {
+			work = append(work, playlistWorkItem{entry: entry, playlistIndex: index + 1})
+		}
+		return work, nil
+	}
+	work := make([]playlistWorkItem, 0, len(requested))
+	seen := make(map[int]struct{}, len(requested))
+	for _, item := range requested {
+		if item.PlaylistIndex < 1 || item.PlaylistIndex > len(playlist.Videos) || !videoID.MatchString(item.VideoID) {
+			return nil, errPlaylistSelection
+		}
+		if _, exists := seen[item.PlaylistIndex]; exists {
+			return nil, errPlaylistSelection
+		}
+		seen[item.PlaylistIndex] = struct{}{}
+		entry := playlist.Videos[item.PlaylistIndex-1]
+		if entry == nil || entry.ID != item.VideoID {
+			return nil, errPlaylistSelection
+		}
+		work = append(work, playlistWorkItem{entry: entry, playlistIndex: item.PlaylistIndex})
+	}
+	sort.Slice(work, func(i, k int) bool { return work[i].playlistIndex < work[k].playlistIndex })
+	if len(work) == 0 {
+		return nil, errPlaylistSelection
+	}
+	return work, nil
+}
+
 func (s *server) run(ctx context.Context, j *jobState) {
 	var fatal error
 	engine := s.operationEngine()
@@ -297,31 +345,41 @@ func (s *server) run(ctx context.Context, j *jobState) {
 		}
 		s.finish(ctx, j, fatal)
 	}()
-	entries := []*youtube.PlaylistEntry{{ID: strings.TrimPrefix(j.URL, "https://www.youtube.com/watch?v=")}}
+	requested := append([]queueItem(nil), j.Items...)
+	work := []playlistWorkItem{{entry: &youtube.PlaylistEntry{ID: strings.TrimPrefix(j.URL, "https://www.youtube.com/watch?v=")}}}
 	if j.Kind == "playlist" {
 		playlist, err := engine.GetPlaylistContext(ctx, j.URL)
 		if playlist == nil {
 			fatal = errPlaylist
 			return
 		}
-		entries = playlist.Videos
+		j.playlistItemCount = len(playlist.Videos)
+		selected, selectionErr := playlistWorkItems(playlist, requested)
+		if selectionErr != nil {
+			fatal = selectionErr
+			return
+		}
+		work = selected
 		s.mu.Lock()
-		total := len(entries)
+		total := len(work)
 		j.TotalCount = &total
 		if playlist.Title != "" {
 			j.Title = playlist.Title
+		}
+		if len(work) < len(playlist.Videos) && !strings.Contains(j.Note, playlistSelectionNote) {
+			j.Note += " " + playlistSelectionNote
 		}
 		s.mu.Unlock()
 		if err != nil {
 			fatal = errPlaylist
 		}
 	} else {
-		total := len(entries)
+		total := len(work)
 		s.mu.Lock()
 		j.TotalCount = &total
 		s.mu.Unlock()
 	}
-	s.setQueueItems(j, entries)
+	s.setQueueItems(j, work)
 	s.mu.Lock()
 	for index, file := range j.fileItems {
 		if !s.validCompletedFile(j, file) {
@@ -340,7 +398,7 @@ func (s *server) run(ctx context.Context, j *jobState) {
 	defer stopWork()
 	var nextMu, fatalMu sync.Mutex
 	nextIndex := 0
-	workerCount := min(6, len(entries))
+	workerCount := min(6, len(work))
 	var workers sync.WaitGroup
 	for range workerCount {
 		workers.Add(1)
@@ -348,7 +406,7 @@ func (s *server) run(ctx context.Context, j *jobState) {
 			defer workers.Done()
 			for {
 				nextMu.Lock()
-				if nextIndex >= len(entries) {
+				if nextIndex >= len(work) {
 					nextMu.Unlock()
 					return
 				}
@@ -359,7 +417,12 @@ func (s *server) run(ctx context.Context, j *jobState) {
 					return
 				}
 				current := index + 1
-				entry := entries[index]
+				item := work[index]
+				outputIndex := item.playlistIndex
+				if outputIndex <= 0 {
+					outputIndex = current
+				}
+				entry := item.entry
 				title := fmt.Sprintf("Item %d", current)
 				if entry != nil && entry.Title != "" {
 					title = entry.Title
@@ -367,7 +430,7 @@ func (s *server) run(ctx context.Context, j *jobState) {
 				if !s.acquireItemSlot(workCtx, j, current, title) {
 					return
 				}
-				err := s.safeProcessItem(workCtx, j, entry, current, tracker)
+				err := s.safeProcessItem(workCtx, j, entry, current, outputIndex, tracker)
 				s.releaseItemSlot(j, current)
 				if err == nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 					continue
@@ -576,8 +639,8 @@ func (s *server) setProcessing(j *jobState, index int, processing bool) {
 	s.mu.Unlock()
 }
 
-func makeQueueItem(index int, entry *youtube.PlaylistEntry) queueItem {
-	item := queueItem{Index: index, Title: fmt.Sprintf("Item %d", index), Status: "queued"}
+func makeQueueItem(index, playlistIndex int, entry *youtube.PlaylistEntry) queueItem {
+	item := queueItem{Index: index, PlaylistIndex: playlistIndex, Title: fmt.Sprintf("Item %d", index), Status: "queued"}
 	if entry != nil {
 		item.VideoID = entry.ID
 		if entry.Title != "" {
@@ -590,10 +653,14 @@ func makeQueueItem(index int, entry *youtube.PlaylistEntry) queueItem {
 	return item
 }
 
-func (s *server) setQueueItems(j *jobState, entries []*youtube.PlaylistEntry) {
-	items := make([]queueItem, len(entries))
-	for index, entry := range entries {
-		items[index] = makeQueueItem(index+1, entry)
+func (s *server) setQueueItems(j *jobState, work []playlistWorkItem) {
+	items := make([]queueItem, len(work))
+	for index, selected := range work {
+		playlistIndex := 0
+		if j.Kind == "playlist" {
+			playlistIndex = selected.playlistIndex
+		}
+		items[index] = makeQueueItem(index+1, playlistIndex, selected.entry)
 	}
 	s.mu.Lock()
 	j.Items = items
@@ -739,7 +806,7 @@ func (s *server) updateProgress(j *jobState, index int, downloaded, total int64)
 	s.refreshProgressLocked(j)
 }
 
-func (s *server) processItem(ctx context.Context, j *jobState, entry *youtube.PlaylistEntry, current int, tracker *jobBudget) error {
+func (s *server) processItem(ctx context.Context, j *jobState, entry *youtube.PlaylistEntry, current, outputIndex int, tracker *jobBudget) error {
 	s.mu.Lock()
 	if completed, ok := j.fileItems[current]; ok {
 		if s.validCompletedFile(j, completed) {
@@ -798,12 +865,12 @@ func (s *server) processItem(ctx context.Context, j *jobState, entry *youtube.Pl
 	var file mediaFile
 	if j.MediaType == "audio" {
 		if j.AudioFormat == "m4a" {
-			file, err = s.transferOriginalAudio(ctx, j, engine, video, format, current, budget)
+			file, err = s.transferOriginalAudio(ctx, j, engine, video, format, current, outputIndex, budget)
 		} else {
-			file, err = s.transferAudio(ctx, j, engine, video, format, extension, current, budget)
+			file, err = s.transferAudio(ctx, j, engine, video, format, extension, current, outputIndex, budget)
 		}
 	} else {
-		file, err = s.transfer(ctx, j, engine, video, selection, current, budget)
+		file, err = s.transfer(ctx, j, engine, video, selection, current, outputIndex, budget)
 	}
 	if err != nil {
 		return err
@@ -850,13 +917,13 @@ func (s *server) processItem(ctx context.Context, j *jobState, entry *youtube.Pl
 	return nil
 }
 
-func (s *server) safeProcessItem(ctx context.Context, j *jobState, entry *youtube.PlaylistEntry, current int, tracker *jobBudget) (err error) {
+func (s *server) safeProcessItem(ctx context.Context, j *jobState, entry *youtube.PlaylistEntry, current, outputIndex int, tracker *jobBudget) (err error) {
 	defer func() {
 		if recover() != nil {
 			err = errNative
 		}
 	}()
-	return s.processItem(ctx, j, entry, current, tracker)
+	return s.processItem(ctx, j, entry, current, outputIndex, tracker)
 }
 
 func (s *server) rebuildFilesLocked(j *jobState) {
