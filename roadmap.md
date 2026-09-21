@@ -61,7 +61,7 @@ Goal: make the frontend and output-management experience catch up with the exist
 
 ### P0.1 Per-download category selection
 
-**Status:** [T] Implemented; runtime/test execution pending
+**Status:** [x] Complete
 
 Users can already create categories and use `{category}` in naming patterns and category-based subfolders, but new jobs currently capture only the global default category.
 
@@ -85,7 +85,7 @@ Users can already create categories and use `{category}` in naming patterns and 
 
 ### P0.2 Batch “apply to all” controls
 
-**Status:** [T] Implemented; runtime/test execution pending
+**Status:** [x] Complete
 
 For multi-URL inspection and playlist workflows, add batch controls that can apply common settings without editing every card individually.
 
@@ -105,7 +105,7 @@ For multi-URL inspection and playlist workflows, add batch controls that can app
 
 ### P0.3 Separate Library removal from disk deletion
 
-**Status:** [T] Implemented; CI validation pending
+**Status:** [x] Complete
 
 Current job deletion can remove both managed app files and files published to the user's chosen output directory. That is too destructive for a media-library workflow.
 
@@ -124,7 +124,7 @@ Current job deletion can remove both managed app files and files published to th
 
 ### P0.4 Storage policy and duplicate-copy control
 
-**Status:** [T] Implemented; CI validation pending
+**Status:** [x] Complete
 
 The application currently retains a managed copy under `DATA_DIR` and publishes another copy to the configured output location. Large files may therefore consume approximately twice their final size.
 
@@ -143,7 +143,7 @@ The application currently retains a managed copy under `DATA_DIR` and publishes 
 
 ### P0.5 Native folder selection and filesystem actions
 
-**Status:** [T] Implemented; CI validation pending
+**Status:** [x] Complete
 
 Typing an absolute path manually is not sufficient desktop UX.
 
@@ -165,7 +165,7 @@ The current browser-hosted SPA cannot directly expose arbitrary local filesystem
 
 ## P1.1 Preserve thumbnails locally
 
-**Status:** [T] Implemented; CI validation pending
+**Status:** [x] Complete
 
 Remote thumbnail URLs are not durable library metadata.
 
@@ -179,7 +179,7 @@ Remote thumbnail URLs are not durable library metadata.
 
 ### P1.2 MP3 ID3 metadata and artwork
 
-**Status:** [T] Implemented; CI validation pending
+**Status:** [x] Complete
 
 The pure-Go MP3 path currently emits audio without ID3 tags.
 
@@ -201,7 +201,7 @@ The pure-Go MP3 path currently emits audio without ID3 tags.
 
 ### P1.3 M4A “original audio” mode
 
-**Status:** [T] Implemented; CI validation pending
+**Status:** [x] Complete
 
 When YouTube exposes AAC-in-MP4 audio, users should be able to preserve it without transcoding.
 
@@ -214,7 +214,7 @@ Benefits: lower CPU use, faster completion, and no additional lossy generation.
 
 ### P1.4 Library folder/category navigation
 
-**Status:** [T] Implemented; CI validation pending
+**Status:** [x] Complete
 
 Promote the Library from a job-results list to a true local media browser.
 
@@ -229,7 +229,7 @@ Promote the Library from a job-results list to a true local media browser.
 
 ### P1.5 Local media preview
 
-**Status:** [T] Implemented; CI validation pending
+**Status:** [x] Complete
 
 Provide lightweight playback from finalized local media.
 
@@ -502,7 +502,7 @@ These are not current roadmap commitments:
 
 ### P0.1 Per-download category selection
 
-**Status:** [T] Implemented; runtime/test execution pending
+**Status:** [x] Complete
 
 Implemented:
 
@@ -517,11 +517,11 @@ Implemented:
 9. Preserved category when retrying failed/partial/cancelled jobs.
 10. Updated backend and frontend tests plus the server API documentation.
 
-Validation note: source and tests were reviewed, but the test suite has not been executed in this session. Keep [T] until CI/local execution confirms the branch.
+Validation note: confirmed by CI run `35550906645` on the roadmap branch. Frontend type-check/build, Bun integration tests, Go tests, Go vet, and the Windows production executable build all passed.
 
 ### P0.2 Batch “apply to all” controls
 
-**Status:** [T] Implemented; runtime/test execution pending
+**Status:** [x] Complete
 
 Implemented:
 
@@ -534,12 +534,12 @@ Implemented:
 7. Added UI coverage for batch controls and the per-item override behavior.
 8. Made the Settings quality selector explicitly addressable and repaired a pre-existing brittle UI-test selector.
 
-Validation note: source and tests were reviewed, but the test suite has not been executed in this session. Keep [T] until CI/local execution confirms the branch.
+Validation note: confirmed by CI run `35550906645` on the roadmap branch. Frontend type-check/build, Bun integration tests, Go tests, Go vet, and the Windows production executable build all passed.
 
 
 ### CI foundation
 
-**Status:** [~] Active; waiting for a green branch run
+**Status:** [x] Complete
 
 - Added `.github/workflows/ci.yml`.
 - CI runs frontend type-check/build, Bun integration tests, Go tests, and Go vet on Ubuntu.
@@ -548,7 +548,7 @@ Validation note: source and tests were reviewed, but the test suite has not been
 
 ### P0.3 Separate Library removal from disk deletion
 
-**Status:** [T] Implemented; CI validation pending
+**Status:** [x] Complete
 
 Implemented:
 
@@ -569,7 +569,7 @@ Important bug fixed: before this milestone, automatic retention cleanup could de
 
 ### P0.4 Storage policy and duplicate-copy control
 
-**Status:** [T] Implemented; CI validation pending
+**Status:** [x] Complete
 
 Implemented:
 
@@ -586,7 +586,7 @@ Implemented:
 
 ### P0.5 Native folder selection and filesystem actions
 
-**Status:** [T] Implemented; CI validation pending
+**Status:** [x] Complete
 
 Implemented:
 
@@ -604,7 +604,7 @@ Implemented:
 
 ### P1.1 Preserve thumbnails locally
 
-**Status:** [T] Implemented; CI validation pending
+**Status:** [x] Complete
 
 Implemented:
 
@@ -626,7 +626,7 @@ Published sidecar artwork remains intentionally deferred; P1.1's durable-Library
 
 ### P1.2 MP3 ID3 metadata and artwork
 
-**Status:** [T] Implemented; CI validation pending
+**Status:** [x] Complete
 
 Implemented:
 
@@ -645,7 +645,7 @@ No new runtime dependency, CGO dependency, or FFmpeg requirement was introduced.
 
 ### P1.3 M4A “original audio” mode
 
-**Status:** [T] Implemented; CI validation pending
+**Status:** [x] Complete
 
 Implemented:
 
@@ -666,7 +666,7 @@ This path remains limited to compatible AAC-in-MP4 audio streams already selecte
 
 ### P1.4 Library folder/category navigation
 
-**Status:** [T] Implemented; CI validation pending
+**Status:** [x] Complete
 
 Implemented:
 
@@ -684,7 +684,7 @@ The facet implementation remains frontend-derived from SQLite-backed job/file me
 
 ### P1.5 Local media preview
 
-**Status:** [T] Implemented; CI validation pending
+**Status:** [x] Complete
 
 Implemented:
 
