@@ -25,6 +25,7 @@ let notificationsEnabled;
 let notificationPermission;
 let notificationPermissionRequests;
 let notifications;
+let updateResponse;
 
 const job = {
   id: "fixture-job", url: "https://www.youtube.com/playlist?list=PL_example",
@@ -60,6 +61,7 @@ beforeEach(async () => {
   notificationPermission = "granted";
   notificationPermissionRequests = 0;
   notifications = [];
+  updateResponse = { currentVersion: "dev", updateAvailable: false, developmentBuild: true, automaticUpdate: false, note: "Development build: external update checks are skipped." };
   class TestNotification {
     static get permission() { return notificationPermission; }
     static async requestPermission() {
@@ -342,6 +344,35 @@ describe("Downloader UI and Go API integration", () => {
     const releaseLink = [...container.querySelectorAll("a")].find(link => link.textContent.includes("Open release"));
     expect(releaseLink?.getAttribute("href")).toBe("https://github.com/ajbergh/yt-dl-go/releases/tag/v1.2.0");
     expect(requests.some(item => item.path === "/api/update")).toBe(true);
+  });
+
+  test("shows build metadata and an available stable release", async () => {
+    updateResponse = {
+      currentVersion: "v1.2.3",
+      latestVersion: "v1.3.0",
+      updateAvailable: true,
+      releaseUrl: "https://github.com/ajbergh/yt-dl-go/releases/tag/v1.3.0",
+      publishedAt: "2026-09-21T12:00:00Z",
+      automaticUpdate: false,
+      note: "Automatic self-update is disabled until OS-native signing/notarization and rollback-safe replacement are implemented.",
+    };
+    await remount();
+    await connect();
+    await click(button("Settings"));
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 20)); });
+    expect(container.textContent).toContain("Version & updates");
+    expect(container.textContent).toContain("v1.3.0 is available");
+    const releaseLink = [...container.querySelectorAll("a")].find(link => link.textContent.includes("Open release"));
+    expect(releaseLink?.getAttribute("href")).toBe("https://github.com/ajbergh/yt-dl-go/releases/tag/v1.3.0");
+    expect(requests.some(item => item.path === "/api/update")).toBe(true);
+  });
+
+  test("shows development build update state without pretending self-update is available", async () => {
+    await click(button("Settings"));
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 10)); });
+    expect(container.textContent).toContain("Current build dev");
+    expect(container.textContent).toContain("Development build: external update checks are skipped");
+    expect(container.textContent).toContain("Automatic self-replacement remains disabled");
   });
 
   test("persists only a supported preference through the service API", async () => {
