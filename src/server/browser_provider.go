@@ -361,29 +361,36 @@ func (p *chromeBrowserProvider) normalizeHeadlessIdentity() error {
 	return p.uaErr
 }
 
-func (p *chromeBrowserProvider) configurePlaybackCodec(format *youtube.Format) error {
+type playbackCodecPolicy struct {
+	unsupportedPattern string
+	av1Preference      string
+}
+
+func playbackPolicy(format *youtube.Format) (playbackCodecPolicy, bool) {
 	if format == nil {
-		return errBrowserUnavailable
+		return playbackCodecPolicy{}, false
 	}
 	kind, codecs, ok := formatType(format)
 	if !ok {
-		return errBrowserUnavailable
+		return playbackCodecPolicy{}, false
 	}
-	family := codecFamily(codecs)
-	unsupported := ""
-	av1Preference := ""
-	switch {
+	switch family := codecFamily(codecs); {
 	case kind == "video/mp4" && family == "h264":
-		unsupported = "(?:av01|av1|vp09|vp9|vp8)"
-		av1Preference = "480"
+		return playbackCodecPolicy{unsupportedPattern: "(?:av01|av1|vp09|vp9|vp8)", av1Preference: "480"}, true
 	case kind == "video/webm" && family == "vp9":
-		unsupported = "(?:av01|av1)"
-		av1Preference = "480"
+		return playbackCodecPolicy{unsupportedPattern: "(?:av01|av1)", av1Preference: "480"}, true
 	case kind == "video/webm" && family == "av1":
-		unsupported = "(?:vp09|vp9|vp8)"
+		return playbackCodecPolicy{unsupportedPattern: "(?:vp09|vp9|vp8)"}, true
 	case kind == "audio/webm" && family == "opus":
-		unsupported = "(?:mp4a|audio\\/mp4)"
+		return playbackCodecPolicy{unsupportedPattern: "(?:mp4a|audio\\/mp4)"}, true
 	default:
+		return playbackCodecPolicy{}, false
+	}
+}
+
+func (p *chromeBrowserProvider) configurePlaybackCodec(format *youtube.Format) error {
+	policy, ok := playbackPolicy(format)
+	if !ok {
 		return errBrowserUnavailable
 	}
 	execCtx, err := p.targetContext()
@@ -391,7 +398,7 @@ func (p *chromeBrowserProvider) configurePlaybackCodec(format *youtube.Format) e
 		return err
 	}
 	script := `(() => {
-  const unsupported = new RegExp(` + strconv.Quote(unsupported) + `, 'i');
+  const unsupported = new RegExp(` + strconv.Quote(policy.unsupportedPattern) + `, 'i');
   if (window.MediaSource && typeof window.MediaSource.isTypeSupported === 'function') {
     const originalIsTypeSupported = window.MediaSource.isTypeSupported.bind(window.MediaSource);
     window.MediaSource.isTypeSupported = type => unsupported.test(type || '') ? false : originalIsTypeSupported(type);
@@ -403,10 +410,10 @@ func (p *chromeBrowserProvider) configurePlaybackCodec(format *youtube.Format) e
     };
   }
   ` + func() string {
-		if av1Preference == "" {
+		if policy.av1Preference == "" {
 			return ""
 		}
-		return "try { localStorage.setItem('yt-player-av1-pref', " + strconv.Quote(av1Preference) + "); } catch (_) {}"
+		return "try { localStorage.setItem('yt-player-av1-pref', " + strconv.Quote(policy.av1Preference) + "); } catch (_) {}"
 	}() + `
 })()`
 	_, err = page.AddScriptToEvaluateOnNewDocument(script).WithRunImmediately(true).Do(execCtx)
