@@ -509,7 +509,7 @@ Validation note: CI run `35566160345` passed frontend type-check/build, Bun inte
 
 ## P1.14 Browser end-to-end testing
 
-**Status:** [T] Implemented; CI validation in progress
+**Status:** [x] Implemented
 
 Added a real-browser E2E layer using headless Chrome plus the Chrome DevTools Protocol, avoiding another simulated DOM layer or a heavyweight browser-test runtime dependency.
 
@@ -532,8 +532,9 @@ Implementation details:
 - `src/server/e2e_fixture_disabled.go` makes the production build incapable of enabling the fixture through environment variables.
 - `NO_BROWSER=1` supports headless/CI startup without invoking the OS URL handler.
 - CI runs `npm run e2e:browser` after the fast frontend/Go test layers.
+- The first browser pass exposed and fixed a real custom-loopback-port bug: Vite's `crossorigin` asset requests carried the listener origin, but only the hard-coded 5173/8080 origins were accepted. Loopback listeners now automatically trust their own exact HTTP origin at the configured port while network-visible listeners still require explicit allowlists.
 
-Existing Go and Bun tests remain the fast unit/integration layer; mark this item **[x]** only after the browser scenario and existing Windows build both pass.
+Validation note: CI run `35597381317` passed frontend type-check/build, Bun integration tests, Go tests, Go vet, the full Chrome E2E scenario, the Windows production build, and Windows artifact upload.
 
 ## P2.6 Cross-platform packaging
 
