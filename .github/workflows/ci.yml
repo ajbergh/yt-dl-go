@@ -58,6 +58,9 @@ jobs:
         working-directory: src/server
         run: go vet ./...
 
+      - name: Run browser end-to-end tests
+        run: npm run e2e:browser
+
   windows-build:
     name: Windows production build
     runs-on: windows-latest
