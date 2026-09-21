@@ -259,6 +259,7 @@ func TestAPIContractAndSecurity(t *testing.T) {
 		{name: "auth", body: valid, headers: map[string]string{"Authorization": ""}, code: 401},
 		{name: "rights", body: strings.Replace(valid, "true", "false", 1), code: 400},
 		{name: "category", body: strings.Replace(valid, `"Music"`, `"Not configured"`, 1), code: 400},
+		{name: "audio-format", body: `{"url":"` + testVideo + `","quality":"best","mediaType":"audio","audioFormat":"flac","rightsConfirmed":true}`, code: 400},
 		{name: "unknown", body: strings.Replace(valid, `"quality"`, `"unknown":1,"quality"`, 1), code: 400},
 		{name: "trailing", body: valid + `{}`, code: 400}, {name: "null", body: "null", code: 400},
 		{name: "oversized", body: `{"url":"` + strings.Repeat("x", 5000) + `"}`, code: 400},
@@ -481,6 +482,53 @@ func TestStoragePolicies(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestOriginalM4AAudioPreservesSourceBytes(t *testing.T) {
+	fake := fixtureClient(1)
+	fake.videoFn = func(_ context.Context, id string) (*youtube.Video, error) {
+		video := fixtureVideo(id)
+		video.Formats = youtube.FormatList{{
+			ItagNo: 140,
+			MimeType: `audio/mp4; codecs="mp4a.40.2"`,
+			AudioChannels: 2,
+			AudioSampleRate: "44100",
+			ContentLength: int64(len(fixtureData)),
+		}}
+		return video, nil
+	}
+	s := testServer(t, fake, nil)
+	body := `{"url":"` + testVideo + `","quality":"best","mediaType":"audio","audioFormat":"m4a","rightsConfirmed":true}`
+	response := request(s, "POST", "/api/jobs", body, nil)
+	var created Job
+	if response.Code != 202 || json.Unmarshal(response.Body.Bytes(), &created) != nil {
+		t.Fatalf("create M4A job: %d %s", response.Code, response.Body.String())
+	}
+	if created.AudioFormat != "m4a" || created.AudioBitrate != "" {
+		t.Fatalf("audio request was not normalized: %+v", created)
+	}
+	j := waitTerminal(t, s, created.ID)
+	if j.Status != "completed" || len(j.Files) != 1 {
+		t.Fatalf("M4A job failed: %+v", j)
+	}
+	file := j.Files[0]
+	if !strings.HasSuffix(file.Name, ".m4a") || file.MimeType != "audio/mp4" || file.MediaType != "audio" {
+		t.Fatalf("unexpected M4A metadata: %+v", file)
+	}
+	handle, err := openFinal(filepath.Join(s.cfg.root, j.ID), file.Name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, readErr := io.ReadAll(handle)
+	_ = handle.Close()
+	if readErr != nil || string(data) != fixtureData {
+		t.Fatalf("M4A source bytes changed: %q err=%v", data, readErr)
+	}
+	outputPath := trackedOutputPath(t, s, j.ID, file.ID)
+	if outputPath == "" {
+		t.Fatal("M4A output was not published")
+	}
+	_ = os.Remove(outputPath)
 }
 
 func TestLocalThumbnailCapturePersistenceAndServing(t *testing.T) {
