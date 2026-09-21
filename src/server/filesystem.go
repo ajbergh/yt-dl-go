@@ -67,11 +67,10 @@ func selectNativeFolder(ctx context.Context) (string, error) {
 	return selected, nil
 }
 
-func trackedOutputCommand(goos, action, path string) (string, []string, error) {
+func trackedOutputCommand(goos, action, path, folder string) (string, []string, error) {
 	if action != "reveal" && action != "open-folder" {
 		return "", nil, errors.New("unsupported filesystem open action")
 	}
-	folder := filepath.Dir(path)
 	switch goos {
 	case "windows":
 		if action == "reveal" {
@@ -97,7 +96,7 @@ func openTrackedOutput(ctx context.Context, action, path string) error {
 	if err != nil || !info.Mode().IsRegular() {
 		return errors.New("published output is unavailable")
 	}
-	commandName, args, err := trackedOutputCommand(runtime.GOOS, action, path)
+	commandName, args, err := trackedOutputCommand(runtime.GOOS, action, path, filepath.Dir(path))
 	if err != nil {
 		return err
 	}
