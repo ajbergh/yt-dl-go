@@ -33,6 +33,8 @@ export function queueItemKey({ job, item }: QueueRow): string {
 
 export const qualityLabels: Record<Quality, string> = {
   best: "Best available",
+  "2160": "Up to 2160p (4K)",
+  "1440": "Up to 1440p",
   "1080": "Up to 1080p",
   "720": "Up to 720p",
   "480": "Up to 480p",
