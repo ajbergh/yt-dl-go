@@ -9,8 +9,8 @@ import {
   Pause, Play, Plus, RefreshCw, Search, Settings, ShieldCheck, Sparkles, Trash2, X,
 } from "lucide-react";
 import {
-  api, formatBytes, isActive, parseYouTubeURL,
-  type AppSettings, type DownloadJob, type Inspection, type QueueItem, type Quality,
+  api, apiBlob, formatBytes, isActive, parseYouTubeURL,
+  type AppSettings, type DownloadFile, type DownloadJob, type Inspection, type QueueItem, type Quality,
   type ServiceConnection, type ServiceHealth,
 } from "../lib/downloader";
 
@@ -74,6 +74,36 @@ function statusClass(status: DownloadJob["status"]): string {
   if (status === "paused") return "border-amber-700/60 bg-amber-950/50 text-amber-300";
   if (status === "failed" || status === "partial") return "border-red-800/60 bg-red-950/40 text-red-300";
   return "border-neutral-700 bg-neutral-800 text-neutral-300";
+}
+
+function LibraryThumbnail({ connection, jobId, file, audio }: { connection: ServiceConnection; jobId: string; file: DownloadFile; audio: boolean }) {
+  const [source, setSource] = useState(file.thumbnailUrl ?? "");
+
+  useEffect(() => {
+    const controller = new AbortController();
+    let objectURL = "";
+    const fallback = file.thumbnailUrl ?? "";
+    setSource(fallback);
+    if (file.thumbnailLocalAvailable) {
+      void apiBlob(connection, `/api/jobs/${encodeURIComponent(jobId)}/thumbnail?fileId=${encodeURIComponent(file.id)}`, {
+        signal: controller.signal,
+      }).then(blob => {
+        if (controller.signal.aborted) return;
+        objectURL = URL.createObjectURL(blob);
+        setSource(objectURL);
+      }).catch(() => {
+        if (!controller.signal.aborted) setSource(fallback);
+      });
+    }
+    return () => {
+      controller.abort();
+      if (objectURL) URL.revokeObjectURL(objectURL);
+    };
+  }, [connection.base, connection.token, file.id, file.thumbnailLocalAvailable, file.thumbnailUrl, jobId]);
+
+  return source
+    ? <img src={source} alt="" referrerPolicy="no-referrer" data-local-thumbnail={file.thumbnailLocalAvailable ? "preferred" : undefined} className="aspect-video w-24 shrink-0 rounded-md bg-neutral-900 object-cover" />
+    : <div className="grid aspect-video w-24 shrink-0 place-items-center rounded-md bg-neutral-900 text-neutral-600">{audio ? <Activity className="size-5" aria-hidden="true" /> : <Film className="size-5" aria-hidden="true" />}</div>;
 }
 
 function durationMetric(job: DownloadJob): string {
@@ -776,7 +806,7 @@ export function HomePage() {
                 </div>
                 <div className="space-y-2 p-3">
                   {job.files.map(file => <div key={file.id} className="flex items-center gap-3 rounded-xl border border-neutral-800/80 bg-neutral-950/70 p-2.5">
-                    {file.thumbnailUrl ? <img src={file.thumbnailUrl} alt="" referrerPolicy="no-referrer" className="aspect-video w-24 rounded-md bg-neutral-900 object-cover" /> : <div className="grid aspect-video w-24 shrink-0 place-items-center rounded-md bg-neutral-900 text-neutral-600">{job.mediaType === "audio" ? <Activity className="size-5" aria-hidden="true" /> : <Film className="size-5" aria-hidden="true" />}</div>}
+                    <LibraryThumbnail connection={connection} jobId={job.id} file={file} audio={job.mediaType === "audio"} />
                     <div className="min-w-0 flex-1"><h4 className="truncate text-xs font-semibold text-neutral-200" title={file.title || file.outputName || file.name}>{file.title || file.outputName || file.name}</h4><p className="mt-1 truncate font-mono text-[10px] text-neutral-500" title={file.outputRelativePath || file.author || file.name}>{file.outputRelativePath || file.author || file.name}</p><p className="mt-1 text-[10px] text-neutral-600">{file.height ? `${file.height}p · ` : ""}{formatBytes(file.size)}{file.durationSeconds ? ` · ${durationLabel(file.durationSeconds)}` : ""}</p><div className="mt-1 flex flex-wrap gap-1">{file.managedAvailable === false && <span className="rounded bg-amber-950/60 px-1.5 py-0.5 text-[9px] text-amber-300">Managed copy removed</span>}{file.outputRelativePath && file.publishedAvailable === false && <span className="rounded bg-red-950/50 px-1.5 py-0.5 text-[9px] text-red-300">Published copy removed</span>}</div></div>
                     <div className="flex shrink-0 flex-wrap items-center justify-end gap-1.5">
                       {file.publishedAvailable !== false && file.outputRelativePath && <><button type="button" className={button} disabled={busyAction === `${job.id}:${file.id}:reveal`} onClick={() => void filesystemAction(job, file.id, "reveal")} aria-label={`Reveal ${file.title || file.name} in folder`} title="Reveal published file in its folder"><FolderTree className="size-3.5" aria-hidden="true" /><span className="hidden xl:inline">Reveal</span></button><button type="button" className={button} disabled={busyAction === `${job.id}:${file.id}:open-folder`} onClick={() => void filesystemAction(job, file.id, "open-folder")} aria-label={`Open folder for ${file.title || file.name}`} title="Open published output folder"><Folder className="size-3.5" aria-hidden="true" /><span className="hidden xl:inline">Folder</span></button><button type="button" className={button} disabled={busyAction === `${job.id}:${file.id}:copy-path`} onClick={() => void filesystemAction(job, file.id, "copy-path")} aria-label={`Copy path for ${file.title || file.name}`} title="Copy absolute published path"><FileText className="size-3.5" aria-hidden="true" /><span className="hidden xl:inline">Path</span></button></>}
