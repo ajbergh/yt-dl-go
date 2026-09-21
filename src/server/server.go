@@ -143,6 +143,7 @@ type server struct {
 	thumbnailFetcher func(context.Context, string, string) (string, error)
 	store            *jobStore
 	bandwidth        *bandwidthLimiter
+	events           *eventBroker
 }
 
 func terminal(status string) bool {
@@ -187,12 +188,14 @@ func (s *server) forgetJobLocked(j *jobState) {
 		}
 	}
 	s.invalidateJobTicketsLocked(j.ID)
+	s.publishDeletedEventLocked(j.ID)
 }
 
 func (s *server) persistJobLocked(j *jobState) {
 	if s.store != nil {
 		_ = s.store.saveJob(j)
 	}
+	s.publishJobEventLocked("job-status", j)
 }
 
 func reply(w http.ResponseWriter, code int, value any) {
@@ -344,6 +347,10 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if r.URL.Path == "/api/settings" {
 		s.handleSettings(w, r)
+		return
+	}
+	if r.URL.Path == "/api/events" {
+		s.serveEvents(w, r)
 		return
 	}
 	if r.URL.Path == "/api/folders/select" {
@@ -652,6 +659,7 @@ func (s *server) handleSettings(w http.ResponseWriter, r *http.Request) {
 		if s.bandwidth != nil {
 			s.bandwidth.SetLimit(settings.BandwidthLimitBytesPerSec)
 		}
+		s.publishSettingsEventLocked(settings)
 		s.notifySchedulerLocked()
 		s.mu.Unlock()
 		reply(w, 200, map[string]AppSettings{"settings": settings})
@@ -843,6 +851,7 @@ func (s *server) enqueueJob(w http.ResponseWriter, u, kind, quality, mediaType, 
 			fail(w, 500, "Cannot persist download job")
 			return
 		}
+		s.publishJobEventLocked("job-created", j)
 		reply(w, 202, snapshot(j))
 	default:
 		_ = os.RemoveAll(j.dir)
