@@ -187,7 +187,7 @@ export function HomePage() {
           ? entries.filter(item => Number.isInteger(item.index) && (item.index ?? 0) > 0 && inspectedVideoID.test(item.id)).map(item => item.index!)
           : [];
         return {
-          ...result, selectedQuality, mediaType: "video" as const, audioFormat: "mp3" as const, audioBitrate: "192k",
+          ...result, selectedQuality, selectedVideoStrategy: settings.defaultVideoStrategy, mediaType: "video" as const, audioFormat: "mp3" as const, audioBitrate: "192k",
           subtitleLanguage: "", subtitleFormat: "vtt" as const,
           category: settings.defaultCategory || settings.userCategories[0] || "General",
           selectedPlaylistIndexes, playlistExpanded: false,
@@ -212,6 +212,12 @@ export function HomePage() {
       const supported = item.kind === "playlist" || !item.availableQualities?.length || item.availableQualities.some(option => option.value === quality);
       return supported ? { ...item, selectedQuality: quality } : item;
     }));
+  }
+
+  function applyVideoStrategyToAll(videoStrategy: Draft["selectedVideoStrategy"]) {
+    setDrafts(previous => previous.map(item =>
+      item.mediaType === "video" ? { ...item, selectedVideoStrategy: videoStrategy } : item,
+    ));
   }
 
   function applyAudioFormatToAll(audioFormat: Draft["audioFormat"]) {
@@ -266,6 +272,7 @@ export function HomePage() {
           method: "POST",
           body: JSON.stringify({
             url: draft.url, quality: draft.selectedQuality, mediaType: draft.mediaType,
+            ...(draft.mediaType === "video" ? { videoStrategy: draft.selectedVideoStrategy } : {}),
             ...(draft.mediaType === "audio" ? { audioFormat: draft.audioFormat } : {}),
             ...(draft.mediaType === "audio" && draft.audioFormat === "mp3" ? { audioBitrate: draft.audioBitrate } : {}),
             ...(draft.subtitleLanguage ? { subtitleLanguage: draft.subtitleLanguage, subtitleFormat: draft.subtitleFormat } : {}),
@@ -362,6 +369,7 @@ export function HomePage() {
           settings={settings}
           applyMediaTypeToAll={applyMediaTypeToAll}
           applyQualityToAll={applyQualityToAll}
+          applyVideoStrategyToAll={applyVideoStrategyToAll}
           applyAudioFormatToAll={applyAudioFormatToAll}
           applyAudioBitrateToAll={applyAudioBitrateToAll}
           applyCategoryToAll={applyCategoryToAll}
