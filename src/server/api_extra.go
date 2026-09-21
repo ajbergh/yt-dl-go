@@ -92,7 +92,7 @@ func (s *server) inspect(w http.ResponseWriter, r *http.Request) {
 		for _, option := range []struct {
 			value, label string
 			height       int
-		}{{"best", "Best available", 0}, {"1080", "Up to 1080p", 1080}, {"720", "Up to 720p", 720}, {"480", "Up to 480p", 480}} {
+		}{{"best", "Best available", 0}, {"2160", "Up to 2160p (4K)", 2160}, {"1440", "Up to 1440p", 1440}, {"1080", "Up to 1080p", 1080}, {"720", "Up to 720p", 720}, {"480", "Up to 480p", 480}} {
 			if _, err := selectFormat(video, option.value); err == nil {
 				result.AvailableQuality = append(result.AvailableQuality, inspectedQuality{Value: option.value, Label: option.label, Height: option.height})
 			}

@@ -646,9 +646,9 @@ func (s *server) handleSettings(w http.ResponseWriter, r *http.Request) {
 			settings.StorageMode = *patch.StorageMode
 		}
 		settings.DownloadLocation = filepath.Clean(strings.TrimSpace(settings.DownloadLocation))
-		if settings.DefaultQuality != "best" && settings.DefaultQuality != "1080" && settings.DefaultQuality != "720" && settings.DefaultQuality != "480" {
+		if settings.DefaultQuality != "best" && settings.DefaultQuality != "2160" && settings.DefaultQuality != "1440" && settings.DefaultQuality != "1080" && settings.DefaultQuality != "720" && settings.DefaultQuality != "480" {
 			s.mu.Unlock()
-			fail(w, 400, "defaultQuality must be best, 1080, 720, or 480")
+			fail(w, 400, "defaultQuality must be best, 2160, 1440, 1080, 720, or 480")
 			return
 		}
 		if settings.MaxConcurrentDownloads < 1 || settings.MaxConcurrentDownloads > 6 {
@@ -741,8 +741,8 @@ func (s *server) create(w http.ResponseWriter, r *http.Request) {
 			seenIndexes[item.Index] = struct{}{}
 		}
 	}
-	if request.Quality != "best" && request.Quality != "1080" && request.Quality != "720" && request.Quality != "480" {
-		fail(w, 400, "Quality must be best, 1080, 720, or 480")
+	if request.Quality != "best" && request.Quality != "2160" && request.Quality != "1440" && request.Quality != "1080" && request.Quality != "720" && request.Quality != "480" {
+		fail(w, 400, "Quality must be best, 2160, 1440, 1080, 720, or 480")
 		return
 	}
 	if request.MediaType == "" {

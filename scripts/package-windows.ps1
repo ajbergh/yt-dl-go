@@ -56,6 +56,7 @@ New-Item -ItemType Directory -Path $archiveDirectory -Force | Out-Null
 
 $readme = Join-Path $repoRoot 'README.md'
 $notices = Join-Path $repoRoot 'src\server\THIRD_PARTY_NOTICES.md'
+$licenses = Join-Path $repoRoot 'src\server\licenses'
 foreach ($required in @($readme, $notices)) {
     if (-not (Test-Path -LiteralPath $required -PathType Leaf)) {
         throw "Required package file is missing: $required"
@@ -69,6 +70,10 @@ try {
     Copy-Item -LiteralPath $ExecutablePath -Destination (Join-Path $stage 'youtube-downloader.exe')
     Copy-Item -LiteralPath $readme -Destination (Join-Path $stage 'README.md')
     Copy-Item -LiteralPath $notices -Destination (Join-Path $stage 'THIRD_PARTY_NOTICES.md')
+    if (-not (Test-Path -LiteralPath $licenses -PathType Container)) {
+        throw "Required package directory is missing: $licenses"
+    }
+    Copy-Item -LiteralPath $licenses -Destination (Join-Path $stage 'licenses') -Recurse
 
     if (Test-Path -LiteralPath $ArchivePath) {
         Remove-Item -LiteralPath $ArchivePath -Force

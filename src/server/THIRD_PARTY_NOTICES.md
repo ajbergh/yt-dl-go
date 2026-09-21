@@ -7,6 +7,7 @@ This table covers the executable's Go module dependency tree. The embedded React
 | `github.com/kkdai/youtube/v2` | `v2.10.6` | YouTube metadata and compatible direct streams | [source](https://github.com/kkdai/youtube) · [license](https://github.com/kkdai/youtube/blob/master/LICENSE) |
 | `github.com/chromedp/chromedp` | `v0.14.1` | Control the installed browser for adaptive media capture | [source](https://github.com/chromedp/chromedp) · [license](https://github.com/chromedp/chromedp/blob/master/LICENSE) |
 | `github.com/chromedp/cdproto` | `v0.0.0-20250724212937-08a3db8b4327` | Chrome DevTools Protocol bindings | [source](https://github.com/chromedp/cdproto) · [license](https://github.com/chromedp/cdproto/blob/master/LICENSE) |
+| `github.com/at-wat/ebml-go` | `v0.19.3` | Pure-Go EBML/WebM parsing and VP9/AV1 + Opus remuxing | [source](https://github.com/at-wat/ebml-go) · [Apache-2.0 license](licenses/ebml-go-LICENSE) |
 | `github.com/yapingcat/gomedia` | `v0.0.0-20240906162731-17feea57090c` | MP4 remuxing | [source](https://github.com/yapingcat/gomedia) · [license](https://github.com/yapingcat/gomedia/blob/master/LICENSE) |
 | `github.com/tphakala/go-aac` | `v0.7.0` | AAC-LC decoding for MP3 conversion | [source](https://github.com/tphakala/go-aac) · [LGPL-2.1-or-later license](licenses/go-aac-LICENSE) · [Go runtime code license](licenses/go-aac-LICENSE.golang) |
 | `github.com/tphakala/go-m4a` | `v0.5.0` | MP4/M4A audio demuxing | [source](https://github.com/tphakala/go-m4a) · [MIT license](licenses/go-m4a-LICENSE) |

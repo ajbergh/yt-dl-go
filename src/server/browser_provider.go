@@ -190,7 +190,7 @@ func (p *chromeBrowserProvider) CaptureTrack(ctx context.Context, id string, for
 		}
 		return 0, errBrowserUnavailable
 	}
-	if err := p.forceH264Playback(); err != nil {
+	if err := p.configurePlaybackCodec(format); err != nil {
 		if os.Getenv("YTDL_TRACE_SABR") != "" {
 			log.Printf("browser codec setup failed: %v", err)
 		}
@@ -361,13 +361,44 @@ func (p *chromeBrowserProvider) normalizeHeadlessIdentity() error {
 	return p.uaErr
 }
 
-func (p *chromeBrowserProvider) forceH264Playback() error {
+type playbackCodecPolicy struct {
+	unsupportedPattern string
+	av1Preference      string
+}
+
+func playbackPolicy(format *youtube.Format) (playbackCodecPolicy, bool) {
+	if format == nil {
+		return playbackCodecPolicy{}, false
+	}
+	kind, codecs, ok := formatType(format)
+	if !ok {
+		return playbackCodecPolicy{}, false
+	}
+	switch family := codecFamily(codecs); {
+	case kind == "video/mp4" && family == "h264":
+		return playbackCodecPolicy{unsupportedPattern: "(?:av01|av1|vp09|vp9|vp8)", av1Preference: "480"}, true
+	case kind == "video/webm" && family == "vp9":
+		return playbackCodecPolicy{unsupportedPattern: "(?:av01|av1)", av1Preference: "480"}, true
+	case kind == "video/webm" && family == "av1":
+		return playbackCodecPolicy{unsupportedPattern: "(?:vp09|vp9|vp8)"}, true
+	case kind == "audio/webm" && family == "opus":
+		return playbackCodecPolicy{unsupportedPattern: "(?:mp4a|audio\\/mp4)"}, true
+	default:
+		return playbackCodecPolicy{}, false
+	}
+}
+
+func (p *chromeBrowserProvider) configurePlaybackCodec(format *youtube.Format) error {
+	policy, ok := playbackPolicy(format)
+	if !ok {
+		return errBrowserUnavailable
+	}
 	execCtx, err := p.targetContext()
 	if err != nil {
 		return err
 	}
-	const script = `(() => {
-  const unsupported = /(?:av01|av1|vp09|vp9|vp8)/i;
+	script := `(() => {
+  const unsupported = new RegExp(` + strconv.Quote(policy.unsupportedPattern) + `, 'i');
   if (window.MediaSource && typeof window.MediaSource.isTypeSupported === 'function') {
     const originalIsTypeSupported = window.MediaSource.isTypeSupported.bind(window.MediaSource);
     window.MediaSource.isTypeSupported = type => unsupported.test(type || '') ? false : originalIsTypeSupported(type);
@@ -378,7 +409,12 @@ func (p *chromeBrowserProvider) forceH264Playback() error {
       return unsupported.test(type || '') ? '' : originalCanPlayType.call(this, type);
     };
   }
-  try { localStorage.setItem('yt-player-av1-pref', '480'); } catch (_) {}
+  ` + func() string {
+		if policy.av1Preference == "" {
+			return ""
+		}
+		return "try { localStorage.setItem('yt-player-av1-pref', " + strconv.Quote(policy.av1Preference) + "); } catch (_) {}"
+	}() + `
 })()`
 	_, err = page.AddScriptToEvaluateOnNewDocument(script).WithRunImmediately(true).Do(execCtx)
 	return err

@@ -51,6 +51,56 @@ func TestFormatSelection(t *testing.T) {
 		t.Fatalf("adaptive 1080p pair was not selected: %+v %v", selection, err)
 	}
 
+	// High-resolution adaptive WebM uses VP9/AV1 video plus Opus audio while
+	// keeping the existing H.264/AAC path available at the 1080p ceiling.
+	high := fixtureVideo("dQw4w9WgXcQ")
+	var h264, aac, vp9, av1, opus youtube.Format
+	for target, raw := range map[*youtube.Format]string{
+		&h264: `{"itag":299,"mimeType":"video/mp4; codecs=\"avc1.64002a\"","height":1080,"width":1920,"fps":60,"bitrate":5000000,"contentLength":"6000","audioChannels":0,"initRange":{"start":"0","end":"1"},"indexRange":{"start":"0","end":"1"}}`,
+		&aac:  `{"itag":140,"mimeType":"audio/mp4; codecs=\"mp4a.40.2\"","audioChannels":2,"bitrate":128000,"contentLength":"1000","initRange":{"start":"0","end":"1"},"indexRange":{"start":"0","end":"1"}}`,
+		&vp9:  `{"itag":308,"mimeType":"video/webm; codecs=\"vp09.00.51.08\"","height":1440,"width":2560,"fps":60,"bitrate":9000000,"contentLength":"9000","audioChannels":0,"initRange":{"start":"0","end":"1"},"indexRange":{"start":"0","end":"1"}}`,
+		&av1:  `{"itag":401,"mimeType":"video/webm; codecs=\"av01.0.12M.08\"","height":2160,"width":3840,"fps":60,"bitrate":12000000,"contentLength":"12000","audioChannels":0,"initRange":{"start":"0","end":"1"},"indexRange":{"start":"0","end":"1"}}`,
+		&opus: `{"itag":251,"mimeType":"audio/webm; codecs=\"opus\"","audioChannels":2,"bitrate":160000,"contentLength":"1200","initRange":{"start":"0","end":"1"},"indexRange":{"start":"0","end":"1"}}`,
+	} {
+		if err := json.Unmarshal([]byte(raw), target); err != nil {
+			t.Fatal(err)
+		}
+	}
+	high.Formats = append(high.Formats, h264, aac, vp9, av1, opus)
+	for quality, wantHeight := range map[string]int{"1080": 1080, "1440": 1440, "2160": 2160, "best": 2160} {
+		selected, err := selectFormat(high, quality)
+		if err != nil || selected.video == nil || selected.video.Height != wantHeight {
+			t.Fatalf("high-res quality %s selected %+v: %v", quality, selected, err)
+		}
+		kind, codecs, _ := formatType(selected.video)
+		if wantHeight <= 1080 {
+			if kind != "video/mp4" || codecFamily(codecs) != "h264" || selected.audio == nil {
+				t.Fatalf("1080 compatibility selection = %+v", selected)
+			}
+		} else if kind != "video/webm" || selected.audio == nil {
+			t.Fatalf("high-res WebM selection = %+v", selected)
+		} else if audioKind, audioCodecs, _ := formatType(selected.audio); audioKind != "audio/webm" || codecFamily(audioCodecs) != "opus" {
+			t.Fatalf("high-res audio selection = %+v", selected.audio)
+		}
+	}
+
+	// Prefer VP9 to AV1 when resolution and frame rate tie, even if AV1 has the
+	// higher advertised bitrate; this keeps the default high-res path broadly
+	// decodable without dropping AV1-only 4K support.
+	tie := fixtureVideo("dQw4w9WgXcQ")
+	vp9Tie, av1Tie := vp9, av1
+	vp9Tie.Height, vp9Tie.Width, vp9Tie.Bitrate = 2160, 3840, 8_000_000
+	av1Tie.Height, av1Tie.Width, av1Tie.Bitrate = 2160, 3840, 14_000_000
+	tie.Formats = append(tie.Formats, vp9Tie, av1Tie, opus)
+	tieSelection, err := selectFormat(tie, "2160")
+	if err != nil || tieSelection.video == nil {
+		t.Fatalf("equal-resolution WebM selection failed: %+v %v", tieSelection, err)
+	}
+	_, tieCodecs, _ := formatType(tieSelection.video)
+	if codecFamily(tieCodecs) != "vp9" {
+		t.Fatalf("equal-resolution high-res selection codec = %q, want VP9", tieCodecs)
+	}
+
 	video = fixtureVideo("dQw4w9WgXcQ")
 	video.Formats = video.Formats[1:]
 	if _, err := selectFormat(video, "best"); !errors.Is(err, errCombined) {
@@ -191,8 +241,8 @@ func TestNativeFailuresAndLengths(t *testing.T) {
 func TestEntireExposedPlaylistAndInvalidEntries(t *testing.T) {
 	fake := fixtureClient(151)
 	fake.playlist.Videos[1].ID = fake.playlist.Videos[0].ID
-	s := testServer(t, fake, nil)
-	j := waitTerminal(t, s, createJob(t, s, testPlaylist).ID)
+	s := testServer(t, fake, func(c *config) { c.timeout = 30 * time.Second })
+	j := waitJobFor(t, s, createJob(t, s, testPlaylist).ID, 45*time.Second, func(j Job) bool { return terminal(j.Status) })
 	if j.Status != "completed" || len(j.Files) != 151 || j.TotalCount == nil || *j.TotalCount != 151 || !strings.Contains(j.Note, playlistNote) {
 		t.Fatalf("playlist was truncated or disclosure omitted: %+v", j)
 	}
@@ -223,6 +273,14 @@ func TestOriginalM4ABudgetUsesOnlySourceBytes(t *testing.T) {
 	mp3 := &jobState{Job: Job{MediaType: "audio", AudioFormat: "mp3", AudioBitrate: "192k"}}
 	if got := estimatedItemBudget(mp3, video, format, streamSelection{}); got <= format.ContentLength {
 		t.Fatalf("MP3 budget = %d, want source plus encoded output", got)
+	}
+
+	webMVideo := &youtube.Format{MimeType: `video/webm; codecs="vp09.00.51.08"`, ContentLength: 10_000}
+	webMAudio := &youtube.Format{MimeType: `audio/webm; codecs="opus"`, ContentLength: 2_000}
+	videoJob := &jobState{Job: Job{MediaType: "video"}}
+	selection := streamSelection{video: webMVideo, audio: webMAudio, kind: "video/webm"}
+	if got := estimatedItemBudget(videoJob, video, webMVideo, selection); got != 12_000 {
+		t.Fatalf("WebM adaptive budget = %d, want 12000", got)
 	}
 }
 

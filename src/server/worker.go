@@ -22,18 +22,18 @@ import (
 	"github.com/yapingcat/gomedia/go-mp4"
 )
 
-const formatNote = "Native Go engine: progressive MP4/WebM, remuxed MP4, and MP3 audio-only downloads. Quality is a maximum, not a guarantee; HLS/DASH manifest and live sources are unsupported."
+const formatNote = "Native Go engine: progressive MP4/WebM, adaptive H.264/AAC MP4, adaptive VP9/AV1 + Opus WebM, and MP3 audio-only downloads. Quality is a maximum, not a guarantee; HLS/DASH manifest and live sources are unsupported."
 const playlistNote = "Playlist totals cover all entries exposed by YouTube, not independently verified hidden entries."
 const playlistSelectionNote = "Only the selected exposed playlist items are queued; original playlist positions are preserved."
 const unknownLengthNote = "An unknown-length stream is complete only at clean EOF; its original size cannot be independently verified."
-const adaptiveFallbackNote = "YouTube rejected the adaptive HD stream; the highest verified progressive MP4 stream was downloaded instead."
-const browserAdaptiveNote = "Adaptive HD media was streamed through a temporary browser session."
+const adaptiveFallbackNote = "The requested adaptive stream could not be completed safely; the highest verified progressive MP4 stream was downloaded instead."
+const browserAdaptiveNote = "Adaptive media was streamed through a temporary browser session."
 
 var (
 	errMetadata     = errors.New("Video metadata is unavailable or invalid")
 	errPlaylist     = errors.New("Playlist enumeration failed; completeness could not be verified")
 	errPlaylistSelection = errors.New("Selected playlist items no longer match the inspected playlist")
-	errCombined     = errors.New("No compatible combined or adaptive MP4 stream fits the requested maximum height")
+	errCombined     = errors.New("No compatible combined or adaptive stream fits the requested maximum height")
 	errManifest     = errors.New("HLS/DASH manifest or live sources are unsupported")
 	errRead         = errors.New("Media stream could not be read completely")
 	errLength       = errors.New("Media stream is empty or does not match its declared size")
@@ -117,10 +117,60 @@ func formatType(f *youtube.Format) (string, string, bool) {
 	return kind, strings.ToLower(params["codecs"]), true
 }
 
+func codecFamily(codecs string) string {
+	codecs = strings.ToLower(codecs)
+	switch {
+	case strings.Contains(codecs, "av01") || strings.Contains(codecs, "av1"):
+		return "av1"
+	case strings.Contains(codecs, "vp09") || strings.Contains(codecs, "vp9"):
+		return "vp9"
+	case strings.Contains(codecs, "avc1") || strings.Contains(codecs, "h264"):
+		return "h264"
+	case strings.Contains(codecs, "opus"):
+		return "opus"
+	case strings.Contains(codecs, "mp4a"):
+		return "aac"
+	default:
+		return ""
+	}
+}
+
 func betterVideoFormat(candidate, current *youtube.Format) bool {
 	return current == nil || candidate.Height > current.Height ||
 		(candidate.Height == current.Height && (candidate.FPS > current.FPS ||
 			(candidate.FPS == current.FPS && candidate.Bitrate > current.Bitrate)))
+}
+
+func betterWebMVideoFormat(candidate, current *youtube.Format) bool {
+	if current == nil {
+		return true
+	}
+	if candidate.Height != current.Height {
+		return candidate.Height > current.Height
+	}
+	if candidate.FPS != current.FPS {
+		return candidate.FPS > current.FPS
+	}
+	candidateCodec := ""
+	currentCodec := ""
+	if _, codecs, ok := formatType(candidate); ok {
+		candidateCodec = codecFamily(codecs)
+	}
+	if _, codecs, ok := formatType(current); ok {
+		currentCodec = codecFamily(codecs)
+	}
+	// At equal resolution/frame rate prefer VP9 over AV1 for broader native
+	// decoder compatibility. AV1 remains fully supported when it is the better
+	// or only high-resolution WebM representation.
+	if candidateCodec != currentCodec {
+		if candidateCodec == "vp9" {
+			return true
+		}
+		if currentCodec == "vp9" {
+			return false
+		}
+	}
+	return candidate.Bitrate > current.Bitrate
 }
 
 func betterAudioFormat(candidate, current *youtube.Format) bool {
@@ -129,8 +179,12 @@ func betterAudioFormat(candidate, current *youtube.Format) bool {
 }
 
 // selectFormat chooses a compatible stream under the requested maximum height.
-// It prefers adaptive H.264/AAC only when its video outranks the best combined
-// stream by height, frame rate, or bitrate; otherwise it uses the combined file.
+//
+// Existing progressive streams and H.264/AAC adaptive MP4 remain the preferred
+// compatibility path through 1080p. Higher resolutions may use WebM adaptive
+// VP9/AV1 video with Opus audio; the worker remuxes those tracks without
+// transcoding. "quality" is a ceiling, so a lower supported representation may
+// still be returned when the exact requested height is unavailable.
 func selectFormat(video *youtube.Video, quality string) (streamSelection, error) {
 	if video == nil {
 		return streamSelection{}, errMetadata
@@ -155,41 +209,71 @@ func selectFormat(video *youtube.Video, quality string) (streamSelection, error)
 		}
 	}
 
-	var audio *youtube.Format
+	var aacAudio *youtube.Format
+	var opusAudio *youtube.Format
 	for i := range video.Formats {
 		f := &video.Formats[i]
 		kind, codecs, ok := formatType(f)
-		if !ok || kind != "audio/mp4" || !strings.Contains(codecs, "mp4a") || f.AudioChannels <= 0 || f.Height != 0 || f.InitRange == nil || f.IndexRange == nil {
+		if !ok || f.AudioChannels <= 0 || f.Height != 0 || f.InitRange == nil || f.IndexRange == nil {
 			continue
 		}
-		if betterAudioFormat(f, audio) {
-			audio = f
+		switch {
+		case kind == "audio/mp4" && codecFamily(codecs) == "aac":
+			if betterAudioFormat(f, aacAudio) {
+				aacAudio = f
+			}
+		case kind == "audio/webm" && codecFamily(codecs) == "opus":
+			if betterAudioFormat(f, opusAudio) {
+				opusAudio = f
+			}
 		}
 	}
 
-	var adaptive streamSelection
+	var adaptiveMP4 streamSelection
 	progressiveMP4 := progressiveMP4Selection.video
-	if audio != nil && progressiveMP4 != nil {
+	if aacAudio != nil && progressiveMP4 != nil {
 		for i := range video.Formats {
 			f := &video.Formats[i]
 			kind, codecs, ok := formatType(f)
-			if !ok || kind != "video/mp4" || !strings.Contains(codecs, "avc1") || f.AudioChannels != 0 || f.Height <= 0 || f.Width <= 0 || f.InitRange == nil || f.IndexRange == nil || (maxHeight > 0 && f.Height > maxHeight) {
+			if !ok || kind != "video/mp4" || codecFamily(codecs) != "h264" || f.AudioChannels != 0 || f.Height <= 0 || f.Width <= 0 || f.InitRange == nil || f.IndexRange == nil || (maxHeight > 0 && f.Height > maxHeight) {
 				continue
 			}
-			if betterVideoFormat(f, adaptive.video) {
-				adaptive = streamSelection{video: f, audio: audio, progressive: progressiveMP4, kind: kind}
+			if betterVideoFormat(f, adaptiveMP4.video) {
+				adaptiveMP4 = streamSelection{video: f, audio: aacAudio, progressive: progressiveMP4, kind: kind}
 			}
 		}
 	}
 
-	if adaptive.video != nil && betterVideoFormat(adaptive.video, progressive.video) {
-		return adaptive, nil
+	var adaptiveWebM streamSelection
+	if opusAudio != nil {
+		for i := range video.Formats {
+			f := &video.Formats[i]
+			kind, codecs, ok := formatType(f)
+			if !ok || kind != "video/webm" || f.AudioChannels != 0 || f.Height <= 0 || f.Width <= 0 || f.InitRange == nil || f.IndexRange == nil || (maxHeight > 0 && f.Height > maxHeight) {
+				continue
+			}
+			family := codecFamily(codecs)
+			if family != "vp9" && family != "av1" {
+				continue
+			}
+			if betterWebMVideoFormat(f, adaptiveWebM.video) {
+				adaptiveWebM = streamSelection{video: f, audio: opusAudio, progressive: progressiveMP4, kind: kind}
+			}
+		}
+	}
+
+	bestAdaptive := adaptiveMP4
+	if adaptiveWebM.video != nil && (bestAdaptive.video == nil || betterVideoFormat(adaptiveWebM.video, bestAdaptive.video)) {
+		bestAdaptive = adaptiveWebM
+	}
+	if bestAdaptive.video != nil && betterVideoFormat(bestAdaptive.video, progressive.video) {
+		return bestAdaptive, nil
 	}
 	if progressive.video != nil {
 		return progressive, nil
 	}
-	if adaptive.video != nil {
-		return adaptive, nil
+	if bestAdaptive.video != nil {
+		return bestAdaptive, nil
 	}
 	if video.HLSManifestURL != "" || video.DASHManifestURL != "" {
 		return streamSelection{}, errManifest
@@ -564,10 +648,21 @@ func estimatedItemBudget(j *jobState, video *youtube.Video, format *youtube.Form
 			estimated = format.ContentLength + encoded + margin
 		}
 	} else if selection.audio != nil {
-		if selection.video.ContentLength <= 0 || selection.progressive == nil || selection.progressive.ContentLength <= 0 {
+		if selection.video == nil || selection.video.ContentLength <= 0 {
 			return 0
 		}
-		estimated = selection.video.ContentLength + selection.progressive.ContentLength
+		kind, _, _ := formatType(selection.video)
+		if kind == "video/webm" {
+			if selection.audio.ContentLength <= 0 {
+				return 0
+			}
+			estimated = selection.video.ContentLength + selection.audio.ContentLength
+		} else {
+			if selection.progressive == nil || selection.progressive.ContentLength <= 0 {
+				return 0
+			}
+			estimated = selection.video.ContentLength + selection.progressive.ContentLength
+		}
 	} else {
 		if format == nil || format.ContentLength <= 0 {
 			return 0
@@ -1481,7 +1576,31 @@ func (s *server) transferProgressive(ctx context.Context, j *jobState, engine na
 	return result, nil
 }
 
-func (s *server) transferAdaptive(ctx context.Context, j *jobState, engine nativeClient, video *youtube.Video, selection streamSelection, queueIndex, outputIndex int, budget int64) (result mediaFile, err error) {
+func (s *server) transferAdaptive(ctx context.Context, j *jobState, engine nativeClient, video *youtube.Video, selection streamSelection, queueIndex, outputIndex int, budget int64) (mediaFile, error) {
+	kind, _, ok := formatType(selection.video)
+	if ok && kind == "video/webm" {
+		return s.transferAdaptiveWebM(ctx, j, engine, video, selection, queueIndex, outputIndex, budget)
+	}
+	return s.transferAdaptiveMP4(ctx, j, engine, video, selection, queueIndex, outputIndex, budget)
+}
+
+func (s *server) noteAdaptiveFallback(j *jobState) {
+	s.mu.Lock()
+	if !strings.Contains(j.Note, adaptiveFallbackNote) {
+		j.Note += " " + adaptiveFallbackNote
+	}
+	s.mu.Unlock()
+}
+
+func (s *server) noteBrowserAdaptive(j *jobState) {
+	s.mu.Lock()
+	if !strings.Contains(j.Note, browserAdaptiveNote) {
+		j.Note += " " + browserAdaptiveNote
+	}
+	s.mu.Unlock()
+}
+
+func (s *server) transferAdaptiveMP4(ctx context.Context, j *jobState, engine nativeClient, video *youtube.Video, selection streamSelection, queueIndex, outputIndex int, budget int64) (result mediaFile, err error) {
 	if selection.video == nil || selection.audio == nil || budget <= 0 {
 		return result, errLimit
 	}
@@ -1537,14 +1656,7 @@ func (s *server) transferAdaptive(ctx context.Context, j *jobState, engine nativ
 	videoSize, browserUsed, err := s.downloadAdaptiveRanges(ctx, j, engine, video, selection.video, videoPart, queueIndex, budget, progress, browserProvider)
 	if err != nil {
 		if ctx.Err() == nil && errors.Is(err, errRead) && selection.progressive != nil {
-			// YouTube may advertise adaptive formats while rejecting their later
-			// byte ranges without a proof-of-origin token. Preserve a complete,
-			// honest download rather than returning a corrupt or partial HD file.
-			s.mu.Lock()
-			if !strings.Contains(j.Note, adaptiveFallbackNote) {
-				j.Note += " " + adaptiveFallbackNote
-			}
-			s.mu.Unlock()
+			s.noteAdaptiveFallback(j)
 			fallback, fallbackErr := s.transferProgressive(ctx, j, engine, video, selection.progressive, "video/mp4", queueIndex, outputIndex, budget)
 			if fallbackErr == nil {
 				finalized = true
@@ -1554,11 +1666,7 @@ func (s *server) transferAdaptive(ctx context.Context, j *jobState, engine nativ
 		return result, err
 	}
 	if browserUsed {
-		s.mu.Lock()
-		if !strings.Contains(j.Note, browserAdaptiveNote) {
-			j.Note += " " + browserAdaptiveNote
-		}
-		s.mu.Unlock()
+		s.noteBrowserAdaptive(j)
 	}
 	downloaded = videoSize
 	if budget-videoSize <= 0 {
@@ -1590,6 +1698,117 @@ func (s *server) transferAdaptive(ctx context.Context, j *jobState, engine nativ
 	}
 	if ctx.Err() != nil {
 		return result, ctx.Err()
+	}
+	if totalExpected > 0 {
+		s.updateProgress(j, queueIndex, progressTotal, progressTotal)
+	}
+	if os.Rename(outputPart, path) != nil {
+		return result, errStorage
+	}
+	result.Size = info.Size()
+	finalized = true
+	return result, nil
+}
+
+func (s *server) transferAdaptiveWebM(ctx context.Context, j *jobState, engine nativeClient, video *youtube.Video, selection streamSelection, queueIndex, outputIndex int, budget int64) (result mediaFile, err error) {
+	if selection.video == nil || selection.audio == nil || budget <= 0 {
+		return result, errLimit
+	}
+	result = mediaFile{
+		ID: randomID(16), Name: fmt.Sprintf("%06d-%s.webm", outputIndex, video.ID),
+		Height: selection.video.Height, MimeType: "video/webm",
+	}
+	path := filepath.Join(j.dir, result.Name)
+	if f, openErr := openFinal(j.dir, result.Name); openErr == nil {
+		info, statErr := f.Stat()
+		_ = f.Close()
+		if statErr == nil {
+			result.Size = info.Size()
+			return result, nil
+		}
+	}
+	videoPart := path + ".video.part"
+	audioPart := path + ".audio.part"
+	outputPart := path + ".part"
+	finalized := false
+	defer func() {
+		if removeErr := os.Remove(outputPart); removeErr != nil && !errors.Is(removeErr, os.ErrNotExist) && err == nil {
+			err = errStorage
+		}
+		if !s.keepPartial(j) {
+			for _, temporary := range []string{videoPart, audioPart} {
+				if removeErr := os.Remove(temporary); removeErr != nil && !errors.Is(removeErr, os.ErrNotExist) && err == nil {
+					err = errStorage
+				}
+			}
+		}
+		if !finalized {
+			_ = os.Remove(path)
+		}
+	}()
+
+	var browserProvider browserMediaProvider
+	if s.browserFactory != nil && !s.bandwidthLimited() {
+		if provider, providerErr := s.browserFactory(ctx); providerErr == nil && provider != nil {
+			defer provider.Close()
+			browserProvider = provider
+		}
+	}
+	totalExpected := selection.video.ContentLength + selection.audio.ContentLength
+	progressTotal := int64(float64(totalExpected) * 100 / 90)
+	var downloaded int64
+	progress := func(current int64) {
+		if totalExpected <= 0 {
+			return
+		}
+		s.updateProgress(j, queueIndex, downloaded+current, progressTotal)
+	}
+
+	fallback := func() (mediaFile, error) {
+		if ctx.Err() != nil {
+			return result, ctx.Err()
+		}
+		if selection.progressive == nil {
+			return result, errCombined
+		}
+		s.noteAdaptiveFallback(j)
+		return s.transferProgressive(ctx, j, engine, video, selection.progressive, "video/mp4", queueIndex, outputIndex, budget)
+	}
+
+	videoSize, videoBrowserUsed, err := s.downloadAdaptiveRanges(ctx, j, engine, video, selection.video, videoPart, queueIndex, budget, progress, browserProvider)
+	if err != nil {
+		if errors.Is(err, errRead) {
+			return fallback()
+		}
+		return result, err
+	}
+	downloaded = videoSize
+	if budget-videoSize <= 0 {
+		return result, errLimit
+	}
+	audioSize, audioBrowserUsed, err := s.downloadAdaptiveRanges(ctx, j, engine, video, selection.audio, audioPart, queueIndex, budget-videoSize, progress, browserProvider)
+	if err != nil {
+		if errors.Is(err, errRead) {
+			return fallback()
+		}
+		return result, err
+	}
+	if videoBrowserUsed || audioBrowserUsed {
+		s.noteBrowserAdaptive(j)
+	}
+	downloaded += audioSize
+	if err := muxWebM(ctx, videoPart, audioPart, outputPart); err != nil {
+		if ctx.Err() != nil {
+			return result, ctx.Err()
+		}
+		return fallback()
+	}
+	info, err := os.Stat(outputPart)
+	if err != nil || info.Size() <= 0 {
+		return result, errLength
+	}
+	if info.Size() > budget {
+		return result, errLimit
 	}
 	if totalExpected > 0 {
 		s.updateProgress(j, queueIndex, progressTotal, progressTotal)

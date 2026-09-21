@@ -94,6 +94,7 @@ mkdir -p "$stage/$archive_base"
 cp "$output" "$stage/$archive_base/youtube-downloader"
 cp "$repo_root/README.md" "$stage/$archive_base/README.md"
 cp "$server_dir/THIRD_PARTY_NOTICES.md" "$stage/$archive_base/THIRD_PARTY_NOTICES.md"
+cp -R "$server_dir/licenses" "$stage/$archive_base/licenses"
 
 tar -czf "$archive" -C "$stage" "$archive_base"
 if command -v shasum >/dev/null 2>&1; then

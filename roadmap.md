@@ -418,22 +418,40 @@ Add opt-in subtitle/caption download for owned/authorized content.
 
 ## P2.4 1440p and 2160p support
 
-**Status:** [ ] Planned
+**Status:** [x] Implemented
 
-This is an engineering project, not merely a quality-dropdown change.
+This is an engineering project, not merely a quality-dropdown change. YouTube commonly uses VP9/AV1 video and Opus audio for higher resolutions, so the implementation adds an explicit codec/container strategy instead of pretending every quality can remain H.264/AAC MP4.
 
-YouTube commonly uses VP9/AV1 and Opus for higher resolutions. The implementation needs an explicit codec/container strategy.
+#### Implemented
 
-#### Research and implementation areas
+1. Added `1440` and `2160` quality ceilings across the API, persisted settings, inspection metadata, TypeScript quality model, and UI labels. Quality remains a ceiling rather than an upscale guarantee.
+2. Preserved the existing compatibility-oriented H.264 + AAC adaptive MP4 path through 1080p.
+3. Added adaptive WebM selection for VP9 and AV1 video with Opus audio. At equal height/frame rate VP9 is preferred for broader native decoder compatibility; AV1 remains available when it is the better or only high-resolution representation.
+4. Added a streaming, pure-Go WebM remuxer using `github.com/at-wat/ebml-go v0.19.3`. Separate YouTube video/audio WebMs are parsed incrementally and timestamp-interleaved into seekable WebM without decoding, transcoding, CGO, FFmpeg, or loading the complete media into memory.
+5. Preserved Opus codec-private metadata, codec delay, seek pre-roll, video dimensions, keyframe flags, and timestamps in finalized WebM output.
+6. Extended browser-assisted adaptive authorization so playback targeting is codec-aware for H.264, VP9, AV1, and Opus rather than globally forcing H.264.
+7. High-resolution video and audio tracks use the existing resumable bounded-range downloader and browser fallback. Both tracks are independently completion-verified before remuxing.
+8. Added safe fallback semantics: if adaptive high-resolution acquisition or WebM validation/remuxing fails and a verified progressive MP4 exists, the job falls back to that complete file and records the downgrade in the job note instead of returning corrupt or partial media.
+9. Updated storage budgeting for separate WebM video + Opus audio sources.
+10. Added unit coverage for 1440p VP9 selection, 2160p AV1 selection, VP9-over-AV1 tie-breaking, codec-aware browser policy, WebM storage estimates, VP9/Opus remuxing, track metadata preservation, frame counts, and rejection of unsupported WebM codecs.
+11. Added the `ebml-go` Apache-2.0 license and third-party notice. Windows/Linux/macOS packaging now includes the complete `licenses/` directory so packaged notice links remain valid.
+12. Updated root/server documentation to describe 1440p/4K behavior, the MP4/WebM strategy, browser requirements, fallback semantics, and the expanded quality values.
 
-- VP9 and AV1 video handling.
-- Opus audio handling.
-- WebM output.
-- Whether selected codecs can be muxed safely into MP4.
-- Browser-assisted adaptive authorization parity with the current H.264 path.
-- CPU/memory impact.
-- Fallback semantics.
-- Test fixtures and live verification.
+#### Codec/container policy
+
+| Requested path | Video | Audio | Final container |
+| --- | --- | --- | --- |
+| Progressive compatibility | Source combined stream | Source combined stream | MP4 or WebM |
+| Adaptive compatibility | H.264 | AAC | MP4 |
+| Adaptive high resolution | VP9 preferred at equal resolution; AV1 supported | Opus | WebM |
+
+P2.5 remains the place for user-selectable codec/container preferences such as explicit AV1 preference or compatibility-only output. P2.4 keeps those choices automatic.
+
+#### Validation
+
+- PR CI run `35617803735` passed frontend type-check/build, Bun integration tests, Go tests, Go vet, real-browser E2E, Windows production build/package/upload, Linux amd64 + arm64 production package/upload, and macOS amd64 + arm64 production package/upload.
+- Earlier CI iterations exposed and fixed: the missing module checksum, a generated browser codec-script compile error, an interleaved WebM-reader test deadlock, YouTube JSON `contentLength` fixture encoding, the legacy test that treated 2160p as unsupported, and a pre-existing Windows timing limit in the 151-item playlist fixture. The Windows fix changes only test timeout/wait behavior, not production scheduler semantics.
+- The opt-in live-download harness already accepts `YTDL_LIVE_MIN_HEIGHT=1440` or `2160` for authorized real-media verification. It remains intentionally outside normal CI because it depends on current YouTube delivery behavior and downloads real media.
 
 ### P2.5 Advanced codec/container selection
 
