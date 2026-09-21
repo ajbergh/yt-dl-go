@@ -259,6 +259,7 @@ export function HomePage() {
     storageMode: "managed-published",
   });
   const knownJobStatuses = useRef<Map<string, DownloadJob["status"]>>(new Map());
+  const notificationsEnabledRef = useRef(false);
   const [newCategoryInput, setNewCategoryInput] = useState("");
   const [mp3Supported, setMp3Supported] = useState(false);
   const [serviceError, setServiceError] = useState("");
@@ -378,6 +379,10 @@ export function HomePage() {
   }, [libraryLayout]);
 
   useEffect(() => {
+    notificationsEnabledRef.current = settings.notificationsEnabled;
+  }, [settings.notificationsEnabled]);
+
+  useEffect(() => {
     // Check the bundled Go service first, then hydrate the page from its
     // SQLite-backed job and preference APIs. Failed startup checks retry every
     // 2.5 seconds; unmounting aborts requests and cancels the pending retry.
@@ -449,7 +454,7 @@ export function HomePage() {
       const previousStatus = knownJobStatuses.current.get(job.id);
       const changed = previousStatus !== undefined && previousStatus !== job.status;
       knownJobStatuses.current.set(job.id, job.status);
-      if (!changed || !settings.notificationsEnabled) return;
+      if (!changed || !notificationsEnabledRef.current) return;
       const notification = terminalNotification(job);
       const NotificationAPI = notificationAPI();
       if (!notification || !NotificationAPI || NotificationAPI.permission !== "granted") return;
@@ -532,7 +537,7 @@ export function HomePage() {
       clearTimeout(reconnectTimer);
       clearInterval(reconcileTimer);
     };
-  }, [connection, serviceReady, settings.notificationsEnabled]);
+  }, [connection, serviceReady]);
 
   async function inspectLinks() {
     setFormError("");
