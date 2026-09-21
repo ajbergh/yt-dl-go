@@ -404,17 +404,32 @@ export function HomePage() {
     setSettingsSaved(false);
   }
 
-  async function jobAction(job: DownloadJob, action: "pause" | "resume" | "cancel" | "retry" | "remove") {
+  async function jobAction(job: DownloadJob, action: "pause" | "resume" | "cancel" | "retry" | "remove" | "delete-managed" | "delete-published" | "delete-all") {
     if (!serviceReady) return;
     if (action === "retry" && !window.confirm("Retry this URL? Confirm that you own the content or have permission to download it.")) return;
-    if (action === "remove" && !window.confirm("Delete this job's history and its downloaded files? This cannot be undone.")) return;
+    if (action === "remove" && !window.confirm("Remove this item from the Library? The app-managed copy and history will be removed, but published files in your configured download folder will be preserved.")) return;
+    if (action === "delete-managed" && !window.confirm("Delete the app-managed media copy? Published files in your configured download folder will be preserved, but in-app Save links will no longer work.")) return;
+    if (action === "delete-published" && !window.confirm("Delete the published media from your configured download folder? The app-managed Library copy will be preserved.")) return;
+    if (action === "delete-all" && !window.confirm("Delete this media everywhere? This removes the app-managed copy, published output files, and Library history. This cannot be undone.")) return;
     setBusyAction(job.id);
     setActionError("");
     try {
-      if (action === "remove") {
-        await api<void>(connection, `/api/jobs/${encodeURIComponent(job.id)}`, { method: "DELETE", signal: AbortSignal.timeout(15000) });
+      if (action === "remove" || action === "delete-all") {
+        const suffix = action === "delete-all" ? "/all" : "";
+        await api<void>(connection, `/api/jobs/${encodeURIComponent(job.id)}${suffix}`, { method: "DELETE", signal: AbortSignal.timeout(15000) });
         setJobs(previous => previous.filter(item => item.id !== job.id));
-        setNotice("Job history and tracked output files removed.");
+        setNotice(action === "delete-all"
+          ? "Media, published output, and Library history deleted."
+          : "Removed from Library. Published output files were preserved.");
+      } else if (action === "delete-managed" || action === "delete-published") {
+        const scope = action === "delete-managed" ? "managed" : "published";
+        const result = await api<DownloadJob>(connection, `/api/jobs/${encodeURIComponent(job.id)}/${scope}`, {
+          method: "DELETE", signal: AbortSignal.timeout(15000),
+        });
+        setJobs(previous => previous.map(item => item.id === job.id ? result : item));
+        setNotice(action === "delete-managed"
+          ? "App-managed media copies deleted. Published output files were preserved."
+          : "Published output files deleted. App-managed Library copies were preserved.");
       } else {
         const result = await api<DownloadJob>(connection, `/api/jobs/${encodeURIComponent(job.id)}/${action}`, {
           method: "POST",
@@ -717,20 +732,23 @@ export function HomePage() {
               {visibleLibraryJobs.map(job => <article key={job.id} className={`${panel} overflow-hidden`}>
                 <div className="flex items-start justify-between gap-3 border-b border-neutral-800 p-4">
                   <div className="min-w-0"><div className="mb-1.5 flex flex-wrap gap-2"><span className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold ${statusClass(job.status)}`}>{statusLabels[job.status]}</span><span className="text-[10px] text-neutral-500">{job.kind} · {qualityLabels[job.quality]}{job.category ? ` · ${job.category}` : ""}</span></div><h3 className="truncate text-sm font-bold text-white">{job.title}</h3><p className="mt-1 text-[10px] text-neutral-500">{dateLabel(job.createdAt)} · {job.files.length} file{job.files.length === 1 ? "" : "s"}</p></div>
-                  <button type="button" className={button} disabled={busyAction === job.id} onClick={() => void jobAction(job, "remove")} title="Delete downloaded files and history"><Trash2 className="size-3.5" aria-hidden="true" /><span className="hidden sm:inline">Delete</span></button>
+                  <button type="button" className={button} disabled={busyAction === job.id} onClick={() => void jobAction(job, "remove")} title="Remove from Library while preserving published output"><Trash2 className="size-3.5" aria-hidden="true" /><span className="hidden sm:inline">Remove</span></button>
                 </div>
                 <div className="space-y-2 p-3">
                   {job.files.map(file => <div key={file.id} className="flex items-center gap-3 rounded-xl border border-neutral-800/80 bg-neutral-950/70 p-2.5">
                     {file.thumbnailUrl ? <img src={file.thumbnailUrl} alt="" referrerPolicy="no-referrer" className="aspect-video w-24 rounded-md bg-neutral-900 object-cover" /> : <div className="grid aspect-video w-24 shrink-0 place-items-center rounded-md bg-neutral-900 text-neutral-600">{job.mediaType === "audio" ? <Activity className="size-5" aria-hidden="true" /> : <Film className="size-5" aria-hidden="true" />}</div>}
-                    <div className="min-w-0 flex-1"><h4 className="truncate text-xs font-semibold text-neutral-200" title={file.title || file.outputName || file.name}>{file.title || file.outputName || file.name}</h4><p className="mt-1 truncate font-mono text-[10px] text-neutral-500" title={file.outputRelativePath || file.author || file.name}>{file.outputRelativePath || file.author || file.name}</p><p className="mt-1 text-[10px] text-neutral-600">{file.height ? `${file.height}p · ` : ""}{formatBytes(file.size)}{file.durationSeconds ? ` · ${durationLabel(file.durationSeconds)}` : ""}</p></div>
-                    <button type="button" className={button} disabled={busyAction === `${job.id}:${file.id}`} onClick={() => void saveFile(job, file.id)} aria-label={`Save ${file.title || file.name}`}><ArrowDownToLine className="size-3.5" aria-hidden="true" /><span className="hidden sm:inline">Save</span></button>
+                    <div className="min-w-0 flex-1"><h4 className="truncate text-xs font-semibold text-neutral-200" title={file.title || file.outputName || file.name}>{file.title || file.outputName || file.name}</h4><p className="mt-1 truncate font-mono text-[10px] text-neutral-500" title={file.outputRelativePath || file.author || file.name}>{file.outputRelativePath || file.author || file.name}</p><p className="mt-1 text-[10px] text-neutral-600">{file.height ? `${file.height}p · ` : ""}{formatBytes(file.size)}{file.durationSeconds ? ` · ${durationLabel(file.durationSeconds)}` : ""}</p><div className="mt-1 flex flex-wrap gap-1">{file.managedAvailable === false && <span className="rounded bg-amber-950/60 px-1.5 py-0.5 text-[9px] text-amber-300">Managed copy removed</span>}{file.outputRelativePath && file.publishedAvailable === false && <span className="rounded bg-red-950/50 px-1.5 py-0.5 text-[9px] text-red-300">Published copy removed</span>}</div></div>
+                    <button type="button" className={button} disabled={busyAction === `${job.id}:${file.id}` || file.managedAvailable === false} onClick={() => void saveFile(job, file.id)} aria-label={`Save ${file.title || file.name}`} title={file.managedAvailable === false ? "The app-managed copy has been removed" : "Save a copy through the browser"}><ArrowDownToLine className="size-3.5" aria-hidden="true" /><span className="hidden sm:inline">Save</span></button>
                   </div>)}
                 </div>
                 <div className="flex flex-wrap items-center justify-between gap-2 border-t border-neutral-800 px-4 py-3">
                   {job.error && <p className="max-w-sm text-[10px] text-amber-300/80">{job.error}</p>}
-                  <div className="ml-auto flex items-center gap-2">
+                  <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
                     {(job.status === "partial" || job.status === "failed" || job.status === "cancelled") && <button type="button" className={button} onClick={() => void jobAction(job, "retry")} disabled={busyAction === job.id}><RefreshCw className="size-3.5" aria-hidden="true" />Retry job</button>}
-                    {job.files.length > 1 && <button type="button" className={primaryButton} onClick={() => void saveFile(job)} disabled={busyAction === `${job.id}:zip`}><ArrowDownToLine className="size-3.5" aria-hidden="true" />Save all as ZIP</button>}
+                    {job.files.length > 1 && job.files.every(file => file.managedAvailable !== false) && <button type="button" className={primaryButton} onClick={() => void saveFile(job)} disabled={busyAction === `${job.id}:zip`}><ArrowDownToLine className="size-3.5" aria-hidden="true" />Save all as ZIP</button>}
+                    {job.files.some(file => file.managedAvailable !== false) && <button type="button" className={button} onClick={() => void jobAction(job, "delete-managed")} disabled={busyAction === job.id} title="Delete only app-managed copies"><Trash2 className="size-3.5" aria-hidden="true" />Managed copy</button>}
+                    {job.files.some(file => file.publishedAvailable !== false && Boolean(file.outputRelativePath)) && <button type="button" className={button} onClick={() => void jobAction(job, "delete-published")} disabled={busyAction === job.id} title="Delete only files in the configured output folder"><Trash2 className="size-3.5" aria-hidden="true" />Published copy</button>}
+                    <button type="button" className={`${button} border-red-900/70 text-red-300 hover:border-red-700 hover:bg-red-950/40`} onClick={() => void jobAction(job, "delete-all")} disabled={busyAction === job.id}><Trash2 className="size-3.5" aria-hidden="true" />Delete everywhere</button>
                   </div>
                 </div>
               </article>)}
