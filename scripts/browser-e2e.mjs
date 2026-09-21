@@ -109,7 +109,7 @@ class CDP {
         else pending.resolve(message.result);
         return;
       }
-      if (["Runtime.exceptionThrown", "Runtime.consoleAPICalled", "Log.entryAdded", "Network.loadingFailed", "Network.responseReceived"].includes(message.method)) {
+      if (["Runtime.exceptionThrown", "Runtime.consoleAPICalled", "Log.entryAdded", "Network.loadingFailed", "Network.requestWillBeSent", "Network.responseReceived"].includes(message.method)) {
         this.events.push({ method: message.method, params: message.params });
         if (this.events.length > 100) this.events.shift();
       }
@@ -250,6 +250,18 @@ async function getJSON(url) {
   return response.json();
 }
 
+async function waitForBackendJobStatus(baseURL, status, timeoutMs = 20000) {
+  const deadline = Date.now() + timeoutMs;
+  let lastJob = null;
+  while (Date.now() < deadline) {
+    const data = await getJSON(`${baseURL}/api/jobs`);
+    lastJob = data.jobs?.[0] ?? null;
+    if (lastJob?.status === status) return lastJob;
+    await new Promise(resolve => setTimeout(resolve, 100));
+  }
+  throw new Error(`Timed out waiting for backend job status ${status}; last job: ${JSON.stringify(lastJob)}`);
+}
+
 async function main() {
   const chromePath = findChrome();
   const tempRoot = await mkdtemp(path.join(os.tmpdir(), "yt-dl-go-browser-e2e-"));
@@ -262,6 +274,7 @@ async function main() {
   let service;
   let chrome;
   let cdp;
+  let baseURL = "";
   let serviceLog = () => "";
   let chromeLog = () => "";
 
@@ -277,7 +290,7 @@ async function main() {
 
     const port = await freePort();
     const debugPort = await freePort();
-    const baseURL = `http://127.0.0.1:${port}`;
+    baseURL = `http://127.0.0.1:${port}`;
 
     const startService = async () => {
       service = spawn(binary, [], {
@@ -343,20 +356,22 @@ async function main() {
     const pauseSelector = '[aria-label^="Pause E2E Fixture Video"]';
     const resumeSelector = '[aria-label^="Resume E2E Fixture Video"]';
     await waitForEnabledSelector(cdp, pauseSelector, "enabled pause control");
+    const pauseRequestPromise = cdp.waitEvent(
+      "Network.requestWillBeSent",
+      params => params?.request?.url?.endsWith("/pause") === true,
+      15000,
+    );
     const pauseResponsePromise = cdp.waitEvent(
       "Network.responseReceived",
       params => params?.response?.url?.endsWith("/pause") === true,
       15000,
     );
     await clickSelector(cdp, pauseSelector);
+    const pauseRequest = await pauseRequestPromise;
+    assert.equal(pauseRequest.request.method, "POST", `pause request used ${pauseRequest.request.method}`);
     const pauseResponse = await pauseResponsePromise;
     assert.equal(pauseResponse.response.status, 200, `pause API returned ${pauseResponse.response.status}`);
-    await waitFor(
-      cdp,
-      `fetch("/api/jobs").then(r => r.json()).then(data => data.jobs?.[0]?.status === "paused")`,
-      "paused backend job",
-      20000,
-    );
+    await waitForBackendJobStatus(baseURL, "paused", 20000);
     await waitFor(cdp, bodyIncludes("Paused"), "paused job");
     await waitForEnabledSelector(cdp, resumeSelector, "enabled resume control");
     await clickSelector(cdp, resumeSelector);
