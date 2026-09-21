@@ -94,10 +94,20 @@ func (s *server) download(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	files := []mediaFile{}
+	unavailable := false
 	for _, f := range j.Files {
 		if t.fileID == "" || t.fileID == f.ID {
+			if !f.ManagedAvailable {
+				unavailable = true
+				continue
+			}
 			files = append(files, f)
 		}
+	}
+	if unavailable {
+		s.mu.Unlock()
+		fail(w, 409, "The app-managed media copy is no longer available")
+		return
 	}
 	j.readers++
 	s.mu.Unlock()
