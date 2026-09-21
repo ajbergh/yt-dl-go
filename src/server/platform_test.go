@@ -31,7 +31,7 @@ func TestBrowserOpenCommands(t *testing.T) {
 
 func TestNativeFolderCommands(t *testing.T) {
 	command, args, err := nativeFolderCommand("windows", "")
-	if err != nil || command != "powershell.exe" || len(args) != 5 || args[0] != "-NoProfile" || args[1] != "-STA" {
+	if err != nil || command != "powershell.exe" || len(args) != 4 || args[0] != "-NoProfile" || args[1] != "-STA" {
 		t.Fatalf("windows folder command = %q %v err=%v", command, args, err)
 	}
 	command, args, err = nativeFolderCommand("darwin", "")
