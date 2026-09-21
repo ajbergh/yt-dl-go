@@ -41,6 +41,8 @@ type mediaFile struct {
 	OutputRelativePath string `json:"outputRelativePath,omitempty"`
 	ManagedAvailable   bool   `json:"managedAvailable"`
 	PublishedAvailable bool   `json:"publishedAvailable"`
+	Subtitle           *subtitleFile `json:"subtitle,omitempty"`
+	SubtitleError      string        `json:"subtitleError,omitempty"`
 }
 
 type itemFailure struct {
@@ -75,6 +77,8 @@ type Job struct {
 	MediaType        string        `json:"mediaType"`
 	AudioBitrate     string        `json:"audioBitrate,omitempty"`
 	AudioFormat      string        `json:"audioFormat,omitempty"`
+	SubtitleLanguage string        `json:"subtitleLanguage,omitempty"`
+	SubtitleFormat   string        `json:"subtitleFormat,omitempty"`
 	Status           string        `json:"status"`
 	Title            string        `json:"title"`
 	Progress         *float64      `json:"progress"`
@@ -141,6 +145,7 @@ type server struct {
 	filesystemOpener filesystemOpener
 	folderSelector   folderSelector
 	thumbnailFetcher func(context.Context, string, string) (string, error)
+	captionFetcher   captionFetcher
 	store            *jobStore
 	bandwidth        *bandwidthLimiter
 	events           *eventBroker
@@ -324,7 +329,7 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		reply(w, 200, map[string]any{
 			"ready": s.engine != nil, "missing": []string{}, "engine": "native-go",
 			"capabilities": map[string]bool{"combinedStreamsOnly": false, "adaptiveStreamsSupported": true, "externalBinariesRequired": false,
-				"mp3AudioSupported": true, "pureGoAudioConversion": true},
+				"mp3AudioSupported": true, "pureGoAudioConversion": true, "captionsSupported": true},
 		})
 		return
 	}
@@ -696,6 +701,8 @@ func (s *server) create(w http.ResponseWriter, r *http.Request) {
 		MediaType       string          `json:"mediaType"`
 		AudioBitrate    string          `json:"audioBitrate"`
 		AudioFormat     string          `json:"audioFormat"`
+		SubtitleLanguage string         `json:"subtitleLanguage"`
+		SubtitleFormat   string         `json:"subtitleFormat"`
 		Category        string          `json:"category"`
 		RightsConfirmed bool            `json:"rightsConfirmed"`
 		Items           []inspectedItem `json:"items"`
@@ -771,12 +778,21 @@ func (s *server) create(w http.ResponseWriter, r *http.Request) {
 		}
 		request.AudioBitrate = ""
 	}
-	s.enqueueJob(w, u, kind, request.Quality, request.MediaType, request.AudioFormat, request.AudioBitrate, request.Category, "", request.Items)
+	request.SubtitleLanguage = strings.TrimSpace(request.SubtitleLanguage)
+	request.SubtitleFormat = strings.ToLower(strings.TrimSpace(request.SubtitleFormat))
+	if request.SubtitleLanguage != "" && request.SubtitleFormat == "" {
+		request.SubtitleFormat = "vtt"
+	}
+	if err := validateSubtitleRequest(request.SubtitleLanguage, request.SubtitleFormat); err != nil {
+		fail(w, 400, err.Error())
+		return
+	}
+	s.enqueueJob(w, u, kind, request.Quality, request.MediaType, request.AudioFormat, request.AudioBitrate, request.SubtitleLanguage, request.SubtitleFormat, request.Category, "", request.Items)
 }
 
 // enqueueJob allocates private per-job storage, persists a queued job, and
 // returns 202 only after the job has entered the bounded worker queue.
-func (s *server) enqueueJob(w http.ResponseWriter, u, kind, quality, mediaType, audioFormat, audioBitrate, requestedCategory, requestedStorageMode string, inspectedItems ...[]inspectedItem) {
+func (s *server) enqueueJob(w http.ResponseWriter, u, kind, quality, mediaType, audioFormat, audioBitrate, subtitleLanguage, subtitleFormat, requestedCategory, requestedStorageMode string, inspectedItems ...[]inspectedItem) {
 	if s.engine == nil {
 		fail(w, 503, "Native download engine is not initialized")
 		return
@@ -824,6 +840,7 @@ func (s *server) enqueueJob(w http.ResponseWriter, u, kind, quality, mediaType, 
 	}
 	j := &jobState{Job: Job{
 		ID: randomID(16), URL: u, Kind: kind, Quality: quality, MediaType: mediaType, AudioFormat: audioFormat, AudioBitrate: audioBitrate,
+		SubtitleLanguage: subtitleLanguage, SubtitleFormat: subtitleFormat,
 		Status: "queued", Title: "YouTube " + kind, Files: []mediaFile{}, Items: items, Failures: []itemFailure{},
 		Note: formatNote, CreatedAt: time.Now().UTC().Format(time.RFC3339Nano), DownloadLocation: outputSettings.DownloadLocation,
 		NamingPattern: outputSettings.NamingPattern, SubfolderSorting: outputSettings.SubfolderSorting, Category: category, StorageMode: storageMode,
