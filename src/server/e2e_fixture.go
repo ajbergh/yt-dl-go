@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/url"
 	"os"
+	"path/filepath"
 	"sync/atomic"
 	"time"
 
@@ -102,6 +103,8 @@ func configureE2EFixture(s *server) bool {
 		return false
 	}
 	s.engine = &e2eFixtureClient{}
+	s.settings.DownloadLocation = filepath.Join(s.cfg.root, "published")
+	_ = s.store.saveAppSettings(s.settings)
 	s.thumbnailFetcher = func(context.Context, string, string) (string, error) {
 		return "", errors.New("E2E fixture thumbnails are intentionally disabled")
 	}
