@@ -13,11 +13,14 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/kkdai/youtube/v2"
 )
 
 const maxCaptionBytes int64 = 5 * 1024 * 1024
+
+type captionFetcher func(context.Context, youtube.CaptionTrack, string) ([]byte, error)
 
 var captionLanguageCode = regexp.MustCompile(`^[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8})*$`)
 var vttTimestamp = regexp.MustCompile(`^(?:(\d+):)?(\d{2}):(\d{2})[.,](\d{3})$`)
