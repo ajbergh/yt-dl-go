@@ -306,6 +306,27 @@ describe("Downloader UI and Go API integration", () => {
     }
   });
 
+  test("previews managed media through an inline scoped ticket without autoplay", async () => {
+    rows = [{ ...job, status: "completed", completedCount: 1, totalCount: 1, files: [
+      { id: "preview-file", name: "001-preview.mp4", title: "Preview clip", size: 1024, mimeType: "video/mp4", managedAvailable: true, publishedAvailable: false },
+    ] }];
+    await remount();
+    await connect();
+    await click(button("Library"));
+    await click(button("Preview"));
+    const ticketRequest = requests.find(item => item.path.endsWith("/ticket") && item.method === "POST");
+    expect(JSON.parse(ticketRequest.body)).toEqual({ fileId: "preview-file", inline: true });
+    const dialog = container.querySelector('[role="dialog"]');
+    expect(dialog).toBeTruthy();
+    expect(dialog.textContent).toContain("Preview clip");
+    const video = dialog.querySelector("video");
+    expect(video).toBeTruthy();
+    expect(video.autoplay).toBe(false);
+    expect(video.getAttribute("src")).toBe("http://127.0.0.1:8080/api/downloads/test-ticket");
+    await click(button("Close"));
+    expect(container.querySelector('[role="dialog"]')).toBeFalsy();
+  });
+
   test("requests an archive ticket and a native browser download", async () => {
     rows = [{ ...job, status: "completed", completedCount: 2, totalCount: 2, files: [
       { id: "file-1", name: "001-test.mp4", size: 1024 },
