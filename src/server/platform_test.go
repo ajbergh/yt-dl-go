@@ -68,16 +68,16 @@ func TestTrackedOutputCommands(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			command, args, err := trackedOutputCommand(test.goos, test.action, path)
+			command, args, err := trackedOutputCommand(test.goos, test.action, path, "/media/downloads")
 			if err != nil || command != test.command || !reflect.DeepEqual(args, test.args) {
 				t.Fatalf("filesystem command = %q %v err=%v; want %q %v", command, args, err, test.command, test.args)
 			}
 		})
 	}
-	if _, _, err := trackedOutputCommand("linux", "execute", path); err == nil {
+	if _, _, err := trackedOutputCommand("linux", "execute", path, "/media/downloads"); err == nil {
 		t.Fatal("unsupported filesystem action was accepted")
 	}
-	if _, _, err := trackedOutputCommand("plan9", "reveal", path); err == nil {
+	if _, _, err := trackedOutputCommand("plan9", "reveal", path, "/media/downloads"); err == nil {
 		t.Fatal("unsupported platform received a filesystem command")
 	}
 }
