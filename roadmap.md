@@ -143,7 +143,7 @@ The application currently retains a managed copy under `DATA_DIR` and publishes 
 
 ### P0.5 Native folder selection and filesystem actions
 
-**Status:** [~] In progress
+**Status:** [T] Implemented; CI validation pending
 
 Typing an absolute path manually is not sufficient desktop UX.
 
@@ -165,7 +165,7 @@ The current browser-hosted SPA cannot directly expose arbitrary local filesystem
 
 ## P1.1 Preserve thumbnails locally
 
-**Status:** [ ] Planned
+**Status:** [~] In progress
 
 Remote thumbnail URLs are not durable library metadata.
 
@@ -586,6 +586,24 @@ Implemented:
 
 ### P0.5 Native folder selection and filesystem actions
 
+**Status:** [T] Implemented; CI validation pending
+
+Implemented:
+
+1. Added a protected localhost filesystem API that accepts only a job ID, persisted file ID, and one of three fixed actions: `reveal`, `open-folder`, or `copy-path`.
+2. The server resolves paths exclusively from tracked published-file metadata; clients cannot submit arbitrary executable filesystem paths.
+3. Re-validates output containment, filename consistency, file type, existence, and expected size before every filesystem action.
+4. Added Windows Explorer reveal/open support, macOS Finder support, and Linux folder opening through `xdg-open`.
+5. Added a native folder-selection endpoint. Windows uses the local Windows Forms folder chooser through PowerShell STA, macOS uses the native `choose folder` dialog, and Linux supports `zenity` when installed.
+6. Folder selection returns only an absolute validated path; cancellation is a normal `204` response.
+7. Connected Settings “Browse” to the native picker while retaining the editable absolute-path field as fallback.
+8. Added Library Reveal, Open Folder, and Copy Path actions for published files.
+9. Filesystem/open operations participate in the job reader guard so published deletion cannot race an active reveal/open operation.
+10. Added backend and frontend tests using injected selectors/openers so CI never launches real OS dialogs.
+11. Updated API documentation.
+
+### P1.1 Preserve thumbnails locally
+
 **Status:** [~] In progress
 
-Next implementation focus: safe localhost filesystem actions for opening/revealing tracked output paths, while preserving strict path validation. Native folder selection will be evaluated separately because the current browser-hosted SPA cannot invoke an unrestricted OS folder picker safely without an explicit local capability.
+Next implementation focus: persist validated thumbnail artwork into app-managed storage so Library visuals no longer depend on remote YouTube image URLs. Published sidecar artwork will remain optional and should follow the job storage policy.
