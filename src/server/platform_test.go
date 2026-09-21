@@ -13,6 +13,7 @@ func TestRuntimeBackgroundOptions(t *testing.T) {
 		env         string
 		wantNoUI    bool
 		wantHelp    bool
+		wantVersion bool
 		wantErr     bool
 	}{
 		{name: "default opens browser"},
@@ -22,6 +23,7 @@ func TestRuntimeBackgroundOptions(t *testing.T) {
 		{name: "flag wins with nonlegacy env value", args: []string{"--background"}, env: "0", wantNoUI: true},
 		{name: "help short", args: []string{"-h"}, wantHelp: true},
 		{name: "help long", args: []string{"--help"}, wantHelp: true},
+		{name: "version", args: []string{"--version"}, wantVersion: true},
 		{name: "unknown argument rejected", args: []string{"--tray"}, wantErr: true},
 	}
 	for _, test := range tests {
@@ -39,13 +41,16 @@ func TestRuntimeBackgroundOptions(t *testing.T) {
 			if options.help != test.wantHelp {
 				t.Fatalf("help = %v; want %v", options.help, test.wantHelp)
 			}
+			if options.version != test.wantVersion {
+				t.Fatalf("version = %v; want %v", options.version, test.wantVersion)
+			}
 			gotNoUI := !automaticBrowserEnabled(options, test.env)
 			if gotNoUI != test.wantNoUI {
 				t.Fatalf("no-browser behavior = %v; want %v", gotNoUI, test.wantNoUI)
 			}
 		})
 	}
-	if usage := runtimeUsage(); !strings.Contains(usage, "--background") || !strings.Contains(usage, "--no-browser") {
+	if usage := runtimeUsage(); !strings.Contains(usage, "--background") || !strings.Contains(usage, "--no-browser") || !strings.Contains(usage, "--version") {
 		t.Fatalf("runtime usage does not document supported flags: %q", usage)
 	}
 }
@@ -141,6 +146,7 @@ func TestRuntimeOptions(t *testing.T) {
 		args      []string
 		noBrowser bool
 		help      bool
+		version   bool
 		wantErr   bool
 	}{
 		{name: "default"},
@@ -149,6 +155,7 @@ func TestRuntimeOptions(t *testing.T) {
 		{name: "aliases together", args: []string{"--background", "--no-browser"}, noBrowser: true},
 		{name: "short help", args: []string{"-h"}, help: true},
 		{name: "long help", args: []string{"--help"}, help: true},
+		{name: "version", args: []string{"--version"}, version: true},
 		{name: "unknown", args: []string{"--tray"}, wantErr: true},
 	}
 	for _, test := range tests {
@@ -160,8 +167,8 @@ func TestRuntimeOptions(t *testing.T) {
 			if err != nil {
 				return
 			}
-			if options.noBrowser != test.noBrowser || options.help != test.help {
-				t.Fatalf("parseRuntimeOptions(%v) = %+v, want noBrowser=%v help=%v", test.args, options, test.noBrowser, test.help)
+			if options.noBrowser != test.noBrowser || options.help != test.help || options.version != test.version {
+				t.Fatalf("parseRuntimeOptions(%v) = %+v, want noBrowser=%v help=%v version=%v", test.args, options, test.noBrowser, test.help, test.version)
 			}
 		})
 	}
