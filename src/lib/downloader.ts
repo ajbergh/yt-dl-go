@@ -15,6 +15,8 @@ export interface DownloadFile {
   author?: string;
   durationSeconds?: number;
   thumbnailUrl?: string;
+  thumbnailLocalAvailable?: boolean;
+  thumbnailMimeType?: string;
   publishDate?: string;
   category?: string;
   mediaType?: "video" | "audio";
@@ -191,6 +193,21 @@ export async function api<T>(connection: ServiceConnection, path: string, init: 
   }
   if (!payload) throw new Error("The service returned an unexpected response.");
   return payload as T;
+}
+
+/** Fetch authenticated non-JSON media from the Go service without cookies. */
+export async function apiBlob(connection: ServiceConnection, path: string, init: RequestInit = {}): Promise<Blob> {
+  const headers = new Headers(init.headers);
+  if (connection.token) headers.set("Authorization", `Bearer ${connection.token}`);
+  const response = await fetch(`${connection.base}${path}`, { ...init, headers, credentials: "omit" });
+  if (!response.ok) {
+    const payload: unknown = await response.clone().json().catch(() => null);
+    const error = payload && typeof payload === "object" && "error" in payload ? String(payload.error) : `The download service could not complete this media request (${response.status}).`;
+    throw new Error(error);
+  }
+  const blob = await response.blob();
+  if (!blob.size) throw new Error("The service returned empty media.");
+  return blob;
 }
 
 export function isActive(job: DownloadJob): boolean {
