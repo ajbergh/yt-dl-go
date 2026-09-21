@@ -442,7 +442,11 @@ func TestInspectionPreferencesRetryAndRemoval(t *testing.T) {
 		request(s, "PUT", "/api/settings", `{"bandwidthLimitBytesPerSec":1073741825}`, nil).Code != 400 {
 		t.Fatal("invalid bandwidth limit was accepted")
 	}
-	if request(s, "PUT", "/api/settings", `{"defaultQuality":"2160"}`, nil).Code != 400 {
+	settings = request(s, "PUT", "/api/settings", `{"defaultQuality":"2160"}`, nil)
+	if settings.Code != 200 || !strings.Contains(settings.Body.String(), `"defaultQuality":"2160"`) {
+		t.Fatalf("save 4K quality preference: %d %s", settings.Code, settings.Body.String())
+	}
+	if request(s, "PUT", "/api/settings", `{"defaultQuality":"4320"}`, nil).Code != 400 {
 		t.Fatal("unsupported quality preference was accepted")
 	}
 	if request(s, "PUT", "/api/settings", `{"storageMode":"unknown"}`, nil).Code != 400 {
