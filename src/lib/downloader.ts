@@ -52,6 +52,7 @@ export interface DownloadJob {
   audioBitrate?: string;
   category?: string;
   storageMode?: "managed-published" | "published-only" | "managed-only";
+  queuePosition?: number;
   status: JobStatus;
   title: string;
   progress: number | null;
