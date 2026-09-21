@@ -92,6 +92,7 @@ export interface ServiceConnection {
 export interface AppSettings {
   defaultQuality: Quality;
   maxConcurrentDownloads: number;
+  bandwidthLimitBytesPerSec: number;
   downloadLocation: string;
   namingPattern: string;
   subfolderSorting: "channel" | "category" | "flat";
