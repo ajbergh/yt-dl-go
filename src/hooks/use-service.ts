@@ -12,6 +12,7 @@ const fallbackCategories = ["Tech", "Science", "Coding", "Music", "Education", "
 const defaultSettings: AppSettings = {
   defaultQuality: "best",
   defaultVideoStrategy: "best",
+  allow360pFallback: false,
   maxConcurrentDownloads: 3,
   bandwidthLimitBytesPerSec: 0,
   notificationsEnabled: false,
@@ -28,6 +29,7 @@ function hydratedSettings(settings: AppSettings, previous: AppSettings = default
     ...previous,
     ...settings,
     defaultVideoStrategy: settings.defaultVideoStrategy || "best",
+    allow360pFallback: settings.allow360pFallback ?? false,
     maxConcurrentDownloads: settings.maxConcurrentDownloads || 3,
     bandwidthLimitBytesPerSec: settings.bandwidthLimitBytesPerSec ?? 0,
     notificationsEnabled: settings.notificationsEnabled ?? false,

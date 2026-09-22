@@ -24,6 +24,19 @@ func TestNativeClientUsesAndroidProfile(t *testing.T) {
 	}
 }
 
+func TestAdaptiveFallbackRequiresExplicitOptIn(t *testing.T) {
+	selection := streamSelection{progressiveFallback: &youtube.Format{ItagNo: 18, Height: 360, AudioChannels: 2}}
+	if adaptiveFallbackAllowed(&jobState{}, selection) {
+		t.Fatal("360p fallback is enabled by default")
+	}
+	if !adaptiveFallbackAllowed(&jobState{Job: Job{Allow360pFallback: true}}, selection) {
+		t.Fatal("explicit 360p fallback opt-in was ignored")
+	}
+	if adaptiveFallbackAllowed(&jobState{Job: Job{Allow360pFallback: true}}, streamSelection{}) {
+		t.Fatal("fallback was allowed without a verified 360p progressive format")
+	}
+}
+
 func TestFormatSelection(t *testing.T) {
 	video := fixtureVideo("dQw4w9WgXcQ")
 	video.Formats = append(video.Formats,
@@ -49,6 +62,9 @@ func TestFormatSelection(t *testing.T) {
 	selection, err := selectFormat(video, "best")
 	if err != nil || selection.audio == nil || selection.video == nil || selection.video.Height != 1080 {
 		t.Fatalf("adaptive 1080p pair was not selected: %+v %v", selection, err)
+	}
+	if selection.progressiveFallback == nil || selection.progressiveFallback.Height > 360 || selection.progressiveFallback.AudioChannels <= 0 {
+		t.Fatalf("adaptive selection has no verified 360p-or-lower progressive fallback: %+v", selection.progressiveFallback)
 	}
 
 	// High-resolution adaptive WebM uses VP9/AV1 video plus Opus audio while

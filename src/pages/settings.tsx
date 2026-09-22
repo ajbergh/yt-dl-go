@@ -143,6 +143,15 @@ export function SettingsPage({
                   <select aria-label="Default video format" className={`${field} mt-1.5`} value={settings.defaultVideoStrategy} onChange={event => changeSetting("defaultVideoStrategy", event.target.value as VideoStrategy)}>{(Object.entries(videoStrategyLabels) as [VideoStrategy, string][]).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select>
                   <span className="mt-1 block text-[10px] leading-relaxed text-neutral-500">Compatibility MP4 is strict H.264/AAC; VP9 and AV1 are preferences with automatic fallback when unavailable.</span>
                 </label>
+                <div className="rounded-lg border border-neutral-800 bg-neutral-950/60 p-3">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <label htmlFor="allow-360p-fallback" className="text-xs font-semibold text-neutral-200">Allow 360p recovery fallback</label>
+                      <p className="mt-1 max-w-sm text-[10px] leading-relaxed text-neutral-500">Off by default. When an adaptive video cannot be safely completed, retry as a verified progressive MP4 at 360p or lower. With this off, the job reports the adaptive failure without silently downgrading.</p>
+                    </div>
+                    <input id="allow-360p-fallback" aria-label="Allow 360p recovery fallback" type="checkbox" checked={settings.allow360pFallback} onChange={event => changeSetting("allow360pFallback", event.target.checked)} className="mt-0.5 size-4 shrink-0 accent-rose-600" />
+                  </div>
+                </div>
                 <label className="block text-xs font-medium text-neutral-300">Maximum concurrent downloads <span className="float-right font-mono text-rose-300">{settings.maxConcurrentDownloads}</span>
                   <input aria-label="Maximum concurrent downloads" type="range" min="1" max="6" step="1" value={settings.maxConcurrentDownloads} onChange={event => changeSetting("maxConcurrentDownloads", Number(event.target.value))} className="mt-2 w-full accent-rose-600" />
                   <span className="mt-1 flex justify-between text-[10px] text-neutral-500"><span>1 stream</span><span>6 streams</span></span>

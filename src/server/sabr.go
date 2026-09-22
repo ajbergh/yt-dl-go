@@ -45,7 +45,7 @@ type sabrCapture struct {
 	acceptSelected bool
 	initWritten    bool
 	initDigest     [sha256.Size]byte
-	active         map[uint64]*sabrSegment
+	active         map[uint64][]*sabrSegment
 	ready          map[uint64]*sabrCompletedSegment
 	written        map[uint64][sha256.Size]byte
 	nextSequence   uint64
@@ -56,6 +56,109 @@ type sabrCapture struct {
 	complete       bool
 	trace          bool
 }
+
+// sabrResponseCapture is the lifecycle shared by one-track and multiplexed
+// SABR captures. A browser response is consumed once and then routed to the
+// selected tracks by the implementation.
+type sabrResponseCapture interface {
+	consume([]byte) error
+	fail(error)
+	addHandler()
+	doneHandler()
+	waitHandlers()
+	isTrace() bool
+}
+
+// sabrCaptureSet routes one parsed UMP response to independent selected-track
+// state machines. Each capture retains its own header IDs and format digest:
+// header IDs are scoped to a UMP response and must not be shared across tracks.
+type sabrCaptureSet struct {
+	mu       sync.Mutex
+	captures []*sabrCapture
+	done     chan error
+	doneOnce sync.Once
+	handlers sync.WaitGroup
+	trace    bool
+}
+
+func newSABRCaptureSet(captures ...*sabrCapture) *sabrCaptureSet {
+	return &sabrCaptureSet{
+		captures: captures,
+		done:     make(chan error, 1),
+		trace:    os.Getenv("YTDL_TRACE_SABR") != "",
+	}
+}
+
+func (set *sabrCaptureSet) fail(err error) {
+	if err == nil {
+		err = errSABR
+	}
+	for _, capture := range set.captures {
+		capture.fail(err)
+	}
+	set.doneOnce.Do(func() { set.done <- err })
+}
+
+func (set *sabrCaptureSet) succeed() {
+	set.doneOnce.Do(func() { set.done <- nil })
+}
+
+func (set *sabrCaptureSet) addHandler()  { set.handlers.Add(1) }
+func (set *sabrCaptureSet) doneHandler() { set.handlers.Done() }
+func (set *sabrCaptureSet) waitHandlers() {
+	set.handlers.Wait()
+}
+func (set *sabrCaptureSet) isTrace() bool { return set.trace }
+
+func (set *sabrCaptureSet) consume(body []byte) error {
+	if len(body) == 0 {
+		return errSABR
+	}
+	if len(body) > maxSABRResponseBytes {
+		return fmt.Errorf("%w: response size %d exceeds %d", errSABR, len(body), maxSABRResponseBytes)
+	}
+	set.mu.Lock()
+	defer set.mu.Unlock()
+	for _, capture := range set.captures {
+		capture.mu.Lock()
+		if !capture.complete {
+			capture.acceptSelected = capture.formatVerified
+		}
+		capture.mu.Unlock()
+	}
+	if err := parseUMP(body, func(partType uint64, payload []byte) error {
+		for _, capture := range set.captures {
+			capture.mu.Lock()
+			if capture.complete {
+				capture.mu.Unlock()
+				continue
+			}
+			err := capture.consumePart(partType, payload)
+			capture.mu.Unlock()
+			if err != nil {
+				return err
+			}
+		}
+		return nil
+	}); err != nil {
+		return err
+	}
+	for _, capture := range set.captures {
+		capture.mu.Lock()
+		complete := capture.complete
+		capture.mu.Unlock()
+		if !complete {
+			return nil
+		}
+	}
+	set.succeed()
+	return nil
+}
+
+func (capture *sabrCapture) addHandler()   { capture.handlers.Add(1) }
+func (capture *sabrCapture) doneHandler()  { capture.handlers.Done() }
+func (capture *sabrCapture) waitHandlers() { capture.handlers.Wait() }
+func (capture *sabrCapture) isTrace() bool { return capture.trace }
 
 type sabrSegment struct {
 	header   sabrMediaHeader
@@ -87,7 +190,7 @@ func newSABRCapture(file *os.File, itag int, expectedDurationMs, budget int64, p
 	}
 	return &sabrCapture{
 		file: file, itag: itag, expectedDurationMs: expectedDurationMs, budget: budget, progress: progress,
-		done: make(chan error, 1), active: map[uint64]*sabrSegment{}, ready: map[uint64]*sabrCompletedSegment{}, written: map[uint64][sha256.Size]byte{},
+		done: make(chan error, 1), active: map[uint64][]*sabrSegment{}, ready: map[uint64]*sabrCompletedSegment{}, written: map[uint64][sha256.Size]byte{},
 		trace: os.Getenv("YTDL_TRACE_SABR") != "",
 	}
 }
@@ -150,11 +253,12 @@ func (capture *sabrCapture) consumePart(partType uint64, payload []byte) error {
 		if err != nil || header.headerID > math.MaxUint32 || header.itag <= 0 || header.contentLength < 0 {
 			return errSABR
 		}
-		if _, exists := capture.active[header.headerID]; exists {
+		selected := header.itag == capture.itag && capture.acceptSelected && header.formatDigest == capture.formatDigest
+		segments := capture.active[header.headerID]
+		if len(segments) >= 8 || (selected && len(segments) > 0 && segments[len(segments)-1].selected) {
 			return errSABR
 		}
-		selected := header.itag == capture.itag && capture.acceptSelected && header.formatDigest == capture.formatDigest
-		capture.active[header.headerID] = &sabrSegment{header: header, selected: selected}
+		capture.active[header.headerID] = append(segments, &sabrSegment{header: header, selected: selected})
 		if capture.trace {
 			log.Printf("SABR media header id=%d itag=%d init=%t sequence=%d length=%d", header.headerID, header.itag, header.isInit, header.sequence, header.contentLength)
 		}
@@ -163,10 +267,11 @@ func (capture *sabrCapture) consumePart(partType uint64, payload []byte) error {
 		if err != nil {
 			return err
 		}
-		segment := capture.active[headerID]
-		if segment == nil {
+		segments := capture.active[headerID]
+		if len(segments) == 0 {
 			return errSABR
 		}
+		segment := segments[0]
 		if segment.selected {
 			if int64(len(segment.data))+int64(len(payload)-offset) > capture.budget {
 				return errLimit
@@ -178,11 +283,16 @@ func (capture *sabrCapture) consumePart(partType uint64, payload []byte) error {
 		if err != nil || offset != len(payload) {
 			return errSABR
 		}
-		segment := capture.active[headerID]
-		if segment == nil {
+		segments := capture.active[headerID]
+		if len(segments) == 0 {
 			return errSABR
 		}
-		delete(capture.active, headerID)
+		segment := segments[0]
+		if len(segments) == 1 {
+			delete(capture.active, headerID)
+		} else {
+			capture.active[headerID] = segments[1:]
+		}
 		if !segment.selected {
 			return nil
 		}
@@ -290,8 +400,10 @@ func (capture *sabrCapture) resetShortCandidate() error {
 	if _, err := capture.file.Seek(0, io.SeekStart); err != nil {
 		return errStorage
 	}
-	for _, segment := range capture.active {
-		segment.selected = false
+	for _, segments := range capture.active {
+		for _, segment := range segments {
+			segment.selected = false
+		}
 	}
 	capture.formatVerified = false
 	capture.formatDigest = [sha256.Size]byte{}

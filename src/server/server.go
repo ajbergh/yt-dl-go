@@ -22,27 +22,27 @@ import (
 )
 
 type mediaFile struct {
-	ID                 string `json:"id"`
-	Name               string `json:"name"`
-	Size               int64  `json:"size"`
-	Height             int    `json:"height"`
-	MimeType           string `json:"mimeType"`
-	Title              string `json:"title,omitempty"`
-	Author             string `json:"author,omitempty"`
-	DurationSeconds    int64  `json:"durationSeconds,omitempty"`
-	ThumbnailURL            string `json:"thumbnailUrl,omitempty"`
-	ThumbnailLocalAvailable bool   `json:"thumbnailLocalAvailable,omitempty"`
-	ThumbnailMimeType       string `json:"thumbnailMimeType,omitempty"`
-	PublishDate             string `json:"publishDate,omitempty"`
-	Category           string `json:"category,omitempty"`
-	MediaType          string `json:"mediaType,omitempty"`
-	OutputName         string `json:"outputName,omitempty"`
-	OutputPath         string `json:"-"`
-	OutputRelativePath string `json:"outputRelativePath,omitempty"`
-	ManagedAvailable   bool   `json:"managedAvailable"`
-	PublishedAvailable bool   `json:"publishedAvailable"`
-	Subtitle           *subtitleFile `json:"subtitle,omitempty"`
-	SubtitleError      string        `json:"subtitleError,omitempty"`
+	ID                      string        `json:"id"`
+	Name                    string        `json:"name"`
+	Size                    int64         `json:"size"`
+	Height                  int           `json:"height"`
+	MimeType                string        `json:"mimeType"`
+	Title                   string        `json:"title,omitempty"`
+	Author                  string        `json:"author,omitempty"`
+	DurationSeconds         int64         `json:"durationSeconds,omitempty"`
+	ThumbnailURL            string        `json:"thumbnailUrl,omitempty"`
+	ThumbnailLocalAvailable bool          `json:"thumbnailLocalAvailable,omitempty"`
+	ThumbnailMimeType       string        `json:"thumbnailMimeType,omitempty"`
+	PublishDate             string        `json:"publishDate,omitempty"`
+	Category                string        `json:"category,omitempty"`
+	MediaType               string        `json:"mediaType,omitempty"`
+	OutputName              string        `json:"outputName,omitempty"`
+	OutputPath              string        `json:"-"`
+	OutputRelativePath      string        `json:"outputRelativePath,omitempty"`
+	ManagedAvailable        bool          `json:"managedAvailable"`
+	PublishedAvailable      bool          `json:"publishedAvailable"`
+	Subtitle                *subtitleFile `json:"subtitle,omitempty"`
+	SubtitleError           string        `json:"subtitleError,omitempty"`
 }
 
 type itemFailure struct {
@@ -70,52 +70,53 @@ type queueItem struct {
 }
 
 type Job struct {
-	ID               string        `json:"id"`
-	URL              string        `json:"url"`
-	Kind             string        `json:"kind"`
-	Quality          string        `json:"quality"`
-	VideoStrategy    string        `json:"videoStrategy,omitempty"`
-	MediaType        string        `json:"mediaType"`
-	AudioBitrate     string        `json:"audioBitrate,omitempty"`
-	AudioFormat      string        `json:"audioFormat,omitempty"`
-	SubtitleLanguage string        `json:"subtitleLanguage,omitempty"`
-	SubtitleFormat   string        `json:"subtitleFormat,omitempty"`
-	Status           string        `json:"status"`
-	Title            string        `json:"title"`
-	Progress         *float64      `json:"progress"`
-	CurrentItem      string        `json:"currentItem"`
-	CompletedCount   int           `json:"completedCount"`
-	TotalCount       *int          `json:"totalCount"`
-	Files            []mediaFile   `json:"files"`
-	Items            []queueItem   `json:"items"`
-	Error            string        `json:"error"`
-	CreatedAt        string        `json:"createdAt"`
-	Note             string        `json:"note"`
-	Failures         []itemFailure `json:"failures"`
-	DownloadedBytes  int64         `json:"downloadedBytes"`
-	TotalBytes       int64         `json:"totalBytes"`
-	SpeedBytesPerSec int64         `json:"speedBytesPerSec"`
-	ETASeconds       int64         `json:"etaSeconds"`
-	ActiveItemCount  int           `json:"activeItemCount"`
-	DownloadLocation string        `json:"-"`
-	NamingPattern    string        `json:"-"`
-	SubfolderSorting string        `json:"-"`
-	Category         string        `json:"category,omitempty"`
-	StorageMode      string        `json:"storageMode"`
-	QueuePosition    int64         `json:"queuePosition,omitempty"`
+	ID                string        `json:"id"`
+	URL               string        `json:"url"`
+	Kind              string        `json:"kind"`
+	Quality           string        `json:"quality"`
+	VideoStrategy     string        `json:"videoStrategy,omitempty"`
+	Allow360pFallback bool          `json:"allow360pFallback"`
+	MediaType         string        `json:"mediaType"`
+	AudioBitrate      string        `json:"audioBitrate,omitempty"`
+	AudioFormat       string        `json:"audioFormat,omitempty"`
+	SubtitleLanguage  string        `json:"subtitleLanguage,omitempty"`
+	SubtitleFormat    string        `json:"subtitleFormat,omitempty"`
+	Status            string        `json:"status"`
+	Title             string        `json:"title"`
+	Progress          *float64      `json:"progress"`
+	CurrentItem       string        `json:"currentItem"`
+	CompletedCount    int           `json:"completedCount"`
+	TotalCount        *int          `json:"totalCount"`
+	Files             []mediaFile   `json:"files"`
+	Items             []queueItem   `json:"items"`
+	Error             string        `json:"error"`
+	CreatedAt         string        `json:"createdAt"`
+	Note              string        `json:"note"`
+	Failures          []itemFailure `json:"failures"`
+	DownloadedBytes   int64         `json:"downloadedBytes"`
+	TotalBytes        int64         `json:"totalBytes"`
+	SpeedBytesPerSec  int64         `json:"speedBytesPerSec"`
+	ETASeconds        int64         `json:"etaSeconds"`
+	ActiveItemCount   int           `json:"activeItemCount"`
+	DownloadLocation  string        `json:"-"`
+	NamingPattern     string        `json:"-"`
+	SubfolderSorting  string        `json:"-"`
+	Category          string        `json:"category,omitempty"`
+	StorageMode       string        `json:"storageMode"`
+	QueuePosition     int64         `json:"queuePosition,omitempty"`
 }
 
 type jobState struct {
 	Job
-	dir             string
-	fileItems       map[int]mediaFile
-	cancel          context.CancelFunc
-	cancelRequested bool
-	pauseRequested  bool
-	done            time.Time
-	readers         int
-	itemProgress    map[int]*itemProgress
-	processingItems int
+	dir               string
+	fileItems         map[int]mediaFile
+	cancel            context.CancelFunc
+	cancelRequested   bool
+	pauseRequested    bool
+	done              time.Time
+	readers           int
+	itemProgress      map[int]*itemProgress
+	processingItems   int
 	playlistItemCount int
 }
 
@@ -126,23 +127,23 @@ type ticket struct {
 }
 
 type server struct {
-	cfg             config
-	settings        AppSettings
-	mu              sync.Mutex
-	jobs            map[string]*jobState
-	order           []string
-	tickets         map[string]ticket
-	queue           chan string
-	slots           chan struct{}
-	scheduleChanged chan struct{}
-	activeDownloads int
-	activeItems     int
-	engineMu        sync.Mutex
-	ctx             context.Context
-	stop            context.CancelFunc
-	wg              sync.WaitGroup
-	engine          nativeClient
-	browserFactory  browserProviderFactory
+	cfg              config
+	settings         AppSettings
+	mu               sync.Mutex
+	jobs             map[string]*jobState
+	order            []string
+	tickets          map[string]ticket
+	queue            chan string
+	slots            chan struct{}
+	scheduleChanged  chan struct{}
+	activeDownloads  int
+	activeItems      int
+	engineMu         sync.Mutex
+	ctx              context.Context
+	stop             context.CancelFunc
+	wg               sync.WaitGroup
+	engine           nativeClient
+	browserFactory   browserProviderFactory
 	filesystemOpener filesystemOpener
 	folderSelector   folderSelector
 	thumbnailFetcher func(context.Context, string, string) (string, error)
@@ -615,17 +616,18 @@ func (s *server) handleSettings(w http.ResponseWriter, r *http.Request) {
 		reply(w, 200, map[string]AppSettings{"settings": settings})
 	case http.MethodPut:
 		var patch struct {
-			DefaultQuality         *string   `json:"defaultQuality"`
-			DefaultVideoStrategy   *string   `json:"defaultVideoStrategy"`
-			MaxConcurrentDownloads   *int      `json:"maxConcurrentDownloads"`
+			DefaultQuality            *string   `json:"defaultQuality"`
+			DefaultVideoStrategy      *string   `json:"defaultVideoStrategy"`
+			Allow360pFallback         *bool     `json:"allow360pFallback"`
+			MaxConcurrentDownloads    *int      `json:"maxConcurrentDownloads"`
 			BandwidthLimitBytesPerSec *int64    `json:"bandwidthLimitBytesPerSec"`
-			NotificationsEnabled     *bool     `json:"notificationsEnabled"`
-			DownloadLocation         *string   `json:"downloadLocation"`
-			NamingPattern          *string   `json:"namingPattern"`
-			SubfolderSorting       *string   `json:"subfolderSorting"`
-			DefaultCategory        *string   `json:"defaultCategory"`
-			UserCategories         *[]string `json:"userCategories"`
-			StorageMode            *string   `json:"storageMode"`
+			NotificationsEnabled      *bool     `json:"notificationsEnabled"`
+			DownloadLocation          *string   `json:"downloadLocation"`
+			NamingPattern             *string   `json:"namingPattern"`
+			SubfolderSorting          *string   `json:"subfolderSorting"`
+			DefaultCategory           *string   `json:"defaultCategory"`
+			UserCategories            *[]string `json:"userCategories"`
+			StorageMode               *string   `json:"storageMode"`
 		}
 		if !decode(w, r, &patch) {
 			return
@@ -637,6 +639,9 @@ func (s *server) handleSettings(w http.ResponseWriter, r *http.Request) {
 		}
 		if patch.DefaultVideoStrategy != nil {
 			settings.DefaultVideoStrategy = strings.ToLower(strings.TrimSpace(*patch.DefaultVideoStrategy))
+		}
+		if patch.Allow360pFallback != nil {
+			settings.Allow360pFallback = *patch.Allow360pFallback
 		}
 		if patch.MaxConcurrentDownloads != nil {
 			settings.MaxConcurrentDownloads = *patch.MaxConcurrentDownloads
@@ -716,17 +721,17 @@ func discardPausedParts(j *jobState) error {
 
 func (s *server) create(w http.ResponseWriter, r *http.Request) {
 	var request struct {
-		URL             string          `json:"url"`
-		Quality         string          `json:"quality"`
-		VideoStrategy   string          `json:"videoStrategy"`
-		MediaType       string          `json:"mediaType"`
-		AudioBitrate    string          `json:"audioBitrate"`
-		AudioFormat     string          `json:"audioFormat"`
-		SubtitleLanguage string         `json:"subtitleLanguage"`
-		SubtitleFormat   string         `json:"subtitleFormat"`
-		Category        string          `json:"category"`
-		RightsConfirmed bool            `json:"rightsConfirmed"`
-		Items           []inspectedItem `json:"items"`
+		URL              string          `json:"url"`
+		Quality          string          `json:"quality"`
+		VideoStrategy    string          `json:"videoStrategy"`
+		MediaType        string          `json:"mediaType"`
+		AudioBitrate     string          `json:"audioBitrate"`
+		AudioFormat      string          `json:"audioFormat"`
+		SubtitleLanguage string          `json:"subtitleLanguage"`
+		SubtitleFormat   string          `json:"subtitleFormat"`
+		Category         string          `json:"category"`
+		RightsConfirmed  bool            `json:"rightsConfirmed"`
+		Items            []inspectedItem `json:"items"`
 	}
 	if !decodeWithLimit(w, r, &request, 8<<20, "8 MiB") {
 		return
@@ -824,6 +829,10 @@ func (s *server) create(w http.ResponseWriter, r *http.Request) {
 // enqueueJob allocates private per-job storage, persists a queued job, and
 // returns 202 only after the job has entered the bounded worker queue.
 func (s *server) enqueueJob(w http.ResponseWriter, u, kind, quality, requestedVideoStrategy, mediaType, audioFormat, audioBitrate, subtitleLanguage, subtitleFormat, requestedCategory, requestedStorageMode string, inspectedItems ...[]inspectedItem) {
+	s.enqueueJobWithFallback(w, u, kind, quality, requestedVideoStrategy, mediaType, audioFormat, audioBitrate, subtitleLanguage, subtitleFormat, requestedCategory, requestedStorageMode, nil, inspectedItems...)
+}
+
+func (s *server) enqueueJobWithFallback(w http.ResponseWriter, u, kind, quality, requestedVideoStrategy, mediaType, audioFormat, audioBitrate, subtitleLanguage, subtitleFormat, requestedCategory, requestedStorageMode string, requestedAllow360pFallback *bool, inspectedItems ...[]inspectedItem) {
 	if s.engine == nil {
 		fail(w, 503, "Native download engine is not initialized")
 		return
@@ -851,7 +860,7 @@ func (s *server) enqueueJob(w http.ResponseWriter, u, kind, quality, requestedVi
 				Index: index + 1, PlaylistIndex: inspected.Index, VideoID: inspected.ID,
 				Title: title, Author: inspected.Author,
 				DurationSeconds: max(int64(0), inspected.DurationSeconds),
-				ThumbnailURL: safeInspectedThumbnailURL(inspected.ThumbnailURL), Status: "queued",
+				ThumbnailURL:    safeInspectedThumbnailURL(inspected.ThumbnailURL), Status: "queued",
 			})
 		}
 	}
@@ -880,8 +889,12 @@ func (s *server) enqueueJob(w http.ResponseWriter, u, kind, quality, requestedVi
 		fail(w, 400, "storageMode must be managed-published, published-only, or managed-only")
 		return
 	}
+	allow360pFallback := outputSettings.Allow360pFallback
+	if requestedAllow360pFallback != nil {
+		allow360pFallback = *requestedAllow360pFallback
+	}
 	j := &jobState{Job: Job{
-		ID: randomID(16), URL: u, Kind: kind, Quality: quality, VideoStrategy: videoStrategy, MediaType: mediaType, AudioFormat: audioFormat, AudioBitrate: audioBitrate,
+		ID: randomID(16), URL: u, Kind: kind, Quality: quality, VideoStrategy: videoStrategy, Allow360pFallback: mediaType == "video" && allow360pFallback, MediaType: mediaType, AudioFormat: audioFormat, AudioBitrate: audioBitrate,
 		SubtitleLanguage: subtitleLanguage, SubtitleFormat: subtitleFormat,
 		Status: "queued", Title: "YouTube " + kind, Files: []mediaFile{}, Items: items, Failures: []itemFailure{},
 		Note: formatNote, CreatedAt: time.Now().UTC().Format(time.RFC3339Nano), DownloadLocation: outputSettings.DownloadLocation,

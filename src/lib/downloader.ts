@@ -141,6 +141,7 @@ export interface ServiceEvent {
 export interface AppSettings {
   defaultQuality: Quality;
   defaultVideoStrategy: VideoStrategy;
+  allow360pFallback: boolean;
   maxConcurrentDownloads: number;
   bandwidthLimitBytesPerSec: number;
   notificationsEnabled: boolean;

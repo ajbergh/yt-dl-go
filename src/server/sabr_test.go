@@ -289,6 +289,66 @@ func TestSABRCaptureReplacesShortCandidate(t *testing.T) {
 	}
 }
 
+func TestSABRCaptureSetRoutesMultiplexedTracksWithSharedHeaderIDs(t *testing.T) {
+	dir := t.TempDir()
+	videoFile, err := os.OpenFile(dir+"\\video.webm", os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	audioFile, err := os.OpenFile(dir+"\\audio.webm", os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	video := newSABRCapture(videoFile, 315, 1000, 1024, nil)
+	audio := newSABRCapture(audioFile, 251, 1000, 1024, nil)
+	set := newSABRCaptureSet(video, audio)
+
+	videoFormat := testProtoVarintField(nil, 1, 315)
+	audioFormat := testProtoVarintField(nil, 1, 251)
+	body := testUMPPart(nil, umpPartFormatInitializationMetadata, testProtoBytesField(nil, 2, videoFormat))
+	body = testUMPPart(body, umpPartFormatInitializationMetadata, testProtoBytesField(nil, 2, audioFormat))
+	// Header IDs are scoped by the selected track state, so both tracks may use
+	// the same IDs inside the one browser response.
+	body = testSelectedSegment(body, 1, 315, true, 0, 0, []byte("video-init"), videoFormat)
+	body = testSelectedSegment(body, 1, 251, true, 0, 0, []byte("audio-init"), audioFormat)
+	body = testSelectedSegment(body, 2, 315, false, 1, 1000, []byte("video-media"), videoFormat)
+	body = testSelectedSegment(body, 2, 251, false, 1, 1000, []byte("audio-media"), audioFormat)
+	if err := set.consume(body); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-set.done; err != nil {
+		t.Fatal(err)
+	}
+	videoSize, err := video.finish()
+	if err != nil {
+		t.Fatal(err)
+	}
+	audioSize, err := audio.finish()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := videoFile.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := audioFile.Close(); err != nil {
+		t.Fatal(err)
+	}
+	videoData, err := os.ReadFile(videoFile.Name())
+	if err != nil {
+		t.Fatal(err)
+	}
+	audioData, err := os.ReadFile(audioFile.Name())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if videoSize != int64(len("video-initvideo-media")) || !bytes.Equal(videoData, []byte("video-initvideo-media")) {
+		t.Fatalf("video size=%d data=%q", videoSize, videoData)
+	}
+	if audioSize != int64(len("audio-initaudio-media")) || !bytes.Equal(audioData, []byte("audio-initaudio-media")) {
+		t.Fatalf("audio size=%d data=%q", audioSize, audioData)
+	}
+}
+
 func testSelectedSegment(dst []byte, id, itag uint64, init bool, sequence, duration uint64, data, format []byte) []byte {
 	dst = testUMPPart(dst, umpPartMediaHeader, testMediaHeader(id, itag, init, sequence, duration, uint64(len(data)), format))
 	dst = testUMPPart(dst, umpPartMedia, append(testUMPVarint(id), data...))

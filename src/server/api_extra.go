@@ -29,20 +29,20 @@ type inspectedItem struct {
 }
 
 type inspection struct {
-	URL                string             `json:"url"`
-	Kind               string             `json:"kind"`
-	Title              string             `json:"title"`
-	Author             string             `json:"author,omitempty"`
-	DurationSeconds    int64              `json:"durationSeconds,omitempty"`
-	ThumbnailURL       string             `json:"thumbnailUrl,omitempty"`
-	PublishDate        string             `json:"publishDate,omitempty"`
-	AvailableQuality   []inspectedQuality     `json:"availableQualities,omitempty"`
+	URL                string                  `json:"url"`
+	Kind               string                  `json:"kind"`
+	Title              string                  `json:"title"`
+	Author             string                  `json:"author,omitempty"`
+	DurationSeconds    int64                   `json:"durationSeconds,omitempty"`
+	ThumbnailURL       string                  `json:"thumbnailUrl,omitempty"`
+	PublishDate        string                  `json:"publishDate,omitempty"`
+	AvailableQuality   []inspectedQuality      `json:"availableQualities,omitempty"`
 	CaptionTracks      []inspectedCaptionTrack `json:"captionTracks,omitempty"`
-	AudioOnlyAvailable bool                   `json:"audioOnlyAvailable"`
-	ItemCount          int                `json:"itemCount,omitempty"`
-	Items              []inspectedItem    `json:"items,omitempty"`
-	Entries            []inspectedItem    `json:"entries,omitempty"`
-	Note               string             `json:"note,omitempty"`
+	AudioOnlyAvailable bool                    `json:"audioOnlyAvailable"`
+	ItemCount          int                     `json:"itemCount,omitempty"`
+	Items              []inspectedItem         `json:"items,omitempty"`
+	Entries            []inspectedItem         `json:"entries,omitempty"`
+	Note               string                  `json:"note,omitempty"`
 }
 
 // inspect validates a link and returns video quality options or playlist
@@ -181,7 +181,7 @@ func (s *server) retry(w http.ResponseWriter, r *http.Request, id string) {
 		fail(w, 409, "Only failed, partial, or cancelled jobs can be retried")
 		return
 	}
-	jobURL, quality, videoStrategy, mediaType, audioFormat, audioBitrate, subtitleLanguage, subtitleFormat, category, storageMode := original.URL, original.Quality, original.VideoStrategy, original.MediaType, original.AudioFormat, original.AudioBitrate, original.SubtitleLanguage, original.SubtitleFormat, original.Category, original.StorageMode
+	jobURL, quality, videoStrategy, mediaType, audioFormat, audioBitrate, subtitleLanguage, subtitleFormat, category, storageMode, allow360pFallback := original.URL, original.Quality, original.VideoStrategy, original.MediaType, original.AudioFormat, original.AudioBitrate, original.SubtitleLanguage, original.SubtitleFormat, original.Category, original.StorageMode, original.Allow360pFallback
 	selectedItems := []inspectedItem{}
 	if original.Kind == "playlist" {
 		for _, item := range original.Items {
@@ -201,10 +201,10 @@ func (s *server) retry(w http.ResponseWriter, r *http.Request, id string) {
 		return
 	}
 	if kind == "playlist" && len(selectedItems) > 0 {
-		s.enqueueJob(w, canonical, kind, quality, videoStrategy, mediaType, audioFormat, audioBitrate, subtitleLanguage, subtitleFormat, category, storageMode, selectedItems)
+		s.enqueueJobWithFallback(w, canonical, kind, quality, videoStrategy, mediaType, audioFormat, audioBitrate, subtitleLanguage, subtitleFormat, category, storageMode, &allow360pFallback, selectedItems)
 		return
 	}
-	s.enqueueJob(w, canonical, kind, quality, videoStrategy, mediaType, audioFormat, audioBitrate, subtitleLanguage, subtitleFormat, category, storageMode)
+	s.enqueueJobWithFallback(w, canonical, kind, quality, videoStrategy, mediaType, audioFormat, audioBitrate, subtitleLanguage, subtitleFormat, category, storageMode, &allow360pFallback)
 }
 
 // safeThumbnailURL returns the last HTTPS thumbnail hosted on an approved

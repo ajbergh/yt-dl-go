@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"mime"
 	"net/http"
 	"net/url"
@@ -26,7 +27,7 @@ const formatNote = "Native Go engine: progressive MP4/WebM, adaptive H.264/AAC M
 const playlistNote = "Playlist totals cover all entries exposed by YouTube, not independently verified hidden entries."
 const playlistSelectionNote = "Only the selected exposed playlist items are queued; original playlist positions are preserved."
 const unknownLengthNote = "An unknown-length stream is complete only at clean EOF; its original size cannot be independently verified."
-const adaptiveFallbackNote = "The requested adaptive stream could not be completed safely; the highest verified progressive MP4 stream was downloaded instead."
+const adaptiveFallbackNote = "The requested adaptive stream could not be completed safely; the optional verified 360p progressive MP4 fallback was downloaded instead."
 const browserAdaptiveNote = "Adaptive media was streamed through a temporary browser session."
 const vp9PreferenceFallbackNote = "VP9 was preferred but unavailable under the selected quality ceiling; the best supported video format was used instead."
 const av1PreferenceFallbackNote = "AV1 was preferred but unavailable under the selected quality ceiling; the best supported video format was used instead."
@@ -55,11 +56,12 @@ type nativeClient interface {
 }
 
 type streamSelection struct {
-	video              *youtube.Format
-	audio              *youtube.Format
-	progressive        *youtube.Format
-	kind               string
-	preferenceFallback string
+	video               *youtube.Format
+	audio               *youtube.Format
+	progressive         *youtube.Format
+	progressiveFallback *youtube.Format
+	kind                string
+	preferenceFallback  string
 }
 
 type itemProgress struct {
@@ -215,6 +217,7 @@ func selectFormatForStrategy(video *youtube.Video, quality, strategy string) (st
 	}
 
 	var progressive streamSelection
+	var progressiveFallback *youtube.Format
 	var progressiveMP4Selection streamSelection
 	var compatibilityProgressive streamSelection
 	var progressiveVP9 streamSelection
@@ -227,6 +230,9 @@ func selectFormatForStrategy(video *youtube.Video, quality, strategy string) (st
 		}
 		if betterVideoFormat(f, progressive.video) {
 			progressive = streamSelection{video: f, kind: kind}
+		}
+		if kind == "video/mp4" && f.Height <= 360 && betterVideoFormat(f, progressiveFallback) {
+			progressiveFallback = f
 		}
 		if kind == "video/mp4" {
 			if betterVideoFormat(f, progressiveMP4Selection.video) {
@@ -284,6 +290,9 @@ func selectFormatForStrategy(video *youtube.Video, quality, strategy string) (st
 			}
 		}
 	}
+	if adaptiveMP4.video != nil {
+		adaptiveMP4.progressiveFallback = progressiveFallback
+	}
 
 	var adaptiveWebM streamSelection
 	var adaptiveVP9 streamSelection
@@ -312,6 +321,11 @@ func selectFormatForStrategy(video *youtube.Video, quality, strategy string) (st
 					adaptiveAV1 = streamSelection{video: f, audio: opusAudio, progressive: progressiveMP4, kind: kind}
 				}
 			}
+		}
+	}
+	for _, selection := range []*streamSelection{&adaptiveWebM, &adaptiveVP9, &adaptiveAV1} {
+		if selection.video != nil {
+			selection.progressiveFallback = progressiveFallback
 		}
 	}
 
@@ -1774,9 +1788,9 @@ func (s *server) transferAdaptiveMP4(ctx context.Context, j *jobState, engine na
 	}
 	videoSize, browserUsed, err := s.downloadAdaptiveRanges(ctx, j, engine, video, selection.video, videoPart, queueIndex, budget, progress, browserProvider)
 	if err != nil {
-		if ctx.Err() == nil && errors.Is(err, errRead) && selection.progressive != nil {
+		if ctx.Err() == nil && errors.Is(err, errRead) && adaptiveFallbackAllowed(j, selection) {
 			s.noteAdaptiveFallback(j)
-			fallback, fallbackErr := s.transferProgressive(ctx, j, engine, video, selection.progressive, "video/mp4", queueIndex, outputIndex, budget)
+			fallback, fallbackErr := s.transferProgressive(ctx, j, engine, video, selection.progressiveFallback, "video/mp4", queueIndex, outputIndex, budget)
 			if fallbackErr == nil {
 				finalized = true
 			}
@@ -1849,6 +1863,13 @@ func (s *server) transferAdaptiveWebM(ctx context.Context, j *jobState, engine n
 	videoPart := path + ".video.part"
 	audioPart := path + ".audio.part"
 	outputPart := path + ".part"
+	transferStarted := time.Now()
+	var capturePhase, muxPhase time.Duration
+	defer func() {
+		if os.Getenv("YTDL_TRACE_PERFORMANCE") != "" {
+			log.Printf("download metrics mode=webm-transfer elapsed=%s capture=%s mux=%s output_bytes=%d err=%v", time.Since(transferStarted).Round(time.Millisecond), capturePhase.Round(time.Millisecond), muxPhase.Round(time.Millisecond), result.Size, err)
+		}
+	}()
 	finalized := false
 	defer func() {
 		if removeErr := os.Remove(outputPart); removeErr != nil && !errors.Is(removeErr, os.ErrNotExist) && err == nil {
@@ -1883,45 +1904,85 @@ func (s *server) transferAdaptiveWebM(ctx context.Context, j *jobState, engine n
 		s.updateProgress(j, queueIndex, downloaded+current, progressTotal)
 	}
 
-	fallback := func() (mediaFile, error) {
+	fallback := func(cause error) (mediaFile, error) {
 		if ctx.Err() != nil {
 			return result, ctx.Err()
 		}
-		if selection.progressive == nil {
-			return result, errCombined
+		if !adaptiveFallbackAllowed(j, selection) {
+			return result, cause
 		}
 		s.noteAdaptiveFallback(j)
-		return s.transferProgressive(ctx, j, engine, video, selection.progressive, "video/mp4", queueIndex, outputIndex, budget)
+		return s.transferProgressive(ctx, j, engine, video, selection.progressiveFallback, "video/mp4", queueIndex, outputIndex, budget)
 	}
 
-	videoSize, videoBrowserUsed, err := s.downloadAdaptiveRanges(ctx, j, engine, video, selection.video, videoPart, queueIndex, budget, progress, browserProvider)
-	if err != nil {
-		if errors.Is(err, errRead) {
-			return fallback()
+	var videoSize, audioSize int64
+	var videoBrowserUsed, audioBrowserUsed bool
+	dualUsed := false
+	if dualProvider, ok := browserProvider.(browserDualTrackProvider); ok {
+		_, videoPartErr := os.Stat(videoPart)
+		_, audioPartErr := os.Stat(audioPart)
+		if errors.Is(videoPartErr, os.ErrNotExist) && errors.Is(audioPartErr, os.ErrNotExist) {
+			dualProgress := func(videoCurrent, audioCurrent int64) {
+				if totalExpected > 0 {
+					s.updateProgress(j, queueIndex, videoCurrent+audioCurrent, progressTotal)
+				}
+			}
+			captureStarted := time.Now()
+			const dualCaptureAttempts = 2
+			for attempt := 0; attempt < dualCaptureAttempts; attempt++ {
+				videoSize, audioSize, err = dualProvider.CaptureTracks(ctx, video.ID, selection.video, selection.audio, videoPart, audioPart, budget, budget, dualProgress)
+				if err == nil && videoSize > 0 && audioSize > 0 && videoSize <= budget && audioSize <= budget-videoSize {
+					videoInfo, videoStatErr := os.Stat(videoPart)
+					audioInfo, audioStatErr := os.Stat(audioPart)
+					if videoStatErr == nil && audioStatErr == nil && videoInfo.Size() == videoSize && audioInfo.Size() == audioSize {
+						dualUsed = true
+						videoBrowserUsed, audioBrowserUsed = true, true
+						break
+					}
+				}
+				_ = os.Remove(videoPart)
+				_ = os.Remove(audioPart)
+			}
+			capturePhase += time.Since(captureStarted)
 		}
-		return result, err
 	}
-	downloaded = videoSize
-	if budget-videoSize <= 0 {
-		return result, errLimit
-	}
-	audioSize, audioBrowserUsed, err := s.downloadAdaptiveRanges(ctx, j, engine, video, selection.audio, audioPart, queueIndex, budget-videoSize, progress, browserProvider)
-	if err != nil {
-		if errors.Is(err, errRead) {
-			return fallback()
+	if !dualUsed {
+		captureStarted := time.Now()
+		videoSize, videoBrowserUsed, err = s.downloadAdaptiveRanges(ctx, j, engine, video, selection.video, videoPart, queueIndex, budget, progress, browserProvider)
+		capturePhase += time.Since(captureStarted)
+		if err != nil {
+			if errors.Is(err, errRead) {
+				return fallback(err)
+			}
+			return result, err
 		}
-		return result, err
+		downloaded = videoSize
+		if budget-videoSize <= 0 {
+			return result, errLimit
+		}
+		captureStarted = time.Now()
+		audioSize, audioBrowserUsed, err = s.downloadAdaptiveRanges(ctx, j, engine, video, selection.audio, audioPart, queueIndex, budget-videoSize, progress, browserProvider)
+		capturePhase += time.Since(captureStarted)
+		if err != nil {
+			if errors.Is(err, errRead) {
+				return fallback(err)
+			}
+			return result, err
+		}
 	}
 	if videoBrowserUsed || audioBrowserUsed {
 		s.noteBrowserAdaptive(j)
 	}
-	downloaded += audioSize
+	downloaded = videoSize + audioSize
+	muxStarted := time.Now()
 	if err := muxWebM(ctx, videoPart, audioPart, outputPart); err != nil {
+		muxPhase += time.Since(muxStarted)
 		if ctx.Err() != nil {
 			return result, ctx.Err()
 		}
-		return fallback()
+		return fallback(err)
 	}
+	muxPhase += time.Since(muxStarted)
 	info, err := os.Stat(outputPart)
 	if err != nil || info.Size() <= 0 {
 		return result, errLength
@@ -1938,6 +1999,10 @@ func (s *server) transferAdaptiveWebM(ctx context.Context, j *jobState, engine n
 	result.Size = info.Size()
 	finalized = true
 	return result, nil
+}
+
+func adaptiveFallbackAllowed(j *jobState, selection streamSelection) bool {
+	return j != nil && j.Allow360pFallback && selection.progressiveFallback != nil
 }
 
 const adaptiveRangeChunkSize int64 = 8 * 1024 * 1024

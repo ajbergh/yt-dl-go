@@ -433,7 +433,7 @@ func TestInspectionPreferencesRetryAndRemoval(t *testing.T) {
 	}
 
 	settings := request(s, "GET", "/api/settings", "", nil)
-	if settings.Code != 200 || !strings.Contains(settings.Body.String(), `"defaultQuality":"best"`) || !strings.Contains(settings.Body.String(), `"defaultVideoStrategy":"best"`) {
+	if settings.Code != 200 || !strings.Contains(settings.Body.String(), `"defaultQuality":"best"`) || !strings.Contains(settings.Body.String(), `"defaultVideoStrategy":"best"`) || !strings.Contains(settings.Body.String(), `"allow360pFallback":false`) {
 		t.Fatalf("default settings: %d %s", settings.Code, settings.Body.String())
 	}
 	settings = request(s, "PUT", "/api/settings", `{"defaultQuality":"720"}`, nil)
@@ -460,6 +460,10 @@ func TestInspectionPreferencesRetryAndRemoval(t *testing.T) {
 	if settings.Code != 200 || !strings.Contains(settings.Body.String(), `"defaultVideoStrategy":"vp9"`) {
 		t.Fatalf("save video strategy preference: %d %s", settings.Code, settings.Body.String())
 	}
+	settings = request(s, "PUT", "/api/settings", `{"allow360pFallback":true}`, nil)
+	if settings.Code != 200 || !strings.Contains(settings.Body.String(), `"allow360pFallback":true`) || !s.settings.Allow360pFallback {
+		t.Fatalf("save 360p fallback setting: %d %s", settings.Code, settings.Body.String())
+	}
 	if request(s, "PUT", "/api/settings", `{"defaultVideoStrategy":"hevc"}`, nil).Code != 400 {
 		t.Fatal("unsupported video strategy preference was accepted")
 	}
@@ -481,12 +485,12 @@ func TestInspectionPreferencesRetryAndRemoval(t *testing.T) {
 
 	fake.videoFn = func(context.Context, string) (*youtube.Video, error) { return nil, errors.New("fixture failure") }
 	failed := waitTerminal(t, s, createJob(t, s, testVideo).ID)
-	if failed.Status != "failed" || failed.VideoStrategy != "vp9" {
+	if failed.Status != "failed" || failed.VideoStrategy != "vp9" || !failed.Allow360pFallback {
 		t.Fatalf("fixture job did not capture default video strategy: %+v", failed)
 	}
 	retriedResponse := request(s, "POST", "/api/jobs/"+failed.ID+"/retry", `{"rightsConfirmed":true}`, nil)
 	var retried Job
-	if retriedResponse.Code != 202 || json.Unmarshal(retriedResponse.Body.Bytes(), &retried) != nil || retried.ID == failed.ID || retried.Quality != failed.Quality || retried.VideoStrategy != failed.VideoStrategy {
+	if retriedResponse.Code != 202 || json.Unmarshal(retriedResponse.Body.Bytes(), &retried) != nil || retried.ID == failed.ID || retried.Quality != failed.Quality || retried.VideoStrategy != failed.VideoStrategy || !retried.Allow360pFallback {
 		t.Fatalf("retry: %d %s", retriedResponse.Code, retriedResponse.Body.String())
 	}
 	if request(s, "POST", "/api/jobs/"+failed.ID+"/retry", `{"rightsConfirmed":false}`, nil).Code != 400 {
@@ -582,8 +586,8 @@ func TestScopedMediaDeletion(t *testing.T) {
 
 func TestStoragePolicies(t *testing.T) {
 	for _, tt := range []struct {
-		mode                 string
-		managed, published   bool
+		mode               string
+		managed, published bool
 	}{
 		{mode: "managed-published", managed: true, published: true},
 		{mode: "published-only", managed: false, published: true},
@@ -632,11 +636,11 @@ func TestOriginalM4AAudioPreservesSourceBytes(t *testing.T) {
 	fake.videoFn = func(_ context.Context, id string) (*youtube.Video, error) {
 		video := fixtureVideo(id)
 		video.Formats = youtube.FormatList{{
-			ItagNo: 140,
-			MimeType: `audio/mp4; codecs="mp4a.40.2"`,
-			AudioChannels: 2,
+			ItagNo:          140,
+			MimeType:        `audio/mp4; codecs="mp4a.40.2"`,
+			AudioChannels:   2,
 			AudioSampleRate: "44100",
-			ContentLength: int64(len(fixtureData)),
+			ContentLength:   int64(len(fixtureData)),
 		}}
 		return video, nil
 	}
@@ -839,7 +843,9 @@ func TestNativeFolderSelectionEndpoint(t *testing.T) {
 	selected := filepath.Join(s.cfg.root, "chosen-output")
 	s.folderSelector = func(context.Context) (string, error) { return selected, nil }
 	response := request(s, "POST", "/api/folders/select", `{}`, nil)
-	var result struct{ Path string `json:"path"` }
+	var result struct {
+		Path string `json:"path"`
+	}
 	if response.Code != 200 || json.Unmarshal(response.Body.Bytes(), &result) != nil || result.Path != selected {
 		t.Fatalf("folder selection: %d %s", response.Code, response.Body.String())
 	}
@@ -877,7 +883,9 @@ func TestTrackedFilesystemActions(t *testing.T) {
 
 	openedAction, openedPath = "", ""
 	response = request(s, "POST", "/api/jobs/"+j.ID+"/filesystem", `{"fileId":"`+file.ID+`","action":"copy-path"}`, nil)
-	var copied struct{ Path string `json:"path"` }
+	var copied struct {
+		Path string `json:"path"`
+	}
 	if response.Code != 200 || json.Unmarshal(response.Body.Bytes(), &copied) != nil || copied.Path != outputPath || openedAction != "" {
 		t.Fatalf("copy tracked path: %d %+v opener=%q", response.Code, copied, openedAction)
 	}
