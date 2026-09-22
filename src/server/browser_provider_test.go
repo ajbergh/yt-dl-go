@@ -2,6 +2,7 @@ package main
 
 import (
 	"testing"
+	"time"
 
 	"github.com/kkdai/youtube/v2"
 )
@@ -77,5 +78,19 @@ func TestPlaybackPolicyTargetsRequestedCodecFamily(t *testing.T) {
 				t.Fatalf("playbackPolicy(%q) = %+v, want pattern=%q preference=%q", test.mime, policy, test.pattern, test.preference)
 			}
 		})
+	}
+}
+
+func TestBrowserCaptureTimeoutAccountsFor4KTransferBytes(t *testing.T) {
+	if got := browserCaptureTimeout(30_000, 0); got != 4*time.Minute {
+		t.Fatalf("minimum capture timeout = %s, want 4m", got)
+	}
+	// A 2.6 GiB AV1 track needs substantially more time than accelerated
+	// playback duration alone when throughput is constrained.
+	if got := browserCaptureTimeout(30_000, 2_600*1024*1024); got < 24*time.Minute {
+		t.Fatalf("4K transfer timeout = %s, want at least 24m", got)
+	}
+	if got := browserCaptureTimeout(24*60*60*1000, 0); got != 45*time.Minute {
+		t.Fatalf("capture timeout cap = %s, want 45m", got)
 	}
 }

@@ -37,7 +37,7 @@ func TestLiveDownload(t *testing.T) {
 		addr: "127.0.0.1:8080", root: t.TempDir(), token: "",
 		browserPath: os.Getenv("CHROME_PATH"),
 		origins:     map[string]bool{"http://127.0.0.1:8080": true}, hosts: map[string]bool{"127.0.0.1:8080": true},
-		maxJobs: 1, maxBytes: 10 * 1024 * 1024 * 1024, timeout: 15 * time.Minute, retain: 10 * time.Minute,
+		maxJobs: 1, maxBytes: 10 * 1024 * 1024 * 1024, timeout: 30 * time.Minute, retain: 10 * time.Minute,
 	}
 	s, err := newServer(c)
 	if err != nil {
@@ -55,7 +55,7 @@ func TestLiveDownload(t *testing.T) {
 	}
 
 	job := createJob(t, s, raw)
-	deadline := time.Now().Add(20 * time.Minute)
+	deadline := time.Now().Add(35 * time.Minute)
 	for time.Now().Before(deadline) {
 		w := request(s, "GET", "/api/jobs/"+job.ID, "", nil)
 		var current Job

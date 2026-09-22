@@ -127,9 +127,9 @@ func TestSABRCaptureAcceptsLargeMultiplexedResponse(t *testing.T) {
 	format := testProtoVarintField(nil, 1, 315)
 	formatInit := testProtoBytesField(nil, 2, format)
 
-	// This models a 4K browser response that multiplexes enough unrelated
-	// track data to exceed the old 64 MiB whole-response ceiling. Individual
-	// UMP parts remain bounded independently.
+	// This models a 4K browser response that multiplexes unrelated track data.
+	// It is intentionally consumed through an io.Reader: browser responses are
+	// no longer assembled into one in-memory byte slice before UMP parsing.
 	const ignoredPartSize = 22 * 1024 * 1024
 	ignored := make([]byte, ignoredPartSize)
 	body := make([]byte, 0, 3*ignoredPartSize+1024)
@@ -142,7 +142,7 @@ func TestSABRCaptureAcceptsLargeMultiplexedResponse(t *testing.T) {
 	if len(body) <= 64*1024*1024 {
 		t.Fatalf("test response is only %d bytes", len(body))
 	}
-	if err := capture.consume(body); err != nil {
+	if err := capture.consumeReader(bytes.NewReader(body)); err != nil {
 		t.Fatal(err)
 	}
 	if err := <-capture.done; err != nil {

@@ -5,7 +5,6 @@ package main
 import (
 	"crypto/sha256"
 	"errors"
-	"fmt"
 	"io"
 	"log"
 	"math"
@@ -19,12 +18,11 @@ const (
 	umpPartMediaEnd                     = 22
 	umpPartFormatInitializationMetadata = 42
 	umpPartStreamProtectionStatus       = 58
-	// Chrome returns multiplexed 4K SABR responses larger than 64 MiB for
-	// some videos. Keep a hard bound because Fetch.getResponseBody holds the
-	// entire response in memory, but leave enough room for those responses.
-	maxSABRResponseBytes = 128 * 1024 * 1024
-	maxSABRPartBytes     = 32 * 1024 * 1024
-	maxSABRParts         = 10000
+	// Individual UMP parts are bounded even when a SABR response itself is
+	// multi-gigabyte. Responses are parsed as streams so their total size does
+	// not need an artificial in-memory ceiling.
+	maxSABRPartBytes = 32 * 1024 * 1024
+	maxSABRParts     = 10000
 )
 
 var errSABR = errors.New("browser SABR media capture failed")
@@ -61,7 +59,7 @@ type sabrCapture struct {
 // SABR captures. A browser response is consumed once and then routed to the
 // selected tracks by the implementation.
 type sabrResponseCapture interface {
-	consume([]byte) error
+	consumeReader(io.Reader) error
 	fail(error)
 	addHandler()
 	doneHandler()
@@ -114,9 +112,21 @@ func (set *sabrCaptureSet) consume(body []byte) error {
 	if len(body) == 0 {
 		return errSABR
 	}
-	if len(body) > maxSABRResponseBytes {
-		return fmt.Errorf("%w: response size %d exceeds %d", errSABR, len(body), maxSABRResponseBytes)
+	return set.consumeParsed(func(consume func(uint64, []byte) error) error {
+		return parseUMP(body, consume)
+	})
+}
+
+func (set *sabrCaptureSet) consumeReader(reader io.Reader) error {
+	if reader == nil {
+		return errSABR
 	}
+	return set.consumeParsed(func(consume func(uint64, []byte) error) error {
+		return parseUMPReader(reader, consume)
+	})
+}
+
+func (set *sabrCaptureSet) consumeParsed(parse func(func(uint64, []byte) error) error) error {
 	set.mu.Lock()
 	defer set.mu.Unlock()
 	for _, capture := range set.captures {
@@ -126,7 +136,7 @@ func (set *sabrCaptureSet) consume(body []byte) error {
 		}
 		capture.mu.Unlock()
 	}
-	if err := parseUMP(body, func(partType uint64, payload []byte) error {
+	if err := parse(func(partType uint64, payload []byte) error {
 		for _, capture := range set.captures {
 			capture.mu.Lock()
 			if capture.complete {
@@ -210,16 +220,28 @@ func (capture *sabrCapture) consume(body []byte) error {
 	if len(body) == 0 {
 		return errSABR
 	}
-	if len(body) > maxSABRResponseBytes {
-		return fmt.Errorf("%w: response size %d exceeds %d", errSABR, len(body), maxSABRResponseBytes)
+	return capture.consumeParsed(func(consume func(uint64, []byte) error) error {
+		return parseUMP(body, consume)
+	})
+}
+
+func (capture *sabrCapture) consumeReader(reader io.Reader) error {
+	if reader == nil {
+		return errSABR
 	}
+	return capture.consumeParsed(func(consume func(uint64, []byte) error) error {
+		return parseUMPReader(reader, consume)
+	})
+}
+
+func (capture *sabrCapture) consumeParsed(parse func(func(uint64, []byte) error) error) error {
 	capture.mu.Lock()
 	defer capture.mu.Unlock()
 	if capture.complete {
 		return nil
 	}
 	capture.acceptSelected = capture.formatVerified
-	return parseUMP(body, capture.consumePart)
+	return parse(capture.consumePart)
 }
 
 func (capture *sabrCapture) consumePart(partType uint64, payload []byte) error {
@@ -463,6 +485,59 @@ func parseUMP(body []byte, consume func(uint64, []byte) error) error {
 		offset = end
 	}
 	return nil
+}
+
+// parseUMPReader is the streamed equivalent of parseUMP. It retains only one
+// bounded UMP part at a time, allowing Chrome Fetch responses larger than RAM
+// or the old whole-response limit to be captured safely.
+func parseUMPReader(reader io.Reader, consume func(uint64, []byte) error) error {
+	parts := 0
+	for {
+		partType, err := readUMPVarintReader(reader)
+		if errors.Is(err, io.EOF) {
+			if parts == 0 {
+				return errSABR
+			}
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		partSize, err := readUMPVarintReader(reader)
+		if err != nil || partSize > maxSABRPartBytes {
+			return errSABR
+		}
+		parts++
+		if parts > maxSABRParts {
+			return errSABR
+		}
+		payload := make([]byte, int(partSize))
+		if _, err := io.ReadFull(reader, payload); err != nil {
+			return err
+		}
+		if err := consume(partType, payload); err != nil {
+			return err
+		}
+	}
+}
+
+func readUMPVarintReader(reader io.Reader) (uint64, error) {
+	var data [5]byte
+	if _, err := io.ReadFull(reader, data[:1]); err != nil {
+		return 0, err
+	}
+	size := 1
+	for bit := 7; bit >= 1 && data[0]&(1<<uint(bit)) != 0; bit-- {
+		size++
+	}
+	if size > len(data) {
+		size = len(data)
+	}
+	if _, err := io.ReadFull(reader, data[1:size]); err != nil {
+		return 0, err
+	}
+	value, _, err := readUMPVarint(data[:size])
+	return value, err
 }
 
 func readUMPVarint(data []byte) (uint64, int, error) {

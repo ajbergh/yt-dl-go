@@ -95,10 +95,10 @@ func (metrics *browserCaptureMetrics) addPhase(target *time.Duration, duration t
 	metrics.mu.Unlock()
 }
 
-func (metrics *browserCaptureMetrics) recordResponse(bodyBytes int, body, parse, resume time.Duration) {
+func (metrics *browserCaptureMetrics) recordResponse(bodyBytes int64, body, parse, resume time.Duration) {
 	metrics.mu.Lock()
 	metrics.responses++
-	metrics.responseBytes += int64(bodyBytes)
+	metrics.responseBytes += bodyBytes
 	metrics.body += body
 	metrics.parse += parse
 	metrics.resume += resume
@@ -318,13 +318,7 @@ func (p *chromeBrowserProvider) CaptureTrack(ctx context.Context, id string, for
 		return 0, err
 	}
 	metrics.addPhase(&metrics.prepare, time.Since(phaseStart))
-	maximum := time.Duration(expectedDurationMs)*time.Millisecond/4 + 2*time.Minute
-	if maximum < 4*time.Minute {
-		maximum = 4 * time.Minute
-	}
-	if maximum > 45*time.Minute {
-		maximum = 45 * time.Minute
-	}
+	maximum := browserCaptureTimeout(expectedDurationMs, format.ContentLength)
 	timer := time.NewTimer(maximum)
 	defer timer.Stop()
 	ticker := time.NewTicker(2 * time.Second)
@@ -490,13 +484,7 @@ func (p *chromeBrowserProvider) CaptureTracks(ctx context.Context, id string, vi
 	if audioDuration > maximumDuration {
 		maximumDuration = audioDuration
 	}
-	maximum := time.Duration(maximumDuration)*time.Millisecond/4 + 2*time.Minute
-	if maximum < 4*time.Minute {
-		maximum = 4 * time.Minute
-	}
-	if maximum > 45*time.Minute {
-		maximum = 45 * time.Minute
-	}
+	maximum := browserCaptureTimeout(maximumDuration, videoFormat.ContentLength+audioFormat.ContentLength)
 	timer := time.NewTimer(maximum)
 	defer timer.Stop()
 	ticker := time.NewTicker(2 * time.Second)
@@ -540,6 +528,30 @@ func (p *chromeBrowserProvider) CaptureTracks(ctx context.Context, id string, vi
 			return 0, 0, ctx.Err()
 		}
 	}
+}
+
+// browserCaptureTimeout allows for both accelerated playback and the selected
+// track's actual transfer volume. Long 4K streams can require more wall time
+// than duration/4 even while Chrome keeps playback at 16x.
+func browserCaptureTimeout(durationMs, contentLength int64) time.Duration {
+	maximum := time.Duration(durationMs)*time.Millisecond/4 + 2*time.Minute
+	// SABR's Fetch response can be delivered as a long-lived 4K transfer rather
+	// than the short media fragments that accelerated playback suggests. Allow
+	// a verified, but modest, 2 MiB/s path before declaring that capture failed.
+	const minimumThroughput = int64(2 * 1024 * 1024)
+	if contentLength > 0 {
+		transfer := time.Duration((contentLength+minimumThroughput-1)/minimumThroughput)*time.Second + 3*time.Minute
+		if transfer > maximum {
+			maximum = transfer
+		}
+	}
+	if maximum < 4*time.Minute {
+		return 4 * time.Minute
+	}
+	if maximum > 45*time.Minute {
+		return 45 * time.Minute
+	}
+	return maximum
 }
 
 type browserUABrand struct {
@@ -744,35 +756,55 @@ func (p *chromeBrowserProvider) captureSABRResponse(paused *fetch.EventRequestPa
 		return
 	}
 	phaseStart := time.Now()
-	body, bodyErr := fetch.GetResponseBody(paused.RequestID).Do(captureCtx)
-	bodyDuration := time.Since(phaseStart)
-	if bodyErr != nil {
-		p.continuePaused(paused)
+	streamHandle, streamErr := fetch.TakeResponseBodyAsStream(paused.RequestID).Do(captureCtx)
+	setupDuration := time.Since(phaseStart)
+	if streamErr != nil {
+		_ = fetch.FailRequest(paused.RequestID, network.ErrorReasonFailed).Do(captureCtx)
 		if capture.isTrace() {
-			log.Printf("SABR response body failed: %v", bodyErr)
+			log.Printf("SABR response stream setup failed: %v", streamErr)
 		}
-		capture.fail(bodyErr)
+		capture.fail(streamErr)
 		return
 	}
-	if capture.isTrace() {
-		log.Printf("SABR response status=%d bytes=%d", paused.ResponseStatusCode, len(body))
-	}
+	readCtx, readCancel := context.WithCancel(captureCtx)
+	stream := &cdpBrowserStream{handle: streamHandle, readCtx: readCtx, readCancel: readCancel, browserCtx: captureCtx}
+	counted := &browserCountingReader{Reader: stream}
 	phaseStart = time.Now()
-	if consumeErr := capture.consume(body); consumeErr != nil {
+	consumeErr := capture.consumeReader(counted)
+	streamDuration := time.Since(phaseStart)
+	closeStart := time.Now()
+	closeErr := stream.Close()
+	resumeDuration := time.Since(closeStart)
+	if capture.isTrace() {
+		log.Printf("SABR response status=%d bytes=%d stream=%s", paused.ResponseStatusCode, counted.bytes, streamDuration.Round(time.Millisecond))
+	}
+	if consumeErr != nil {
 		if capture.isTrace() {
 			log.Printf("SABR consume failed: %v", consumeErr)
 		}
 		capture.fail(consumeErr)
+	} else if closeErr != nil {
+		if capture.isTrace() {
+			log.Printf("SABR response stream close failed: %v", closeErr)
+		}
+		capture.fail(closeErr)
 	}
-	parseDuration := time.Since(phaseStart)
-	// Resume the original buffered response instead of replaying a base64 copy.
-	// Replaying large 4K bodies can congest the CDP target and leave a later
-	// GetResponseBody call blocked indefinitely.
-	phaseStart = time.Now()
-	p.continuePaused(paused)
 	if metrics != nil {
-		metrics.recordResponse(len(body), bodyDuration, parseDuration, time.Since(phaseStart))
+		// Streaming combines CDP transfer and UMP parsing in one phase; setup and
+		// close remain separate so slow large responses are visible in telemetry.
+		metrics.recordResponse(counted.bytes, setupDuration, streamDuration, resumeDuration)
 	}
+}
+
+type browserCountingReader struct {
+	io.Reader
+	bytes int64
+}
+
+func (reader *browserCountingReader) Read(dst []byte) (int, error) {
+	n, err := reader.Reader.Read(dst)
+	reader.bytes += int64(n)
+	return n, err
 }
 
 func (p *chromeBrowserProvider) continuePaused(paused *fetch.EventRequestPaused) {

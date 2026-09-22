@@ -1928,7 +1928,9 @@ func (s *server) transferAdaptiveWebM(ctx context.Context, j *jobState, engine n
 				}
 			}
 			captureStarted := time.Now()
-			const dualCaptureAttempts = 2
+			// A full dual capture already consumes its byte-aware deadline. Replaying
+			// the same adaptive session a second time only delays a definitive error.
+			const dualCaptureAttempts = 1
 			for attempt := 0; attempt < dualCaptureAttempts; attempt++ {
 				videoSize, audioSize, err = dualProvider.CaptureTracks(ctx, video.ID, selection.video, selection.audio, videoPart, audioPart, budget, budget, dualProgress)
 				if err == nil && videoSize > 0 && audioSize > 0 && videoSize <= budget && audioSize <= budget-videoSize {
