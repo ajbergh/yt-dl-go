@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/assets/readme-banner.svg" alt="YouTube Downloader — local-first cross-platform downloader built with Go and React" width="100%" />
+</p>
+
 # YouTube Downloader
 
 YouTube Downloader is a local Windows, macOS, and Linux web application for saving YouTube videos and playlists that you own or are permitted to download. One Go executable starts the local API, serves the embedded React interface, and opens it in your browser. With the default `ADDR`, the URL is `http://127.0.0.1:8080`; changing `ADDR` changes the URL.
