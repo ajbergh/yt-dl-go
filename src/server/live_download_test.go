@@ -22,6 +22,9 @@ func TestLiveDownload(t *testing.T) {
 	if strings.Contains(raw, "y0KRrtfy2pY") {
 		minimumHeight = 360
 	}
+	if strings.Contains(raw, "JapSnYBq3U8") {
+		minimumHeight = 2160
+	}
 	if value := os.Getenv("YTDL_LIVE_MIN_HEIGHT"); value != "" {
 		parsed, parseErr := strconv.Atoi(value)
 		if parseErr != nil || parsed < 1 {
@@ -69,6 +72,9 @@ func TestLiveDownload(t *testing.T) {
 			t.Logf("completed height=%d size=%d note=%q", current.Files[0].Height, current.Files[0].Size, current.Note)
 			if current.Files[0].Height < minimumHeight {
 				t.Fatalf("live download selected %dp, want at least %dp", current.Files[0].Height, minimumHeight)
+			}
+			if strings.Contains(raw, "JapSnYBq3U8") && strings.Contains(current.Note, adaptiveFallbackNote) {
+				t.Fatalf("4K sample used adaptive fallback: height=%d note=%q", current.Files[0].Height, current.Note)
 			}
 			if strings.Contains(raw, "y0KRrtfy2pY") && current.Files[0].Height < 1080 && !strings.Contains(current.Note, adaptiveFallbackNote) {
 				t.Fatalf("sample completed below 1080p without an adaptive fallback note: height=%d note=%q", current.Files[0].Height, current.Note)

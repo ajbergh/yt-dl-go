@@ -187,7 +187,13 @@ func waitTerminal(t *testing.T, s *server, id string) Job {
 func assertFinalFiles(t *testing.T, s *server, j Job) {
 	t.Helper()
 	entries, err := os.ReadDir(filepath.Join(s.cfg.root, j.ID))
-	if err != nil || len(entries) != len(j.Files) {
+	expectedEntries := len(j.Files)
+	for _, file := range j.Files {
+		if file.ThumbnailLocalAvailable {
+			expectedEntries++
+		}
+	}
+	if err != nil || len(entries) != expectedEntries {
 		t.Fatalf("unfinished or missing files: %d entries, %d final files, %v", len(entries), len(j.Files), err)
 	}
 	var size int64

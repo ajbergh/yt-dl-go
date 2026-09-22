@@ -32,19 +32,19 @@ const vp9PreferenceFallbackNote = "VP9 was preferred but unavailable under the s
 const av1PreferenceFallbackNote = "AV1 was preferred but unavailable under the selected quality ceiling; the best supported video format was used instead."
 
 var (
-	errMetadata     = errors.New("Video metadata is unavailable or invalid")
-	errPlaylist     = errors.New("Playlist enumeration failed; completeness could not be verified")
+	errMetadata          = errors.New("Video metadata is unavailable or invalid")
+	errPlaylist          = errors.New("Playlist enumeration failed; completeness could not be verified")
 	errPlaylistSelection = errors.New("Selected playlist items no longer match the inspected playlist")
-	errCombined     = errors.New("No compatible combined or adaptive stream fits the requested maximum height")
-	errManifest     = errors.New("HLS/DASH manifest or live sources are unsupported")
-	errRead         = errors.New("Media stream could not be read completely")
-	errLength       = errors.New("Media stream is empty or does not match its declared size")
-	errMux          = errors.New("Video and audio streams could not be combined into a complete file")
-	errStorage      = errors.New("Private media storage could not be safely written or cleaned")
-	errLimit        = errors.New("Job storage limit reached; remaining entries were not downloaded")
-	errNative       = errors.New("Native engine failed unexpectedly; completeness could not be verified")
-	errNoAudio      = errors.New("No compatible standalone audio stream is available")
-	errAudioConvert = errors.New("AAC audio could not be decoded and encoded to MP3")
+	errCombined          = errors.New("No compatible combined or adaptive stream fits the requested maximum height")
+	errManifest          = errors.New("HLS/DASH manifest or live sources are unsupported")
+	errRead              = errors.New("Media stream could not be read completely")
+	errLength            = errors.New("Media stream is empty or does not match its declared size")
+	errMux               = errors.New("Video and audio streams could not be combined into a complete file")
+	errStorage           = errors.New("Private media storage could not be safely written or cleaned")
+	errLimit             = errors.New("Job storage limit reached; remaining entries were not downloaded")
+	errNative            = errors.New("Native engine failed unexpectedly; completeness could not be verified")
+	errNoAudio           = errors.New("No compatible standalone audio stream is available")
+	errAudioConvert      = errors.New("AAC audio could not be decoded and encoded to MP3")
 )
 
 type nativeClient interface {
@@ -752,6 +752,10 @@ func estimatedItemBudget(j *jobState, video *youtube.Video, format *youtube.Form
 				return 0
 			}
 			estimated = selection.video.ContentLength + selection.audio.ContentLength
+			// The muxer writes a new WebM container with clusters, cues, and seek
+			// metadata, so its output can be larger than the two source tracks.
+			// Reserve bounded headroom instead of rejecting a valid final mux.
+			estimated += max(int64(1024*1024), estimated/20)
 		} else {
 			if selection.progressive == nil || selection.progressive.ContentLength <= 0 {
 				return 0
@@ -1954,13 +1958,19 @@ func (s *server) downloadAdaptiveRanges(ctx context.Context, j *jobState, engine
 		}
 	}
 	if browserProvider != nil && start == 0 {
-		captured, captureErr := browserProvider.CaptureTrack(ctx, video.ID, format, path, budget, progress)
-		if captureErr == nil && captured > 0 && captured <= budget {
-			if info, statErr := os.Stat(path); statErr == nil && info.Size() == captured {
-				return captured, true, nil
+		const browserCaptureAttempts = 2
+		for attempt := 0; attempt < browserCaptureAttempts; attempt++ {
+			captured, captureErr := browserProvider.CaptureTrack(ctx, video.ID, format, path, budget, progress)
+			if captureErr == nil && captured > 0 && captured <= budget {
+				if info, statErr := os.Stat(path); statErr == nil && info.Size() == captured {
+					return captured, true, nil
+				}
+			}
+			_ = os.Remove(path)
+			if ctx.Err() != nil {
+				return 0, false, ctx.Err()
 			}
 		}
-		_ = os.Remove(path)
 	}
 	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE, 0600)
 	if err != nil {

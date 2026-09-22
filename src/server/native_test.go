@@ -330,8 +330,44 @@ func TestOriginalM4ABudgetUsesOnlySourceBytes(t *testing.T) {
 	webMAudio := &youtube.Format{MimeType: `audio/webm; codecs="opus"`, ContentLength: 2_000}
 	videoJob := &jobState{Job: Job{MediaType: "video"}}
 	selection := streamSelection{video: webMVideo, audio: webMAudio, kind: "video/webm"}
-	if got := estimatedItemBudget(videoJob, video, webMVideo, selection); got != 12_000 {
-		t.Fatalf("WebM adaptive budget = %d, want 12000", got)
+	if got := estimatedItemBudget(videoJob, video, webMVideo, selection); got != 12_000+1024*1024 {
+		t.Fatalf("WebM adaptive budget = %d, want source bytes plus mux headroom", got)
+	}
+}
+
+type retryBrowserProvider struct {
+	calls int
+	data  []byte
+}
+
+func (provider *retryBrowserProvider) CaptureTrack(_ context.Context, _ string, _ *youtube.Format, path string, _ int64, progress func(int64)) (int64, error) {
+	provider.calls++
+	if provider.calls == 1 {
+		return 0, errBrowserUnavailable
+	}
+	if err := os.WriteFile(path, provider.data, 0600); err != nil {
+		return 0, err
+	}
+	if progress != nil {
+		progress(int64(len(provider.data)))
+	}
+	return int64(len(provider.data)), nil
+}
+
+func (*retryBrowserProvider) Close() error { return nil }
+
+func TestAdaptiveRangesRetriesBrowserCapture(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "video.part")
+	provider := &retryBrowserProvider{data: []byte("verified adaptive media")}
+	format := &youtube.Format{ItagNo: 315, ContentLength: 1024}
+	video := &youtube.Video{ID: "JapSnYBq3U8"}
+	s := &server{}
+	size, browserUsed, err := s.downloadAdaptiveRanges(context.Background(), &jobState{}, nil, video, format, path, 1, 2048, nil, provider)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if provider.calls != 2 || !browserUsed || size != int64(len(provider.data)) {
+		t.Fatalf("browser retry calls=%d used=%t size=%d", provider.calls, browserUsed, size)
 	}
 }
 

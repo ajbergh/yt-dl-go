@@ -116,6 +116,179 @@ func TestSABRCaptureUsesDeclaredFinalSegment(t *testing.T) {
 	}
 }
 
+func TestSABRCaptureAcceptsLargeMultiplexedResponse(t *testing.T) {
+	path := t.TempDir() + "\\track.webm"
+	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer file.Close()
+	capture := newSABRCapture(file, 315, 1000, 1024, nil)
+	format := testProtoVarintField(nil, 1, 315)
+	formatInit := testProtoBytesField(nil, 2, format)
+
+	// This models a 4K browser response that multiplexes enough unrelated
+	// track data to exceed the old 64 MiB whole-response ceiling. Individual
+	// UMP parts remain bounded independently.
+	const ignoredPartSize = 22 * 1024 * 1024
+	ignored := make([]byte, ignoredPartSize)
+	body := make([]byte, 0, 3*ignoredPartSize+1024)
+	for range 3 {
+		body = testUMPPart(body, 99, ignored)
+	}
+	body = testUMPPart(body, umpPartFormatInitializationMetadata, formatInit)
+	body = testSelectedSegment(body, 1, 315, true, 0, 0, []byte("init"), format)
+	body = testSelectedSegment(body, 2, 315, false, 1, 1000, []byte("video"), format)
+	if len(body) <= 64*1024*1024 {
+		t.Fatalf("test response is only %d bytes", len(body))
+	}
+	if err := capture.consume(body); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-capture.done; err != nil {
+		t.Fatal(err)
+	}
+	if _, err := capture.finish(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestSABRCaptureFlushesMediaReceivedBeforeInit(t *testing.T) {
+	path := t.TempDir() + "\\track.webm"
+	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	capture := newSABRCapture(file, 315, 1000, 1024, nil)
+	format := testProtoVarintField(nil, 1, 315)
+	body := testUMPPart(nil, umpPartFormatInitializationMetadata, testProtoBytesField(nil, 2, format))
+	body = testSelectedSegment(body, 2, 315, false, 1, 1000, []byte("video"), format)
+	body = testSelectedSegment(body, 1, 315, true, 0, 0, []byte("init"), format)
+	if err := capture.consume(body); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-capture.done; err != nil {
+		t.Fatal(err)
+	}
+	if _, err := capture.finish(); err != nil {
+		t.Fatal(err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(data, []byte("initvideo")) {
+		t.Fatalf("assembled data=%q, want init followed by queued media", data)
+	}
+}
+
+func TestSABRCaptureIgnoresConflictingSameItagStream(t *testing.T) {
+	path := t.TempDir() + "\\track.webm"
+	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	capture := newSABRCapture(file, 251, 2000, 1024, nil)
+	format := testProtoVarintField(nil, 1, 251)
+	formatInit := testProtoBytesField(nil, 2, format)
+	formatInit = testProtoVarintField(formatInit, 4, 2)
+	body := testUMPPart(nil, umpPartFormatInitializationMetadata, formatInit)
+	body = testSelectedSegment(body, 1, 251, true, 0, 0, []byte("init"), format)
+	body = testSelectedSegment(body, 2, 251, false, 1, 1000, []byte("one"), format)
+	if err := capture.consume(body); err != nil {
+		t.Fatal(err)
+	}
+
+	alternateFormat := testProtoVarintField(nil, 1, 251)
+	alternateFormat = testProtoVarintField(alternateFormat, 2, 999)
+	alternateInit := testProtoBytesField(nil, 2, alternateFormat)
+	alternateInit = testProtoVarintField(alternateInit, 4, 1)
+	alternate := testUMPPart(nil, umpPartFormatInitializationMetadata, alternateInit)
+	alternate = testSelectedSegment(alternate, 3, 251, true, 0, 0, []byte("other-init"), alternateFormat)
+	alternate = testSelectedSegment(alternate, 4, 251, false, 1, 1000, []byte("other"), alternateFormat)
+	if err := capture.consume(alternate); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-capture.done:
+		t.Fatalf("conflicting stream completed capture: %v", err)
+	default:
+	}
+
+	final := testSelectedSegment(nil, 5, 251, false, 2, 1000, []byte("two"), format)
+	if err := capture.consume(final); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-capture.done; err != nil {
+		t.Fatal(err)
+	}
+	if _, err := capture.finish(); err != nil {
+		t.Fatal(err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(data, []byte("initonetwo")) {
+		t.Fatalf("assembled data=%q, want only the verified stream", data)
+	}
+}
+
+func TestSABRCaptureReplacesShortCandidate(t *testing.T) {
+	path := t.TempDir() + "\\track.webm"
+	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	capture := newSABRCapture(file, 251, 2000, 1024, nil)
+	shortFormat := testProtoVarintField(nil, 1, 251)
+	shortFormat = testProtoVarintField(shortFormat, 2, 999)
+	shortInit := testProtoBytesField(nil, 2, shortFormat)
+	shortInit = testProtoVarintField(shortInit, 4, 1)
+	short := testUMPPart(nil, umpPartFormatInitializationMetadata, shortInit)
+	short = testSelectedSegment(short, 1, 251, true, 0, 0, []byte("short-init"), shortFormat)
+	short = testSelectedSegment(short, 2, 251, false, 1, 100, []byte("short"), shortFormat)
+	if err := capture.consume(short); err != nil {
+		t.Fatal(err)
+	}
+	if capture.totalWritten != 0 || capture.formatVerified {
+		t.Fatalf("short candidate was not reset: bytes=%d verified=%t", capture.totalWritten, capture.formatVerified)
+	}
+
+	format := testProtoVarintField(nil, 1, 251)
+	formatInit := testProtoBytesField(nil, 2, format)
+	formatInit = testProtoVarintField(formatInit, 4, 2)
+	body := testUMPPart(nil, umpPartFormatInitializationMetadata, formatInit)
+	body = testSelectedSegment(body, 3, 251, true, 0, 0, []byte("init"), format)
+	body = testSelectedSegment(body, 4, 251, false, 1, 1000, []byte("one"), format)
+	body = testSelectedSegment(body, 5, 251, false, 2, 1000, []byte("two"), format)
+	if err := capture.consume(body); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-capture.done; err != nil {
+		t.Fatal(err)
+	}
+	if _, err := capture.finish(); err != nil {
+		t.Fatal(err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(data, []byte("initonetwo")) {
+		t.Fatalf("assembled data=%q, want replacement stream only", data)
+	}
+}
+
 func testSelectedSegment(dst []byte, id, itag uint64, init bool, sequence, duration uint64, data, format []byte) []byte {
 	dst = testUMPPart(dst, umpPartMediaHeader, testMediaHeader(id, itag, init, sequence, duration, uint64(len(data)), format))
 	dst = testUMPPart(dst, umpPartMedia, append(testUMPVarint(id), data...))

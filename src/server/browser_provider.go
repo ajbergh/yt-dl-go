@@ -52,6 +52,8 @@ type chromeBrowserProvider struct {
 	pending     *browserRangeCapture
 	captureMu   sync.Mutex
 	capture     *sabrCapture
+	captureCtx  context.Context
+	captureStop context.CancelFunc
 }
 
 type browserRangeCapture struct {
@@ -98,8 +100,14 @@ func (p *chromeBrowserProvider) Close() error {
 		}
 		p.captureMu.Lock()
 		capture := p.capture
+		captureStop := p.captureStop
 		p.capture = nil
+		p.captureCtx = nil
+		p.captureStop = nil
 		p.captureMu.Unlock()
+		if captureStop != nil {
+			captureStop()
+		}
 		if capture != nil {
 			capture.fail(errBrowserUnavailable)
 		}
@@ -196,27 +204,45 @@ func (p *chromeBrowserProvider) CaptureTrack(ctx context.Context, id string, for
 		}
 		return 0, errBrowserUnavailable
 	}
+	execCtx, contextErr := p.targetContext()
+	if contextErr != nil {
+		return 0, errBrowserUnavailable
+	}
+	captureCtx, captureStop := context.WithCancel(execCtx)
 	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
 	if err != nil {
+		captureStop()
 		return 0, errStorage
 	}
 	capture := newSABRCapture(file, format.ItagNo, expectedDurationMs, budget, progress)
 	p.captureMu.Lock()
 	if p.capture != nil {
 		p.captureMu.Unlock()
+		captureStop()
 		_ = file.Close()
 		_ = os.Remove(path)
 		return 0, errBrowserUnavailable
 	}
 	p.capture = capture
+	p.captureCtx = captureCtx
+	p.captureStop = captureStop
 	p.captureMu.Unlock()
 	completed := false
+	var detachOnce sync.Once
+	detach := func() {
+		detachOnce.Do(func() {
+			p.captureMu.Lock()
+			if p.capture == capture {
+				p.capture = nil
+				p.captureCtx = nil
+				p.captureStop = nil
+			}
+			p.captureMu.Unlock()
+			captureStop()
+		})
+	}
 	defer func() {
-		p.captureMu.Lock()
-		if p.capture == capture {
-			p.capture = nil
-		}
-		p.captureMu.Unlock()
+		detach()
 		capture.handlers.Wait()
 		if closeErr := file.Close(); closeErr != nil && err == nil {
 			err = errStorage
@@ -228,9 +254,9 @@ func (p *chromeBrowserProvider) CaptureTrack(ctx context.Context, id string, for
 	if err := p.Prepare(ctx, id, format); err != nil {
 		return 0, err
 	}
-	maximum := time.Duration(expectedDurationMs)*time.Millisecond/8 + 2*time.Minute
-	if maximum < 3*time.Minute {
-		maximum = 3 * time.Minute
+	maximum := time.Duration(expectedDurationMs)*time.Millisecond/4 + 2*time.Minute
+	if maximum < 4*time.Minute {
+		maximum = 4 * time.Minute
 	}
 	if maximum > 45*time.Minute {
 		maximum = 45 * time.Minute
@@ -253,11 +279,7 @@ func (p *chromeBrowserProvider) CaptureTrack(ctx context.Context, id string, for
 			if captureErr != nil {
 				return 0, errBrowserUnavailable
 			}
-			p.captureMu.Lock()
-			if p.capture == capture {
-				p.capture = nil
-			}
-			p.captureMu.Unlock()
+			detach()
 			capture.handlers.Wait()
 			result, err = capture.finish()
 			if err != nil {
@@ -440,12 +462,13 @@ func (p *chromeBrowserProvider) handleFetchEvent(event interface{}) {
 	if isSABRMediaURL(paused.Request.URL) {
 		p.captureMu.Lock()
 		capture := p.capture
-		if capture != nil {
+		captureCtx := p.captureCtx
+		if capture != nil && captureCtx != nil {
 			capture.handlers.Add(1)
 		}
 		p.captureMu.Unlock()
-		if capture != nil {
-			go p.captureSABRResponse(paused, capture)
+		if capture != nil && captureCtx != nil {
+			go p.captureSABRResponse(paused, capture, captureCtx)
 			return
 		}
 	}
@@ -469,36 +492,24 @@ func (p *chromeBrowserProvider) handleFetchEvent(event interface{}) {
 	go p.continuePaused(paused)
 }
 
-func (p *chromeBrowserProvider) captureSABRResponse(paused *fetch.EventRequestPaused, capture *sabrCapture) {
+func (p *chromeBrowserProvider) captureSABRResponse(paused *fetch.EventRequestPaused, capture *sabrCapture, captureCtx context.Context) {
 	defer capture.handlers.Done()
-	execCtx, err := p.targetContext()
-	if err != nil {
-		capture.fail(errBrowserUnavailable)
-		return
-	}
 	if paused.ResponseStatusCode < 200 || paused.ResponseStatusCode >= 300 || paused.ResponseErrorReason != "" {
 		p.continuePaused(paused)
 		capture.fail(errBrowserUnavailable)
 		return
 	}
-	body, bodyErr := fetch.GetResponseBody(paused.RequestID).Do(execCtx)
+	body, bodyErr := fetch.GetResponseBody(paused.RequestID).Do(captureCtx)
 	if bodyErr != nil {
-		_ = fetch.FailRequest(paused.RequestID, network.ErrorReasonFailed).Do(execCtx)
+		p.continuePaused(paused)
+		if capture.trace {
+			log.Printf("SABR response body failed: %v", bodyErr)
+		}
 		capture.fail(bodyErr)
 		return
 	}
 	if capture.trace {
 		log.Printf("SABR response status=%d bytes=%d", paused.ResponseStatusCode, len(body))
-	}
-	fulfill := fetch.FulfillRequest(paused.RequestID, paused.ResponseStatusCode).
-		WithResponseHeaders(paused.ResponseHeaders).
-		WithBody(base64.StdEncoding.EncodeToString(body))
-	if paused.ResponseStatusText != "" {
-		fulfill = fulfill.WithResponsePhrase(paused.ResponseStatusText)
-	}
-	if fulfillErr := fulfill.Do(execCtx); fulfillErr != nil {
-		capture.fail(fulfillErr)
-		return
 	}
 	if consumeErr := capture.consume(body); consumeErr != nil {
 		if capture.trace {
@@ -506,6 +517,10 @@ func (p *chromeBrowserProvider) captureSABRResponse(paused *fetch.EventRequestPa
 		}
 		capture.fail(consumeErr)
 	}
+	// Resume the original buffered response instead of replaying a base64 copy.
+	// Replaying large 4K bodies can congest the CDP target and leave a later
+	// GetResponseBody call blocked indefinitely.
+	p.continuePaused(paused)
 }
 
 func (p *chromeBrowserProvider) continuePaused(paused *fetch.EventRequestPaused) {

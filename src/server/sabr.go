@@ -5,6 +5,7 @@ package main
 import (
 	"crypto/sha256"
 	"errors"
+	"fmt"
 	"io"
 	"log"
 	"math"
@@ -18,9 +19,12 @@ const (
 	umpPartMediaEnd                     = 22
 	umpPartFormatInitializationMetadata = 42
 	umpPartStreamProtectionStatus       = 58
-	maxSABRResponseBytes                = 64 * 1024 * 1024
-	maxSABRPartBytes                    = 32 * 1024 * 1024
-	maxSABRParts                        = 10000
+	// Chrome returns multiplexed 4K SABR responses larger than 64 MiB for
+	// some videos. Keep a hard bound because Fetch.getResponseBody holds the
+	// entire response in memory, but leave enough room for those responses.
+	maxSABRResponseBytes = 128 * 1024 * 1024
+	maxSABRPartBytes     = 32 * 1024 * 1024
+	maxSABRParts         = 10000
 )
 
 var errSABR = errors.New("browser SABR media capture failed")
@@ -37,6 +41,8 @@ type sabrCapture struct {
 	handlers           sync.WaitGroup
 
 	formatVerified bool
+	formatDigest   [sha256.Size]byte
+	acceptSelected bool
 	initWritten    bool
 	initDigest     [sha256.Size]byte
 	active         map[uint64]*sabrSegment
@@ -71,6 +77,7 @@ type sabrMediaHeader struct {
 	contentLength int64
 	timeDuration  int64
 	timeScale     int64
+	formatDigest  [sha256.Size]byte
 }
 
 // newSABRCapture initializes bounded capture state for one selected video itag.
@@ -97,14 +104,18 @@ func (capture *sabrCapture) succeed() {
 }
 
 func (capture *sabrCapture) consume(body []byte) error {
-	if len(body) == 0 || len(body) > maxSABRResponseBytes {
+	if len(body) == 0 {
 		return errSABR
+	}
+	if len(body) > maxSABRResponseBytes {
+		return fmt.Errorf("%w: response size %d exceeds %d", errSABR, len(body), maxSABRResponseBytes)
 	}
 	capture.mu.Lock()
 	defer capture.mu.Unlock()
 	if capture.complete {
 		return nil
 	}
+	capture.acceptSelected = capture.formatVerified
 	return parseUMP(body, capture.consumePart)
 }
 
@@ -115,12 +126,24 @@ func (capture *sabrCapture) consumePart(partType uint64, payload []byte) error {
 		if err != nil {
 			return err
 		}
+		selected := false
 		if metadata.itag == capture.itag {
-			capture.formatVerified = true
-			capture.endSegment = metadata.endSegment
+			if !capture.formatVerified {
+				capture.formatVerified = true
+				capture.formatDigest = metadata.formatDigest
+				capture.endSegment = metadata.endSegment
+				selected = true
+			} else {
+				selected = metadata.formatDigest == capture.formatDigest &&
+					(capture.endSegment == 0 || metadata.endSegment == 0 || metadata.endSegment == capture.endSegment)
+				if selected && capture.endSegment == 0 {
+					capture.endSegment = metadata.endSegment
+				}
+			}
+			capture.acceptSelected = selected
 		}
 		if capture.trace {
-			log.Printf("SABR format init itag=%d selected=%t end_segment=%d", metadata.itag, metadata.itag == capture.itag, metadata.endSegment)
+			log.Printf("SABR format init itag=%d selected=%t end_segment=%d", metadata.itag, selected, metadata.endSegment)
 		}
 	case umpPartMediaHeader:
 		header, err := decodeSABRMediaHeader(payload)
@@ -130,7 +153,8 @@ func (capture *sabrCapture) consumePart(partType uint64, payload []byte) error {
 		if _, exists := capture.active[header.headerID]; exists {
 			return errSABR
 		}
-		capture.active[header.headerID] = &sabrSegment{header: header, selected: header.itag == capture.itag}
+		selected := header.itag == capture.itag && capture.acceptSelected && header.formatDigest == capture.formatDigest
+		capture.active[header.headerID] = &sabrSegment{header: header, selected: selected}
 		if capture.trace {
 			log.Printf("SABR media header id=%d itag=%d init=%t sequence=%d length=%d", header.headerID, header.itag, header.isInit, header.sequence, header.contentLength)
 		}
@@ -198,7 +222,7 @@ func (capture *sabrCapture) commitSegment(segment *sabrSegment) error {
 		}
 		capture.initDigest = digest
 		capture.initWritten = true
-		return nil
+		return capture.flushReady()
 	}
 	if prior, ok := capture.written[segment.header.sequence]; ok {
 		if prior != digest {
@@ -246,6 +270,10 @@ func (capture *sabrCapture) flushReady() error {
 		delete(capture.ready, capture.nextSequence)
 		capture.nextSequence++
 		capture.cumulativeMs += segment.durationMs
+		if capture.endSegment > 0 && capture.nextSequence > capture.endSegment &&
+			capture.expectedDurationMs > 0 && capture.cumulativeMs+1500 < capture.expectedDurationMs {
+			return capture.resetShortCandidate()
+		}
 		if (capture.endSegment > 0 && capture.nextSequence > capture.endSegment) ||
 			(capture.endSegment == 0 && capture.expectedDurationMs > 0 && capture.cumulativeMs+1500 >= capture.expectedDurationMs) {
 			capture.complete = true
@@ -253,6 +281,32 @@ func (capture *sabrCapture) flushReady() error {
 			return nil
 		}
 	}
+}
+
+func (capture *sabrCapture) resetShortCandidate() error {
+	if err := capture.file.Truncate(0); err != nil {
+		return errStorage
+	}
+	if _, err := capture.file.Seek(0, io.SeekStart); err != nil {
+		return errStorage
+	}
+	for _, segment := range capture.active {
+		segment.selected = false
+	}
+	capture.formatVerified = false
+	capture.formatDigest = [sha256.Size]byte{}
+	capture.acceptSelected = false
+	capture.initWritten = false
+	capture.initDigest = [sha256.Size]byte{}
+	capture.ready = map[uint64]*sabrCompletedSegment{}
+	capture.written = map[uint64][sha256.Size]byte{}
+	capture.nextSequence = 0
+	capture.sequenceSet = false
+	capture.endSegment = 0
+	capture.cumulativeMs = 0
+	capture.totalWritten = 0
+	capture.progress(0)
+	return nil
 }
 
 func (capture *sabrCapture) write(data []byte) error {
@@ -397,8 +451,9 @@ func (reader *protoReader) skip(wire int) error {
 }
 
 type sabrFormatInitialization struct {
-	itag       int
-	endSegment uint64
+	itag         int
+	endSegment   uint64
+	formatDigest [sha256.Size]byte
 }
 
 func decodeSABRFormatInitialization(data []byte) (sabrFormatInitialization, error) {
@@ -424,6 +479,7 @@ func decodeSABRFormatInitialization(data []byte) (sabrFormatInitialization, erro
 			if err != nil {
 				return metadata, err
 			}
+			metadata.formatDigest = sha256.Sum256(format)
 			continue
 		}
 		if field == 4 && wire == 0 {
@@ -510,6 +566,7 @@ func decodeSABRMediaHeader(data []byte) (sabrMediaHeader, error) {
 			var format []byte
 			format, err = reader.bytes()
 			if err == nil {
+				header.formatDigest = sha256.Sum256(format)
 				var formatItag int
 				formatItag, err = sabrFormatItag(format)
 				if formatItag != 0 {
