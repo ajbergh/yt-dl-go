@@ -932,6 +932,7 @@ func makeQueueItem(index, playlistIndex int, entry *youtube.PlaylistEntry) queue
 }
 
 func (s *server) setQueueItems(j *jobState, work []playlistWorkItem, retryTargets map[int]struct{}) {
+	s.mu.Lock()
 	previous := append([]queueItem(nil), j.Items...)
 	items := make([]queueItem, len(work))
 	for index, selected := range work {
@@ -950,7 +951,6 @@ func (s *server) setQueueItems(j *jobState, work []playlistWorkItem, retryTarget
 			items[index].FileID = previous[index].FileID
 		}
 	}
-	s.mu.Lock()
 	j.Items = items
 	s.refreshAllQueueItemsLocked(j)
 	s.persistJobLocked(j)

@@ -280,9 +280,11 @@ jobs:
       - name: Create LGPL source and relinking archive
         shell: bash
         run: |
+          mkdir -p dist/release
           source_archive="yt-dl-go-source-${RELEASE_VERSION}.tar.gz"
           git archive --format=tar --prefix="yt-dl-go-${RELEASE_VERSION}/" "${GITHUB_SHA}" | gzip -n > "dist/release/${source_archive}"
-          sha256sum "dist/release/${source_archive}" > "dist/release/${source_archive}.sha256"
+          test -s "dist/release/${source_archive}"
+          (cd dist/release && sha256sum "${source_archive}" > "${source_archive}.sha256")
           printf '%s\n' "${source_archive}" > dist/release/expected-source.txt
 
       - name: Verify checksums and create manifest
