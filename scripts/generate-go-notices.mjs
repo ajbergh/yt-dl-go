@@ -115,10 +115,9 @@ const modules = run("go", ["list", "-m", "-f", "{{.Path}}\t{{.Version}}", "all"]
 const versionFor = packagePath => modules.find(([modulePath]) => packagePath === modulePath || packagePath.startsWith(`${modulePath}/`))?.[1] || "unknown";
 const moduleFor = packagePath => modules.find(([modulePath]) => packagePath === modulePath || packagePath.startsWith(`${modulePath}/`))?.[0] || packagePath;
 
-const goRoot = run("go", ["env", "GOROOT"]).trim();
 const standardLicenseDirectory = path.join(goLicensesRoot, "Go-Standard-Library");
 mkdirSync(standardLicenseDirectory, { recursive: true });
-copyFileSync(path.join(goRoot, "LICENSE"), path.join(standardLicenseDirectory, "LICENSE"));
+copyFileSync(path.join(repoRoot, "scripts", "go-runtime-LICENSE.txt"), path.join(standardLicenseDirectory, "LICENSE"));
 
 const gojaRoot = run("go", ["list", "-m", "-f", "{{.Dir}}", "github.com/dop251/goja"]).trim();
 const gojaLicenseDirectory = path.join(goLicensesRoot, "github.com", "dop251", "goja");
@@ -130,27 +129,31 @@ copyFileSync(path.join(gojaRoot, "ftoa", "internal", "fast", "LICENSE_V8"), path
 
 const compare = (a, b) => a < b ? -1 : a > b ? 1 : 0;
 const sortedRows = rows.sort((a, b) => compare(a[0], b[0]));
-writeFileSync(csvPath, `${sortedRows.map(row => row.map(field => `"${String(field).replaceAll('"', '""')}"`).join(",")).join("\n")}\n`, "utf8");
+const csvRows = sortedRows.map(([packagePath, , licenseName]) => {
+  const version = versionFor(packagePath);
+  return [packagePath, `https://pkg.go.dev/${packagePath}@${version}`, licenseName];
+});
+writeFileSync(csvPath, `${csvRows.map(row => row.map(field => `"${String(field).replaceAll('"', '""')}"`).join(",")).join("\n")}\n`, "utf8");
 
-const markdownRows = sortedRows.map(([packagePath, licenseURL, licenseName]) => {
+const markdownRows = sortedRows.map(([packagePath, , licenseName]) => {
   const modulePath = moduleFor(packagePath);
   const version = versionFor(packagePath);
-  const source = licenseURL && licenseURL !== "Unknown"
-    ? `[source/license](${licenseURL})`
-    : `[source](https://pkg.go.dev/${packagePath}@${version})`;
+  const source = `[source](https://pkg.go.dev/${packagePath}@${version})`;
   const licenseFiles = `[license files](licenses/go/${modulePath})`;
   return `| \`${packagePath}\` | \`${version}\` | ${licenseName} | ${source} | ${licenseFiles} |`;
 });
+const goModuleVersion = run("go", ["list", "-m", "-f", "{{.GoVersion}}"])
+  .trim().split(".").slice(0, 2).join(".");
 markdownRows.push(
   "| `github.com/dop251/goja/ftoa` (Lucent-derived implementation) | goja module version | Lucent license | [source](https://github.com/dop251/goja) | [text](licenses/go/github.com/dop251/goja/ftoa/LICENSE_LUCENE) |",
   "| `github.com/dop251/goja/ftoa/internal/fast` (V8-derived implementation) | goja module version | BSD-3-Clause | [source](https://github.com/dop251/goja) | [text](licenses/go/github.com/dop251/goja/ftoa/internal/fast/LICENSE_V8) |",
-  `| Go standard library and runtime | \`${run("go", ["version"]).trim()}\` | BSD-style | [source and license](https://go.dev/LICENSE) | [text](licenses/go/Go-Standard-Library/LICENSE) |`,
+  `| Go standard library and runtime | \`${goModuleVersion}.x\` | BSD-style | [source and license](https://go.dev/LICENSE) | [text](licenses/go/Go-Standard-Library/LICENSE) |`,
 );
 
 writeFileSync(reportPath, [
   "# Go third-party notices",
   "",
-  "Generated from the Go packages used by the application with `go-licenses`. The CSV companion preserves the tool output; redistributed license texts and the LGPL component's source are under `licenses/go/`.",
+  "Generated from the Go packages used by supported release targets with `go-licenses`. The CSV companion preserves package paths and license classifications; redistributed license texts and the LGPL component's source are under `licenses/go/`.",
   "",
   "| Package | Version | License | Source | Included text/source |",
   "| --- | --- | --- | --- | --- |",
