@@ -21,6 +21,13 @@ import (
 	"time"
 )
 
+const contentSecurityPolicy = "default-src 'self'; " +
+	"script-src 'self'; " +
+	"style-src 'self' 'unsafe-inline'; " +
+	"img-src 'self' data: blob: https://i.ytimg.com https://ytimg.com https://*.ytimg.com https://ggpht.com https://*.ggpht.com; " +
+	"media-src 'self' blob:; " +
+	"frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
+
 type mediaFile struct {
 	ID                      string        `json:"id"`
 	Name                    string        `json:"name"`
@@ -309,6 +316,8 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Referrer-Policy", "no-referrer")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("X-Frame-Options", "DENY")
+	w.Header().Set("Content-Security-Policy", contentSecurityPolicy)
 	w.Header().Set("Vary", "Origin")
 	if !s.cfg.hosts[strings.ToLower(r.Host)] {
 		fail(w, 403, "Host is not approved")

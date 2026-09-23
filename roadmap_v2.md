@@ -99,13 +99,13 @@ The production bundle contains the following:
 
 ### M0.4 Security headers: CSP and frame protection
 
-**Status:** [ ] · **P0** · **Area:** backend / security
+**Status:** [x] · **P0** · **Area:** backend / security
 
 Only `Cache-Control`, `Referrer-Policy`, `X-Content-Type-Options`, and `Vary` are set (`server.go:309-312`). Any site can iframe `http://127.0.0.1:8080`. Requests from inside the frame are same-origin, so they pass the Host/Origin checks and destructive buttons can be clickjacked.
 
 #### Scope
 
-- On every response, send `Content-Security-Policy: default-src 'self'; img-src 'self' data: blob: https://i.ytimg.com; media-src 'self' blob:; frame-ancestors 'none'; base-uri 'none'; form-action 'self'` (adjust after M0.3), plus `X-Frame-Options: DENY`.
+- On every response, send a same-origin CSP with `script-src 'self'`, `frame-ancestors 'none'`, `base-uri 'none'`, and `form-action 'self'`, plus `X-Frame-Options: DENY`. `style-src 'unsafe-inline'` preserves the app's current dynamic React styles; `img-src` includes the specific YouTube image hosts already accepted by thumbnail validation.
 - Add header regression tests for static, API, and ticket responses.
 
 ### M0.5 Allow the dev-server origins only in development builds
