@@ -56,6 +56,15 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci
 
+      - name: Install license scanner tools
+        run: |
+          npm ci --prefix tools/license-checker
+          go install github.com/google/go-licenses/v2@v2.0.1
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+
+      - name: Verify third-party notices and licenses
+        run: npm run licenses:check
+
       - name: Type-check frontend
         run: npm run typecheck
 
@@ -256,6 +265,14 @@ jobs:
           path: dist/release
           merge-multiple: true
 
+      - name: Create LGPL source and relinking archive
+        shell: bash
+        run: |
+          source_archive="yt-dl-go-source-${GITHUB_REF_NAME}.tar.gz"
+          git archive --format=tar --prefix="yt-dl-go-${GITHUB_REF_NAME}/" "${GITHUB_SHA}" | gzip -n > "dist/release/${source_archive}"
+          sha256sum "dist/release/${source_archive}" > "dist/release/${source_archive}.sha256"
+          printf '%s\n' "${source_archive}" > dist/release/expected-source.txt
+
       - name: Verify checksums and create manifest
         shell: bash
         run: |
@@ -293,4 +310,3 @@ jobs:
             dist/release/*.tar.gz \
             dist/release/*.sha256 \
             dist/release/SHA256SUMS.txt
-

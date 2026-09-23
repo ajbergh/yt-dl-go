@@ -29,7 +29,7 @@ Install Go 1.26+, Node.js/npm, and run `npm ci` first.
 .\scripts\package-windows.ps1 -ExecutablePath dist\youtube-downloader.exe
 ```
 
-The first script rebuilds the embedded UI, runs Go tests, and produces the executable. The second creates a ZIP containing the executable, README, and third-party notices, plus a SHA-256 checksum file.
+The first script rebuilds the embedded UI, runs Go tests, and produces the executable. The second creates a ZIP containing the executable, README, project license, third-party notices, LGPL relinking guide, and dependency license/source materials, plus a SHA-256 checksum file.
 
 ### Linux
 
@@ -94,11 +94,12 @@ The workflow:
 1. validates the stable tag format and requires it to equal `v<package.json version>`;
 2. reruns frontend type-check/build, Bun tests, Go tests/vet, and browser E2E;
 3. builds the Windows package plus Linux/macOS amd64 and arm64 packages;
-4. injects `VERSION`, `COMMIT`, and `BUILD_DATE` into the Go executable via linker variables;
-5. verifies every per-package SHA-256 checksum;
-6. produces a canonical `SHA256SUMS.txt`;
-7. creates GitHub build-provenance attestations for each release archive and the checksum manifest using OIDC;
-8. creates a **draft** GitHub Release containing the archives and checksum files.
+4. creates a source archive that includes the license reports, LGPL source, and relinking guide;
+5. injects `VERSION`, `COMMIT`, and `BUILD_DATE` into the Go executable via linker variables;
+6. verifies every per-package SHA-256 checksum;
+7. produces a canonical `SHA256SUMS.txt`;
+8. creates GitHub build-provenance attestations for each release archive and the checksum manifest using OIDC;
+9. creates a **draft** GitHub Release containing the binaries, source archive, and checksum files.
 
 The draft is the release-publication safety gate: it is not returned by GitHub's latest-release endpoint, so the app cannot advertise the release until a human publishes it after the required review/signing steps in [RELEASES.md](RELEASES.md).
 

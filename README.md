@@ -157,6 +157,10 @@ Pop-Location
 
 The race detector may require a C compiler on Windows, depending on the Go toolchain and target configuration.
 
+## Licensing
+
+The project is licensed under MIT; third-party components retain their own licenses. Binary packages include complete Go and npm notices, license texts, and the LGPL decoder source. Each tagged release also includes a source archive with the build and relinking instructions. See [third-party notices](src/server/THIRD_PARTY_NOTICES.md) and [LGPL relinking](src/server/LGPL_RELINKING.md).
+
 ## Project guides
 
 - [Frontend guide](src/README.md): develop, test, and embed the React UI.
