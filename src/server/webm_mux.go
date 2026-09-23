@@ -45,6 +45,10 @@ type webMTrackSource struct {
 	fatal  *muxAsyncError
 }
 
+type nonClosingWriteCloser struct{ *os.File }
+
+func (nonClosingWriteCloser) Close() error { return nil }
+
 func (s *webMTrackSource) close() {
 	if s == nil {
 		return
@@ -222,9 +226,17 @@ func muxWebMForDimensions(ctx context.Context, videoPath, audioPath, outputPath 
 	if err != nil {
 		return err
 	}
+	outputClosed := false
+	defer func() {
+		if !outputClosed {
+			if closeErr := output.Close(); closeErr != nil {
+				err = errors.Join(err, closeErr)
+			}
+		}
+	}()
 	writerFatal := &muxAsyncError{}
 	writers, err := webm.NewSimpleBlockWriter(
-		output,
+		nonClosingWriteCloser{File: output},
 		[]webm.TrackEntry{videoTrack, audioTrack},
 		mkvcore.WithSeekHead(true),
 		mkvcore.WithCues(256*1024),
@@ -232,7 +244,6 @@ func muxWebMForDimensions(ctx context.Context, videoPath, audioPath, outputPath 
 		mkvcore.WithOnFatalHandler(writerFatal.set),
 	)
 	if err != nil {
-		_ = output.Close()
 		return err
 	}
 	writersClosed := false
@@ -286,5 +297,13 @@ func muxWebMForDimensions(ctx context.Context, videoPath, audioPath, outputPath 
 	if fatal := audioSource.fatal.get(); fatal != nil {
 		return fatal
 	}
+	if err := output.Sync(); err != nil {
+		return err
+	}
+	if err := output.Close(); err != nil {
+		outputClosed = true
+		return err
+	}
+	outputClosed = true
 	return nil
 }

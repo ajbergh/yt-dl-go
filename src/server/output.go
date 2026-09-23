@@ -3,7 +3,6 @@ package main
 import (
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -187,31 +186,61 @@ func (s *server) publishOutput(j *jobState, file *mediaFile) error {
 	if err := os.MkdirAll(folder, 0700); err != nil {
 		return fmt.Errorf("create download destination: %w", err)
 	}
-	source, err := openFinal(j.dir, file.Name)
-	if err != nil {
-		return err
-	}
-	defer source.Close()
-
 	for suffix := 0; suffix < 10000; suffix++ {
 		name := baseName + extension
 		if suffix > 0 {
 			name = fmt.Sprintf("%s (%d)%s", baseName, suffix+1, extension)
 		}
 		destination := filepath.Join(folder, name)
-		out, err := os.OpenFile(destination, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
-		if errors.Is(err, os.ErrExist) {
+		if _, err := os.Lstat(destination); err == nil {
 			continue
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("inspect download destination: %w", err)
 		}
+		temporary, err := temporarySibling(destination)
 		if err != nil {
-			return fmt.Errorf("create download output: %w", err)
+			return fmt.Errorf("create temporary download output: %w", err)
 		}
-		copied, copyErr := io.Copy(out, source)
-		syncErr := out.Sync()
-		closeErr := out.Close()
-		if copyErr != nil || copied != file.Size || syncErr != nil || closeErr != nil {
-			_ = os.Remove(destination)
-			return errors.New("could not write download output")
+		temporaryPath := temporary.Name()
+		if closeErr := temporary.Close(); closeErr != nil {
+			_ = os.Remove(temporaryPath)
+			return fmt.Errorf("close temporary download output: %w", closeErr)
+		}
+		_ = os.Remove(temporaryPath)
+
+		publishedByMove := false
+		if j.StorageMode == "published-only" {
+			sourcePath := filepath.Join(j.dir, file.Name)
+			moveErr := durableRename(sourcePath, temporaryPath)
+			if moveErr == nil {
+				if err := publishTemporary(temporaryPath, destination); err != nil {
+					_ = durableRename(temporaryPath, sourcePath)
+					return fmt.Errorf("publish moved download output: %w", err)
+				}
+				publishedByMove = true
+			} else if _, statErr := os.Lstat(temporaryPath); statErr == nil {
+				_ = durableRename(temporaryPath, sourcePath)
+				return fmt.Errorf("move download output: %w", moveErr)
+			}
+		}
+		if !publishedByMove {
+			source, openErr := openFinal(j.dir, file.Name)
+			if openErr != nil {
+				return openErr
+			}
+			temporary, copyErr := writeTemporaryCopy(source, folder, ".yt-dl-go-*.part", file.Size)
+			closeErr := source.Close()
+			if copyErr != nil || closeErr != nil {
+				return fmt.Errorf("write temporary download output: %w", errors.Join(copyErr, closeErr))
+			}
+			if err := publishTemporary(temporary, destination); err != nil {
+				if errors.Is(err, os.ErrExist) {
+					_ = os.Remove(temporary)
+					continue
+				}
+				_ = os.Remove(temporary)
+				return fmt.Errorf("publish download output: %w", err)
+			}
 		}
 		file.OutputName = name
 		file.OutputPath = destination
