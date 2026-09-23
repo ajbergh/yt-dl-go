@@ -145,7 +145,7 @@ Track `src/server/dist/.gitkeep` with a `.gitignore` exception, embed all files 
 
 ### M0.8 Surface swallowed persistence errors
 
-**Status:** [ ] · **P0** · **Area:** backend
+**Status:** [x] · **P0** · **Area:** backend
 
 - `persistJobLocked` ignores `saveJob` errors (`server.go:203`).
 - `savePart`/`deletePart` ignore theirs (`store.go:739, 749`).
@@ -154,7 +154,7 @@ Track `src/server/dist/.gitkeep` with a `.gitignore` exception, embed all files 
 
 #### Scope
 
-Log every failure, and fail the job or item where the error means state is lost. After N consecutive failures, report the problem as a degraded state through `/api/health`.
+Log these failures and fail the job or item where state is lost. Job, checkpoint, settings, queue, and finalization persistence failures contribute to a consecutive failure count; a successful persistence operation resets it. `/api/health` reports degraded persistence after three consecutive failures. Failed job-state saves stop the job and expose a failure to the API/UI.
 
 ### M0.9 Gate CI on lint
 

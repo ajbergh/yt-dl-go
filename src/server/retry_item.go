@@ -65,6 +65,7 @@ func (s *server) handleRetryItem(w http.ResponseWriter, r *http.Request, jobID s
 	s.refreshAllQueueItemsLocked(job)
 
 	if err := s.store.saveJob(job); err != nil {
+		s.recordPersistenceFailure("save item retry state", job.ID, err)
 		job.Job = oldJob
 		job.Items = oldItems
 		job.Failures = oldFailures
@@ -73,6 +74,7 @@ func (s *server) handleRetryItem(w http.ResponseWriter, r *http.Request, jobID s
 		fail(w, http.StatusInternalServerError, "Could not persist item retry state")
 		return
 	}
+	s.recordPersistenceSuccess()
 	s.publishJobEventLocked("job-status", job)
 	s.notifySchedulerLocked()
 	reply(w, http.StatusAccepted, snapshot(job))

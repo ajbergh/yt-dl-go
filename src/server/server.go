@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"log"
 	"mime"
 	"net/http"
 	"net/url"
@@ -125,6 +126,7 @@ type jobState struct {
 	itemProgress      map[int]*itemProgress
 	processingItems   int
 	playlistItemCount int
+	persistenceFailed bool
 }
 
 type ticket struct {
@@ -134,30 +136,32 @@ type ticket struct {
 }
 
 type server struct {
-	cfg              config
-	settings         AppSettings
-	mu               sync.Mutex
-	jobs             map[string]*jobState
-	order            []string
-	tickets          map[string]ticket
-	queue            chan string
-	slots            chan struct{}
-	scheduleChanged  chan struct{}
-	activeDownloads  int
-	activeItems      int
-	engineMu         sync.Mutex
-	ctx              context.Context
-	stop             context.CancelFunc
-	wg               sync.WaitGroup
-	engine           nativeClient
-	browserFactory   browserProviderFactory
-	filesystemOpener filesystemOpener
-	folderSelector   folderSelector
-	thumbnailFetcher func(context.Context, string, string) (string, error)
-	captionFetcher   captionFetcher
-	store            *jobStore
-	bandwidth        *bandwidthLimiter
-	events           *eventBroker
+	cfg                 config
+	settings            AppSettings
+	mu                  sync.Mutex
+	persistenceMu       sync.Mutex
+	persistenceFailures uint64
+	jobs                map[string]*jobState
+	order               []string
+	tickets             map[string]ticket
+	queue               chan string
+	slots               chan struct{}
+	scheduleChanged     chan struct{}
+	activeDownloads     int
+	activeItems         int
+	engineMu            sync.Mutex
+	ctx                 context.Context
+	stop                context.CancelFunc
+	wg                  sync.WaitGroup
+	engine              nativeClient
+	browserFactory      browserProviderFactory
+	filesystemOpener    filesystemOpener
+	folderSelector      folderSelector
+	thumbnailFetcher    func(context.Context, string, string) (string, error)
+	captionFetcher      captionFetcher
+	store               *jobStore
+	bandwidth           *bandwidthLimiter
+	events              *eventBroker
 }
 
 func terminal(status string) bool {
@@ -205,11 +209,53 @@ func (s *server) forgetJobLocked(j *jobState) {
 	s.publishDeletedEventLocked(j.ID)
 }
 
-func (s *server) persistJobLocked(j *jobState) {
+const persistenceDegradedThreshold uint64 = 3
+
+func (s *server) recordPersistenceFailure(operation, jobID string, err error) {
+	if err == nil {
+		return
+	}
+	s.persistenceMu.Lock()
+	s.persistenceFailures++
+	consecutive := s.persistenceFailures
+	s.persistenceMu.Unlock()
+	log.Printf("persistence failure operation=%s job=%s consecutive=%d: %v", operation, jobID, consecutive, err)
+}
+
+func (s *server) recordPersistenceSuccess() {
+	s.persistenceMu.Lock()
+	s.persistenceFailures = 0
+	s.persistenceMu.Unlock()
+}
+
+func (s *server) persistenceDegraded() (bool, uint64) {
+	s.persistenceMu.Lock()
+	defer s.persistenceMu.Unlock()
+	return s.persistenceFailures >= persistenceDegradedThreshold, s.persistenceFailures
+}
+
+func (s *server) persistJobLocked(j *jobState) error {
 	if s.store != nil {
-		_ = s.store.saveJob(j)
+		if err := s.store.saveJob(j); err != nil {
+			s.recordPersistenceFailure("save job", j.ID, err)
+			j.persistenceFailed = true
+			j.Status = "failed"
+			if len(j.Files) > 0 {
+				j.Status = "partial"
+			}
+			j.Error = "Could not save job state; download stopped"
+			j.done = time.Now()
+			if j.cancel != nil {
+				j.cancel()
+			}
+			s.refreshAllQueueItemsLocked(j)
+			s.publishJobEventLocked("job-status", j)
+			return err
+		}
+		s.recordPersistenceSuccess()
 	}
 	s.publishJobEventLocked("job-status", j)
+	return nil
 }
 
 func reply(w http.ResponseWriter, code int, value any) {
@@ -338,9 +384,11 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if r.URL.Path == "/api/health" && r.Method == http.MethodGet {
 		info := currentBuildInfo()
+		degraded, consecutiveFailures := s.persistenceDegraded()
 		reply(w, 200, map[string]any{
 			"ready": s.engine != nil, "missing": []string{}, "engine": "native-go",
 			"version": info.Version, "commit": info.Commit, "buildDate": info.Date,
+			"degraded": degraded, "persistence": map[string]any{"degraded": degraded, "consecutiveFailures": consecutiveFailures},
 			"capabilities": map[string]bool{"combinedStreamsOnly": false, "adaptiveStreamsSupported": true, "externalBinariesRequired": false,
 				"mp3AudioSupported": true, "pureGoAudioConversion": true, "captionsSupported": true},
 		})
@@ -486,9 +534,11 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if err := s.store.deleteJob(j.ID); err != nil {
+			s.recordPersistenceFailure("delete job", j.ID, err)
 			fail(w, 500, "Could not remove the job from history")
 			return
 		}
+		s.recordPersistenceSuccess()
 		s.forgetJobLocked(j)
 		w.WriteHeader(http.StatusNoContent)
 	case len(parts) == 2 && parts[1] == "managed" && r.Method == http.MethodDelete:
@@ -505,7 +555,10 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.invalidateJobTicketsLocked(j.ID)
-		s.persistJobLocked(j)
+		if err := s.persistJobLocked(j); err != nil {
+			fail(w, 500, "Media copies were removed, but job state could not be saved")
+			return
+		}
 		reply(w, 200, snapshot(j))
 	case len(parts) == 2 && parts[1] == "published" && r.Method == http.MethodDelete:
 		if !terminal(j.Status) {
@@ -517,11 +570,14 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if err := removeOutputCopies(j); err != nil {
-			s.persistJobLocked(j)
+			_ = s.persistJobLocked(j)
 			fail(w, 500, "Could not remove the published media copies")
 			return
 		}
-		s.persistJobLocked(j)
+		if err := s.persistJobLocked(j); err != nil {
+			fail(w, 500, "Published copies were removed, but job state could not be saved")
+			return
+		}
 		reply(w, 200, snapshot(j))
 	case len(parts) == 2 && parts[1] == "all" && r.Method == http.MethodDelete:
 		if !terminal(j.Status) {
@@ -533,19 +589,21 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if err := removeOutputCopies(j); err != nil {
-			s.persistJobLocked(j)
+			_ = s.persistJobLocked(j)
 			fail(w, 500, "Could not remove the published media copies")
 			return
 		}
 		if err := removeManagedCopies(j); err != nil {
-			s.persistJobLocked(j)
+			_ = s.persistJobLocked(j)
 			fail(w, 500, "Published copies were removed, but private managed files could not be removed")
 			return
 		}
 		if err := s.store.deleteJob(j.ID); err != nil {
+			s.recordPersistenceFailure("delete job", j.ID, err)
 			fail(w, 500, "Media copies were removed, but job history could not be deleted")
 			return
 		}
+		s.recordPersistenceSuccess()
 		s.forgetJobLocked(j)
 		w.WriteHeader(http.StatusNoContent)
 	case len(parts) == 2 && parts[1] == "pause" && r.Method == http.MethodPost:
@@ -563,7 +621,10 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.refreshAllQueueItemsLocked(j)
-		s.persistJobLocked(j)
+		if err := s.persistJobLocked(j); err != nil {
+			fail(w, 500, "Could not save the pause state")
+			return
+		}
 		reply(w, 200, snapshot(j))
 	case len(parts) == 2 && parts[1] == "resume" && r.Method == http.MethodPost:
 		if j.Status != "paused" {
@@ -577,7 +638,10 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			j.Status, j.Error, j.done = "queued", "", time.Time{}
 			j.QueuePosition = s.nextQueuePositionLocked()
 			s.refreshAllQueueItemsLocked(j)
-			s.persistJobLocked(j)
+			if err := s.persistJobLocked(j); err != nil {
+				fail(w, 500, "Could not save the resume state")
+				return
+			}
 			s.notifySchedulerLocked()
 			reply(w, 200, snapshot(j))
 		default:
@@ -591,9 +655,11 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 					return
 				}
 				if err := s.store.deletePartsForJob(j.ID); err != nil {
+					s.recordPersistenceFailure("delete resumable download state", j.ID, err)
 					fail(w, 500, "Could not remove resumable download state")
 					return
 				}
+				s.recordPersistenceSuccess()
 			}
 			j.pauseRequested = false
 			j.cancelRequested = true
@@ -605,7 +671,10 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			}
 			s.refreshAllQueueItemsLocked(j)
 			s.notifySchedulerLocked()
-			s.persistJobLocked(j)
+			if err := s.persistJobLocked(j); err != nil {
+				fail(w, 500, "Could not save the cancellation state")
+				return
+			}
 		}
 		reply(w, 200, snapshot(j))
 	case len(parts) == 2 && parts[1] == "ticket" && r.Method == http.MethodPost:
@@ -696,10 +765,12 @@ func (s *server) handleSettings(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if err := s.store.saveAppSettings(settings); err != nil {
+			s.recordPersistenceFailure("save application settings", "", err)
 			s.mu.Unlock()
 			fail(w, 500, "Could not save preferences")
 			return
 		}
+		s.recordPersistenceSuccess()
 		s.settings = settings
 		if s.bandwidth != nil {
 			s.bandwidth.SetLimit(settings.BandwidthLimitBytesPerSec)
@@ -932,12 +1003,14 @@ func (s *server) enqueueJobWithFallback(w http.ResponseWriter, u, kind, quality,
 		s.jobs[j.ID], s.order = j, append(s.order, j.ID)
 		s.notifySchedulerLocked()
 		if err := s.store.saveJob(j); err != nil {
+			s.recordPersistenceFailure("create job", j.ID, err)
 			delete(s.jobs, j.ID)
 			s.order = s.order[:len(s.order)-1]
 			_ = os.RemoveAll(j.dir)
 			fail(w, 500, "Cannot persist download job")
 			return
 		}
+		s.recordPersistenceSuccess()
 		s.publishJobEventLocked("job-created", j)
 		reply(w, 202, snapshot(j))
 	default:

@@ -1557,13 +1557,23 @@ func (s *server) finish(ctx context.Context, j *jobState, fatal error) {
 		j.Status = "partial"
 	}
 	switch {
+	case j.persistenceFailed:
+		j.Status = "failed"
+		if len(j.Files) > 0 {
+			j.Status = "partial"
+		}
+		j.Error = "Could not save job state; download stopped"
 	case j.pauseRequested && !j.cancelRequested:
 		j.Status, j.Error, j.done = "paused", "Paused. The current playlist item may restart when resumed.", time.Time{}
 	case s.ctx.Err() != nil && !j.cancelRequested:
 		j.Status, j.Error, j.done = "queued", "Download paused; it will resume when the service restarts", time.Time{}
 	case j.cancelRequested:
 		j.Status, j.Error = "cancelled", "Download cancelled; only finalized files are available"
-		_ = s.store.deletePartsForJob(j.ID)
+		if err := s.store.deletePartsForJob(j.ID); err != nil {
+			s.recordPersistenceFailure("delete resumable download state", j.ID, err)
+		} else {
+			s.recordPersistenceSuccess()
+		}
 	case ctx.Err() != nil:
 		j.Error = "Job timeout reached; remaining entries were not downloaded"
 	case fatal != nil:
@@ -1817,6 +1827,9 @@ func (s *server) transferAdaptiveMP4(ctx context.Context, j *jobState, engine na
 	}
 	downloaded += audioSize
 	if err := muxMP4(ctx, videoPart, audioPart, outputPart, selection.video, selection.audio); err != nil {
+		if errors.Is(err, errStorage) {
+			s.recordPersistenceFailure("finalize MP4 output", j.ID, err)
+		}
 		if ctx.Err() != nil {
 			return result, ctx.Err()
 		}
@@ -2044,13 +2057,27 @@ func (s *server) downloadAdaptiveRanges(ctx context.Context, j *jobState, engine
 		return 0, false, errStorage
 	}
 	committed := false
+	closed := false
 	defer func() {
-		_ = f.Close()
+		if !closed {
+			if closeErr := f.Close(); closeErr != nil {
+				s.recordPersistenceFailure("close adaptive download part", j.ID, closeErr)
+				if err == nil {
+					err = errStorage
+				}
+			} else {
+				s.recordPersistenceSuccess()
+			}
+		}
 		if !committed && !s.keepPartial(j) {
 			_ = os.Remove(path)
 		}
-		if committed {
-			s.store.deletePart(j.ID, itemIndex)
+		if committed && s.store != nil {
+			if checkpointErr := s.store.deletePart(j.ID, itemIndex); checkpointErr != nil {
+				s.recordPersistenceFailure("delete download checkpoint", j.ID, checkpointErr)
+			} else {
+				s.recordPersistenceSuccess()
+			}
 		}
 	}()
 	client := nativeHTTPClient(s.cfg.timeout)
@@ -2058,7 +2085,13 @@ func (s *server) downloadAdaptiveRanges(ctx context.Context, j *jobState, engine
 	result = start
 	if start > 0 {
 		progress(start)
-		s.store.savePart(j.ID, itemIndex, path, start, format.ContentLength)
+		if s.store != nil {
+			if checkpointErr := s.store.savePart(j.ID, itemIndex, path, start, format.ContentLength); checkpointErr != nil {
+				s.recordPersistenceFailure("save download checkpoint", j.ID, checkpointErr)
+				return result, browserUsed, errStorage
+			}
+			s.recordPersistenceSuccess()
+		}
 	}
 	for start < format.ContentLength {
 		if err := ctx.Err(); err != nil {
@@ -2092,8 +2125,16 @@ func (s *server) downloadAdaptiveRanges(ctx context.Context, j *jobState, engine
 			if requestErr != nil {
 				continue
 			}
-			_, _ = f.Seek(start, io.SeekStart)
-			_ = f.Truncate(start)
+			if _, seekErr := f.Seek(start, io.SeekStart); seekErr != nil {
+				_ = resp.Body.Close()
+				s.recordPersistenceFailure("seek adaptive download part", j.ID, seekErr)
+				return result, browserUsed, errStorage
+			}
+			if truncateErr := f.Truncate(start); truncateErr != nil {
+				_ = resp.Body.Close()
+				s.recordPersistenceFailure("truncate adaptive download part", j.ID, truncateErr)
+				return result, browserUsed, errStorage
+			}
 			written, copyErr := io.Copy(f, io.LimitReader(s.bandwidthReader(ctx, resp.Body), chunkSize+1))
 			_ = resp.Body.Close()
 			if copyErr == nil && written == chunkSize && (resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusPartialContent) {
@@ -2110,14 +2151,25 @@ func (s *server) downloadAdaptiveRanges(ctx context.Context, j *jobState, engine
 		start = end + 1
 		result = start
 		progress(result)
-		s.store.savePart(j.ID, itemIndex, path, result, format.ContentLength)
+		if s.store != nil {
+			if checkpointErr := s.store.savePart(j.ID, itemIndex, path, result, format.ContentLength); checkpointErr != nil {
+				s.recordPersistenceFailure("save download checkpoint", j.ID, checkpointErr)
+				return result, browserUsed, errStorage
+			}
+			s.recordPersistenceSuccess()
+		}
 	}
 	if err := f.Sync(); err != nil {
+		s.recordPersistenceFailure("sync adaptive download part", j.ID, err)
 		return result, browserUsed, errStorage
 	}
 	if err := f.Close(); err != nil {
+		closed = true
+		s.recordPersistenceFailure("close adaptive download part", j.ID, err)
 		return result, browserUsed, errStorage
 	}
+	closed = true
+	s.recordPersistenceSuccess()
 	committed = true
 	return result, browserUsed, nil
 }
@@ -2221,12 +2273,16 @@ func (s *server) downloadSource(ctx context.Context, j *jobState, engine nativeC
 	return result, nil
 }
 
-func muxMP4(ctx context.Context, videoPath, audioPath, outputPath string, videoFormat, audioFormat *youtube.Format) error {
+func muxMP4(ctx context.Context, videoPath, audioPath, outputPath string, videoFormat, audioFormat *youtube.Format) (muxErr error) {
 	out, err := os.OpenFile(outputPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
 	if err != nil {
-		return err
+		return fmt.Errorf("%w: create MP4 output: %v", errStorage, err)
 	}
-	defer out.Close()
+	defer func() {
+		if closeErr := out.Close(); closeErr != nil {
+			muxErr = errors.Join(muxErr, fmt.Errorf("%w: close MP4 output: %v", errStorage, closeErr))
+		}
+	}()
 	muxer, err := mp4.CreateMp4Muxer(out)
 	if err != nil {
 		return err
@@ -2343,7 +2399,12 @@ func (s *server) prune(now time.Time) {
 		if terminal(j.Status) && j.readers == 0 && !held[id] && now.Sub(j.done) >= s.cfg.retain {
 			// Retention expires app-managed history and private media only.
 			// Published output belongs to the user and must survive pruning.
-			if removeManagedCopies(j) == nil && s.store.deleteJob(id) == nil {
+			if err := removeManagedCopies(j); err != nil {
+				log.Printf("retention failure operation=remove managed copies job=%s: %v", id, err)
+			} else if err := s.store.deleteJob(id); err != nil {
+				s.recordPersistenceFailure("retention delete job", id, err)
+			} else {
+				s.recordPersistenceSuccess()
 				delete(s.jobs, id)
 				s.publishDeletedEventLocked(id)
 				continue

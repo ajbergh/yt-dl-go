@@ -732,21 +732,23 @@ func (s *jobStore) saveQueueOrder(jobIDs []string) error {
 	return tx.Commit()
 }
 
-func (s *jobStore) savePart(jobID string, itemIndex int, path string, completed, expected int64) {
+func (s *jobStore) savePart(jobID string, itemIndex int, path string, completed, expected int64) error {
 	if s == nil {
-		return
+		return nil
 	}
-	_, _ = s.db.Exec(`INSERT INTO download_parts(job_id,item_index,path,completed_bytes,expected_bytes,updated_at)
+	_, err := s.db.Exec(`INSERT INTO download_parts(job_id,item_index,path,completed_bytes,expected_bytes,updated_at)
 		VALUES(?,?,?,?,?,?) ON CONFLICT(job_id,item_index) DO UPDATE SET path=excluded.path,
 		completed_bytes=excluded.completed_bytes,expected_bytes=excluded.expected_bytes,updated_at=excluded.updated_at`,
 		jobID, itemIndex, path, completed, expected, time.Now().UnixNano())
+	return err
 }
 
-func (s *jobStore) deletePart(jobID string, itemIndex int) {
+func (s *jobStore) deletePart(jobID string, itemIndex int) error {
 	if s == nil {
-		return
+		return nil
 	}
-	_, _ = s.db.Exec(`DELETE FROM download_parts WHERE job_id=? AND item_index=?`, jobID, itemIndex)
+	_, err := s.db.Exec(`DELETE FROM download_parts WHERE job_id=? AND item_index=?`, jobID, itemIndex)
+	return err
 }
 
 func (s *jobStore) deletePartsForJob(jobID string) error {
