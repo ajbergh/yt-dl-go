@@ -301,7 +301,12 @@ jobs:
             exit 1
           fi
           while IFS= read -r archive; do
-            test -f "$archive"
+            archive="${archive%$'\r'}"
+            [[ -z "$archive" ]] && continue
+            if [[ ! -f "$archive" ]]; then
+              echo "Expected release archive '$archive' was not found." >&2
+              exit 1
+            fi
           done < <(cat expected-*.txt)
           sha256sum *.zip *.tar.gz | sort > SHA256SUMS.txt
 
