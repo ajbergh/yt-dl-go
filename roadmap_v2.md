@@ -146,7 +146,7 @@ The default Vite origins now compile only with `-tags=dev`; release builds allow
 
 ### M0.6 Add a project LICENSE and complete third-party notices
 
-**Status:** [T] Implemented; tagged source-package validation pending · **P0** · **Area:** legal
+**Status:** [T] Implemented and dispatch-validated; tagged source-package validation pending · **P0** · **Area:** legal
 
 - The root `LICENSE` now applies MIT to the project.
 - Go notices cover the application dependency packages and Go runtime; npm notices cover production dependencies, including the Geist font (OFL-1.1) and lucide (ISC).
@@ -160,7 +160,7 @@ The default Vite origins now compile only with `-tags=dev`; release builds allow
 - [x] Generate notices with pinned `go-licenses` and `license-checker` tools in CI; fail when generated files drift.
 - [x] Ship the dependency license texts and LGPL source in release packages.
 
-**Progress (2026-09-23):** Merged by [PR #14](https://github.com/ajbergh/yt-dl-go/pull/14). All six CI jobs passed, including reproducible license checks and Linux, Windows, and macOS package builds. Notices cover 33 Go/runtime entries and 15 npm production packages. A release dry run remains to validate the tagged source archive and complete M8.1/M8.2 runtime validation.
+**Progress (2026-09-23):** Merged by [PR #14](https://github.com/ajbergh/yt-dl-go/pull/14). All six CI jobs passed, including reproducible license checks and Linux, Windows, and macOS package builds. Notices cover 33 Go/runtime entries and 15 npm production packages. Dry run [35925902083](https://github.com/ajbergh/yt-dl-go/actions/runs/35925902083) successfully created and checksummed the LGPL source/relink archive; the tag-triggered release path remains to be exercised when a release is cut.
 
 ### M0.7 A fresh clone must build and test
 
@@ -916,9 +916,9 @@ No tests exist for:
 
 ### M8.1 Ship the first release
 
-**Status:** [T] Dry-run fixes in progress; final manual validation and release version pending · **P1** · **Area:** release
+**Status:** [T] Dry run validated; release version and tag pending · **P1** · **Area:** release
 
-- No release tag exists yet and `package.json` remains `0.1.0`; two manual dry runs have exercised the release workflow.
+- No release tag exists yet and `package.json` remains `0.1.0`; the successful dry run validated `v0.1.0` without publishing a release.
 - Shared action versions now align between the release and CI workflows.
 - The README's Windows download now points to GitHub Releases rather than the gitignored `dist/` directory.
 
@@ -929,14 +929,14 @@ No tests exist for:
 - Cut `v0.2.0` (or `v1.0.0` after Milestone 0).
 - [x] Point the README at GitHub Releases.
 
-**Progress (2026-09-23):** Merged by [PR #15](https://github.com/ajbergh/yt-dl-go/pull/15); all six CI jobs passed. Manual runs validate the selected version against `package.json`, build and checksum all release archives, then upload a workflow artifact without creating a GitHub Release. The authorized `v0.1.0` dry run (run 35921227203) exposed a source archive checksum path issue, fixed in [PR #31](https://github.com/ajbergh/yt-dl-go/pull/31). The rerun (35924524457) passed source validation, all six platform builds, and all seven archive checksum checks, then failed in the expected-archive existence loop. Windows manifests are written with CRLF; the verifier now strips trailing carriage returns and reports a missing archive by name. No GitHub Release was created. Rerun after this fix merges; the actual release version decision remains pending.
+**Progress (2026-09-23):** Merged by [PR #15](https://github.com/ajbergh/yt-dl-go/pull/15); all six CI jobs passed. The authorized `v0.1.0` run (35921227203) exposed a source archive checksum path issue, fixed in [PR #31](https://github.com/ajbergh/yt-dl-go/pull/31). Its rerun (35924524457) passed all seven checksum checks but exposed CRLF handling in expected-archive validation, fixed in [PR #32](https://github.com/ajbergh/yt-dl-go/pull/32). Final dry run [35925902083](https://github.com/ajbergh/yt-dl-go/actions/runs/35925902083) passed source validation, all six platform builds, archive and manifest checksums, provenance attestations, and uploaded the 77.5 MB `release-dry-run-v0.1.0` artifact. The workflow skipped GitHub Release creation as intended. The release version/tag decision remains pending.
 
 ### M8.2 Harden the release workflow
 
-**Status:** [T] Implemented; release dry-run validation in progress · **P1** · **Area:** release / security
+**Status:** [x] · **P1** · **Area:** release / security
 
 - The original findings are addressed: write/attestation permissions are scoped to the jobs that need them, expected archives come from matrix manifests, and build timestamps are normalized to UTC.
-- The remaining M8.2 gate is a successful manual release dry run covering all archive checks, manifest generation, attestation, and artifact upload.
+- Dry-run validation covers all archive checks, manifest generation, provenance attestation, and artifact upload.
 
 #### Scope
 
@@ -945,7 +945,7 @@ No tests exist for:
 - [x] Emit UTC timestamps on both Windows and Unix release builders.
 - [x] Add Windows arm64 builds.
 
-**Progress (2026-09-23):** Merged by [PR #13](https://github.com/ajbergh/yt-dl-go/pull/13) as `db6f845`. Workflow permissions are scoped by job, Windows packaging builds amd64 and arm64, build timestamps are converted to UTC using portable Windows/Unix tooling, and the publish job validates archives against per-matrix expected-archive manifests. All six PR #13 CI jobs passed. Both authorized `v0.1.0` dry runs built all six platform packages, including Windows amd64/arm64; the second passed all seven checksum checks. The remaining expected-archive verification now normalizes Windows CRLF lines and reports a missing filename. Full runtime validation remains pending a successful rerun.
+**Progress (2026-09-23):** Implemented in [PR #13](https://github.com/ajbergh/yt-dl-go/pull/13) as `db6f845`, with CRLF-safe expected-archive validation completed in [PR #32](https://github.com/ajbergh/yt-dl-go/pull/32). Workflow permissions are scoped by job, Windows packaging builds amd64 and arm64, build timestamps are converted to UTC, and expected archives come from per-matrix manifests. The successful [dry run 35925902083](https://github.com/ajbergh/yt-dl-go/actions/runs/35925902083) validated source, six platform builds, archive checksums, manifest generation and attestation, and uploaded the workflow artifact. All M8.2 gates are complete.
 
 ### M8.3 SBOM and reproducible archives
 
@@ -1117,31 +1117,31 @@ v2 adds:
 
 ### M8.2 release workflow hardening
 
-**Status:** [T] Merged by PR #13; release dry-run pending
+**Status:** [x] Merged by PR #13; dry-run validation passed
 
 - Scoped release write and attestation permissions to the jobs that need them.
 - Added Windows amd64/arm64 matrix builds; the Windows build script cross-compiles after running native tests.
 - Converted Windows and Unix build timestamps to UTC using PowerShell and Node.js, including macOS runners.
 - Replaced the fixed five-archive assertion with expected archive manifests from each matrix job.
-- All six PR #13 CI jobs passed. The release workflow is tag-triggered and was not executed, so a dry run remains required for release-specific validation.
-- M0.6 merged in PR #14; its linked source archive still needs release-workflow dry-run validation.
+- All six PR #13 CI jobs passed. Dispatch dry run 35925902083 passed release-source validation, all six package builds, archive checksums, manifest generation and attestation, and uploaded the dry-run artifact. The tag-triggered publishing path remains pending an actual release.
+- M0.6 merged in PR #14; dry run 35925902083 generated and checksummed the linked source archive. Tagged release-path validation remains pending.
 
 ### M0.6 license and notice implementation
 
-**Status:** [T] Merged by PR #14; tagged source-package validation pending
+**Status:** [T] Merged by PR #14; dispatch source-package validation passed, tag-triggered validation pending
 
 - Added the MIT project license, generated Go and npm notices, complete dependency license texts, and LGPL decoder source/relinking instructions.
 - License generation runs for Linux, Windows, and macOS target dependency sets and uses stable package links and normalized license text.
 - PR #14 passed all six CI jobs, including license drift checks and production package builds for Linux amd64/arm64, macOS amd64/arm64, and Windows amd64.
-- M8.1 adds a dispatchable release dry run that validates the source archive without creating a draft release. Two manual runs built it and verified its checksum; final publish-preparation validation remains pending.
+- Dispatch dry run 35925902083 generated and checksummed the linked source archive and LGPL relink package. The source archive path triggered by a release tag remains untested until a release is cut.
 
 ### M8.1 first-release preparation
 
-**Status:** [T] Workflow merged by PR #15; final dry-run validation and version cut pending
+**Status:** [T] Dry run passed; release version and tag pending
 
 - Added a manual workflow run that builds the release matrix, checks archive checksums, and uploads a dry-run artifact without creating a GitHub Release.
 - Aligned shared GitHub Actions versions between CI and release workflows and updated the README's download link.
-- All six PR #15 CI jobs passed. Dry run 35921227203 exposed the source archive checksum path issue, fixed in PR #31. Run 35924524457 passed checksums for all six platform archives and the source archive, then failed because expected-archive validation did not normalize CRLF from Windows manifests. The verifier fix is in review; no release was created.
+- PR #32 fixed CRLF handling in expected-archive verification. Successful dry run [35925902083](https://github.com/ajbergh/yt-dl-go/actions/runs/35925902083) passed source validation, all six platform builds, all archive checksums, manifest generation and attestation, and uploaded seven artifacts, including `release-dry-run-v0.1.0` (77.5 MB). The GitHub Release step was skipped and no release or tag was created. Select the actual release version and cut the tag after the remaining release prerequisites are complete.
 
 ### M9.1 community and governance docs
 
@@ -1164,7 +1164,7 @@ v2 adds:
 - M0.5 is implemented on `fix/dev-only-origins`, stacked on M0.3. Production defaults omit the Vite origins; the `dev` build tag restores them for local development. Release and dev policy tests, the full Go suite, and vet pass.
 - Both CI validation runs passed all six jobs: stacked stabilization at `8291aa0` on `roadmap/validate-stabilization`, and independent 4K capture at `de754d7` on `roadmap/validate-4k`.
 - After GitHub CLI reauthentication, PR #10 consolidated and squash merged the stacked fixes as `287928e`. PR #11 updated the 4K branch onto that result, passed all six PR CI jobs, and squash merged as `677c59e`.
-- M0.6 implementation is complete: MIT, linked Go and bundled npm notices, license texts, and LGPL source/relink materials are included. Tagged source-package validation remains pending successful M8.1 dry-run completion.
+- M0.6 implementation is complete: MIT, linked Go and bundled npm notices, license texts, and LGPL source/relink materials are included. Dispatch dry-run source-package validation passed; tagged source-package validation remains pending a release tag.
 
 ### Roadmap v2 created
 
