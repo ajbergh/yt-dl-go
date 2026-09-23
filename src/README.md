@@ -1,8 +1,8 @@
 # Frontend guide
 
-The React/Vite application is embedded in and served by the Windows executable. It automatically connects to that executable's Go API to inspect YouTube links, submit jobs, follow progress, manage SQLite-backed preferences and retrieve finalized files through short-lived download tickets.
+The React/Vite application is embedded in and served by the platform executable. It automatically connects to that executable's Go API to inspect YouTube links, submit jobs, follow progress, manage SQLite-backed preferences and retrieve finalized files through short-lived download tickets.
 
-The Go server can host this interface itself, so end users normally run only `youtube-downloader.exe` and visit `http://127.0.0.1:8080`. A standalone Vite server is useful only while developing the UI.
+The Go server can host this interface itself, so end users normally run the release executable for their platform and visit `http://127.0.0.1:8080`. A standalone Vite server is useful only while developing the UI.
 
 ## Develop
 
