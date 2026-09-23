@@ -1,0 +1,43 @@
+name: Bug report
+description: Report a reproducible problem with yt-dl-go
+title: "bug: "
+body:
+  - type: markdown
+    attributes:
+      value: For suspected security vulnerabilities, follow [SECURITY.md](https://github.com/ajbergh/yt-dl-go/blob/main/SECURITY.md) instead of filing a public issue. Do not include API tokens, download-ticket URLs, signed media URLs, cookies, or private media.
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Include the version shown by `youtube-downloader --version` or the commit if using a development build.
+      placeholder: v0.1.0 or dev / commit SHA
+    validations:
+      required: true
+  - type: input
+    id: platform
+    attributes:
+      label: Operating system and architecture
+      placeholder: Windows 11, amd64
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Provide a minimal sequence. Use a public URL only if it is necessary and safe to share.
+      placeholder: 1. Open…
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: Remove credentials, ticket links, signed URLs, and personal data from logs before pasting them.
+    validations:
+      required: true

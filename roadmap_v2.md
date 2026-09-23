@@ -993,17 +993,17 @@ The v1 P2.3 gates still apply: checksum plus signature/provenance verification, 
 
 ### M9.1 Community and governance docs
 
-**Status:** [ ] · **P1** · **Area:** docs
+**Status:** [~] Security/contribution guidance and templates added; changelog pending M8.7 · **P1** · **Area:** docs
 
 #### Scope
 
-Add:
+- [x] Add `LICENSE` (M0.6).
+- [x] Add `SECURITY.md` with private vulnerability reporting guidance and the local API token/ticket model.
+- [x] Add `CONTRIBUTING.md` with setup, npm/Bun roles, CI checks, and contribution guidance.
+- [ ] Add `CHANGELOG.md` with M8.7 release automation.
+- [x] Add bug, feature-request, and pull-request templates.
 
-- `LICENSE` (M0.6);
-- `SECURITY.md`, covering how to report issues in the local HTTP API and the token/ticket model;
-- `CONTRIBUTING.md`, covering setup, the single package manager, test commands, and commit conventions;
-- `CHANGELOG.md` (M8.7);
-- issue and PR templates.
+**Progress (2026-09-23):** Implemented on `roadmap/m9-1-governance-docs`; the changelog remains tied to M8.7 so it can be generated from the release history.
 
 ### M9.2 Architecture and troubleshooting docs
 
@@ -1133,6 +1133,15 @@ v2 adds:
 - Added a manual workflow run that builds the release matrix, checks archive checksums, and uploads a dry-run artifact without creating a GitHub Release.
 - Aligned shared GitHub Actions versions between CI and release workflows and updated the README's download link.
 - All six PR #15 CI jobs passed. Manual dispatch was not available through the connected GitHub tools or browser in this session; release-specific runtime validation remains pending.
+
+### M9.1 community and governance docs
+
+**Status:** [~] Guidance and templates added; changelog pending M8.7
+
+- Added `SECURITY.md` with private vulnerability reporting guidance and the app's local API/token/ticket security boundaries.
+- Added `CONTRIBUTING.md` with the npm/Bun setup distinction, developer commands, CI gates, and pull request guidance.
+- Added bug-report, feature-request, and pull-request templates that steer security issues away from public disclosure and remind reporters to redact secrets.
+- The `CHANGELOG.md` remains deferred to M8.7 release automation.
 
 ### Stabilization branches and 4K retest
 
