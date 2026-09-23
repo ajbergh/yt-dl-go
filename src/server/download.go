@@ -138,7 +138,9 @@ func (s *server) download(w http.ResponseWriter, r *http.Request) {
 			_ = sidecar.Close()
 		}
 	}
-	_ = http.NewResponseController(w).SetWriteDeadline(time.Now().Add(s.cfg.timeout))
+	if s.cfg.timeout > 0 {
+		_ = http.NewResponseController(w).SetWriteDeadline(time.Now().Add(s.cfg.timeout))
+	}
 	if t.fileID != "" {
 		f, err := openFinal(j.dir, files[0].Name)
 		if err != nil {

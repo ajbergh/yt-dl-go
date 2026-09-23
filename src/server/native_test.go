@@ -451,6 +451,120 @@ func TestHardStorageLimitAndEOF(t *testing.T) {
 	assertFinalFiles(t, s2, failed)
 }
 
+func TestIdleDeadlineReaderReturnsRetryableReadError(t *testing.T) {
+	reader, _ := io.Pipe()
+	started := time.Now()
+	var output bytes.Buffer
+	_, err := copyStream(context.Background(), &output, idleDeadlineReader{
+		reader: reader, timeout: 25 * time.Millisecond, onIdle: func() { _ = reader.Close() },
+	}, 1024, 0, func(int64) {})
+	if !errors.Is(err, errRead) {
+		t.Fatalf("stalled stream error = %v, want errRead", err)
+	}
+	if elapsed := time.Since(started); elapsed > time.Second {
+		t.Fatalf("idle read took %s, want under 1s", elapsed)
+	}
+}
+
+func TestIdleDeadlineReaderPreservesParentCancellation(t *testing.T) {
+	reader, _ := io.Pipe()
+	ctx, cancel := context.WithCancel(context.Background())
+	stopClose := context.AfterFunc(ctx, func() { _ = reader.CloseWithError(ctx.Err()) })
+	defer stopClose()
+	defer cancel()
+	time.AfterFunc(25*time.Millisecond, cancel)
+	_, err := copyStream(ctx, io.Discard, idleDeadlineReader{
+		reader: reader, timeout: time.Second, onIdle: func() { _ = reader.Close() },
+	}, 1024, 0, func(int64) {})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancelled read error = %v, want context.Canceled", err)
+	}
+}
+
+func TestItemTransferTimeoutScalesForLargeAndLongMedia(t *testing.T) {
+	if got := itemTransferTimeout(&youtube.Video{}, 1, 0); got != minimumItemTimeout {
+		t.Fatalf("minimum item timeout = %s, want %s", got, minimumItemTimeout)
+	}
+	large := &youtube.Video{Duration: 2 * time.Hour}
+	if got := itemTransferTimeout(large, 1<<30, 512*1024); got < 8*time.Hour {
+		t.Fatalf("large long-form item timeout = %s, want at least 8h", got)
+	}
+	throttled := itemTransferTimeout(&youtube.Video{}, 1<<30, 128*1024)
+	unlimited := itemTransferTimeout(&youtube.Video{}, 1<<30, 0)
+	if throttled <= unlimited {
+		t.Fatalf("throttled item timeout = %s, unlimited = %s; want longer allowance", throttled, unlimited)
+	}
+	if got := itemTransferTimeout(&youtube.Video{}, 1<<62, 1); got != maximumItemTimeout {
+		t.Fatalf("bounded item timeout = %s, want %s", got, maximumItemTimeout)
+	}
+}
+
+func TestAdaptiveRangeRetryDelayIsExponentialAndBounded(t *testing.T) {
+	for retry := 1; retry <= 3; retry++ {
+		base := 250 * time.Millisecond * time.Duration(1<<(retry-1))
+		got := adaptiveRangeRetryDelay(retry)
+		if got < base || got >= 2*base {
+			t.Fatalf("retry %d delay = %s, want in [%s, %s)", retry, got, base, 2*base)
+		}
+	}
+}
+
+func TestNewJobContextMakesOverallTimeoutOptional(t *testing.T) {
+	ctx, cancel := newJobContext(context.Background(), 0)
+	defer cancel()
+	if _, hasDeadline := ctx.Deadline(); hasDeadline {
+		t.Fatal("job context has an overall deadline when JOB_TIMEOUT is disabled")
+	}
+
+	ctx, cancel = newJobContext(context.Background(), time.Second)
+	defer cancel()
+	if _, hasDeadline := ctx.Deadline(); !hasDeadline {
+		t.Fatal("job context omitted the configured overall cap")
+	}
+}
+
+func TestItemDeadlineErrorPreservesCancellation(t *testing.T) {
+	parent, cancelParent := context.WithCancel(context.Background())
+	item, cancelItem := context.WithDeadline(parent, time.Now().Add(-time.Second))
+	defer cancelItem()
+	if got := itemDeadlineError(parent, item, context.DeadlineExceeded); !errors.Is(got, errItemTimeout) {
+		t.Fatalf("item deadline error = %v, want errItemTimeout", got)
+	}
+	cancelParent()
+	if got := itemDeadlineError(parent, item, context.DeadlineExceeded); !errors.Is(got, context.Canceled) {
+		t.Fatalf("parent cancellation error = %v, want context.Canceled", got)
+	}
+}
+
+func TestOptionalJobTimeoutConfig(t *testing.T) {
+	for _, key := range []string{"ADDR", "API_TOKEN", "ALLOWED_HOSTS", "ALLOWED_ORIGINS", "MAX_JOBS", "MAX_JOB_BYTES", "JOB_TIMEOUT", "RETENTION"} {
+		t.Setenv(key, "")
+	}
+	for _, entry := range []struct {
+		value   string
+		want    time.Duration
+		wantErr bool
+	}{
+		{value: "", want: 0},
+		{value: "none", want: 0},
+		{value: "0", want: 0},
+		{value: "2h", want: 2 * time.Hour},
+		{value: "500ms", wantErr: true},
+		{value: "-1h", wantErr: true},
+		{value: "invalid", wantErr: true},
+	} {
+		t.Setenv("JOB_TIMEOUT", entry.value)
+		config, err := loadConfig()
+		if entry.wantErr {
+			if err == nil {
+				t.Fatalf("JOB_TIMEOUT=%q accepted", entry.value)
+			}
+		} else if err != nil || config.timeout != entry.want {
+			t.Fatalf("JOB_TIMEOUT=%q parsed as %s, error=%v; want %s", entry.value, config.timeout, err, entry.want)
+		}
+	}
+}
+
 func TestCancellationQueueAndTimeout(t *testing.T) {
 	stream := &blockedStream{closed: make(chan struct{}), entered: make(chan struct{}), prefix: []byte("partial")}
 	fake := fixtureClient(2)
