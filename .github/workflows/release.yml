@@ -6,9 +6,7 @@ on:
       - "v*.*.*"
 
 permissions:
-  contents: write
-  id-token: write
-  attestations: write
+  contents: read
 
 concurrency:
   group: release-${{ github.ref }}
@@ -19,6 +17,8 @@ jobs:
     name: Validate release source
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    permissions:
+      contents: read
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
@@ -77,8 +77,16 @@ jobs:
   windows:
     name: Windows release package
     needs: validate
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [amd64, arm64]
     runs-on: windows-latest
     timeout-minutes: 30
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
@@ -103,17 +111,20 @@ jobs:
         run: |
           "VERSION=${{ github.ref_name }}" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
           "COMMIT=${{ github.sha }}" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
-          $buildDate = (git show -s --format=%cI "${{ github.sha }}").Trim()
+          $commitDate = [DateTimeOffset]::Parse((git show -s --format=%cI "${{ github.sha }}").Trim()).ToUniversalTime()
+          $buildDate = $commitDate.ToString("yyyy-MM-dd'T'HH:mm:ss'Z'")
           "BUILD_DATE=$buildDate" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
       - name: Build Windows executable
         shell: pwsh
+        env:
+          TARGET_ARCH: ${{ matrix.arch }}
         run: ./scripts/build-windows.ps1 -OutputPath dist/release/youtube-downloader.exe
 
       - name: Detect Windows architecture
         id: platform
         shell: pwsh
-        run: '"arch=$(go env GOARCH)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8'
+        run: '"arch=${{ matrix.arch }}" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8'
 
       - name: Package Windows executable
         shell: pwsh
@@ -124,6 +135,10 @@ jobs:
         with:
           subject-path: dist/release/youtube-downloader-windows-${{ steps.platform.outputs.arch }}.zip
 
+      - name: Record expected archive
+        shell: pwsh
+        run: '"youtube-downloader-windows-${{ steps.platform.outputs.arch }}.zip" | Set-Content -Path "dist/release/expected-windows-${{ steps.platform.outputs.arch }}.txt" -Encoding ascii'
+
       - name: Upload Windows release package
         uses: actions/upload-artifact@v7
         with:
@@ -131,6 +146,7 @@ jobs:
           path: |
             dist/release/youtube-downloader-windows-${{ steps.platform.outputs.arch }}.zip
             dist/release/youtube-downloader-windows-${{ steps.platform.outputs.arch }}.zip.sha256
+            dist/release/expected-windows-${{ steps.platform.outputs.arch }}.txt
           if-no-files-found: error
           retention-days: 7
 
@@ -159,6 +175,10 @@ jobs:
             label: macOS arm64
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 35
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
@@ -183,7 +203,9 @@ jobs:
         run: |
           echo "VERSION=${GITHUB_REF_NAME}" >> "$GITHUB_ENV"
           echo "COMMIT=${GITHUB_SHA}" >> "$GITHUB_ENV"
-          echo "BUILD_DATE=$(git show -s --format=%cI "${GITHUB_SHA}")" >> "$GITHUB_ENV"
+          commit_date="$(git show -s --format=%cI "${GITHUB_SHA}")"
+          build_date="$(node -e 'const date = new Date(process.argv[1]); if (Number.isNaN(date.getTime())) process.exit(1); console.log(date.toISOString().replace(/\.\d{3}Z$/, "Z"))' "$commit_date")"
+          echo "BUILD_DATE=$build_date" >> "$GITHUB_ENV"
 
       - name: Build and package ${{ matrix.label }}
         shell: bash
@@ -197,6 +219,10 @@ jobs:
         with:
           subject-path: dist/release/youtube-downloader-${{ matrix.target }}-${{ matrix.arch }}.tar.gz
 
+      - name: Record expected archive
+        shell: bash
+        run: echo "youtube-downloader-${{ matrix.target }}-${{ matrix.arch }}.tar.gz" > "dist/release/expected-${{ matrix.target }}-${{ matrix.arch }}.txt"
+
       - name: Upload ${{ matrix.label }} release package
         uses: actions/upload-artifact@v7
         with:
@@ -204,6 +230,7 @@ jobs:
           path: |
             dist/release/youtube-downloader-${{ matrix.target }}-${{ matrix.arch }}.tar.gz
             dist/release/youtube-downloader-${{ matrix.target }}-${{ matrix.arch }}.tar.gz.sha256
+            dist/release/expected-${{ matrix.target }}-${{ matrix.arch }}.txt
           if-no-files-found: error
           retention-days: 7
 
@@ -214,6 +241,10 @@ jobs:
       - unix
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
@@ -232,8 +263,16 @@ jobs:
           for checksum in *.sha256; do
             sha256sum -c "$checksum"
           done
+          expected_count="$(cat expected-*.txt | wc -l)"
+          actual_count="$(find . -maxdepth 1 -type f \( -name '*.zip' -o -name '*.tar.gz' \) | wc -l)"
+          if [[ "$expected_count" -eq 0 || "$actual_count" -ne "$expected_count" ]]; then
+            echo "Expected $expected_count release archives from build matrix, found $actual_count." >&2
+            exit 1
+          fi
+          while IFS= read -r archive; do
+            test -f "$archive"
+          done < <(cat expected-*.txt)
           sha256sum *.zip *.tar.gz | sort > SHA256SUMS.txt
-          test "$(wc -l < SHA256SUMS.txt)" -eq 5
 
       - name: Attest release checksum manifest
         uses: actions/attest-build-provenance@v4.2.2
@@ -254,3 +293,4 @@ jobs:
             dist/release/*.tar.gz \
             dist/release/*.sha256 \
             dist/release/SHA256SUMS.txt
+

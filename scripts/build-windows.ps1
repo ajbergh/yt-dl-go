@@ -80,6 +80,10 @@ try {
     $version = if ([string]::IsNullOrWhiteSpace($env:VERSION)) { 'dev' } else { $env:VERSION.Trim() }
     $commit = if ([string]::IsNullOrWhiteSpace($env:COMMIT)) { 'unknown' } else { $env:COMMIT.Trim() }
     $buildDate = if ([string]::IsNullOrWhiteSpace($env:BUILD_DATE)) { 'unknown' } else { $env:BUILD_DATE.Trim() }
+    $targetArch = if ([string]::IsNullOrWhiteSpace($env:TARGET_ARCH)) { '' } else { $env:TARGET_ARCH.Trim() }
+    if ($targetArch -and $targetArch -notin @('amd64', 'arm64')) {
+        throw "TARGET_ARCH must be amd64 or arm64: $targetArch"
+    }
     foreach ($metadataValue in @($version, $commit, $buildDate)) {
         if ($metadataValue -notmatch '^[A-Za-z0-9:._+\-]+$') {
             throw "VERSION, COMMIT, and BUILD_DATE must contain only release-metadata-safe characters: $metadataValue"
@@ -100,6 +104,9 @@ try {
         Write-Host 'Running Go tests...' -ForegroundColor Cyan
         Invoke-Native 'go' @('test', './...')
 
+        if ($targetArch) {
+            $env:GOARCH = $targetArch
+        }
         New-Item -ItemType Directory -Path $outputDirectory -Force | Out-Null
         Write-Host "Building $OutputPath..." -ForegroundColor Cyan
         Invoke-Native 'go' @(
@@ -127,3 +134,4 @@ try {
 } finally {
     Set-Location $originalLocation
 }
+
