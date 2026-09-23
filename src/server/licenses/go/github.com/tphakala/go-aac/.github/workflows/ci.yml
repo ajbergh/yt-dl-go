@@ -1,0 +1,385 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  GO_VERSION: '1.26'
+  # Pinned to match the local toolchain (golangci-lint 2.12.2) so the git
+  # hooks, `task lint`, and CI all run the identical linter version.
+  GOLANGCI_LINT_VERSION: 'v2.12.2'
+  # The differential and PSNR gates are only meaningful against FFmpeg built
+  # from this exact commit. A distro ffmpeg predates the NMR coder this port
+  # targets and is not a valid oracle. Keep in sync with PROVENANCE.md.
+  FFMPEG_COMMIT: 'd09d5afc3aebede25d2d245ee23b75a47ea17c3a'
+  # The rest of the oracle recipe. A source commit alone underspecifies the
+  # oracle: the compiler's floating point contraction default decides whether
+  # the intensity-stereo energy accumulation in libavcodec/aacenc_is.c fuses
+  # its multiply-adds, and that moves the stereo reference the PSNR gates
+  # compare against. GCC in `-std=c17` mode picks ISO behaviour (off), Apple
+  # clang picks on, so an unpinned build means the reference depends on who
+  # built it. Every committed C fixture was generated contraction-off, so off
+  # is the semantics this port reproduces. See issue #15 and PROVENANCE.md.
+  # --disable-programs --enable-ffmpeg only skips ffprobe/ffplay, which the
+  # gates never invoke; it does not change libav* behaviour.
+  FFMPEG_CONFIGURE_FLAGS: >-
+    --disable-doc
+    --disable-network
+    --disable-autodetect
+    --disable-programs
+    --enable-ffmpeg
+    --extra-cflags=-ffp-contract=off
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Test
+    runs-on: ${{ matrix.os }}
+    # GOFLAGS applies -count=1 and -timeout=20m to every `go test` in this job,
+    # stated once here rather than repeated per step (a flag in GOFLAGS is
+    # applied only to a command that knows it, so `go mod download` and setup-go's
+    # own `go env` ignore both). -count=1 defeats actions/setup-go's restored test
+    # cache, which is keyed on go.mod rather than the commit: without it a step can
+    # serve a cached ok having run no tests, on a re-run against an unchanged SHA
+    # or any later push whose Go inputs are unchanged, such as a docs-only or
+    # workflow-only commit (issue #94). -timeout=20m overrides Go's 10-minute
+    # per-binary default; the root race binary with the edge-config soak is the
+    # long pole, and blowing the default surfaces as a panic that reads like a
+    # hang rather than a slow runner (issue #62). Stating it once is also what
+    # keeps the steps from drifting apart, which is how some of them lost the
+    # flags before.
+    env:
+      GOFLAGS: "-count=1 -timeout=20m"
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Download dependencies
+        run: go mod download
+
+      - name: Run tests
+        if: matrix.os != 'ubuntu-latest'
+        run: go test -race ./...
+
+      - name: Run tests with coverage
+        if: matrix.os == 'ubuntu-latest'
+        run: go test -race -coverprofile=coverage.out -covermode=atomic ./...
+
+      - name: Upload coverage to Codecov
+        if: matrix.os == 'ubuntu-latest'
+        uses: codecov/codecov-action@v7
+        with:
+          files: coverage.out
+          fail_ci_if_error: false
+
+      # The default build (tested above) links the f32.MinIdxOfSumRows trellis
+      # kernel, the f32.AbsPow34 magnitude kernel, and the f32 QuantizeBands
+      # quantizer. The noasm build is the pure-Go fallback with no linked
+      # assembly; its scalar kernels are byte-identical but must be tested on
+      # every arch this matrix covers or they can rot unnoticed.
+      - name: Run tests (noasm)
+        run: go test -race -tags noasm ./...
+
+      # The non-race pass. Until this step existed, the ONLY non-race lane was
+      # the differential-oracle job, which is ubuntu-latest, so every test whose
+      # coverage differs between the two builds ran on amd64 alone. Three of
+      # those differences matter: TestEncoderEdgeConfigSoak drops its two
+      # in-range bitrate points under -race (edge_soak_race_test.go),
+      # TestEncoderToolWiring is skipped there outright, and pcm's
+      # TestEncodeInterleavedReuseAllocs drops its zero-allocation bound to an
+      # unenforced sentinel (pcm/raceflag_race_test.go). Only the tool-wiring
+      # gate had never run at all on arm64 or Windows; the other two ran there
+      # in reduced form, so what was missing is the extra bitrate points and the
+      # enforced allocation bound.
+      #
+      # It runs the whole suite rather than a -run filter naming those tests,
+      # because a hand-maintained filter drifts: the next test that shortens
+      # under -race would silently miss this lane again. Measured at about 20 s,
+      # against roughly 2 minutes for the race lane it sits beside.
+      #
+      # On ubuntu this overlaps the oracle job's first pass, which runs the same
+      # suite with the oracle env and so covers strictly more (it differs only in
+      # lacking the -timeout this job sets via GOFLAGS). That overlap is deliberate rather than an
+      # oversight: the oracle job can fail while
+      # building FFmpeg, for reasons that have nothing to do with the suite, and
+      # this step is what keeps a non-race regression visible when it does.
+      - name: Run tests (no race)
+        run: go test ./...
+
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # Lint each build separately; a build's tagged files are only compiled,
+        # and so only linted, under that build. race is here because
+        # edge_soak_race_test.go and pcm/raceflag_race_test.go are invisible to
+        # both other legs: nothing else in CI ever compiles them with a linter
+        # attached, since the race test steps run the compiler, not golangci-lint.
+        tags: ['', 'noasm', 'race']
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version: ${{ env.GO_VERSION }}
+      - name: Run golangci-lint
+        uses: golangci/golangci-lint-action@v9
+        with:
+          version: ${{ env.GOLANGCI_LINT_VERSION }}
+          args: ${{ matrix.tags != '' && format('--build-tags {0}', matrix.tags) || '' }}
+
+  vet:
+    name: Vet
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        goarch: [amd64, arm64]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version: ${{ env.GO_VERSION }}
+      - name: Run go vet
+        env:
+          GOARCH: ${{ matrix.goarch }}
+        run: go vet ./...
+
+      - name: Run go vet (noasm)
+        env:
+          GOARCH: ${{ matrix.goarch }}
+        run: go vet -tags noasm ./...
+
+      # Same reason as the lint job's race leg: without this, the race-tagged
+      # files are never vetted at all.
+      - name: Run go vet (race)
+        env:
+          GOARCH: ${{ matrix.goarch }}
+        run: go vet -tags race ./...
+
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        goos: [linux, darwin, windows]
+        goarch: [amd64, arm64]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version: ${{ env.GO_VERSION }}
+      - name: Build
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: go build ./...
+
+      - name: Build (noasm)
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: go build -tags noasm ./...
+
+  fuzz:
+    name: Fuzz smoke
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version: ${{ env.GO_VERSION }}
+      # A short bounded run of each decode-path fuzz target on every build.
+      # Any crash a run finds is committed under testdata/fuzz as a regression
+      # seed, so the corpus grows monotonically. These are smoke runs, not a
+      # substitute for a long local fuzz session.
+      #
+      # Each target runs through scripts/fuzz-smoke.sh, which tolerates a bare
+      # `-fuzztime` deadline expiry on a slow/loaded runner (issue #62) while
+      # still failing on a real crasher (a written reproducer under
+      # testdata/fuzz/). Args: <FuzzTarget> <pkg> <fuzztime-seconds>.
+      - name: Fuzz ADTS parser
+        run: scripts/fuzz-smoke.sh FuzzParseADTS ./internal/dec/ 20
+      - name: Fuzz ASC parser
+        run: scripts/fuzz-smoke.sh FuzzParseASC ./internal/dec/ 15
+      - name: Fuzz frame decode
+        run: scripts/fuzz-smoke.sh FuzzDecodeFrame ./internal/dec/ 20
+      - name: Fuzz public stream decode
+        run: scripts/fuzz-smoke.sh FuzzDecodeStream ./pcm/ 20
+
+      # The SIMD trellis kernel (default build) against the naive
+      # C-transcription reference: random shapes the fixed grid only samples,
+      # asserting bit-identical output and never-panic.
+      - name: Fuzz SIMD trellis differential
+        run: scripts/fuzz-smoke.sh FuzzNMRTrellisStep ./internal/coder/ 20
+      # The SIMD AbsPow34 kernel (default build) against the scalar reference it must match.
+      - name: Fuzz SIMD AbsPow34 differential
+        run: scripts/fuzz-smoke.sh FuzzAbsPow34Equiv ./internal/dsp/ 20
+      # The SIMD QuantizeBands kernel (default build) against the scalar reference it must match.
+      - name: Fuzz SIMD QuantizeBands differential
+        run: scripts/fuzz-smoke.sh FuzzQuantizeBandsEquiv ./internal/dsp/ 20
+
+  # The differential/PSNR gates are the only check that can tell a correct
+  # encoder from a plausible-but-wrong one; PSNR alone cannot see a misported
+  # psy constant or a drifting bit reservoir. Without this job they skip on CI
+  # and still print ok, so a broken encoder can be fully green (it happened: a
+  # bad rate-control guard failed every 128k encode past 15 green checks).
+  oracle:
+    name: Differential oracle gate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          # This job builds FFmpeg from source, so external build scripts run
+          # in this workspace. Do not leave a credential in the git config
+          # while they execute.
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      # The cache key has to cover the whole recipe, not just the source
+      # commit, because the compiler flags are part of what the oracle is (see
+      # FFMPEG_CONFIGURE_FLAGS above). A key that named only the commit would
+      # serve a warm cache after a flag change, so the flags would look applied
+      # while the gates kept running against the old binary. Hashing the flags
+      # in means any future edit to them busts the cache on its own, with no
+      # version number for anyone to remember to bump.
+      - name: Derive the oracle cache key
+        id: oracle-key
+        run: |
+          set -euo pipefail
+          recipe=$(printf '%s\n%s\n' "$FFMPEG_COMMIT" "$FFMPEG_CONFIGURE_FLAGS" |
+                   sha256sum | cut -c1-16)
+          printf 'recipe=%s\n' "$recipe" >> "$GITHUB_OUTPUT"
+
+      - name: Restore pinned FFmpeg
+        id: ffmpeg-cache
+        uses: actions/cache@v6
+        with:
+          path: ~/ffmpeg-oracle
+          # Keyed on the pin AND the configure flags, so the build happens once
+          # and any change to either builds a fresh oracle instead of reusing a
+          # stale one.
+          key: ffmpeg-oracle-${{ runner.os }}-${{ env.FFMPEG_COMMIT }}-${{ steps.oracle-key.outputs.recipe }}
+
+      - name: Build pinned FFmpeg
+        if: steps.ffmpeg-cache.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y nasm
+          git init ffmpeg-src
+          cd ffmpeg-src
+          git remote add origin https://github.com/FFmpeg/FFmpeg.git
+          git fetch --depth 1 origin "$FFMPEG_COMMIT"
+          git checkout FETCH_HEAD
+          # Refuse to build anything other than the pin.
+          test "$(git rev-parse HEAD)" = "$FFMPEG_COMMIT"
+          # Same flags as the validated local oracle, taken from the same env
+          # var the cache key hashes, so the key and the build cannot drift
+          # apart. Unquoted on purpose: the flags are meant to word-split.
+          # shellcheck disable=SC2086
+          ./configure $FFMPEG_CONFIGURE_FLAGS
+          make -j"$(nproc)"
+          mkdir -p ~/ffmpeg-oracle
+          cp ffmpeg ~/ffmpeg-oracle/ffmpeg
+
+      - name: Verify the oracle provides what the gates need
+        # Each consumer drains its stream. Under pipefail an early-closing
+        # consumer (head -1, grep -q) can kill ffmpeg with SIGPIPE and fail the
+        # step even though the oracle is fine, so use sed -n '1p' and a plain
+        # grep redirected to /dev/null instead.
+        run: |
+          set -euo pipefail
+          ~/ffmpeg-oracle/ffmpeg -hide_banner -version | sed -n '1p'
+          ~/ffmpeg-oracle/ffmpeg -hide_banner -decoders | grep -w aac_fixed >/dev/null
+          ~/ffmpeg-oracle/ffmpeg -hide_banner -encoders | grep -w aac >/dev/null
+          # Contraction off is part of the pin, not an optional extra: with it
+          # on, the compiler fuses the intensity-stereo energy accumulation in
+          # libavcodec/aacenc_is.c and the C reference the stereo PSNR cells
+          # compare against moves by about 0.4 dB. -buildconf echoes the
+          # configure line, so assert the flag reached this binary rather than
+          # trusting that the cache key did its job.
+          ~/ffmpeg-oracle/ffmpeg -hide_banner -buildconf |
+            grep -F -- '-ffp-contract=off' >/dev/null
+
+      - name: Run the differential and PSNR gates
+        # GOAAC_REQUIRE_ORACLE turns a missing oracle into a failure instead of
+        # a skip. Without it this job could silently degrade to the very bug it
+        # closes. -count=1 because setup-go restores the Go test cache, and a
+        # cached ok would otherwise satisfy the gate without running it. The
+        # default run gates the SIMD trellis and AbsPow34 kernels byte-identical
+        # against the oracle (not merely transitively through the scalar), on
+        # the AVX2 path this runner provides, so the SIMD build cannot drift.
+        # The noasm run gates the pure-Go scalar path against the same oracle.
+        run: |
+          GOAAC_FFMPEG="$HOME/ffmpeg-oracle/ffmpeg" \
+          GOAAC_REQUIRE_ORACLE=1 \
+            go test -count=1 ./...
+          GOAAC_FFMPEG="$HOME/ffmpeg-oracle/ffmpeg" \
+          GOAAC_REQUIRE_ORACLE=1 \
+            go test -count=1 -tags noasm ./...
+          # The third build state: SIMD compiled IN, but selected OFF at
+          # runtime. This is what a pre-AVX2 amd64 host runs, and neither pass
+          # above reaches it. The default pass takes the vectorised path, and
+          # -tags noasm compiles the dispatch out entirely and links no simd
+          # code, so it exercises this package's own scalar files rather than
+          # the fallback loops inside the simd dependency that such a host would
+          # actually execute. SIMD_DISABLE=all masks the detected features
+          # (github.com/tphakala/simd cpu/cpu_amd64.go), so this pass gates that
+          # path against the same oracle, and TestEncoderArchDeterminism's
+          # SHA-256 goldens against the same bytes.
+          #
+          # TestSIMDDisableEnvIsHonoured asserts the masking really happened, so
+          # this cannot decay into a third copy of the default pass if the
+          # dependency ever drops the variable.
+          SIMD_DISABLE=all \
+          GOAAC_FFMPEG="$HOME/ffmpeg-oracle/ffmpeg" \
+          GOAAC_REQUIRE_ORACLE=1 \
+            go test -count=1 ./...
+
+      # The pass above is only worth running if the masking actually happened,
+      # and TestSIMDDisableEnvIsHonoured SKIPS when it did not. A skip keeps the
+      # step green, so deleting the SIMD_DISABLE line above would silently turn
+      # that pass into a third copy of the default one with nothing to say so.
+      # This requires a PASS specifically, which a skip cannot satisfy.
+      - name: Prove the SIMD fallback lane actually masked the features
+        run: |
+          set -euo pipefail
+          # tee to a file and grep the FILE, not the pipe. `grep -q` exits on its
+          # first match, which would SIGPIPE the upstream tee and, under
+          # pipefail, fail this step with 141 on exactly the runs that should
+          # pass. Measured here: the pipe form exited 141 on 8 of 10 runs that
+          # should have passed.
+          SIMD_DISABLE=all go test -count=1 -v -run TestSIMDDisableEnvIsHonoured ./ |
+            tee "$RUNNER_TEMP/simd-guard.log"
+          grep -q '^--- PASS: TestSIMDDisableEnvIsHonoured' "$RUNNER_TEMP/simd-guard.log"

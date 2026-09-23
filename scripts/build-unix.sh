@@ -101,7 +101,9 @@ trap 'rm -rf "$stage"' EXIT
 mkdir -p "$stage/$archive_base"
 cp "$output" "$stage/$archive_base/youtube-downloader"
 cp "$repo_root/README.md" "$stage/$archive_base/README.md"
+cp "$repo_root/LICENSE" "$stage/$archive_base/LICENSE"
 cp "$server_dir/THIRD_PARTY_NOTICES.md" "$stage/$archive_base/THIRD_PARTY_NOTICES.md"
+cp "$server_dir/LGPL_RELINKING.md" "$stage/$archive_base/LGPL_RELINKING.md"
 cp -R "$server_dir/licenses" "$stage/$archive_base/licenses"
 
 tar -czf "$archive" -C "$stage" "$archive_base"

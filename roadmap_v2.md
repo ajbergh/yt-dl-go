@@ -20,7 +20,7 @@ The Milestone 0 fixes below were consolidated from the stacked source branches a
 | M0.5 dev-only origins | `fix/dev-only-origins` / `8291aa0` | Merged by #10; release and dev origin checks pass. |
 | 4K adaptive capture | `fix/4k-browser-representation` / `de754d7` | Merged by #11; the reported URL completed at 2160p with audio in a 2,335,115,476-byte WebM. |
 
-All six jobs passed in [PR #10 CI](https://github.com/ajbergh/yt-dl-go/actions/runs/35870589146) and in [PR #11 CI after updating onto the merged stabilization commit](https://github.com/ajbergh/yt-dl-go/actions/runs/35871657223). The owner selected MIT for M0.6; dependency notice generation and LGPL source/relink packaging remain open.
+All six jobs passed in [PR #10 CI](https://github.com/ajbergh/yt-dl-go/actions/runs/35870589146) and in [PR #11 CI after updating onto the merged stabilization commit](https://github.com/ajbergh/yt-dl-go/actions/runs/35871657223). The owner selected MIT for M0.6; implementation is underway on `roadmap/m0-6-license-notices`.
 
 ## Why a v2
 
@@ -146,20 +146,21 @@ The default Vite origins now compile only with `-tags=dev`; release builds allow
 
 ### M0.6 Add a project LICENSE and complete third-party notices
 
-**Status:** [~] MIT selected; implementation pending · **P0** · **Area:** legal
+**Status:** [~] MIT and notices implemented; PR validation pending · **P0** · **Area:** legal
 
-- There is no `LICENSE`, so the project is all-rights-reserved by default. The binary statically links LGPL-2.1 `go-aac`, and `THIRD_PARTY_NOTICES.md:20` promises relink materials that are not provided.
-- `THIRD_PARTY_NOTICES.md` lists 10 modules; `go version -m` shows 31. Missing include goja, regexp2, gobwas/ws, go-json-experiment/json, google/pprof, go-sourcemap, go-simplejson, chromedp/sysutil, go-humanize, go-isatty, go-strftime, bigfft, x/sys, x/text, the modernc libc/mathutil/memory modules, and the Go standard library.
-- MIT/BSD licenses (chromedp, cdproto, sqlite) require the license text to be shipped; today they are only linked.
-- Bundled npm packages are not attributed at all: React, react-router, dnd-kit, lucide (ISC), and the **Geist font (OFL-1.1)**.
+- The root `LICENSE` now applies MIT to the project.
+- Go notices cover the application dependency packages and Go runtime; npm notices cover production dependencies, including the Geist font (OFL-1.1) and lucide (ISC).
+- Complete license texts are packaged under `src/server/licenses/`; the LGPL decoder source and local replacement build instructions are included.
+- Tagged releases now prepare a source archive so users can rebuild against a modified LGPL decoder.
 
 #### Scope
 
-- Choose and add a project license. MIT or Apache-2.0 are compatible with the current dependency set, provided the LGPL obligations are met.
-- Document the LGPL relink path, e.g. publish a source archive plus build instructions with every release.
-- Generate notices in CI (`go-licenses` for Go, `rollup-plugin-license` or `license-checker` for npm) and fail on drift.
+- [x] Choose MIT and add the root project license.
+- [x] Document the LGPL relink path and include a source archive with each release.
+- [x] Generate notices with pinned `go-licenses` and `license-checker` tools in CI; fail when generated files drift.
+- [x] Ship the dependency license texts and LGPL source in release packages.
 
-**Progress (2026-09-23):** The owner selected MIT. Implementation is the next focused branch after the release-workflow hardening PR; bundled dependency notices and LGPL source/relink materials remain open.
+**Progress (2026-09-23):** Implemented on `roadmap/m0-6-license-notices`. Local generation completed for 32 Go/runtime notices and 15 npm production packages. PR CI and tagged source-package validation are pending.
 
 ### M0.7 A fresh clone must build and test
 
@@ -924,7 +925,7 @@ No tests exist for:
 
 ### M8.2 Harden the release workflow
 
-**Status:** [~] · **P1** · **Area:** release / security
+**Status:** [T] Implemented; release dry-run pending · **P1** · **Area:** release / security
 
 - `contents: write` and `id-token: write` are granted at workflow level (`release.yml:8-11`), so the `validate` job, which runs `npm ci` and third-party code, also receives them.
 - The workflow expects exactly 5 archives (`release.yml:236`), so adding a Windows arm64 build will break it.
@@ -932,12 +933,12 @@ No tests exist for:
 
 #### Scope
 
-- Set permissions per job.
-- Derive the expected artifact count from the matrix.
-- Emit UTC timestamps on both Windows and Unix release builders.
-- Add Windows arm64 builds.
+- [x] Set permissions per job.
+- [x] Derive the expected artifact count from per-matrix manifests.
+- [x] Emit UTC timestamps on both Windows and Unix release builders.
+- [x] Add Windows arm64 builds.
 
-**Progress (2026-09-23):** In progress on `roadmap/m8-2-release-hardening`, tracked in [PR #13](https://github.com/ajbergh/yt-dl-go/pull/13). Workflow permissions are scoped by job, Windows packaging builds amd64 and arm64, build timestamps are converted to UTC using portable Windows/Unix tooling, and the publish job validates archives against per-matrix expected-archive manifests. CI validation and PR review are still pending.
+**Progress (2026-09-23):** Merged by [PR #13](https://github.com/ajbergh/yt-dl-go/pull/13) as `db6f845`. Workflow permissions are scoped by job, Windows packaging builds amd64 and arm64, build timestamps are converted to UTC using portable Windows/Unix tooling, and the publish job validates archives against per-matrix expected-archive manifests. All six PR CI jobs passed; a release workflow dry run is still needed to validate the release-specific jobs and Windows ARM64 package.
 
 ### M8.3 SBOM and reproducible archives
 
@@ -1101,14 +1102,14 @@ v2 adds:
 
 ### M8.2 release workflow hardening
 
-**Status:** [~] In progress on `roadmap/m8-2-release-hardening`
+**Status:** [T] Merged by PR #13; release dry-run pending
 
 - Scoped release write and attestation permissions to the jobs that need them.
 - Added Windows amd64/arm64 matrix builds; the Windows build script cross-compiles after running native tests.
 - Converted Windows and Unix build timestamps to UTC using PowerShell and Node.js, including macOS runners.
 - Replaced the fixed five-archive assertion with expected archive manifests from each matrix job.
-- Local tests were not run; PR CI remains the required validation. The GitHub CLI token is invalid, so the PR was opened through the authenticated GitHub connector.
-- The owner selected MIT for M0.6; implementation remains the next focused task after this release-workflow PR. The new release workflow still needs a release dry run for runtime validation.
+- All six PR #13 CI jobs passed. The release workflow is tag-triggered and was not executed, so a dry run remains required for release-specific validation.
+- M0.6 implementation is underway on `roadmap/m0-6-license-notices`. The new release workflow still needs a release dry run for runtime validation.
 
 ### Stabilization branches and 4K retest
 
@@ -1137,4 +1138,3 @@ v2 adds:
   - map-order filename expansion;
   - itag-18 audio in adaptive MP4.
 - Items marked **Investigate** or **(not verified)** need reproduction before work begins.
-

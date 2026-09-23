@@ -1,0 +1,60 @@
+# Build artifacts
+/bin/
+*.exe
+*.test
+*.out
+*.o
+
+# Coverage and profiling
+coverage.out
+coverage.txt
+*.cov
+*.prof
+*.pprof
+
+# Local design and planning notes are not part of the published repo.
+/docs/
+
+# C dump harness (arrives in Phase 0b): binary and scratch fixture output.
+# Committed fixtures live under internal/*/testdata/ and are never ignored.
+tools/cdump/cdump
+tools/cdump/*.f32
+tools/cdump/*.f64
+tools/gentables/gentables
+
+# Decoder reconstruction oracle harness (Phase D2): binary only; the cdec2.c
+# source is committed and the fixtures live under internal/dec/testdata/.
+tools/cdec2/cdec2
+
+# Editor and OS noise
+.DS_Store
+*.swp
+.idea/
+.vscode/
+.serena/
+.claude/
+
+# Local tool cache
+cache/
+
+# Local code-intelligence index
+.codegraph/
+
+# quant fixture harness binary (source and committed fixtures are tracked).
+tools/cquant/cquant
+
+# psy model fixture harness (arrives in Phase 2): binaries and scratch
+# output; committed fixtures live under internal/psy/testdata/.
+tools/cpsy/cpsy
+tools/cpsy/cpsy_neuter
+tools/cnmr/cnmr
+tools/cnmr/cnmrtrace
+tools/ctns/ctns
+tools/ctwoloop/ctwoloop
+tools/corder/corder
+
+# wav2aac benchmark CLI. `go build ./tools/wav2aac` writes the binary to the
+# CWD, not the package dir, so the repo root needs covering too; a stray 2.9 MB
+# ELF reached main this way once already.
+/wav2aac
+tools/wav2aac/wav2aac

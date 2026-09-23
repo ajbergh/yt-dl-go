@@ -43,11 +43,12 @@ The workflow:
 1. checks out the immutable tag;
 2. validates the stable tag format and exact `package.json` version match;
 3. runs frontend type-check/build, Bun tests, Go tests/vet, and real-browser E2E;
-4. builds Windows amd64, Linux amd64/arm64, and macOS amd64/arm64 packages;
+4. builds Windows amd64/arm64, Linux amd64/arm64, and macOS amd64/arm64 packages;
 5. embeds the same version, source commit, and build timestamp into every executable;
-6. verifies per-package SHA-256 checksums and creates `SHA256SUMS.txt`;
-7. creates GitHub/Sigstore build-provenance attestations for every release archive and the checksum manifest;
-8. creates a **draft** GitHub Release containing the generated packages and checksums.
+6. creates a tagged source archive with the LGPL decoder source and relinking guide;
+7. verifies per-package SHA-256 checksums and creates `SHA256SUMS.txt`;
+8. creates GitHub/Sigstore build-provenance attestations for every release archive and the checksum manifest;
+9. creates a **draft** GitHub Release containing the binaries, source archive, and checksums.
 
 The workflow intentionally stops at a draft. This prevents the application's latest-release check from advertising a tag-driven package before a human has completed the publication gate.
 

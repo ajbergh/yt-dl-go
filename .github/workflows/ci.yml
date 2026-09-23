@@ -41,6 +41,15 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci
 
+      - name: Install license scanner tools
+        run: |
+          npm ci --prefix tools/license-checker
+          go install github.com/google/go-licenses/v2@v2.0.1
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+
+      - name: Verify third-party notices and licenses
+        run: npm run licenses:check
+
       - name: Type-check frontend
         run: npm run typecheck
 

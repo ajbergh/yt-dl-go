@@ -11,6 +11,9 @@
     "typecheck": "tsc -p tsconfig.app.json --noEmit",
     "build:check": "node scripts/build-check.mjs",
     "lint": "eslint .",
+    "licenses:generate": "node scripts/generate-npm-notices.mjs",
+    "licenses:generate:go": "node scripts/generate-go-notices.mjs",
+    "licenses:check": "node scripts/check-license-drift.mjs",
     "preview": "vite preview",
     "e2e:browser": "node scripts/browser-e2e.mjs"
   },

@@ -55,9 +55,11 @@ $archiveDirectory = Split-Path -Parent $ArchivePath
 New-Item -ItemType Directory -Path $archiveDirectory -Force | Out-Null
 
 $readme = Join-Path $repoRoot 'README.md'
+$projectLicense = Join-Path $repoRoot 'LICENSE'
 $notices = Join-Path $repoRoot 'src\server\THIRD_PARTY_NOTICES.md'
+$relinking = Join-Path $repoRoot 'src\server\LGPL_RELINKING.md'
 $licenses = Join-Path $repoRoot 'src\server\licenses'
-foreach ($required in @($readme, $notices)) {
+foreach ($required in @($readme, $projectLicense, $notices, $relinking)) {
     if (-not (Test-Path -LiteralPath $required -PathType Leaf)) {
         throw "Required package file is missing: $required"
     }
@@ -69,7 +71,9 @@ try {
     New-Item -ItemType Directory -Path $stage -Force | Out-Null
     Copy-Item -LiteralPath $ExecutablePath -Destination (Join-Path $stage 'youtube-downloader.exe')
     Copy-Item -LiteralPath $readme -Destination (Join-Path $stage 'README.md')
+    Copy-Item -LiteralPath $projectLicense -Destination (Join-Path $stage 'LICENSE')
     Copy-Item -LiteralPath $notices -Destination (Join-Path $stage 'THIRD_PARTY_NOTICES.md')
+    Copy-Item -LiteralPath $relinking -Destination (Join-Path $stage 'LGPL_RELINKING.md')
     if (-not (Test-Path -LiteralPath $licenses -PathType Container)) {
         throw "Required package directory is missing: $licenses"
     }
