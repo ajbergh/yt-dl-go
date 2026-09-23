@@ -843,13 +843,15 @@ Inject an HTTP doer and extractor. Share one transport per process. This enables
 
 ### M7.2 Go static analysis, race detection, and vulnerability scanning
 
-**Status:** [ ] · **P1** · **Area:** CI
+**Status:** [~] · **P1** · **Area:** CI · implementation on `roadmap/m7-2-go-analysis`; CI pending
 
-There is no `-race`, no gofmt check, no staticcheck/golangci-lint, and no govulncheck, and `go vet` skips the `e2e` build tag (`ci.yml:59`). The README mentions `-race` (`README.md:158`), but CI never runs it.
+The Ubuntu CI job currently runs normal Go tests and untagged vet, but has no `-race`, gofmt, golangci-lint, or govulncheck gate. It also does not vet the `e2e` build tag. The README notes that race detection needs a C compiler, so the race gate belongs on Ubuntu.
 
 #### Scope
 
-Add `go test -race ./...` on ubuntu, `golangci-lint`, `govulncheck`, and `go vet -tags e2e`.
+Add `go test -race ./...` on Ubuntu, a gofmt check for first-party Go source, `golangci-lint` with staticcheck/unused analyzers, `govulncheck`, and `go vet -tags e2e`. Keep the existing untagged vet check as well.
+
+**Progress (2026-09-23):** Upgraded `golang.org/x/text` to v0.39.0, the first version fixed for GO-2026-5970. Removed the unused AAC wrapper and dead queue-row field, retained the bandwidth waiter's non-zero size using a blank byte field, and corrected capitalized error strings. Added the Ubuntu formatting/race/lint/vulnerability/tagged-vet gates; PR and CI validation are pending.
 
 ### M7.3 Supply-chain automation
 

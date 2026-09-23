@@ -33,18 +33,18 @@ const vp9PreferenceFallbackNote = "VP9 was preferred but unavailable under the s
 const av1PreferenceFallbackNote = "AV1 was preferred but unavailable under the selected quality ceiling; the best supported video format was used instead."
 
 var (
-	errMetadata          = errors.New("Video metadata is unavailable or invalid")
-	errPlaylist          = errors.New("Playlist enumeration failed; completeness could not be verified")
-	errPlaylistSelection = errors.New("Selected playlist items no longer match the inspected playlist")
-	errCombined          = errors.New("No compatible combined or adaptive stream fits the requested maximum height")
+	errMetadata          = errors.New("video metadata is unavailable or invalid")
+	errPlaylist          = errors.New("playlist enumeration failed; completeness could not be verified")
+	errPlaylistSelection = errors.New("selected playlist items no longer match the inspected playlist")
+	errCombined          = errors.New("no compatible combined or adaptive stream fits the requested maximum height")
 	errManifest          = errors.New("HLS/DASH manifest or live sources are unsupported")
-	errRead              = errors.New("Media stream could not be read completely")
-	errLength            = errors.New("Media stream is empty or does not match its declared size")
-	errMux               = errors.New("Video and audio streams could not be combined into a complete file")
-	errStorage           = errors.New("Private media storage could not be safely written or cleaned")
+	errRead              = errors.New("media stream could not be read completely")
+	errLength            = errors.New("media stream is empty or does not match its declared size")
+	errMux               = errors.New("video and audio streams could not be combined into a complete file")
+	errStorage           = errors.New("private media storage could not be safely written or cleaned")
 	errLimit             = errors.New("Job storage limit reached; remaining entries were not downloaded")
-	errNative            = errors.New("Native engine failed unexpectedly; completeness could not be verified")
-	errNoAudio           = errors.New("No compatible standalone audio stream is available")
+	errNative            = errors.New("native engine failed unexpectedly; completeness could not be verified")
+	errNoAudio           = errors.New("no compatible standalone audio stream is available")
 	errAudioConvert      = errors.New("AAC audio could not be decoded and encoded to MP3")
 )
 

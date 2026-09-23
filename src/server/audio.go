@@ -12,12 +12,6 @@ import (
 	"github.com/tphakala/go-mp3"
 )
 
-// convertAACToMP3 decodes the AAC-LC audio track from an MP4/M4A stream and
-// encodes it as CBR MP3, entirely in-process with Go libraries.
-func convertAACToMP3(ctx context.Context, source io.ReadSeeker, output io.Writer, bitrate string, budget int64, progress func(int64)) (int64, error) {
-	return convertAACToMP3Tagged(ctx, source, output, bitrate, budget, nil, progress)
-}
-
 func convertAACToMP3Tagged(ctx context.Context, source io.ReadSeeker, output io.Writer, bitrate string, budget int64, tag []byte, progress func(int64)) (int64, error) {
 	if budget <= 0 {
 		return 0, errLimit

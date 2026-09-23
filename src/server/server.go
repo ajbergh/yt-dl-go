@@ -319,7 +319,7 @@ var playlistID = regexp.MustCompile(`^[A-Za-z0-9_-]{2,200}$`)
 // returns a canonical watch or playlist URL plus its kind; other hosts/paths
 // and malformed or invalid IDs are rejected.
 func canonicalURL(raw string) (string, string, error) {
-	bad := errors.New("Use an HTTPS YouTube video, shorts, live, show, or playlist URL with valid IDs")
+	bad := errors.New("use an HTTPS YouTube video, shorts, live, show, or playlist URL with valid IDs")
 	u, err := url.Parse(raw)
 	if err != nil || len(raw) > 2048 || u.Scheme != "https" || u.User != nil || u.Opaque != "" || u.RawPath != "" || u.Fragment != "" {
 		return "", "", bad

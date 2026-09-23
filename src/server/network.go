@@ -15,7 +15,7 @@ import (
 	"time"
 )
 
-var errOutbound = errors.New("Outbound destination is not a permitted public HTTPS endpoint")
+var errOutbound = errors.New("outbound destination is not a permitted public HTTPS endpoint")
 
 var reservedNetworks = func() []netip.Prefix {
 	var result []netip.Prefix
@@ -109,7 +109,7 @@ func (d guardedDialer) DialContext(ctx context.Context, network, address string)
 			return conn, nil
 		}
 	}
-	return nil, errors.New("Public HTTPS connection could not be established")
+	return nil, errors.New("public HTTPS connection could not be established")
 }
 
 type guardedTransport struct {
@@ -144,7 +144,7 @@ func nativeHTTPClient(timeout time.Duration) *http.Client {
 		Transport: &guardedTransport{base: transport}, Timeout: timeout,
 		CheckRedirect: func(r *http.Request, via []*http.Request) error {
 			if len(via) >= 10 {
-				return errors.New("Too many HTTPS redirects")
+				return errors.New("too many HTTPS redirects")
 			}
 			return checkOutboundURL(r.URL)
 		},
