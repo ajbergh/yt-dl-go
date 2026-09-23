@@ -158,6 +158,7 @@ type server struct {
 	folderSelector      folderSelector
 	thumbnailFetcher    func(context.Context, string, string) (string, error)
 	captionFetcher      captionFetcher
+	rangeHTTPClient     *http.Client
 	store               *jobStore
 	bandwidth           *bandwidthLimiter
 	events              *eventBroker
