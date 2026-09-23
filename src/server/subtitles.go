@@ -281,20 +281,26 @@ func (s *server) captureSubtitle(ctx context.Context, j *jobState, file *mediaFi
 	code := strings.ToLower(strings.TrimSpace(track.LanguageCode))
 	name := strings.TrimSuffix(file.Name, filepath.Ext(file.Name)) + "." + code + "." + j.SubtitleFormat
 	path := filepath.Join(j.dir, name)
-	out, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
-	if errors.Is(err, os.ErrExist) {
-		_ = os.Remove(path)
-		out, err = os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		file.SubtitleError = "Caption sidecar could not be stored"
+		return 0
 	}
+	part := path + ".part"
+	_ = os.Remove(part)
+	out, err := os.OpenFile(part, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
 	if err != nil {
 		file.SubtitleError = "Caption sidecar could not be stored"
 		return 0
 	}
 	written, writeErr := out.Write(data)
-	syncErr := out.Sync()
-	closeErr := out.Close()
-	if writeErr != nil || written != len(data) || syncErr != nil || closeErr != nil {
-		_ = os.Remove(path)
+	if writeErr != nil || written != len(data) {
+		_ = out.Close()
+		_ = os.Remove(part)
+		file.SubtitleError = "Caption sidecar could not be stored"
+		return 0
+	}
+	if err := syncCloseRename(out, part, path); err != nil {
+		_ = os.Remove(part)
 		file.SubtitleError = "Caption sidecar could not be stored"
 		return 0
 	}
@@ -345,20 +351,18 @@ func publishSubtitleOutput(j *jobState, file *mediaFile) error {
 	if err != nil {
 		return err
 	}
-	defer source.Close()
 	base := strings.TrimSuffix(file.OutputName, filepath.Ext(file.OutputName))
 	name := base + "." + strings.ToLower(subtitle.LanguageCode) + "." + subtitle.Format
 	destination := filepath.Join(filepath.Dir(file.OutputPath), name)
-	out, err := os.OpenFile(destination, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
-	if err != nil {
-		return err
+	temporaryPath, copyErr := writeTemporaryCopy(source, filepath.Dir(destination), ".yt-dl-go-caption-*.part", subtitle.Size)
+	sourceCloseErr := source.Close()
+	if copyErr != nil || sourceCloseErr != nil {
+		_ = os.Remove(temporaryPath)
+		return errors.Join(errors.New("could not write caption sidecar"), sourceCloseErr)
 	}
-	copied, copyErr := io.Copy(out, source)
-	syncErr := out.Sync()
-	closeErr := out.Close()
-	if copyErr != nil || copied != subtitle.Size || syncErr != nil || closeErr != nil {
-		_ = os.Remove(destination)
-		return errors.New("could not write caption sidecar")
+	if err := publishTemporary(temporaryPath, destination); err != nil {
+		_ = os.Remove(temporaryPath)
+		return err
 	}
 	subtitle.OutputName = name
 	subtitle.OutputPath = destination

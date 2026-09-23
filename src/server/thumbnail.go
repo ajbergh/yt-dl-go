@@ -100,7 +100,7 @@ func fetchThumbnail(ctx context.Context, timeout time.Duration, rawURL, destinat
 	if err := file.Close(); err != nil {
 		return "", err
 	}
-	if err := os.Rename(part, destination); err != nil {
+	if err := durableRename(part, destination); err != nil {
 		return "", err
 	}
 	cleanup = false

@@ -1238,7 +1238,6 @@ func (s *server) processItem(ctx context.Context, j *jobState, entry *youtube.Pl
 	}
 	if j.StorageMode != "managed-only" {
 		if err := s.publishOutput(j, &file); err != nil {
-			_ = os.Remove(filepath.Join(j.dir, file.Name))
 			return errStorage
 		}
 	}
@@ -1362,16 +1361,7 @@ func (s *server) transferAudio(ctx context.Context, j *jobState, engine nativeCl
 	finalPath := filepath.Join(j.dir, result.Name)
 	sourcePath := filepath.Join(j.dir, fmt.Sprintf("%06d-%s.source.%s", outputIndex, video.ID, extension))
 	outputPart := finalPath + ".part"
-	if existing, openErr := openFinal(j.dir, result.Name); openErr == nil {
-		info, statErr := existing.Stat()
-		_ = existing.Close()
-		if statErr == nil {
-			_ = os.Remove(sourcePath)
-			_ = os.Remove(outputPart)
-			result.Size = info.Size()
-			return result, nil
-		}
-	}
+	_ = os.Remove(finalPath)
 	_ = os.Remove(sourcePath)
 	_ = os.Remove(outputPart)
 	defer func() {
@@ -1466,14 +1456,14 @@ func (s *server) transferAudio(ctx context.Context, j *jobState, engine nativeCl
 	})
 	sourceCloseErr := source.Close()
 	outputSyncErr := output.Sync()
-	closeOutputErr := output.Close()
+	outputCloseErr := output.Close()
 	if convertErr != nil {
 		if ctx.Err() != nil {
 			return result, ctx.Err()
 		}
 		return result, convertErr
 	}
-	if sourceCloseErr != nil || outputSyncErr != nil || closeOutputErr != nil {
+	if sourceCloseErr != nil || outputSyncErr != nil || outputCloseErr != nil {
 		return result, errStorage
 	}
 	if outputSize <= 0 {
@@ -1485,7 +1475,7 @@ func (s *server) transferAudio(ctx context.Context, j *jobState, engine nativeCl
 	if _, statErr := os.Lstat(finalPath); !errors.Is(statErr, os.ErrNotExist) {
 		return result, errStorage
 	}
-	if os.Rename(outputPart, finalPath) != nil {
+	if durableRename(outputPart, finalPath) != nil {
 		return result, errStorage
 	}
 	result.Size = outputSize
@@ -1515,10 +1505,11 @@ func (s *server) transferOriginalAudio(ctx context.Context, j *jobState, engine 
 	if existing, openErr := openFinal(j.dir, result.Name); openErr == nil {
 		info, statErr := existing.Stat()
 		_ = existing.Close()
-		if statErr == nil {
+		if statErr == nil && format.ContentLength > 0 && info.Size() == format.ContentLength {
 			result.Size = info.Size()
 			return result, nil
 		}
+		_ = os.Remove(filepath.Join(j.dir, result.Name))
 	}
 	part := finalPath + ".part"
 	_ = os.Remove(part)
@@ -1578,16 +1569,13 @@ func (s *server) transferOriginalAudio(ctx context.Context, j *jobState, engine 
 	if ctx.Err() != nil {
 		return result, ctx.Err()
 	}
-	if output.Sync() != nil || output.Close() != nil {
-		return result, errStorage
-	}
 	if result.Size <= 0 || (expected > 0 && result.Size != expected) {
 		return result, errLength
 	}
 	if _, statErr := os.Lstat(finalPath); !errors.Is(statErr, os.ErrNotExist) {
 		return result, errStorage
 	}
-	if os.Rename(part, finalPath) != nil {
+	if syncCloseRename(output, part, finalPath) != nil {
 		return result, errStorage
 	}
 	finalized = true
@@ -1761,9 +1749,16 @@ func (s *server) transferProgressive(ctx context.Context, j *jobState, engine na
 	result = mediaFile{ID: randomID(16), Name: fmt.Sprintf("%06d-%s.%s", outputIndex, video.ID, strings.TrimPrefix(kind, "video/")), Height: format.Height, MimeType: kind}
 	path := filepath.Join(j.dir, result.Name)
 	part := path + ".part"
-	if info, statErr := os.Stat(path); statErr == nil && info.Size() > 0 && (expected <= 0 || info.Size() == expected) {
-		result.Size = info.Size()
-		return result, nil
+	if existing, openErr := openFinal(j.dir, result.Name); openErr == nil {
+		info, statErr := existing.Stat()
+		_ = existing.Close()
+		if statErr == nil && expected > 0 && info.Size() == expected {
+			result.Size = info.Size()
+			return result, nil
+		}
+	}
+	if removeErr := os.Remove(path); removeErr != nil && !errors.Is(removeErr, os.ErrNotExist) {
+		return result, errStorage
 	}
 	_ = os.Remove(part)
 	f, err := os.OpenFile(part, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
@@ -1795,13 +1790,10 @@ func (s *server) transferProgressive(ctx context.Context, j *jobState, engine na
 	if ctx.Err() != nil {
 		return result, ctx.Err()
 	}
-	if f.Sync() != nil || f.Close() != nil {
-		return result, errStorage
-	}
 	if _, e := os.Lstat(path); !errors.Is(e, os.ErrNotExist) {
 		return result, errStorage
 	}
-	if os.Rename(part, path) != nil {
+	if syncCloseRename(f, part, path) != nil {
 		return result, errStorage
 	}
 	finalized = true
@@ -1858,14 +1850,7 @@ func (s *server) transferAdaptiveMP4(ctx context.Context, j *jobState, engine na
 		Height: selection.video.Height, MimeType: "video/mp4",
 	}
 	path := filepath.Join(j.dir, result.Name)
-	if f, openErr := openFinal(j.dir, result.Name); openErr == nil {
-		info, statErr := f.Stat()
-		_ = f.Close()
-		if statErr == nil {
-			result.Size = info.Size()
-			return result, nil
-		}
-	}
+	_ = os.Remove(path)
 	videoPart := path + ".video.part"
 	audioPart := path + ".audio.part"
 	outputPart := path + ".part"
@@ -1954,7 +1939,7 @@ func (s *server) transferAdaptiveMP4(ctx context.Context, j *jobState, engine na
 	if totalExpected > 0 {
 		s.updateProgress(j, queueIndex, progressTotal, progressTotal)
 	}
-	if os.Rename(outputPart, path) != nil {
+	if durableRename(outputPart, path) != nil {
 		return result, errStorage
 	}
 	result.Size = info.Size()
@@ -1971,14 +1956,7 @@ func (s *server) transferAdaptiveWebM(ctx context.Context, j *jobState, engine n
 		Height: selection.video.Height, MimeType: "video/webm",
 	}
 	path := filepath.Join(j.dir, result.Name)
-	if f, openErr := openFinal(j.dir, result.Name); openErr == nil {
-		info, statErr := f.Stat()
-		_ = f.Close()
-		if statErr == nil {
-			result.Size = info.Size()
-			return result, nil
-		}
-	}
+	_ = os.Remove(path)
 	videoPart := path + ".video.part"
 	audioPart := path + ".audio.part"
 	outputPart := path + ".part"
@@ -2142,7 +2120,7 @@ func (s *server) transferAdaptiveWebM(ctx context.Context, j *jobState, engine n
 	if totalExpected > 0 {
 		s.updateProgress(j, queueIndex, progressTotal, progressTotal)
 	}
-	if os.Rename(outputPart, path) != nil {
+	if durableRename(outputPart, path) != nil {
 		return result, errStorage
 	}
 	result.Size = info.Size()
@@ -2453,9 +2431,12 @@ func muxMP4(ctx context.Context, videoPath, audioPath, outputPath string, videoF
 	if err != nil {
 		return fmt.Errorf("%w: create MP4 output: %v", errStorage, err)
 	}
+	closed := false
 	defer func() {
-		if closeErr := out.Close(); closeErr != nil {
-			muxErr = errors.Join(muxErr, fmt.Errorf("%w: close MP4 output: %v", errStorage, closeErr))
+		if !closed {
+			if closeErr := out.Close(); closeErr != nil {
+				muxErr = errors.Join(muxErr, fmt.Errorf("%w: close MP4 output: %v", errStorage, closeErr))
+			}
 		}
 	}()
 	muxer, err := mp4.CreateMp4Muxer(out)
@@ -2470,7 +2451,18 @@ func muxMP4(ctx context.Context, videoPath, audioPath, outputPath string, videoF
 	if err := muxMP4Track(ctx, audioPath, muxer, audioTrack, mp4.MP4_CODEC_AAC); err != nil {
 		return err
 	}
-	return muxer.WriteTrailer()
+	if err := muxer.WriteTrailer(); err != nil {
+		return err
+	}
+	if err := out.Sync(); err != nil {
+		return fmt.Errorf("%w: sync MP4 output: %v", errStorage, err)
+	}
+	if err := out.Close(); err != nil {
+		closed = true
+		return fmt.Errorf("%w: close MP4 output: %v", errStorage, err)
+	}
+	closed = true
+	return nil
 }
 
 func muxMP4Track(ctx context.Context, path string, muxer *mp4.Movmuxer, track uint32, codec mp4.MP4_CODEC_TYPE) error {

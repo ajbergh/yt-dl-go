@@ -311,7 +311,7 @@ Goal: no hung slots, no silent corruption, no avoidable restarts from zero.
 
 ### M2.1 Stall detection and per-item timeouts
 
-**Status:** [~] Implementation complete; PR validation pending · **P0** · **Area:** engine
+**Status:** [x] Merged by PR #35 · **P0** · **Area:** engine
 
 - `JOB_TIMEOUT` is now an optional overall job cap and defaults to disabled. Playlist and item metadata retain bounded lookup deadlines.
 - Native progressive/audio reads and adaptive range bodies close after 60 seconds without data and return retryable `errRead`; the watchdog runs before bandwidth throttling.
@@ -324,11 +324,11 @@ Goal: no hung slots, no silent corruption, no avoidable restarts from zero.
 - [x] Turn `JOB_TIMEOUT` into an optional overall cap; `none` and `0` disable it.
 - [x] Add bounded exponential backoff with jitter between adaptive range retries; retain retries at three attempts.
 
-**Progress (2026-09-23):** Implemented on `roadmap/m2-1-stall-and-item-timeouts`. Native read watchdogs cover progressive video/audio sources and adaptive HTTP ranges, and close the underlying stream so a blocked `Read` cannot hold a worker slot. Item deadline errors become visible failed queue entries eligible for the existing playlist item retry action; parent cancellation and pause remain distinct. Range attempts now back off exponentially with jitter. `JOB_TIMEOUT` defaults to `none` and remains available as a configured overall cap; metadata lookups stay bounded. The full Go server suite and `go vet ./...` pass locally; PR CI is pending.
+**Progress (2026-09-23):** Merged by [PR #35](https://github.com/ajbergh/yt-dl-go/pull/35) (`58679fd`) after the Go test/lint/vet checks, frontend browser end-to-end tests, CodeQL, and Linux, Windows, and macOS builds passed. Native read watchdogs cover progressive video/audio sources and adaptive HTTP ranges, item deadlines bound transfers, and adaptive range attempts back off with jitter. `JOB_TIMEOUT` is optional and defaults to `none`.
 
 ### M2.2 Atomic, durable finalization everywhere
 
-**Status:** [ ] · **P0** · **Area:** engine / file safety
+**Status:** [~] Implementation complete; PR validation pending on `roadmap/m2-2-atomic-durable-finalization` · **P0** · **Area:** engine / file safety
 
 - Adaptive MP4/WebM outputs are renamed without `Sync` (`worker.go:1838, 1998`).
 - `publishOutput` writes directly to the final user-visible name (`output.go:202-215`). A crash leaves an untracked, truncated file in the user's media folder.
@@ -340,6 +340,8 @@ Goal: no hung slots, no silent corruption, no avoidable restarts from zero.
 - Publish through a temporary name in the destination folder.
 - Always verify the expected size before reusing an existing final file.
 - `published-only` should `rename` when source and destination are on the same volume instead of copying then deleting multi-GB files (`output.go:209`, `worker.go:1160`).
+
+**Progress (2026-09-23):** Implemented on `roadmap/m2-2-atomic-durable-finalization`. Media, adaptive mux, thumbnail, managed caption, and published sidecar outputs now finalize from temporary names with checked sync/close and durable rename/publication. Existing transfer files are reused only with an exact known expected size; adaptive mux outputs are rebuilt because their final size is unknown until muxing completes. `published-only` first moves the managed file to a temporary name in the destination directory and falls back to a synced copy for cross-volume moves. POSIX directory entries are synced; Windows uses `MoveFileExW` with `MOVEFILE_WRITE_THROUGH` because Windows directory handles cannot be synced. The full Go suite and `go vet ./...` pass locally; PR validation is pending.
 
 ### M2.3 Resume on every transfer path
 
