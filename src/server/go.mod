@@ -2,6 +2,8 @@ module youtube-downloader
 
 go 1.26.0
 
+toolchain go1.26.8
+
 require (
 	github.com/at-wat/ebml-go v0.19.3
 	github.com/chromedp/cdproto v0.0.0-20250724212937-08a3db8b4327
