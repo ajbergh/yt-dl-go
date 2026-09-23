@@ -55,7 +55,7 @@ Managed sidecars use the finalized media basename plus `.<language>.vtt` or `.<l
 | `MAX_JOBS` | `32` | 1 through 1000 retained, queued, and active jobs combined |
 | `MAX_JOB_BYTES` | `10737418240` | Positive per-job media byte budget (10 GiB by default) |
 | `JOB_TIMEOUT` | `6h` | Whole-job deadline; at least one second |
-| `RETENTION` | `24h` | Terminal-job retention; at least five minutes |
+| `RETENTION` | `never` | Keep finished Library records by default. An explicit duration of at least five minutes expires only records whose finalized files have verified published copies; empty failed/cancelled jobs are cleaned after 24h by default. |
 | `CHROME_PATH` | unset | Chrome/Chromium/Edge executable for adaptive capture |
 | `NO_BROWSER` | unset | Legacy/automation switch; `1` suppresses automatic OS browser launch |
 
@@ -65,7 +65,7 @@ The scheduler defaults to three concurrent media items and allows a persisted `m
 
 The MP3 encoder emits constant-bitrate audio with native ID3v2.3 metadata written before the encoded frames. Tags include available title, artist/channel, playlist album and track position, publish date, canonical source URL, and locally captured cover artwork when it is JPEG/PNG/WebP and no larger than 1 MiB. Tagging is best-effort and never makes otherwise valid audio fail. Encoding quality and compression efficiency differ from LAME; available bitrates are 128, 192, 256, and 320 kb/s. The API health response reports `mp3AudioSupported` and `pureGoAudioConversion` when this built-in path is available.
 
-Ticket links last five minutes. Individual-file transfers support one byte range; ZIP downloads stream finalized files without building a duplicate archive in memory. Completed jobs are removed after retention unless an active transfer or unexpired ticket still holds them.
+Ticket links last five minutes. Individual-file transfers support one byte range; ZIP downloads stream finalized files without building a duplicate archive in memory. Completed Library records remain by default. With an explicit `RETENTION` duration, a record and its private managed files can expire only when all finalized media and caption sidecars still have verified published copies; active transfers and unexpired tickets also hold the record. Failed or cancelled jobs without finalized files are cleaned after 24 hours by default (or after the explicit duration).
 
 ## API
 

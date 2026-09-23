@@ -6,15 +6,16 @@
 
 ## Current implementation branches (2026-09-23)
 
-The checked items below are implemented on branches; none of these fixes is merged into `main` (`cb6523e`) yet. The branches are stacked in this order: `fix/fresh-checkout-build` → `fix/security-headers-m07` → `fix/persistence-errors` → `fix/lint-gate`. Review each stacked PR against its immediate predecessor. The 4K work is on a separate branch from `main`.
+The checked items below are implemented on branches; none of these fixes is merged into `main` (`cb6523e`) yet. The branches are stacked in this order: `fix/fresh-checkout-build` → `fix/security-headers-m07` → `fix/persistence-errors` → `fix/lint-gate` → `fix/safe-retention`. Review each stacked PR against its immediate predecessor. The 4K work is on a separate branch from `main`.
 
 | Work | Branch / commit | Current state |
 | --- | --- | --- |
 | M0.7 fresh checkout build | `fix/fresh-checkout-build` / `baa8887` | Pushed; clean Go build and tests passed. |
 | M0.4 security headers | `fix/security-headers-m07` / `2c61f5d` | Pushed; Go tests passed. |
 | M0.8 persistence errors | `fix/persistence-errors` / `cf34220` | Pushed; Go tests and vet passed. |
-| M0.9 lint gate | `fix/lint-gate` | Implemented locally; `npm run lint` and `npm run typecheck` pass. Pending commit, push, and PR. |
-| 4K adaptive capture | `fix/4k-browser-representation` / `3bf9fc2` | Pushed, but **not validated**: the latest live retest of `7PIji8OubXU` selected 2160p and failed after audio capture stalled. Further engine work is required. |
+| M0.9 lint gate | `fix/lint-gate` / `45f4f1d` | Pushed; `npm run lint` and `npm run typecheck` pass. |
+| M0.1 safe retention | `fix/safe-retention` | Implemented; targeted storage-mode and scratch cleanup tests pass. |
+| 4K adaptive capture | `fix/4k-browser-representation` / `de754d7` | Pushed; the exact live URL completed at 2160p with audio and a verified 2,335,115,476-byte WebM. Go tests and vet pass. |
 
 Draft PR creation is pending GitHub authentication: `gh auth status` reports that the saved `ajbergh` token is invalid. CI runs on pull requests; the current workflow does not run on direct pushes to `fix/**` branches.
 
@@ -62,7 +63,7 @@ Goal: remove data-loss paths, close the framing/console exposure, and make the p
 
 ### M0.1 Retention must never delete the only copy of user media
 
-**Status:** [ ] · **P0** · **Area:** backend
+**Status:** [x] · **P0** · **Area:** backend
 
 `prune()` (`src/server/worker.go:2329-2354`) removes every terminal job older than `RETENTION` (default `24h`, `main.go:143`). It calls `removeManagedCopies` (`output.go:325`, `os.RemoveAll(j.dir)`) and then `store.deleteJob`, with no check on storage mode. Under `managed-only`, published output does not exist, so the media is gone for good.
 
@@ -77,6 +78,8 @@ Goal: remove data-loss paths, close the framing/console exposure, and make the p
 - A `managed-only` completed job survives any number of prune cycles.
 - A `managed-published` job's Library record survives pruning unless retention was explicitly enabled.
 - The README and Settings text explain exactly what retention removes.
+
+`RETENTION` now defaults to `never` for Library records. Empty failed/cancelled jobs retain the previous 24-hour scratch cleanup by default. An explicit duration can prune a Library record only after every finalized media file and managed caption sidecar has a verified published copy. Regression cases cover all three storage modes, missing published media, scratch jobs, and configuration parsing on `fix/safe-retention`.
 
 ### M0.2 Stop `MAX_JOBS` from capping the Library
 
@@ -1087,9 +1090,10 @@ v2 adds:
 
 **Status:** [~] In progress
 
-- M0.7 is on `fix/fresh-checkout-build` (`baa8887`); M0.4 is stacked on it in `fix/security-headers-m07` (`2c61f5d`); M0.8 is stacked next in `fix/persistence-errors` (`cf34220`); M0.9 is implemented on the local `fix/lint-gate` branch.
-- The independent `fix/4k-browser-representation` branch (`3bf9fc2`) still needs work. A network-enabled live test of `https://youtu.be/7PIji8OubXU?si=WRtj7oVFiAXW07Ra` selected a 2160p video stream (itag 337), then dual browser capture stalled its audio track after 60 seconds. The subsequent WebM transfer ended as `Media stream could not be read completely` after about 73 seconds. The result does not satisfy the 4K acceptance criterion.
+- M0.7 is on `fix/fresh-checkout-build` (`baa8887`); M0.4 is stacked on it in `fix/security-headers-m07` (`2c61f5d`); M0.8 is stacked next in `fix/persistence-errors` (`cf34220`); M0.9 is stacked next in `fix/lint-gate` (`45f4f1d`). All four branches are pushed.
+- The independent `fix/4k-browser-representation` branch (`de754d7`) now passes a network-enabled live test of `https://youtu.be/7PIji8OubXU?si=WRtj7oVFiAXW07Ra`. Browser Network response streaming captured the complete 2160p VP9 video (itag 315) and Opus audio (itag 251) without intercepting playback responses. The finalized WebM is 2,335,115,476 bytes; the job completed at height 2160. `go test ./...` and `go vet ./...` pass.
 - The saved GitHub CLI token is invalid, so draft PRs and their CI runs are pending reauthentication.
+- M0.1 is implemented on `fix/safe-retention`, stacked on M0.9. The default now keeps Library records; explicit retention verifies all published media before removing managed files, and empty failed/cancelled jobs still expire after 24 hours by default. Targeted Go tests and frontend typecheck pass.
 
 ### Roadmap v2 created
 

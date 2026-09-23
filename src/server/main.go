@@ -140,9 +140,12 @@ func loadConfig() (config, error) {
 	if err != nil || c.timeout < time.Second {
 		return c, errors.New("JOB_TIMEOUT must be at least 1s")
 	}
-	c.retain, err = time.ParseDuration(env("RETENTION", "24h"))
-	if err != nil || c.retain < 5*time.Minute {
-		return c, errors.New("RETENTION must be at least 5m")
+	retention := strings.TrimSpace(env("RETENTION", "never"))
+	if !strings.EqualFold(retention, "never") {
+		c.retain, err = time.ParseDuration(retention)
+		if err != nil || (c.retain != 0 && c.retain < 5*time.Minute) {
+			return c, errors.New("RETENTION must be 'never', zero, or at least 5m")
+		}
 	}
 	return c, nil
 }

@@ -2382,6 +2382,60 @@ func copyStream(ctx context.Context, dst io.Writer, src io.Reader, budget, expec
 	}
 }
 
+const failedScratchRetention = 24 * time.Hour
+
+// retentionAge distinguishes Library records from failed or cancelled jobs
+// that never finalized a file. A zero configured retention keeps Library
+// records indefinitely while still cleaning empty scratch jobs after a day.
+func (s *server) retentionAge(j *jobState) (time.Duration, bool) {
+	if j == nil || !terminal(j.Status) {
+		return 0, false
+	}
+	if len(j.Files) == 0 && (j.Status == "failed" || j.Status == "cancelled") {
+		if s.cfg.retain > 0 {
+			return s.cfg.retain, true
+		}
+		return failedScratchRetention, true
+	}
+	if s.cfg.retain <= 0 || !publishedCopiesIntact(j) {
+		return 0, false
+	}
+	return s.cfg.retain, true
+}
+
+// publishedCopiesIntact checks the actual destination before background
+// cleanup removes any managed media or finalized caption sidecars.
+func publishedCopiesIntact(j *jobState) bool {
+	if len(j.Files) == 0 {
+		return false
+	}
+	for _, file := range j.Files {
+		if !file.PublishedAvailable || validateOutputCopy(j, file) != nil {
+			return false
+		}
+		info, err := os.Lstat(file.OutputPath)
+		if err != nil || !info.Mode().IsRegular() || info.Size() != file.Size {
+			return false
+		}
+		if file.Subtitle != nil {
+			subtitle := file.Subtitle
+			if subtitle.ManagedAvailable && !subtitle.PublishedAvailable {
+				return false
+			}
+			if subtitle.PublishedAvailable {
+				if validateSubtitleOutputCopy(j, *subtitle) != nil {
+					return false
+				}
+				subtitleInfo, err := os.Lstat(subtitle.OutputPath)
+				if err != nil || !subtitleInfo.Mode().IsRegular() || subtitleInfo.Size() != subtitle.Size {
+					return false
+				}
+			}
+		}
+	}
+	return true
+}
+
 func (s *server) prune(now time.Time) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -2396,7 +2450,8 @@ func (s *server) prune(now time.Time) {
 	keep := s.order[:0]
 	for _, id := range s.order {
 		j := s.jobs[id]
-		if terminal(j.Status) && j.readers == 0 && !held[id] && now.Sub(j.done) >= s.cfg.retain {
+		age, eligible := s.retentionAge(j)
+		if eligible && !j.done.IsZero() && j.readers == 0 && !held[id] && now.Sub(j.done) >= age {
 			// Retention expires app-managed history and private media only.
 			// Published output belongs to the user and must survive pruning.
 			if err := removeManagedCopies(j); err != nil {

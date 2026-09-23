@@ -110,7 +110,7 @@ All settings are optional environment variables. The default loopback configurat
 | `MAX_JOBS` | `32` | Maximum queued, active, and retained jobs |
 | `MAX_JOB_BYTES` | `10737418240` | Per-job media byte limit (10 GiB) |
 | `JOB_TIMEOUT` | `6h` | Whole-job deadline |
-| `RETENTION` | `24h` | Retention period after a job reaches a terminal state |
+| `RETENTION` | `never` | Keep finished Library records by default. An explicit duration of at least `5m` expires a record only when every finalized file has a verified published copy. Failed or cancelled jobs with no files are cleaned after 24h by default. |
 | `NO_BROWSER` | unset | Backward-compatible environment switch; set to `1` to suppress automatic UI browser launch |
 
 ### Background / no-browser mode
