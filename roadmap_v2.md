@@ -929,7 +929,7 @@ No tests exist for:
 - Cut `v0.2.0` (or `v1.0.0` after Milestone 0).
 - [x] Point the README at GitHub Releases.
 
-**Progress (2026-09-23):** Merged by [PR #15](https://github.com/ajbergh/yt-dl-go/pull/15); all six CI jobs passed. Manual runs validate the selected version against `package.json`, build and checksum all release archives, then upload a workflow artifact without creating a GitHub Release. Manual release-workflow validation and a release version decision remain.
+**Progress (2026-09-23):** Merged by [PR #15](https://github.com/ajbergh/yt-dl-go/pull/15); all six CI jobs passed. Manual runs validate the selected version against `package.json`, build and checksum all release archives, then upload a workflow artifact without creating a GitHub Release. The authorized `v0.1.0` dry run (run 35921227203) passed source validation and all six platform package builds, but checksum verification failed because the source archive checksum recorded a workspace-relative path while verification ran from `dist/release`. No GitHub Release was created. The path fix is in review; rerun the dry run after it merges. The actual release version decision remains pending.
 
 ### M8.2 Harden the release workflow
 
@@ -946,7 +946,7 @@ No tests exist for:
 - [x] Emit UTC timestamps on both Windows and Unix release builders.
 - [x] Add Windows arm64 builds.
 
-**Progress (2026-09-23):** Merged by [PR #13](https://github.com/ajbergh/yt-dl-go/pull/13) as `db6f845`. Workflow permissions are scoped by job, Windows packaging builds amd64 and arm64, build timestamps are converted to UTC using portable Windows/Unix tooling, and the publish job validates archives against per-matrix expected-archive manifests. All six PR CI jobs passed; a release workflow dry run is still needed to validate the release-specific jobs and Windows ARM64 package.
+**Progress (2026-09-23):** Merged by [PR #13](https://github.com/ajbergh/yt-dl-go/pull/13) as `db6f845`. Workflow permissions are scoped by job, Windows packaging builds amd64 and arm64, build timestamps are converted to UTC using portable Windows/Unix tooling, and the publish job validates archives against per-matrix expected-archive manifests. All six PR #13 CI jobs passed. The authorized release dry run built all six platform packages, including Windows amd64/arm64, but exposed the source archive checksum path issue tracked under M8.1; rerun after the fix merges.
 
 ### M8.3 SBOM and reproducible archives
 
@@ -1142,7 +1142,7 @@ v2 adds:
 
 - Added a manual workflow run that builds the release matrix, checks archive checksums, and uploads a dry-run artifact without creating a GitHub Release.
 - Aligned shared GitHub Actions versions between CI and release workflows and updated the README's download link.
-- All six PR #15 CI jobs passed. Manual dispatch was not available through the connected GitHub tools or browser in this session; release-specific runtime validation remains pending.
+- All six PR #15 CI jobs passed. The authorized manual dry run reached the publish-preparation job, but checksum verification failed because the source archive checksum stored a path relative to the workspace and validation ran from `dist/release`. The initial source validation, platform builds, and all artifact downloads passed; no release was created. The workflow path fix and rerun remain pending.
 
 ### M9.1 community and governance docs
 
