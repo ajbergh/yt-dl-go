@@ -2137,6 +2137,9 @@ func (s *server) downloadAdaptiveRanges(ctx context.Context, j *jobState, engine
 			if attempt > 0 || current == nil || current.URL == "" {
 				current, err = s.refreshFormat(ctx, engine, video.ID, format.ItagNo)
 				if err != nil {
+					if os.Getenv("YTDL_TRACE_PERFORMANCE") != "" {
+						log.Printf("adaptive range refresh failed itag=%d start=%d attempt=%d err=%v", format.ItagNo, start, attempt+1, err)
+					}
 					continue
 				}
 			}
@@ -2156,6 +2159,9 @@ func (s *server) downloadAdaptiveRanges(ctx context.Context, j *jobState, engine
 			req.Header.Set("Sec-Fetch-Mode", "navigate")
 			resp, requestErr := client.Do(req)
 			if requestErr != nil {
+				if os.Getenv("YTDL_TRACE_PERFORMANCE") != "" {
+					log.Printf("adaptive range request failed itag=%d start=%d attempt=%d err=%v", format.ItagNo, start, attempt+1, requestErr)
+				}
 				continue
 			}
 			_, _ = f.Seek(start, io.SeekStart)
@@ -2165,6 +2171,9 @@ func (s *server) downloadAdaptiveRanges(ctx context.Context, j *jobState, engine
 			if copyErr == nil && written == chunkSize && (resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusPartialContent) {
 				chunkOK = true
 				break
+			}
+			if os.Getenv("YTDL_TRACE_PERFORMANCE") != "" {
+				log.Printf("adaptive range incomplete itag=%d start=%d attempt=%d status=%d bytes=%d expected=%d err=%v", format.ItagNo, start, attempt+1, resp.StatusCode, written, chunkSize, copyErr)
 			}
 		}
 		if !chunkOK {
