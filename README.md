@@ -149,7 +149,7 @@ The live check is intentionally separate because it downloads real media and dep
 
 ~~~
 Push-Location .\src\server
-$env:YTDL_LIVE_DOWNLOAD_URL = 'https://youtu.be/y0KRrtfy2pY?si=ERBKJkjkY-SoPC4I'
+$env:YTDL_LIVE_DOWNLOAD_URL = 'https://youtu.be/y0KRrtfy2pY'
 $env:YTDL_LIVE_MIN_HEIGHT = '1080'
 go test -run TestLiveDownload -count=1 -v
 Pop-Location

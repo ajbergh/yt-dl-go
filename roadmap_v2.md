@@ -910,11 +910,11 @@ No tests exist for:
 
 ### M8.1 Ship the first release
 
-**Status:** [~] In progress on `roadmap/m8-1-release-dry-run` · **P1** · **Area:** release
+**Status:** [T] Dry-run workflow merged; manual validation and release version pending · **P1** · **Area:** release
 
-- There are no tags, `package.json` is `0.1.0`, and `release.yml` has never run.
-- `release.yml` uses different action majors from `ci.yml`.
-- The README's download link (`README.md:13`) points to the gitignored `dist/`, which does not exist on GitHub.
+- No release tag exists yet, `package.json` remains `0.1.0`, and the release workflow has not run.
+- Shared action versions now align between the release and CI workflows.
+- The README's Windows download now points to GitHub Releases rather than the gitignored `dist/` directory.
 
 #### Scope
 
@@ -923,7 +923,7 @@ No tests exist for:
 - Cut `v0.2.0` (or `v1.0.0` after Milestone 0).
 - [x] Point the README at GitHub Releases.
 
-**Progress (2026-09-23):** Implementing on `roadmap/m8-1-release-dry-run`. Manual runs validate the selected version against `package.json`, build and checksum all release archives, then upload a workflow artifact without creating a GitHub Release. A successful dry run and version-tag decision remain.
+**Progress (2026-09-23):** Merged by [PR #15](https://github.com/ajbergh/yt-dl-go/pull/15); all six CI jobs passed. Manual runs validate the selected version against `package.json`, build and checksum all release archives, then upload a workflow artifact without creating a GitHub Release. Manual release-workflow validation and a release version decision remain.
 
 ### M8.2 Harden the release workflow
 
@@ -1027,12 +1027,16 @@ Add:
 
 ### M9.3 Fix stale documentation
 
-**Status:** [ ] · **P1** · **Area:** docs
+**Status:** [x] · **P1** · **Area:** docs
 
-- `src/README.md:3` still says "Windows executable".
-- `README.md:152` has a sample URL with a `si=` share-tracking parameter.
-- `roadmap.md:5` names the old branch `roadmap/release-publication-gates-v1`.
-- Update the README's `DATA_DIR`/`RETENTION`/`MAX_JOBS` descriptions after M0.1, M0.2, and M1.4.
+#### Scope
+
+- [x] Describe the embedded UI as part of the platform executable.
+- [x] Remove the sample URL's `si=` share-tracking parameter.
+- [x] Mark v1's roadmap as superseded by `roadmap_v2.md`.
+- [x] Verify `DATA_DIR`, `RETENTION`, and `MAX_JOBS` documentation against current behavior.
+
+**Progress (2026-09-23):** Updated the frontend guide to describe all platform executables, removed the sample URL's share-tracking parameter, marked v1's roadmap as superseded, and confirmed the `DATA_DIR`, `RETENTION`, and `MAX_JOBS` descriptions match the current defaults and behavior.
 
 ### M9.4 Remove stray and legacy files
 
@@ -1120,7 +1124,15 @@ v2 adds:
 - Added the MIT project license, generated Go and npm notices, complete dependency license texts, and LGPL decoder source/relinking instructions.
 - License generation runs for Linux, Windows, and macOS target dependency sets and uses stable package links and normalized license text.
 - PR #14 passed all six CI jobs, including license drift checks and production package builds for Linux amd64/arm64, macOS amd64/arm64, and Windows amd64.
-- M8.1 now adds a dispatchable release dry run that will validate the tagged source archive without creating a draft release.
+- M8.1 adds a dispatchable release dry run that will validate the source archive without creating a draft release. Manual validation remains pending.
+
+### M8.1 first-release preparation
+
+**Status:** [T] Workflow merged by PR #15; manual release dry run and version cut pending
+
+- Added a manual workflow run that builds the release matrix, checks archive checksums, and uploads a dry-run artifact without creating a GitHub Release.
+- Aligned shared GitHub Actions versions between CI and release workflows and updated the README's download link.
+- All six PR #15 CI jobs passed. Manual dispatch was not available through the connected GitHub tools or browser in this session; release-specific runtime validation remains pending.
 
 ### Stabilization branches and 4K retest
 

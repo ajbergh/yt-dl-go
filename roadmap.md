@@ -2,9 +2,9 @@
 
 > Durable roadmap for the `yt-dl-go` product. This file is the source of truth for roadmap scope, sequencing, implementation status, acceptance criteria, and follow-up work.
 >
-> **Branch:** `roadmap/release-publication-gates-v1`
+> **Status:** Superseded by [`roadmap_v2.md`](roadmap_v2.md); retained as the completed v1 history.
 >
-> **Last updated:** 2026-09-21
+> **Last updated:** 2026-09-23
 
 ## Product direction
 
