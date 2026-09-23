@@ -29,7 +29,7 @@ Generated from the Go packages used by supported release targets with `go-licens
 | `github.com/tphakala/simd` | `v1.9.0` | MIT | [source](https://pkg.go.dev/github.com/tphakala/simd@v1.9.0) | [license files](licenses/go/github.com/tphakala/simd) |
 | `github.com/yapingcat/gomedia` | `v0.0.0-20240906162731-17feea57090c` | MIT | [source](https://pkg.go.dev/github.com/yapingcat/gomedia@v0.0.0-20240906162731-17feea57090c) | [license files](licenses/go/github.com/yapingcat/gomedia) |
 | `golang.org/x/sys` | `v0.47.0` | BSD-3-Clause | [source](https://pkg.go.dev/golang.org/x/sys@v0.47.0) | [license files](licenses/go/golang.org/x/sys) |
-| `golang.org/x/text` | `v0.35.0` | BSD-3-Clause | [source](https://pkg.go.dev/golang.org/x/text@v0.35.0) | [license files](licenses/go/golang.org/x/text) |
+| `golang.org/x/text` | `v0.39.0` | BSD-3-Clause | [source](https://pkg.go.dev/golang.org/x/text@v0.39.0) | [license files](licenses/go/golang.org/x/text) |
 | `modernc.org/libc` | `v1.75.7` | BSD-3-Clause | [source](https://pkg.go.dev/modernc.org/libc@v1.75.7) | [license files](licenses/go/modernc.org/libc) |
 | `modernc.org/mathutil` | `v1.7.1` | BSD-3-Clause | [source](https://pkg.go.dev/modernc.org/mathutil@v1.7.1) | [license files](licenses/go/modernc.org/mathutil) |
 | `modernc.org/memory` | `v1.12.1` | BSD-3-Clause | [source](https://pkg.go.dev/modernc.org/memory@v1.12.1) | [license files](licenses/go/modernc.org/memory) |

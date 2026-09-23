@@ -33,13 +33,13 @@ func id3Frames(t *testing.T, tag []byte) map[string][]byte {
 func TestBuildID3v23TagIncludesTrackSourceAndArtwork(t *testing.T) {
 	artwork := []byte{0xff, 0xd8, 0xff, 0xe0, 1, 2, 3, 4}
 	tag, err := buildID3v23Tag(mp3TagMetadata{
-		Title: "Título – 你好",
+		Title:  "Título – 你好",
 		Artist: "Fixture Artist",
-		Album: "Fixture Playlist",
-		Track: 2, TrackTotal: 12,
+		Album:  "Fixture Playlist",
+		Track:  2, TrackTotal: 12,
 		PublishDate: "2026-09-20",
-		SourceURL: "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
-		Artwork: artwork, ArtworkMIME: "image/jpeg",
+		SourceURL:   "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+		Artwork:     artwork, ArtworkMIME: "image/jpeg",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -64,7 +64,7 @@ func TestBuildID3v23TagIncludesTrackSourceAndArtwork(t *testing.T) {
 
 func TestBuildID3v23TagSkipsOversizedOrUnsupportedArtwork(t *testing.T) {
 	for name, metadata := range map[string]mp3TagMetadata{
-		"oversized": {Title: "Track", Artwork: make([]byte, maxEmbeddedArtworkBytes+1), ArtworkMIME: "image/jpeg"},
+		"oversized":   {Title: "Track", Artwork: make([]byte, maxEmbeddedArtworkBytes+1), ArtworkMIME: "image/jpeg"},
 		"unsupported": {Title: "Track", Artwork: []byte("GIF89a"), ArtworkMIME: "image/gif"},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -82,7 +82,7 @@ func TestBuildID3v23TagSkipsOversizedOrUnsupportedArtwork(t *testing.T) {
 func TestMP3MetadataForPlaylist(t *testing.T) {
 	selectedTotal := 2
 	j := &jobState{
-		Job: Job{Kind: "playlist", Title: "Road Trip", TotalCount: &selectedTotal},
+		Job:               Job{Kind: "playlist", Title: "Road Trip", TotalCount: &selectedTotal},
 		playlistItemCount: 8,
 	}
 	file := mediaFile{Title: "Song", Author: "Artist", PublishDate: "2026-09-20"}

@@ -54,15 +54,21 @@ func compareSemanticVersions(left, right string) (int, bool) {
 		return 0, false
 	}
 	if a.major != b.major {
-		if a.major < b.major { return -1, true }
+		if a.major < b.major {
+			return -1, true
+		}
 		return 1, true
 	}
 	if a.minor != b.minor {
-		if a.minor < b.minor { return -1, true }
+		if a.minor < b.minor {
+			return -1, true
+		}
 		return 1, true
 	}
 	if a.patch != b.patch {
-		if a.patch < b.patch { return -1, true }
+		if a.patch < b.patch {
+			return -1, true
+		}
 		return 1, true
 	}
 	if a.prerelease == b.prerelease {

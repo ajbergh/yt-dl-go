@@ -18,7 +18,7 @@ jobs:
   validate:
     name: Validate source and tests
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 35
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
@@ -37,6 +37,13 @@ jobs:
         with:
           go-version: "1.26.x"
           cache-dependency-path: src/server/go.sum
+
+      - name: Install Go analysis tools
+        shell: bash
+        run: |
+          go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.12.2
+          go install golang.org/x/vuln/cmd/govulncheck@v1.6.0
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
 
       - name: Install frontend dependencies
         run: npm ci
@@ -69,6 +76,27 @@ jobs:
         working-directory: src/server
         run: go test ./...
 
+      - name: Check Go formatting
+        shell: bash
+        run: |
+          unformatted="$(find src/server -maxdepth 1 -type f -name '*.go' -print0 | xargs -0 gofmt -l)"
+          if [[ -n "$unformatted" ]]; then
+            printf '%s\n' "$unformatted"
+            exit 1
+          fi
+
+      - name: Run Go race tests
+        working-directory: src/server
+        run: go test -race ./...
+
+      - name: Run golangci-lint
+        working-directory: src/server
+        run: golangci-lint run
+
+      - name: Scan Go dependencies and source for vulnerabilities
+        working-directory: src/server
+        run: govulncheck ./...
+
       - name: Check development origin policy
         working-directory: src/server
         run: go test -tags=dev -run TestDevelopmentOriginsIncludeVite ./...
@@ -76,6 +104,10 @@ jobs:
       - name: Run Go vet
         working-directory: src/server
         run: go vet ./...
+
+      - name: Run Go vet with E2E build tag
+        working-directory: src/server
+        run: go vet -tags=e2e ./...
 
       - name: Run browser end-to-end tests
         run: npm run e2e:browser

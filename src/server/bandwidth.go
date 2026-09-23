@@ -12,7 +12,7 @@ const maxBandwidthLimitBytesPerSec int64 = 1 << 30 // 1 GiB/s safety ceiling.
 // Keep this non-zero-sized: Go may reuse pointer addresses for distinct
 // zero-sized allocations, which would make FIFO waiter identity ambiguous.
 type bandwidthWaiter struct {
-	marker byte
+	_ byte
 }
 
 type bandwidthLimiter struct {

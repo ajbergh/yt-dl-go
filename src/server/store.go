@@ -781,7 +781,6 @@ func (s *jobStore) loadJobs(root string) ([]*storedJob, error) {
 		dir             string
 		cancelRequested int
 		doneAt          sql.NullInt64
-		queueItems      string
 	}
 	var savedRows []jobRow
 	for rows.Next() {

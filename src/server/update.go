@@ -21,7 +21,7 @@ type updateStatus struct {
 	DevelopmentBuild bool   `json:"developmentBuild,omitempty"`
 	ReleaseURL       string `json:"releaseUrl,omitempty"`
 	PublishedAt      string `json:"publishedAt,omitempty"`
-	AutomaticUpdate bool   `json:"automaticUpdate"`
+	AutomaticUpdate  bool   `json:"automaticUpdate"`
 	Note             string `json:"note,omitempty"`
 }
 
