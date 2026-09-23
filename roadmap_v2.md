@@ -4,23 +4,23 @@
 >
 > **Last updated:** 2026-09-23
 
-## Current implementation branches (2026-09-23)
+## Merged fixes and source branches (2026-09-23)
 
-The checked items below are implemented on branches; none of these fixes is merged into `main` (`cb6523e`) yet. The branches are stacked in this order: `fix/fresh-checkout-build` → `fix/security-headers-m07` → `fix/persistence-errors` → `fix/lint-gate` → `fix/safe-retention` → `fix/active-job-cap` → `fix/remove-preview-scaffolding` → `fix/dev-only-origins`. Review each stacked PR against its immediate predecessor. The 4K work is on a separate branch from `main`.
+The Milestone 0 fixes below were consolidated from the stacked source branches and squash merged by [PR #10](https://github.com/ajbergh/yt-dl-go/pull/10) as `287928e`. The independent 4K fix was squash merged by [PR #11](https://github.com/ajbergh/yt-dl-go/pull/11) as `677c59e`. Both are on `main`; the source branches record where each fix was developed.
 
 | Work | Branch / commit | Current state |
 | --- | --- | --- |
-| M0.7 fresh checkout build | `fix/fresh-checkout-build` / `baa8887` | Pushed; clean Go build and tests passed. |
-| M0.4 security headers | `fix/security-headers-m07` / `2c61f5d` | Pushed; Go tests passed. |
-| M0.8 persistence errors | `fix/persistence-errors` / `cf34220` | Pushed; Go tests and vet passed. |
-| M0.9 lint gate | `fix/lint-gate` / `45f4f1d` | Pushed; `npm run lint` and `npm run typecheck` pass. |
-| M0.1 safe retention | `fix/safe-retention` / `53a3abb` | Pushed; Go tests, vet, frontend typecheck and lint pass. |
-| M0.2 active job cap | `fix/active-job-cap` / `a8f6c58` | Pushed; 100 retained Library records do not block admission. Full Go tests and vet pass. |
-| M0.3 remove preview scaffolding | `fix/remove-preview-scaffolding` / `46605dc` | Pushed; production bundle scan, typecheck, and lint pass. |
-| M0.5 dev-only origins | `fix/dev-only-origins` / `8291aa0` | Pushed; release and dev policy checks, full Go tests, and vet pass. |
-| 4K adaptive capture | `fix/4k-browser-representation` / `de754d7` | Pushed; the exact live URL completed at 2160p with audio and a verified 2,335,115,476-byte WebM. Go tests and vet pass. |
+| M0.7 fresh checkout build | `fix/fresh-checkout-build` / `baa8887` | Merged by #10; clean Go build and tests passed. |
+| M0.4 security headers | `fix/security-headers-m07` / `2c61f5d` | Merged by #10; Go tests passed. |
+| M0.8 persistence errors | `fix/persistence-errors` / `cf34220` | Merged by #10; Go tests and vet passed. |
+| M0.9 lint gate | `fix/lint-gate` / `45f4f1d` | Merged by #10; lint and typecheck pass. |
+| M0.1 safe retention | `fix/safe-retention` / `53a3abb` | Merged by #10; storage-mode and scratch cleanup tests pass. |
+| M0.2 active job cap | `fix/active-job-cap` / `a8f6c58` | Merged by #10; 100 retained Library records do not block admission. |
+| M0.3 remove preview scaffolding | `fix/remove-preview-scaffolding` / `46605dc` | Merged by #10; production bundle scan passes. |
+| M0.5 dev-only origins | `fix/dev-only-origins` / `8291aa0` | Merged by #10; release and dev origin checks pass. |
+| 4K adaptive capture | `fix/4k-browser-representation` / `de754d7` | Merged by #11; the reported URL completed at 2160p with audio in a 2,335,115,476-byte WebM. |
 
-CI passed on [the stacked stabilization validation branch](https://github.com/ajbergh/yt-dl-go/actions/runs/35869093121) at `8291aa0` and [the independent 4K validation branch](https://github.com/ajbergh/yt-dl-go/actions/runs/35869587270) at `de754d7`: all six jobs succeeded in each run. These temporary `roadmap/validate-stabilization` and `roadmap/validate-4k` refs trigger the push workflow; direct pushes to `fix/**` do not. Draft PR creation is pending GitHub authentication: `gh auth status` reports that the saved `ajbergh` token is invalid. M0.6 awaits the owner's project-license choice; dependency notice generation and LGPL source/relink packaging are still open.
+All six jobs passed in [PR #10 CI](https://github.com/ajbergh/yt-dl-go/actions/runs/35870589146) and in [PR #11 CI after updating onto the merged stabilization commit](https://github.com/ajbergh/yt-dl-go/actions/runs/35871657223). M0.6 awaits the owner's project-license choice; dependency notice generation and LGPL source/relink packaging remain open.
 
 ## Why a v2
 
@@ -1097,16 +1097,17 @@ v2 adds:
 
 ### Stabilization branches and 4K retest
 
-**Status:** [~] In progress
+**Status:** [x] Merged
 
 - M0.7 is on `fix/fresh-checkout-build` (`baa8887`); M0.4 is stacked on it in `fix/security-headers-m07` (`2c61f5d`); M0.8 is stacked next in `fix/persistence-errors` (`cf34220`); M0.9 is stacked next in `fix/lint-gate` (`45f4f1d`). All four branches are pushed.
 - The independent `fix/4k-browser-representation` branch (`de754d7`) now passes a network-enabled live test of `https://youtu.be/7PIji8OubXU?si=WRtj7oVFiAXW07Ra`. Browser Network response streaming captured the complete 2160p VP9 video (itag 315) and Opus audio (itag 251) without intercepting playback responses. The finalized WebM is 2,335,115,476 bytes; the job completed at height 2160. `go test ./...` and `go vet ./...` pass.
-- The saved GitHub CLI token is invalid, so draft PRs and their CI runs are pending reauthentication.
 - M0.1 is implemented on `fix/safe-retention`, stacked on M0.9. The default now keeps Library records; explicit retention verifies all published media before removing managed files, and empty failed/cancelled jobs still expire after 24 hours by default. Targeted Go tests and frontend typecheck pass.
 - M0.2 is implemented on `fix/active-job-cap`, stacked on M0.1. The live-job count replaces `len(s.jobs)` for admissions, the redundant fixed-size scheduler wake channel is removed, and item retry uses the same cap. Tests with 100 retained terminal records and paused/retry capacity pass, as do the full Go suite and vet.
 - M0.3 is implemented on `fix/remove-preview-scaffolding`, stacked on M0.2. Production preview messaging and console forwarding are removed, and CI now scans a built JavaScript bundle for the forbidden preview strings. `npm run build:check`, typecheck, and lint pass.
 - M0.5 is implemented on `fix/dev-only-origins`, stacked on M0.3. Production defaults omit the Vite origins; the `dev` build tag restores them for local development. Release and dev policy tests, the full Go suite, and vet pass.
-- Both CI validation runs passed all six jobs: stacked stabilization at `8291aa0` on `roadmap/validate-stabilization`, and independent 4K capture at `de754d7` on `roadmap/validate-4k`. Draft PRs are still pending a valid GitHub CLI login. M0.6 requires a project-license decision; the current notices omit linked Go and bundled npm dependencies, and release archives lack the LGPL source/relink materials.
+- Both CI validation runs passed all six jobs: stacked stabilization at `8291aa0` on `roadmap/validate-stabilization`, and independent 4K capture at `de754d7` on `roadmap/validate-4k`.
+- After GitHub CLI reauthentication, PR #10 consolidated and squash merged the stacked fixes as `287928e`. PR #11 updated the 4K branch onto that result, passed all six PR CI jobs, and squash merged as `677c59e`.
+- M0.6 remains open: it requires a project-license decision, complete linked Go and bundled npm notices, and LGPL source/relink materials in release packaging.
 
 ### Roadmap v2 created
 
