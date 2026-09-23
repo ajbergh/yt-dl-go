@@ -140,6 +140,44 @@ func codecFamily(codecs string) string {
 	}
 }
 
+// browserWebMVideoCandidates returns only adaptive representations that can
+// safely substitute for the selected WebM video when Chrome chooses a
+// different itag. Resolution and codec family must remain identical; the
+// browser capture later pins the first candidate's SABR format digest.
+func browserWebMVideoCandidates(video *youtube.Video, selected *youtube.Format) []*youtube.Format {
+	if video == nil || selected == nil || selected.ItagNo <= 0 {
+		return nil
+	}
+	selectedKind, selectedCodecs, ok := formatType(selected)
+	if !ok || selectedKind != "video/webm" || selected.Height <= 0 || selected.Width <= 0 {
+		return nil
+	}
+	family := codecFamily(selectedCodecs)
+	if family != "vp9" && family != "av1" {
+		return nil
+	}
+	var candidates []*youtube.Format
+	seen := make(map[int]struct{})
+	for i := range video.Formats {
+		candidate := &video.Formats[i]
+		kind, codecs, valid := formatType(candidate)
+		if !valid || kind != "video/webm" || candidate.ItagNo <= 0 || candidate.AudioChannels != 0 ||
+			candidate.Height != selected.Height || candidate.Width != selected.Width ||
+			candidate.InitRange == nil || candidate.IndexRange == nil || codecFamily(codecs) != family {
+			continue
+		}
+		if _, exists := seen[candidate.ItagNo]; exists {
+			continue
+		}
+		seen[candidate.ItagNo] = struct{}{}
+		candidates = append(candidates, candidate)
+	}
+	if _, exists := seen[selected.ItagNo]; !exists {
+		candidates = append(candidates, selected)
+	}
+	return candidates
+}
+
 func betterVideoFormat(candidate, current *youtube.Format) bool {
 	return current == nil || candidate.Height > current.Height ||
 		(candidate.Height == current.Height && (candidate.FPS > current.FPS ||
@@ -1918,10 +1956,12 @@ func (s *server) transferAdaptiveWebM(ctx context.Context, j *jobState, engine n
 	var videoSize, audioSize int64
 	var videoBrowserUsed, audioBrowserUsed bool
 	dualUsed := false
+	dualAttempted := false
 	if dualProvider, ok := browserProvider.(browserDualTrackProvider); ok {
 		_, videoPartErr := os.Stat(videoPart)
 		_, audioPartErr := os.Stat(audioPart)
 		if errors.Is(videoPartErr, os.ErrNotExist) && errors.Is(audioPartErr, os.ErrNotExist) {
+			dualAttempted = true
 			dualProgress := func(videoCurrent, audioCurrent int64) {
 				if totalExpected > 0 {
 					s.updateProgress(j, queueIndex, videoCurrent+audioCurrent, progressTotal)
@@ -1932,7 +1972,8 @@ func (s *server) transferAdaptiveWebM(ctx context.Context, j *jobState, engine n
 			// the same adaptive session a second time only delays a definitive error.
 			const dualCaptureAttempts = 1
 			for attempt := 0; attempt < dualCaptureAttempts; attempt++ {
-				videoSize, audioSize, err = dualProvider.CaptureTracks(ctx, video.ID, selection.video, selection.audio, videoPart, audioPart, budget, budget, dualProgress)
+				videoCandidates := browserWebMVideoCandidates(video, selection.video)
+				videoSize, audioSize, err = dualProvider.CaptureTracks(ctx, video.ID, selection.video, videoCandidates, selection.audio, videoPart, audioPart, budget, budget, dualProgress)
 				if err == nil && videoSize > 0 && audioSize > 0 && videoSize <= budget && audioSize <= budget-videoSize {
 					videoInfo, videoStatErr := os.Stat(videoPart)
 					audioInfo, audioStatErr := os.Stat(audioPart)
@@ -1950,7 +1991,32 @@ func (s *server) transferAdaptiveWebM(ctx context.Context, j *jobState, engine n
 	}
 	if !dualUsed {
 		captureStarted := time.Now()
-		videoSize, videoBrowserUsed, err = s.downloadAdaptiveRanges(ctx, j, engine, video, selection.video, videoPart, queueIndex, budget, progress, browserProvider)
+		rangeBrowserProvider := browserProvider
+		if dualAttempted {
+			// A dual browser capture has already spent its bounded playback attempt.
+			// Retry through native ranges now instead of replaying the same browser
+			// session serially for video and audio.
+			rangeBrowserProvider = nil
+		}
+		videoFormats := []*youtube.Format{selection.video}
+		for _, candidate := range browserWebMVideoCandidates(video, selection.video) {
+			if candidate != nil && candidate.ItagNo != selection.video.ItagNo {
+				videoFormats = append(videoFormats, candidate)
+			}
+		}
+		for formatIndex, videoFormat := range videoFormats {
+			if formatIndex > 0 {
+				// A partial representation cannot be resumed as another itag.
+				_ = os.Remove(videoPart)
+			}
+			videoSize, videoBrowserUsed, err = s.downloadAdaptiveRanges(ctx, j, engine, video, videoFormat, videoPart, queueIndex, budget, progress, rangeBrowserProvider)
+			if err == nil {
+				break
+			}
+			if ctx.Err() != nil {
+				return result, ctx.Err()
+			}
+		}
 		capturePhase += time.Since(captureStarted)
 		if err != nil {
 			if errors.Is(err, errRead) {
@@ -1963,7 +2029,7 @@ func (s *server) transferAdaptiveWebM(ctx context.Context, j *jobState, engine n
 			return result, errLimit
 		}
 		captureStarted = time.Now()
-		audioSize, audioBrowserUsed, err = s.downloadAdaptiveRanges(ctx, j, engine, video, selection.audio, audioPart, queueIndex, budget-videoSize, progress, browserProvider)
+		audioSize, audioBrowserUsed, err = s.downloadAdaptiveRanges(ctx, j, engine, video, selection.audio, audioPart, queueIndex, budget-videoSize, progress, rangeBrowserProvider)
 		capturePhase += time.Since(captureStarted)
 		if err != nil {
 			if errors.Is(err, errRead) {
@@ -1977,7 +2043,7 @@ func (s *server) transferAdaptiveWebM(ctx context.Context, j *jobState, engine n
 	}
 	downloaded = videoSize + audioSize
 	muxStarted := time.Now()
-	if err := muxWebM(ctx, videoPart, audioPart, outputPart); err != nil {
+	if err := muxWebMForDimensions(ctx, videoPart, audioPart, outputPart, selection.video.Width, selection.video.Height); err != nil {
 		muxPhase += time.Since(muxStarted)
 		if ctx.Err() != nil {
 			return result, ctx.Err()

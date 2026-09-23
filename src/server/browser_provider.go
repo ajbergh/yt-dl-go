@@ -3,8 +3,11 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"crypto/rand"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
@@ -16,6 +19,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/chromedp/cdproto/cdp"
@@ -39,28 +43,33 @@ type browserMediaProvider interface {
 // browserDualTrackProvider is deliberately optional so existing test and
 // alternate providers retain the serial CaptureTrack contract.
 type browserDualTrackProvider interface {
-	CaptureTracks(context.Context, string, *youtube.Format, *youtube.Format, string, string, int64, int64, func(int64, int64)) (int64, int64, error)
+	CaptureTracks(context.Context, string, *youtube.Format, []*youtube.Format, *youtube.Format, string, string, int64, int64, func(int64, int64)) (int64, int64, error)
 }
 
 type browserProviderFactory func(context.Context) (browserMediaProvider, error)
 
 type chromeBrowserProvider struct {
-	ctx         context.Context
-	cancel      context.CancelFunc
-	allocCancel context.CancelFunc
-	closeOnce   sync.Once
-	fetchOnce   sync.Once
-	fetchErr    error
-	uaOnce      sync.Once
-	uaErr       error
-	openMu      sync.Mutex
-	pendingMu   sync.Mutex
-	pending     *browserRangeCapture
-	captureMu   sync.Mutex
-	capture     sabrResponseCapture
-	captureCtx  context.Context
-	captureStop context.CancelFunc
-	metrics     *browserCaptureMetrics
+	ctx          context.Context
+	cancel       context.CancelFunc
+	allocCancel  context.CancelFunc
+	closeOnce    sync.Once
+	fetchOnce    sync.Once
+	fetchErr     error
+	uaOnce       sync.Once
+	uaErr        error
+	openMu       sync.Mutex
+	pendingMu    sync.Mutex
+	pending      *browserRangeCapture
+	replayMu     sync.Mutex
+	replayServer *http.Server
+	replayAddr   string
+	replayBodies map[string]browserReplayBody
+	captureMu    sync.Mutex
+	capture      sabrResponseCapture
+	captureCtx   context.Context
+	captureStop  context.CancelFunc
+	metrics      *browserCaptureMetrics
+	sabrReplay   chan struct{}
 }
 
 type browserRangeCapture struct {
@@ -73,6 +82,12 @@ type browserStreamResult struct {
 	stream io.ReadCloser
 	length int64
 	err    error
+}
+
+type browserReplayBody struct {
+	status  int
+	headers []*fetch.HeaderEntry
+	body    []byte
 }
 
 // browserCaptureMetrics separates browser transport work from final track
@@ -130,7 +145,7 @@ func newChromeBrowserProvider(parent context.Context, executable string) (browse
 	)
 	allocCtx, allocCancel := chromedp.NewExecAllocator(parent, options...)
 	browserCtx, cancel := chromedp.NewContext(allocCtx)
-	return &chromeBrowserProvider{ctx: browserCtx, cancel: cancel, allocCancel: allocCancel}, nil
+	return &chromeBrowserProvider{ctx: browserCtx, cancel: cancel, allocCancel: allocCancel, sabrReplay: make(chan struct{}, 1), replayBodies: make(map[string]browserReplayBody)}, nil
 }
 
 func (p *chromeBrowserProvider) Close() error {
@@ -159,6 +174,15 @@ func (p *chromeBrowserProvider) Close() error {
 		if capture != nil {
 			capture.fail(errBrowserUnavailable)
 		}
+		p.replayMu.Lock()
+		replayServer := p.replayServer
+		p.replayBodies = nil
+		p.replayMu.Unlock()
+		if replayServer != nil {
+			ctx, stop := context.WithTimeout(context.Background(), 2*time.Second)
+			_ = replayServer.Shutdown(ctx)
+			stop()
+		}
 		p.cancel()
 		p.allocCancel()
 	})
@@ -172,7 +196,7 @@ func (p *chromeBrowserProvider) Prepare(_ context.Context, id string, format *yo
 	videoURL := "https://www.youtube.com/watch?v=" + url.QueryEscape(id)
 	quality := "hd" + strconv.Itoa(format.Height)
 	qualityLabel := strconv.Itoa(format.Height) + "p"
-	playScript := `(() => {
+	configureQualityScript := `(() => {
   const labels = ['Accept all', 'I agree', 'Agree'];
   for (const button of document.querySelectorAll('button')) {
     const text = (button.innerText || '').trim();
@@ -184,19 +208,8 @@ func (p *chromeBrowserProvider) Prepare(_ context.Context, id string, format *yo
     try { player.setPlaybackQuality('` + quality + `'); } catch (_) {}
   }
   const video = document.querySelector('video');
-  if (!video) return false;
-  video.muted = true;
-  video.playbackRate = 16;
-  try { video.play(); } catch (_) {}
-  clearInterval(window.__ytdlKeepAlive);
-  window.__ytdlKeepAlive = setInterval(() => {
-    const current = document.querySelector('video');
-    if (!current) return;
-    current.muted = true;
-    current.playbackRate = 16;
-    if (current.paused && !current.ended) current.play().catch(() => {});
-  }, 1000);
-  return true;
+  if (video) { video.pause(); video.muted = true; }
+  return !!video;
 })()`
 	qualityMenuScript := `(() => {
   const settings = document.querySelector('.ytp-settings-button');
@@ -213,13 +226,35 @@ func (p *chromeBrowserProvider) Prepare(_ context.Context, id string, format *yo
   }, 500);
   return true;
 })()`
+	playScript := `(() => {
+  const player = document.getElementById('movie_player');
+  if (player) {
+    try { player.setPlaybackQualityRange('` + quality + `'); } catch (_) {}
+    try { player.setPlaybackQuality('` + quality + `'); } catch (_) {}
+  }
+  const video = document.querySelector('video');
+  if (!video) return false;
+  video.muted = true;
+  video.playbackRate = ` + strconv.Itoa(browserPlaybackRate) + `;
+  try { video.play(); } catch (_) {}
+  clearInterval(window.__ytdlKeepAlive);
+  window.__ytdlKeepAlive = setInterval(() => {
+    const current = document.querySelector('video');
+    if (!current) return;
+    current.muted = true;
+    current.playbackRate = ` + strconv.Itoa(browserPlaybackRate) + `;
+    if (current.paused && !current.ended) current.play().catch(() => {});
+  }, 1000);
+  return true;
+})()`
 	if err := chromedp.Run(p.ctx,
 		network.Enable(),
 		chromedp.Navigate(videoURL),
 		chromedp.Sleep(5*time.Second),
-		chromedp.Evaluate(playScript, nil),
+		chromedp.Evaluate(configureQualityScript, nil),
 		chromedp.Evaluate(qualityMenuScript, nil),
-		chromedp.Sleep(8*time.Second),
+		chromedp.Sleep(3*time.Second),
+		chromedp.Evaluate(playScript, nil),
 	); err != nil {
 		return errBrowserUnavailable
 	}
@@ -273,7 +308,15 @@ func (p *chromeBrowserProvider) CaptureTrack(ctx context.Context, id string, for
 		captureStop()
 		return 0, errStorage
 	}
-	capture := newSABRCapture(file, format.ItagNo, expectedDurationMs, budget, progress)
+	if progress == nil {
+		progress = func(int64) {}
+	}
+	var lastProgress atomic.Int64
+	lastProgress.Store(time.Now().UnixNano())
+	capture := newSABRCapture(file, format.ItagNo, expectedDurationMs, budget, func(value int64) {
+		lastProgress.Store(time.Now().UnixNano())
+		progress(value)
+	})
 	p.captureMu.Lock()
 	if p.capture != nil {
 		p.captureMu.Unlock()
@@ -327,7 +370,7 @@ func (p *chromeBrowserProvider) CaptureTrack(ctx context.Context, id string, for
   const video = document.querySelector('video');
   if (!video) return false;
   video.muted = true;
-  video.playbackRate = 16;
+  video.playbackRate = ` + strconv.Itoa(browserPlaybackRate) + `;
   if (video.paused && !video.ended) video.play().catch(() => {});
   return !video.ended;
 })()`
@@ -337,6 +380,9 @@ func (p *chromeBrowserProvider) CaptureTrack(ctx context.Context, id string, for
 		select {
 		case captureErr := <-capture.done:
 			if captureErr != nil {
+				if os.Getenv("YTDL_TRACE_SABR") != "" {
+					log.Printf("browser capture ended with error: %v", captureErr)
+				}
 				return 0, errBrowserUnavailable
 			}
 			detach()
@@ -350,7 +396,16 @@ func (p *chromeBrowserProvider) CaptureTrack(ctx context.Context, id string, for
 			completed = true
 			return result, nil
 		case <-ticker.C:
+			if time.Since(time.Unix(0, lastProgress.Load())) >= browserStreamIdleTimeout {
+				if os.Getenv("YTDL_TRACE_SABR") != "" {
+					log.Printf("browser capture stalled without new media for %s", browserStreamIdleTimeout)
+				}
+				return 0, errBrowserUnavailable
+			}
 			if runErr := chromedp.Run(p.ctx, chromedp.Evaluate(keepAlive, nil)); runErr != nil {
+				if os.Getenv("YTDL_TRACE_SABR") != "" {
+					log.Printf("browser keep-alive failed: %v", runErr)
+				}
 				return 0, errBrowserUnavailable
 			}
 		case <-timer.C:
@@ -364,7 +419,7 @@ func (p *chromeBrowserProvider) CaptureTrack(ctx context.Context, id string, for
 // CaptureTracks captures the selected WebM video and Opus audio from one
 // playback. Fetch pauses each SABR response once; sabrCaptureSet parses it once
 // and fan-outs the UMP parts to independent verified track assemblers.
-func (p *chromeBrowserProvider) CaptureTracks(ctx context.Context, id string, videoFormat, audioFormat *youtube.Format, videoPath, audioPath string, videoBudget, audioBudget int64, progress func(int64, int64)) (videoResult, audioResult int64, err error) {
+func (p *chromeBrowserProvider) CaptureTracks(ctx context.Context, id string, videoFormat *youtube.Format, videoCandidates []*youtube.Format, audioFormat *youtube.Format, videoPath, audioPath string, videoBudget, audioBudget int64, progress func(int64, int64)) (videoResult, audioResult int64, err error) {
 	if videoFormat == nil || audioFormat == nil || videoFormat.ItagNo <= 0 || audioFormat.ItagNo <= 0 || videoBudget <= 0 || audioBudget <= 0 || !videoID.MatchString(id) {
 		return 0, 0, errBrowserUnavailable
 	}
@@ -417,13 +472,25 @@ func (p *chromeBrowserProvider) CaptureTracks(ctx context.Context, id string, vi
 
 	var progressMu sync.Mutex
 	var videoCurrent, audioCurrent int64
+	var lastVideoProgress, lastAudioProgress atomic.Int64
+	now := time.Now().UnixNano()
+	lastVideoProgress.Store(now)
+	lastAudioProgress.Store(now)
+	videoItags := make([]int, 0, len(videoCandidates))
+	for _, candidate := range videoCandidates {
+		if candidate != nil {
+			videoItags = append(videoItags, candidate.ItagNo)
+		}
+	}
 	videoCapture := newSABRCapture(videoFile, videoFormat.ItagNo, videoDuration, videoBudget, func(value int64) {
+		lastVideoProgress.Store(time.Now().UnixNano())
 		progressMu.Lock()
 		videoCurrent = value
 		progress(videoCurrent, audioCurrent)
 		progressMu.Unlock()
-	})
+	}, videoItags...)
 	audioCapture := newSABRCapture(audioFile, audioFormat.ItagNo, audioDuration, audioBudget, func(value int64) {
+		lastAudioProgress.Store(time.Now().UnixNano())
 		progressMu.Lock()
 		audioCurrent = value
 		progress(videoCurrent, audioCurrent)
@@ -484,7 +551,13 @@ func (p *chromeBrowserProvider) CaptureTracks(ctx context.Context, id string, vi
 	if audioDuration > maximumDuration {
 		maximumDuration = audioDuration
 	}
-	maximum := browserCaptureTimeout(maximumDuration, videoFormat.ContentLength+audioFormat.ContentLength)
+	videoLength := videoFormat.ContentLength
+	for _, candidate := range videoCandidates {
+		if candidate != nil && candidate.ContentLength > videoLength {
+			videoLength = candidate.ContentLength
+		}
+	}
+	maximum := browserCaptureTimeout(maximumDuration, videoLength+audioFormat.ContentLength)
 	timer := time.NewTimer(maximum)
 	defer timer.Stop()
 	ticker := time.NewTicker(2 * time.Second)
@@ -493,7 +566,7 @@ func (p *chromeBrowserProvider) CaptureTracks(ctx context.Context, id string, vi
   const video = document.querySelector('video');
   if (!video) return false;
   video.muted = true;
-  video.playbackRate = 16;
+  video.playbackRate = ` + strconv.Itoa(browserPlaybackRate) + `;
   if (video.paused && !video.ended) video.play().catch(() => {});
   return !video.ended;
 })()`
@@ -503,6 +576,9 @@ func (p *chromeBrowserProvider) CaptureTracks(ctx context.Context, id string, vi
 		select {
 		case captureErr := <-capture.done:
 			if captureErr != nil {
+				if os.Getenv("YTDL_TRACE_SABR") != "" {
+					log.Printf("dual browser capture ended with error: %v", captureErr)
+				}
 				return 0, 0, errBrowserUnavailable
 			}
 			detach()
@@ -519,7 +595,19 @@ func (p *chromeBrowserProvider) CaptureTracks(ctx context.Context, id string, vi
 			completed = true
 			return videoResult, audioResult, nil
 		case <-ticker.C:
+			now := time.Now()
+			videoStalled := !videoCapture.isComplete() && now.Sub(time.Unix(0, lastVideoProgress.Load())) >= browserStreamIdleTimeout
+			audioStalled := !audioCapture.isComplete() && now.Sub(time.Unix(0, lastAudioProgress.Load())) >= browserStreamIdleTimeout
+			if videoStalled || audioStalled {
+				if os.Getenv("YTDL_TRACE_SABR") != "" {
+					log.Printf("dual browser capture stalled video=%t audio=%t idle_timeout=%s", videoStalled, audioStalled, browserStreamIdleTimeout)
+				}
+				return 0, 0, errBrowserUnavailable
+			}
 			if runErr := chromedp.Run(p.ctx, chromedp.Evaluate(keepAlive, nil)); runErr != nil {
+				if os.Getenv("YTDL_TRACE_SABR") != "" {
+					log.Printf("dual browser keep-alive failed: %v", runErr)
+				}
 				return 0, 0, errBrowserUnavailable
 			}
 		case <-timer.C:
@@ -748,11 +836,84 @@ func (p *chromeBrowserProvider) handleFetchEvent(event interface{}) {
 	go p.continuePaused(paused)
 }
 
+func (p *chromeBrowserProvider) registerReplayBody(status int, headers []*fetch.HeaderEntry, body []byte) (string, string, error) {
+	p.replayMu.Lock()
+	defer p.replayMu.Unlock()
+	if p.replayServer == nil {
+		listener, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			return "", "", err
+		}
+		mux := http.NewServeMux()
+		mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+			if r.Method == http.MethodOptions {
+				w.Header().Set("Access-Control-Allow-Origin", "*")
+				w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+				w.Header().Set("Access-Control-Allow-Headers", "*")
+				w.Header().Set("Access-Control-Allow-Private-Network", "true")
+				w.WriteHeader(http.StatusNoContent)
+				return
+			}
+			token := strings.TrimPrefix(r.URL.Path, "/")
+			p.replayMu.Lock()
+			replay, ok := p.replayBodies[token]
+			if ok {
+				delete(p.replayBodies, token)
+			}
+			p.replayMu.Unlock()
+			if !ok {
+				http.NotFound(w, r)
+				return
+			}
+			for _, header := range replay.headers {
+				name := http.CanonicalHeaderKey(header.Name)
+				if name == "Content-Length" || name == "Connection" || name == "Transfer-Encoding" || name == "Access-Control-Allow-Origin" {
+					continue
+				}
+				w.Header().Add(name, header.Value)
+			}
+			w.Header().Set("Access-Control-Allow-Origin", "*")
+			w.Header().Set("Access-Control-Allow-Private-Network", "true")
+			w.Header().Set("Content-Length", strconv.Itoa(len(replay.body)))
+			w.WriteHeader(replay.status)
+			_, _ = w.Write(replay.body)
+		})
+		server := &http.Server{Handler: mux, ReadHeaderTimeout: 5 * time.Second}
+		p.replayServer = server
+		p.replayAddr = listener.Addr().String()
+		go func() { _ = server.Serve(listener) }()
+	}
+	var random [24]byte
+	if _, err := rand.Read(random[:]); err != nil {
+		return "", "", err
+	}
+	token := hex.EncodeToString(random[:])
+	p.replayBodies[token] = browserReplayBody{status: status, headers: headers, body: body}
+	return "http://" + p.replayAddr + "/" + token, token, nil
+}
+
+func (p *chromeBrowserProvider) removeReplayBody(token string) {
+	p.replayMu.Lock()
+	delete(p.replayBodies, token)
+	p.replayMu.Unlock()
+}
+
 func (p *chromeBrowserProvider) captureSABRResponse(paused *fetch.EventRequestPaused, capture sabrResponseCapture, captureCtx context.Context, metrics *browserCaptureMetrics) {
 	defer capture.doneHandler()
 	if paused.ResponseStatusCode < 200 || paused.ResponseStatusCode >= 300 || paused.ResponseErrorReason != "" {
+		if capture.isTrace() {
+			log.Printf("SABR response rejected status=%d error=%q", paused.ResponseStatusCode, paused.ResponseErrorReason)
+		}
 		p.continuePaused(paused)
 		capture.fail(errBrowserUnavailable)
+		return
+	}
+	select {
+	case p.sabrReplay <- struct{}{}:
+		defer func() { <-p.sabrReplay }()
+	case <-captureCtx.Done():
+		p.continuePaused(paused)
+		capture.fail(captureCtx.Err())
 		return
 	}
 	phaseStart := time.Now()
@@ -768,44 +929,67 @@ func (p *chromeBrowserProvider) captureSABRResponse(paused *fetch.EventRequestPa
 	}
 	readCtx, readCancel := context.WithCancel(captureCtx)
 	stream := &cdpBrowserStream{handle: streamHandle, readCtx: readCtx, readCancel: readCancel, browserCtx: captureCtx}
-	counted := &browserCountingReader{Reader: stream}
 	phaseStart = time.Now()
-	consumeErr := capture.consumeReader(counted)
+	body, consumeErr := io.ReadAll(io.LimitReader(stream, maxSABRRelayBytes+1))
+	if consumeErr == nil && int64(len(body)) > maxSABRRelayBytes {
+		consumeErr = errLimit
+	}
+	if consumeErr == nil {
+		consumeErr = capture.consumeReader(bytes.NewReader(body))
+	}
 	streamDuration := time.Since(phaseStart)
-	closeStart := time.Now()
-	closeErr := stream.Close()
-	resumeDuration := time.Since(closeStart)
+	var resumeDuration time.Duration
 	if capture.isTrace() {
-		log.Printf("SABR response status=%d bytes=%d stream=%s", paused.ResponseStatusCode, counted.bytes, streamDuration.Round(time.Millisecond))
+		log.Printf("SABR response status=%d bytes=%d stream=%s", paused.ResponseStatusCode, len(body), streamDuration.Round(time.Millisecond))
 	}
 	if consumeErr != nil {
+		if commandCtx, contextErr := p.targetContext(); contextErr == nil {
+			_ = fetch.FailRequest(paused.RequestID, network.ErrorReasonFailed).Do(commandCtx)
+		}
+		_ = stream.Close()
 		if capture.isTrace() {
 			log.Printf("SABR consume failed: %v", consumeErr)
 		}
 		capture.fail(consumeErr)
-	} else if closeErr != nil {
-		if capture.isTrace() {
-			log.Printf("SABR response stream close failed: %v", closeErr)
+	} else {
+		phaseStart = time.Now()
+		replayCtx, replayContextErr := p.targetContext()
+		fulfillErr := replayContextErr
+		var replayURL, replayToken string
+		if fulfillErr == nil {
+			replayURL, replayToken, fulfillErr = p.registerReplayBody(int(paused.ResponseStatusCode), paused.ResponseHeaders, body)
 		}
-		capture.fail(closeErr)
+		if fulfillErr == nil {
+			fulfillErr = fetch.FulfillRequest(paused.RequestID, 307).
+				WithResponseHeaders([]*fetch.HeaderEntry{{Name: "Location", Value: replayURL}, {Name: "Content-Length", Value: "1"}, {Name: "Cache-Control", Value: "no-store"}}).
+				WithBody(base64.StdEncoding.EncodeToString([]byte{0})).
+				Do(replayCtx)
+			if fulfillErr != nil {
+				p.removeReplayBody(replayToken)
+			}
+		}
+		resumeDuration += time.Since(phaseStart)
+		closeErr := stream.Close()
+		if fulfillErr != nil {
+			if capture.isTrace() {
+				log.Printf("SABR response replay failed: %v capture_context=%v provider_context=%v", fulfillErr, captureCtx.Err(), p.ctx.Err())
+			}
+			capture.fail(fulfillErr)
+		} else if capture.isTrace() {
+			log.Printf("SABR response replayed through loopback bytes=%d", len(body))
+			if closeErr != nil {
+				log.Printf("SABR response stream close failed after replay: %v", closeErr)
+			}
+		}
 	}
 	if metrics != nil {
 		// Streaming combines CDP transfer and UMP parsing in one phase; setup and
 		// close remain separate so slow large responses are visible in telemetry.
-		metrics.recordResponse(counted.bytes, setupDuration, streamDuration, resumeDuration)
+		metrics.recordResponse(int64(len(body)), setupDuration, streamDuration, resumeDuration)
 	}
 }
 
-type browserCountingReader struct {
-	io.Reader
-	bytes int64
-}
-
-func (reader *browserCountingReader) Read(dst []byte) (int, error) {
-	n, err := reader.Reader.Read(dst)
-	reader.bytes += int64(n)
-	return n, err
-}
+const maxSABRRelayBytes int64 = 128 * 1024 * 1024
 
 func (p *chromeBrowserProvider) continuePaused(paused *fetch.EventRequestPaused) {
 	execCtx, err := p.targetContext()
@@ -938,10 +1122,32 @@ type cdpBrowserStream struct {
 	onClose    func()
 }
 
+const browserStreamIdleTimeout = 60 * time.Second
+
+// browserPlaybackRate speeds up playback without overloading Chrome while its
+// response bodies are being replayed through the media pipeline.
+const browserPlaybackRate = 1
+
+func browserReadWithIdleDeadline(ctx context.Context, timeout time.Duration, read func(context.Context) (int, error)) (int, error) {
+	readCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	n, err := read(readCtx)
+	if errors.Is(err, context.DeadlineExceeded) && ctx.Err() == nil {
+		return 0, errRead
+	}
+	return n, err
+}
+
 func (s *cdpBrowserStream) Read(dst []byte) (int, error) {
 	if len(dst) == 0 {
 		return 0, nil
 	}
+	return browserReadWithIdleDeadline(s.readCtx, browserStreamIdleTimeout, func(readCtx context.Context) (int, error) {
+		return s.readWithContext(readCtx, dst)
+	})
+}
+
+func (s *cdpBrowserStream) readWithContext(readCtx context.Context, dst []byte) (int, error) {
 	for emptyReads := 0; emptyReads < 100; emptyReads++ {
 		if len(s.buffer) > 0 {
 			n := copy(dst, s.buffer)
@@ -956,7 +1162,7 @@ func (s *cdpBrowserStream) Read(dst []byte) (int, error) {
 			Data          string `json:"data,omitempty"`
 			EOF           bool   `json:"eof"`
 		}
-		err := cdp.Execute(s.readCtx, "IO.read", map[string]any{"handle": s.handle}, &response)
+		err := cdp.Execute(readCtx, "IO.read", map[string]any{"handle": s.handle}, &response)
 		if err != nil {
 			return 0, err
 		}

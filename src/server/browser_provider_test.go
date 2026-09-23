@@ -1,11 +1,39 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"testing"
 	"time"
 
 	"github.com/kkdai/youtube/v2"
 )
+
+func TestBrowserReadIdleDeadlineReturnsRetryableError(t *testing.T) {
+	started := time.Now()
+	n, err := browserReadWithIdleDeadline(context.Background(), 25*time.Millisecond, func(ctx context.Context) (int, error) {
+		<-ctx.Done()
+		return 0, ctx.Err()
+	})
+	if n != 0 || !errors.Is(err, errRead) {
+		t.Fatalf("idle read = (%d, %v), want (0, errRead)", n, err)
+	}
+	if elapsed := time.Since(started); elapsed > time.Second {
+		t.Fatalf("idle read took %s, want under 1s", elapsed)
+	}
+}
+
+func TestBrowserReadIdleDeadlinePreservesParentCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err := browserReadWithIdleDeadline(ctx, time.Second, func(readCtx context.Context) (int, error) {
+		<-readCtx.Done()
+		return 0, readCtx.Err()
+	})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("parent cancellation = %v, want context.Canceled", err)
+	}
+}
 
 func TestRangeURLReplacesOnlyRange(t *testing.T) {
 	raw := "https://rr1---sn-example.googlevideo.com/videoplayback?expire=1&itag=299&range=1-2&spc=token"

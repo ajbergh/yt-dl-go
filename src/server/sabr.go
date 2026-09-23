@@ -31,6 +31,8 @@ type sabrCapture struct {
 	mu                 sync.Mutex
 	file               *os.File
 	itag               int
+	selectedItag       int
+	allowedItags       map[int]struct{}
 	expectedDurationMs int64
 	budget             int64
 	progress           func(int64)
@@ -90,6 +92,9 @@ func newSABRCaptureSet(captures ...*sabrCapture) *sabrCaptureSet {
 func (set *sabrCaptureSet) fail(err error) {
 	if err == nil {
 		err = errSABR
+	}
+	if set.trace {
+		log.Printf("SABR capture set failed: %v", err)
 	}
 	for _, capture := range set.captures {
 		capture.fail(err)
@@ -194,12 +199,18 @@ type sabrMediaHeader struct {
 }
 
 // newSABRCapture initializes bounded capture state for one selected video itag.
-func newSABRCapture(file *os.File, itag int, expectedDurationMs, budget int64, progress func(int64)) *sabrCapture {
+func newSABRCapture(file *os.File, itag int, expectedDurationMs, budget int64, progress func(int64), alternateItags ...int) *sabrCapture {
 	if progress == nil {
 		progress = func(int64) {}
 	}
+	allowedItags := map[int]struct{}{itag: {}}
+	for _, alternate := range alternateItags {
+		if alternate > 0 {
+			allowedItags[alternate] = struct{}{}
+		}
+	}
 	return &sabrCapture{
-		file: file, itag: itag, expectedDurationMs: expectedDurationMs, budget: budget, progress: progress,
+		file: file, itag: itag, allowedItags: allowedItags, expectedDurationMs: expectedDurationMs, budget: budget, progress: progress,
 		done: make(chan error, 1), active: map[uint64][]*sabrSegment{}, ready: map[uint64]*sabrCompletedSegment{}, written: map[uint64][sha256.Size]byte{},
 		trace: os.Getenv("YTDL_TRACE_SABR") != "",
 	}
@@ -214,6 +225,12 @@ func (capture *sabrCapture) fail(err error) {
 
 func (capture *sabrCapture) succeed() {
 	capture.doneOnce.Do(func() { capture.done <- nil })
+}
+
+func (capture *sabrCapture) isComplete() bool {
+	capture.mu.Lock()
+	defer capture.mu.Unlock()
+	return capture.complete
 }
 
 func (capture *sabrCapture) consume(body []byte) error {
@@ -252,9 +269,11 @@ func (capture *sabrCapture) consumePart(partType uint64, payload []byte) error {
 			return err
 		}
 		selected := false
-		if metadata.itag == capture.itag {
+		_, allowed := capture.allowedItags[metadata.itag]
+		if allowed && (!capture.formatVerified || metadata.itag == capture.selectedItag) {
 			if !capture.formatVerified {
 				capture.formatVerified = true
+				capture.selectedItag = metadata.itag
 				capture.formatDigest = metadata.formatDigest
 				capture.endSegment = metadata.endSegment
 				selected = true
@@ -275,7 +294,7 @@ func (capture *sabrCapture) consumePart(partType uint64, payload []byte) error {
 		if err != nil || header.headerID > math.MaxUint32 || header.itag <= 0 || header.contentLength < 0 {
 			return errSABR
 		}
-		selected := header.itag == capture.itag && capture.acceptSelected && header.formatDigest == capture.formatDigest
+		selected := header.itag == capture.selectedItag && capture.acceptSelected && header.formatDigest == capture.formatDigest
 		segments := capture.active[header.headerID]
 		if len(segments) >= 8 || (selected && len(segments) > 0 && segments[len(segments)-1].selected) {
 			return errSABR
