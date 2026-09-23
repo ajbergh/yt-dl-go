@@ -6,7 +6,7 @@
 
 ## Current implementation branches (2026-09-23)
 
-The checked items below are implemented on branches; none of these fixes is merged into `main` (`cb6523e`) yet. The branches are stacked in this order: `fix/fresh-checkout-build` → `fix/security-headers-m07` → `fix/persistence-errors` → `fix/lint-gate` → `fix/safe-retention` → `fix/active-job-cap`. Review each stacked PR against its immediate predecessor. The 4K work is on a separate branch from `main`.
+The checked items below are implemented on branches; none of these fixes is merged into `main` (`cb6523e`) yet. The branches are stacked in this order: `fix/fresh-checkout-build` → `fix/security-headers-m07` → `fix/persistence-errors` → `fix/lint-gate` → `fix/safe-retention` → `fix/active-job-cap` → `fix/remove-preview-scaffolding`. Review each stacked PR against its immediate predecessor. The 4K work is on a separate branch from `main`.
 
 | Work | Branch / commit | Current state |
 | --- | --- | --- |
@@ -15,7 +15,8 @@ The checked items below are implemented on branches; none of these fixes is merg
 | M0.8 persistence errors | `fix/persistence-errors` / `cf34220` | Pushed; Go tests and vet passed. |
 | M0.9 lint gate | `fix/lint-gate` / `45f4f1d` | Pushed; `npm run lint` and `npm run typecheck` pass. |
 | M0.1 safe retention | `fix/safe-retention` / `53a3abb` | Pushed; Go tests, vet, frontend typecheck and lint pass. |
-| M0.2 active job cap | `fix/active-job-cap` | Implemented locally; 100 retained Library records do not block admission. Full Go tests and vet pass. |
+| M0.2 active job cap | `fix/active-job-cap` / `a8f6c58` | Pushed; 100 retained Library records do not block admission. Full Go tests and vet pass. |
+| M0.3 remove preview scaffolding | `fix/remove-preview-scaffolding` | Implemented locally; production bundle scan, typecheck, and lint pass. |
 | 4K adaptive capture | `fix/4k-browser-representation` / `de754d7` | Pushed; the exact live URL completed at 2160p with audio and a verified 2,335,115,476-byte WebM. Go tests and vet pass. |
 
 Draft PR creation is pending GitHub authentication: `gh auth status` reports that the saved `ajbergh` token is invalid. CI runs on pull requests; the current workflow does not run on direct pushes to `fix/**` branches.
@@ -98,7 +99,7 @@ Goal: remove data-loss paths, close the framing/console exposure, and make the p
 
 ### M0.3 Remove preview-host / app-builder scaffolding from production
 
-**Status:** [ ] · **P0** · **Area:** frontend / security
+**Status:** [x] · **P0** · **Area:** frontend / security
 
 The production bundle contains the following:
 
@@ -116,6 +117,8 @@ The production bundle contains the following:
 - Remove their call sites in `main.tsx`, `App.tsx:6-7,30,48`, and `error-boundary.tsx`.
 - Fix `getRouterBasename` (`App.tsx:14-26`) so unknown paths reach the not-found route.
 - Add a build check that fails if `dist/assets/*.js` contains `ancestorOrigins`, `m365.cloud.microsoft`, or `__dev/console`.
+
+The seven preview transport/serializer modules and their production call sites are removed on `fix/remove-preview-scaffolding`. Unknown paths now use the root router basename and reach the not-found route. `npm run build:check` builds into a temporary directory and scans every JavaScript asset for the three forbidden strings; CI runs it on pull requests. Frontend typecheck and lint pass.
 
 ### M0.4 Security headers: CSP and frame protection
 
@@ -1098,6 +1101,7 @@ v2 adds:
 - The saved GitHub CLI token is invalid, so draft PRs and their CI runs are pending reauthentication.
 - M0.1 is implemented on `fix/safe-retention`, stacked on M0.9. The default now keeps Library records; explicit retention verifies all published media before removing managed files, and empty failed/cancelled jobs still expire after 24 hours by default. Targeted Go tests and frontend typecheck pass.
 - M0.2 is implemented on `fix/active-job-cap`, stacked on M0.1. The live-job count replaces `len(s.jobs)` for admissions, the redundant fixed-size scheduler wake channel is removed, and item retry uses the same cap. Tests with 100 retained terminal records and paused/retry capacity pass, as do the full Go suite and vet.
+- M0.3 is implemented on `fix/remove-preview-scaffolding`, stacked on M0.2. Production preview messaging and console forwarding are removed, and CI now scans a built JavaScript bundle for the forbidden preview strings. `npm run build:check`, typecheck, and lint pass.
 
 ### Roadmap v2 created
 

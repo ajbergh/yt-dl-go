@@ -47,6 +47,9 @@ jobs:
       - name: Lint frontend
         run: npm run lint
 
+      - name: Check production bundle for preview-host code
+        run: npm run build:check
+
       - name: Build embedded frontend
         run: npm run build -- --outDir src/server/dist
 
