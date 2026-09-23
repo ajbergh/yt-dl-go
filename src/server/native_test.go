@@ -37,6 +37,36 @@ func TestAdaptiveFallbackRequiresExplicitOptIn(t *testing.T) {
 	}
 }
 
+func TestBrowserWebMCandidatesStayWithinResolutionAndCodecFamily(t *testing.T) {
+	var selected, alternate, lowerResolution, otherCodec, combined youtube.Format
+	formats := []struct {
+		target *youtube.Format
+		raw    string
+	}{
+		{&selected, `{"itag":337,"mimeType":"video/webm; codecs=\"vp09.02.51.12\"","height":2160,"width":3840,"fps":60,"audioChannels":0,"initRange":{"start":"0","end":"1"},"indexRange":{"start":"0","end":"1"}}`},
+		{&alternate, `{"itag":315,"mimeType":"video/webm; codecs=\"vp09.00.51.08\"","height":2160,"width":3840,"fps":30,"audioChannels":0,"initRange":{"start":"0","end":"1"},"indexRange":{"start":"0","end":"1"}}`},
+		{&lowerResolution, `{"itag":308,"mimeType":"video/webm; codecs=\"vp09.00.41.08\"","height":1440,"width":2560,"fps":60,"audioChannels":0,"initRange":{"start":"0","end":"1"},"indexRange":{"start":"0","end":"1"}}`},
+		{&otherCodec, `{"itag":401,"mimeType":"video/webm; codecs=\"av01.0.12M.08\"","height":2160,"width":3840,"fps":60,"audioChannels":0,"initRange":{"start":"0","end":"1"},"indexRange":{"start":"0","end":"1"}}`},
+		{&combined, `{"itag":303,"mimeType":"video/webm; codecs=\"vp09.00.51.08, opus\"","height":2160,"width":3840,"fps":60,"audioChannels":2,"initRange":{"start":"0","end":"1"},"indexRange":{"start":"0","end":"1"}}`},
+	}
+	video := fixtureVideo("dQw4w9WgXcQ")
+	for _, item := range formats {
+		if err := json.Unmarshal([]byte(item.raw), item.target); err != nil {
+			t.Fatal(err)
+		}
+		video.Formats = append(video.Formats, *item.target)
+	}
+	selectedFormat := &video.Formats[len(video.Formats)-len(formats)]
+	candidates := browserWebMVideoCandidates(video, selectedFormat)
+	if len(candidates) != 2 || candidates[0].ItagNo != 337 || candidates[1].ItagNo != 315 {
+		var got []int
+		for _, candidate := range candidates {
+			got = append(got, candidate.ItagNo)
+		}
+		t.Fatalf("browser candidate itags = %v, want [337 315]", got)
+	}
+}
+
 func TestFormatSelection(t *testing.T) {
 	video := fixtureVideo("dQw4w9WgXcQ")
 	video.Formats = append(video.Formats,

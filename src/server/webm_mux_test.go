@@ -149,6 +149,24 @@ func TestMuxWebMInterleavesVP9AndOpus(t *testing.T) {
 	}
 }
 
+func TestMuxWebMRejectsUnexpectedVideoDimensions(t *testing.T) {
+	dir := t.TempDir()
+	videoPath := filepath.Join(dir, "video.webm")
+	audioPath := filepath.Join(dir, "audio.webm")
+	outputPath := filepath.Join(dir, "output.webm")
+	writeWebMFixture(t, videoPath, webm.TrackEntry{
+		TrackNumber: 1, TrackUID: 1, TrackType: webMVideoTrackType, CodecID: "V_VP9",
+		Video: &webm.Video{PixelWidth: 3840, PixelHeight: 2160},
+	}, []webMFrame{{data: []byte{1}, keyframe: true, timestamp: 0}})
+	writeWebMFixture(t, audioPath, webm.TrackEntry{
+		TrackNumber: 1, TrackUID: 2, TrackType: webMAudioTrackType, CodecID: "A_OPUS", CodecPrivate: []byte("OpusHead"),
+		Audio: &webm.Audio{SamplingFrequency: 48000, Channels: 2},
+	}, []webMFrame{{data: []byte{2}, keyframe: true, timestamp: 0}})
+	if err := muxWebMForDimensions(context.Background(), videoPath, audioPath, outputPath, 2560, 1440); !errors.Is(err, errMux) {
+		t.Fatalf("unexpected video dimensions returned %v, want errMux", err)
+	}
+}
+
 func TestMuxWebMRejectsUnsupportedTracks(t *testing.T) {
 	dir := t.TempDir()
 	videoPath := filepath.Join(dir, "video.webm")

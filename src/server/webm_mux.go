@@ -185,6 +185,10 @@ func closeWebMWriters(writers []webm.BlockWriteCloser) error {
 // decoding or transcoding. Frames are streamed and timestamp-interleaved, so
 // memory use is bounded by the EBML parser and writer sort buffers.
 func muxWebM(ctx context.Context, videoPath, audioPath, outputPath string) (err error) {
+	return muxWebMForDimensions(ctx, videoPath, audioPath, outputPath, 0, 0)
+}
+
+func muxWebMForDimensions(ctx context.Context, videoPath, audioPath, outputPath string, expectedWidth, expectedHeight int) (err error) {
 	videoTrack, err := readWebMTrackEntry(videoPath, webMVideoTrackType)
 	if err != nil {
 		return err
@@ -194,6 +198,10 @@ func muxWebM(ctx context.Context, videoPath, audioPath, outputPath string) (err 
 		return err
 	}
 	if !validWebMAdaptiveTracks(videoTrack, audioTrack) {
+		return errMux
+	}
+	if (expectedWidth > 0 && videoTrack.Video.PixelWidth != uint64(expectedWidth)) ||
+		(expectedHeight > 0 && videoTrack.Video.PixelHeight != uint64(expectedHeight)) {
 		return errMux
 	}
 	videoTrack = normalizeWebMTrack(videoTrack, 1, webMVideoTrackType)

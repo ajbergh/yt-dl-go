@@ -50,6 +50,48 @@ func TestSABRCaptureAssemblesSelectedTrack(t *testing.T) {
 	}
 }
 
+func TestSABRCapturePinsAllowedAlternateItag(t *testing.T) {
+	path := t.TempDir() + "\\track.webm"
+	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer file.Close()
+	// Chrome may choose itag 315 while metadata selection chose the same-size,
+	// same-codec-family representation 337. Capture may accept 315, then pins
+	// that exact itag and format digest for the rest of the track.
+	capture := newSABRCapture(file, 337, 1000, 1024, nil, 315)
+	format315 := testProtoVarintField(nil, 1, 315)
+	format337 := testProtoVarintField(nil, 1, 337)
+	body := testUMPPart(nil, umpPartFormatInitializationMetadata, testProtoBytesField(nil, 2, format315))
+	body = testSelectedSegment(body, 1, 315, true, 0, 0, []byte("init"), format315)
+	body = testUMPPart(body, umpPartFormatInitializationMetadata, testProtoBytesField(nil, 2, format337))
+	body = testSelectedSegment(body, 2, 337, true, 0, 0, []byte("wrong-init"), format337)
+	body = testSelectedSegment(body, 3, 315, false, 1, 1000, []byte("video"), format315)
+	if err := capture.consume(body); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-capture.done; err != nil {
+		t.Fatal(err)
+	}
+	if capture.selectedItag != 315 {
+		t.Fatalf("pinned itag = %d, want first eligible itag 315", capture.selectedItag)
+	}
+	if _, err := capture.finish(); err != nil {
+		t.Fatal(err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(data, []byte("initvideo")) {
+		t.Fatalf("captured %q, want only pinned itag 315", data)
+	}
+}
+
 func TestSABRCaptureRejectsLengthMismatch(t *testing.T) {
 	path := t.TempDir() + "\\track.mp4"
 	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
