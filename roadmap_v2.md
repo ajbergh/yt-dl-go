@@ -20,7 +20,7 @@ The Milestone 0 fixes below were consolidated from the stacked source branches a
 | M0.5 dev-only origins | `fix/dev-only-origins` / `8291aa0` | Merged by #10; release and dev origin checks pass. |
 | 4K adaptive capture | `fix/4k-browser-representation` / `de754d7` | Merged by #11; the reported URL completed at 2160p with audio in a 2,335,115,476-byte WebM. |
 
-All six jobs passed in [PR #10 CI](https://github.com/ajbergh/yt-dl-go/actions/runs/35870589146) and in [PR #11 CI after updating onto the merged stabilization commit](https://github.com/ajbergh/yt-dl-go/actions/runs/35871657223). The owner selected MIT for M0.6; implementation is underway on `roadmap/m0-6-license-notices`.
+All six jobs passed in [PR #10 CI](https://github.com/ajbergh/yt-dl-go/actions/runs/35870589146) and in [PR #11 CI after updating onto the merged stabilization commit](https://github.com/ajbergh/yt-dl-go/actions/runs/35871657223). The owner selected MIT for M0.6; its license and notice work merged in [PR #14](https://github.com/ajbergh/yt-dl-go/pull/14).
 
 ## Why a v2
 
@@ -146,7 +146,7 @@ The default Vite origins now compile only with `-tags=dev`; release builds allow
 
 ### M0.6 Add a project LICENSE and complete third-party notices
 
-**Status:** [~] MIT and notices implemented; PR validation pending · **P0** · **Area:** legal
+**Status:** [T] Implemented; tagged source-package validation pending · **P0** · **Area:** legal
 
 - The root `LICENSE` now applies MIT to the project.
 - Go notices cover the application dependency packages and Go runtime; npm notices cover production dependencies, including the Geist font (OFL-1.1) and lucide (ISC).
@@ -160,7 +160,7 @@ The default Vite origins now compile only with `-tags=dev`; release builds allow
 - [x] Generate notices with pinned `go-licenses` and `license-checker` tools in CI; fail when generated files drift.
 - [x] Ship the dependency license texts and LGPL source in release packages.
 
-**Progress (2026-09-23):** Implemented on `roadmap/m0-6-license-notices`. Local generation completed for 32 Go/runtime notices and 15 npm production packages. PR CI and tagged source-package validation are pending.
+**Progress (2026-09-23):** Merged by [PR #14](https://github.com/ajbergh/yt-dl-go/pull/14). All six CI jobs passed, including reproducible license checks and Linux, Windows, and macOS package builds. Notices cover 33 Go/runtime entries and 15 npm production packages. A release dry run remains to validate the tagged source archive and complete M8.1/M8.2 runtime validation.
 
 ### M0.7 A fresh clone must build and test
 
@@ -910,7 +910,7 @@ No tests exist for:
 
 ### M8.1 Ship the first release
 
-**Status:** [ ] · **P1** · **Area:** release
+**Status:** [~] In progress on `roadmap/m8-1-release-dry-run` · **P1** · **Area:** release
 
 - There are no tags, `package.json` is `0.1.0`, and `release.yml` has never run.
 - `release.yml` uses different action majors from `ci.yml`.
@@ -918,10 +918,12 @@ No tests exist for:
 
 #### Scope
 
-- Add a `workflow_dispatch` dry-run mode to `release.yml` that skips `gh release create`.
-- Align action versions between the two workflows.
+- [x] Add a `workflow_dispatch` dry-run mode to `release.yml` that skips `gh release create` and uploads release artifacts for inspection.
+- [x] Align shared action versions between the two workflows.
 - Cut `v0.2.0` (or `v1.0.0` after Milestone 0).
-- Point the README at GitHub Releases.
+- [x] Point the README at GitHub Releases.
+
+**Progress (2026-09-23):** Implementing on `roadmap/m8-1-release-dry-run`. Manual runs validate the selected version against `package.json`, build and checksum all release archives, then upload a workflow artifact without creating a GitHub Release. A successful dry run and version-tag decision remain.
 
 ### M8.2 Harden the release workflow
 
@@ -1109,7 +1111,16 @@ v2 adds:
 - Converted Windows and Unix build timestamps to UTC using PowerShell and Node.js, including macOS runners.
 - Replaced the fixed five-archive assertion with expected archive manifests from each matrix job.
 - All six PR #13 CI jobs passed. The release workflow is tag-triggered and was not executed, so a dry run remains required for release-specific validation.
-- M0.6 implementation is underway on `roadmap/m0-6-license-notices`. The new release workflow still needs a release dry run for runtime validation.
+- M0.6 merged in PR #14; its linked source archive still needs release-workflow dry-run validation.
+
+### M0.6 license and notice implementation
+
+**Status:** [T] Merged by PR #14; tagged source-package validation pending
+
+- Added the MIT project license, generated Go and npm notices, complete dependency license texts, and LGPL decoder source/relinking instructions.
+- License generation runs for Linux, Windows, and macOS target dependency sets and uses stable package links and normalized license text.
+- PR #14 passed all six CI jobs, including license drift checks and production package builds for Linux amd64/arm64, macOS amd64/arm64, and Windows amd64.
+- M8.1 now adds a dispatchable release dry run that will validate the tagged source archive without creating a draft release.
 
 ### Stabilization branches and 4K retest
 
