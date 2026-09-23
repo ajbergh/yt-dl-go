@@ -18,6 +18,7 @@ Generated from the Go packages used by the application with `go-licenses`. The C
 | `github.com/gobwas/pool` | `v0.2.1` | MIT | [source/license](https://github.com/gobwas/pool/blob/v0.2.1/LICENSE) | [license files](licenses/go/github.com/gobwas/pool) |
 | `github.com/gobwas/ws` | `v1.4.0` | MIT | [source/license](https://github.com/gobwas/ws/blob/v1.4.0/LICENSE) | [license files](licenses/go/github.com/gobwas/ws) |
 | `github.com/google/pprof/profile` | `v0.0.0-20260802141513-ef3492d7dac3` | Apache-2.0 | [source/license](https://github.com/google/pprof/blob/ef3492d7dac3/LICENSE) | [license files](licenses/go/github.com/google/pprof) |
+| `github.com/google/uuid` | `v1.6.0` | BSD-3-Clause | [source/license](https://github.com/google/uuid/blob/v1.6.0/LICENSE) | [license files](licenses/go/github.com/google/uuid) |
 | `github.com/kkdai/youtube/v2` | `v2.10.6` | MIT | [source/license](https://github.com/kkdai/youtube/blob/v2.10.6/LICENSE) | [license files](licenses/go/github.com/kkdai/youtube/v2) |
 | `github.com/mattn/go-isatty` | `v0.0.24` | MIT | [source/license](https://github.com/mattn/go-isatty/blob/v0.0.24/LICENSE) | [license files](licenses/go/github.com/mattn/go-isatty) |
 | `github.com/ncruces/go-strftime` | `v1.0.0` | MIT | [source/license](https://github.com/ncruces/go-strftime/blob/v1.0.0/LICENSE) | [license files](licenses/go/github.com/ncruces/go-strftime) |

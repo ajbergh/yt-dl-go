@@ -31,7 +31,7 @@ const report = execFileSync(process.execPath, [
 const packages = JSON.parse(report);
 const rows = Object.entries(packages)
   .filter(([packageKey]) => packageKey !== rootPackageKey)
-  .sort(([a], [b]) => a.localeCompare(b));
+  .sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0);
 if (rows.length === 0) {
   throw new Error("license-checker returned no production dependencies");
 }
@@ -39,7 +39,7 @@ if (rows.length === 0) {
 const generated = [];
 for (const [packageKey, details] of rows) {
   const license = String(details.licenses || "").trim();
-  const licenseText = String(details.licenseText || "").trim();
+  const licenseText = String(details.licenseText || "").replace(/\r\n?/g, "\n").trim();
   if (!license || /\b(unknown|unlicensed)\b/i.test(license)) {
     throw new Error(`Unknown or unlicensed npm dependency: ${packageKey} (${license || "missing"})`);
   }

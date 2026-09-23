@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { copyFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -11,16 +11,30 @@ const reportPath = path.join(serverRoot, "GO_THIRD_PARTY_NOTICES.md");
 const csvPath = path.join(licensesRoot, "go-dependencies.csv");
 const ignoredPackages = ["youtube-downloader", "github.com/dop251/goja/ftoa"];
 const cacheDirectory = mkdtempSync(path.join(repoRoot, ".go-licenses-cache-"));
-process.on("exit", () => rmSync(cacheDirectory, { recursive: true, force: true }));
+const outputsDirectory = mkdtempSync(path.join(repoRoot, ".go-licenses-output-"));
+process.on("exit", () => {
+  rmSync(cacheDirectory, { recursive: true, force: true });
+  rmSync(outputsDirectory, { recursive: true, force: true });
+});
 
-function run(command, args, options = {}) {
+function run(command, args, options = {}, target = {}) {
   return execFileSync(command, args, {
     cwd: serverRoot,
     encoding: "utf8",
     maxBuffer: 64 * 1024 * 1024,
-    env: { ...process.env, GOCACHE: cacheDirectory },
+    env: { ...process.env, GOCACHE: cacheDirectory, ...target },
     ...options,
   });
+}
+
+function collectFiles(directory, prefix = "", result = new Map()) {
+  for (const name of readdirSync(directory)) {
+    const absolutePath = path.join(directory, name);
+    const relativePath = path.join(prefix, name);
+    if (statSync(absolutePath).isDirectory()) collectFiles(absolutePath, relativePath, result);
+    else result.set(relativePath, absolutePath);
+  }
+  return result;
 }
 
 function parseCsvLine(line) {
@@ -48,18 +62,48 @@ function parseCsvLine(line) {
 }
 
 const ignoreArgs = ignoredPackages.flatMap(value => ["--ignore", value]);
-run("go-licenses", ["save", "./...", "--save_path=licenses/go", "--force", ...ignoreArgs], {
-  stdio: ["ignore", "ignore", "inherit"],
-});
-run("go-licenses", ["check", "./...", "--disallowed_types=forbidden,unknown", ...ignoreArgs], {
-  stdio: ["ignore", "ignore", "inherit"],
-});
-const csv = run("go-licenses", ["report", "./...", ...ignoreArgs]);
-const rows = csv.trim().split(/\r?\n/).filter(Boolean).map(parseCsvLine);
+const targets = [
+  ["linux", "amd64"],
+  ["windows", "amd64"],
+  ["darwin", "arm64"],
+];
+const rowByPackage = new Map();
+const savedFiles = new Map();
+for (const [goos, goarch] of targets) {
+  const target = { GOOS: goos, GOARCH: goarch, CGO_ENABLED: "0" };
+  run("go-licenses", ["check", "./...", "--disallowed_types=forbidden,unknown", ...ignoreArgs], {
+    stdio: ["ignore", "ignore", "inherit"],
+  }, target);
+  const csv = run("go-licenses", ["report", "./...", ...ignoreArgs], {}, target);
+  for (const row of csv.trim().split(/\r?\n/).filter(Boolean).map(parseCsvLine)) {
+    rowByPackage.set(row[0], row);
+  }
+  const targetOutput = path.join(outputsDirectory, `${goos}-${goarch}`);
+  run("go-licenses", ["save", "./...", `--save_path=${targetOutput}`, "--force", ...ignoreArgs], {
+    stdio: ["ignore", "ignore", "inherit"],
+  }, target);
+  for (const [relativePath, absolutePath] of collectFiles(targetOutput)) {
+    const contents = readFileSync(absolutePath);
+    const previous = savedFiles.get(relativePath);
+    if (previous && !previous.equals(contents)) {
+      throw new Error(`Conflicting generated license file across Go targets: ${relativePath}`);
+    }
+    if (!previous) savedFiles.set(relativePath, contents);
+  }
+}
+const rows = [...rowByPackage.values()];
 if (rows.length === 0) throw new Error("go-licenses returned no dependency report");
 if (rows.some(row => !row[0] || !row[2] || /\bunknown\b/i.test(row[2]))) {
   const unknown = rows.filter(row => !row[0] || !row[2] || /\bunknown\b/i.test(row[2]));
   throw new Error(`Unknown Go dependency license(s): ${JSON.stringify(unknown)}`);
+}
+
+rmSync(goLicensesRoot, { recursive: true, force: true });
+mkdirSync(goLicensesRoot, { recursive: true });
+for (const [relativePath, contents] of savedFiles) {
+  const destination = path.join(goLicensesRoot, relativePath);
+  mkdirSync(path.dirname(destination), { recursive: true });
+  writeFileSync(destination, contents);
 }
 
 const modules = run("go", ["list", "-m", "-f", "{{.Path}}\t{{.Version}}", "all"])
@@ -84,7 +128,8 @@ mkdirSync(v8LicenseDirectory, { recursive: true });
 copyFileSync(path.join(gojaRoot, "ftoa", "LICENSE_LUCENE"), path.join(ftoaLicenseDirectory, "LICENSE_LUCENE"));
 copyFileSync(path.join(gojaRoot, "ftoa", "internal", "fast", "LICENSE_V8"), path.join(v8LicenseDirectory, "LICENSE_V8"));
 
-const sortedRows = rows.sort((a, b) => a[0].localeCompare(b[0]));
+const compare = (a, b) => a < b ? -1 : a > b ? 1 : 0;
+const sortedRows = rows.sort((a, b) => compare(a[0], b[0]));
 writeFileSync(csvPath, `${sortedRows.map(row => row.map(field => `"${String(field).replaceAll('"', '""')}"`).join(",")).join("\n")}\n`, "utf8");
 
 const markdownRows = sortedRows.map(([packagePath, licenseURL, licenseName]) => {
