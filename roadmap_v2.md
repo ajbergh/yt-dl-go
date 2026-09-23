@@ -851,7 +851,7 @@ The Ubuntu CI job currently runs normal Go tests and untagged vet, but has no `-
 
 Add `go test -race ./...` on Ubuntu, a gofmt check for first-party Go source, `golangci-lint` with staticcheck/unused analyzers, `govulncheck`, and `go vet -tags e2e`. Keep the existing untagged vet check as well.
 
-**Progress (2026-09-23):** Upgraded `golang.org/x/text` to v0.39.0, the first version fixed for GO-2026-5970. Removed the unused AAC wrapper and dead queue-row field, retained the bandwidth waiter's non-zero size using a blank byte field, and corrected capitalized error strings. Added the Ubuntu formatting/race/lint/vulnerability/tagged-vet gates; PR and CI validation are pending.
+**Progress (2026-09-23):** Upgraded `golang.org/x/text` to v0.39.0, the first version fixed for GO-2026-5970. Removed the unused AAC wrapper and dead queue-row field, retained the bandwidth waiter's non-zero size using a blank byte field, and corrected capitalized error strings. Added the Ubuntu formatting/race/lint/vulnerability/tagged-vet gates. The first PR #20 CI run caught stale Go notice metadata after the dependency upgrade; regenerated the 33-package report and pinned source list, and CI is being rerun.
 
 ### M7.3 Supply-chain automation
 

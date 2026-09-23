@@ -23,7 +23,7 @@
 "github.com/tphakala/simd","https://pkg.go.dev/github.com/tphakala/simd@v1.9.0","MIT"
 "github.com/yapingcat/gomedia","https://pkg.go.dev/github.com/yapingcat/gomedia@v0.0.0-20240906162731-17feea57090c","MIT"
 "golang.org/x/sys","https://pkg.go.dev/golang.org/x/sys@v0.47.0","BSD-3-Clause"
-"golang.org/x/text","https://pkg.go.dev/golang.org/x/text@v0.35.0","BSD-3-Clause"
+"golang.org/x/text","https://pkg.go.dev/golang.org/x/text@v0.39.0","BSD-3-Clause"
 "modernc.org/libc","https://pkg.go.dev/modernc.org/libc@v1.75.7","BSD-3-Clause"
 "modernc.org/mathutil","https://pkg.go.dev/modernc.org/mathutil@v1.7.1","BSD-3-Clause"
 "modernc.org/memory","https://pkg.go.dev/modernc.org/memory@v1.12.1","BSD-3-Clause"
