@@ -1045,16 +1045,16 @@ The v1 P2.3 gates still apply: checksum plus signature/provenance verification, 
 
 ### M9.4 Remove stray and legacy files
 
-**Status:** [T] · **P1** · **Area:** hygiene · merged by PR #18; manual HMR smoke check pending
+**Status:** [x] · **P1** · **Area:** hygiene · merged by PR #18
 
 - [x] Delete the unreferenced, stale `SOURCE_MANIFEST.sha256`.
 - [x] Delete `vite-dev-reload.ts` and remove the WebSocket mute shim and its TypeScript/lint references from the Vite setup.
 - [x] Restore native Vite HMR and React Fast Refresh; remove disabled HMR and polling while preserving the watcher ignore list.
 - [x] Move `tailwindcss` to `devDependencies` and refresh npm/Bun lockfiles and generated production npm notices.
 - [x] Keep `dev_mock_new_ui/` available as a design reference because M4.9 has not captured its ideas yet; ESLint already excludes it and this repository has no Dependabot configuration.
-- [ ] Manually verify a frontend edit hot-updates through the local dev server without a full reload.
+- [x] Manually verify a frontend edit hot-updates through the local dev server without a full reload.
 
-**Progress (2026-09-23):** PR #18 (`59dd1cd`) merged after all six CI jobs passed, including license drift, typecheck, lint, frontend and Go tests, browser E2E, and Linux/macOS/Windows package builds. Removed the stale manifest and SSE reload plugin, returned Vite to native HMR defaults, retained the existing file-watch exclusions, and moved Tailwind out of production dependencies. npm now reports 14 production packages in its generated notice report. The source scan found the old manifest substantially stale (62 missing paths, 40 hash mismatches, and 4 valid entries), so it was deleted rather than repaired. Local interactive HMR remains to be checked; no test suite was run locally for this task.
+**Progress (2026-09-23):** PR #18 (`59dd1cd`) merged after all six CI jobs passed, including license drift, typecheck, lint, frontend and Go tests, browser E2E, and Linux/macOS/Windows package builds. Removed the stale manifest and SSE reload plugin, returned Vite to native HMR defaults, retained the existing file-watch exclusions, and moved Tailwind out of production dependencies. npm now reports 14 production packages in its generated notice report. The source scan found the old manifest substantially stale (62 missing paths, 40 hash mismatches, and 4 valid entries), so it was deleted rather than repaired. Manual HMR smoke check passed: editing the queue page's explanatory text updated it in the open browser, while a browser-side marker and `performance.timeOrigin` remained unchanged, confirming no full reload. The temporary edit and local servers were removed after the check.
 
 ### M9.5 Cross-platform developer workflow
 
