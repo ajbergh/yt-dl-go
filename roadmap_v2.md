@@ -6,7 +6,7 @@
 
 ## Current implementation branches (2026-09-23)
 
-The checked items below are implemented on branches; none of these fixes is merged into `main` (`cb6523e`) yet. The branches are stacked in this order: `fix/fresh-checkout-build` → `fix/security-headers-m07` → `fix/persistence-errors` → `fix/lint-gate` → `fix/safe-retention`. Review each stacked PR against its immediate predecessor. The 4K work is on a separate branch from `main`.
+The checked items below are implemented on branches; none of these fixes is merged into `main` (`cb6523e`) yet. The branches are stacked in this order: `fix/fresh-checkout-build` → `fix/security-headers-m07` → `fix/persistence-errors` → `fix/lint-gate` → `fix/safe-retention` → `fix/active-job-cap`. Review each stacked PR against its immediate predecessor. The 4K work is on a separate branch from `main`.
 
 | Work | Branch / commit | Current state |
 | --- | --- | --- |
@@ -14,7 +14,8 @@ The checked items below are implemented on branches; none of these fixes is merg
 | M0.4 security headers | `fix/security-headers-m07` / `2c61f5d` | Pushed; Go tests passed. |
 | M0.8 persistence errors | `fix/persistence-errors` / `cf34220` | Pushed; Go tests and vet passed. |
 | M0.9 lint gate | `fix/lint-gate` / `45f4f1d` | Pushed; `npm run lint` and `npm run typecheck` pass. |
-| M0.1 safe retention | `fix/safe-retention` | Implemented; targeted storage-mode and scratch cleanup tests pass. |
+| M0.1 safe retention | `fix/safe-retention` / `53a3abb` | Pushed; Go tests, vet, frontend typecheck and lint pass. |
+| M0.2 active job cap | `fix/active-job-cap` | Implemented locally; 100 retained Library records do not block admission. Full Go tests and vet pass. |
 | 4K adaptive capture | `fix/4k-browser-representation` / `de754d7` | Pushed; the exact live URL completed at 2160p with audio and a verified 2,335,115,476-byte WebM. Go tests and vet pass. |
 
 Draft PR creation is pending GitHub authentication: `gh auth status` reports that the saved `ajbergh` token is invalid. CI runs on pull requests; the current workflow does not run on direct pushes to `fix/**` branches.
@@ -83,7 +84,7 @@ Goal: remove data-loss paths, close the framing/console exposure, and make the p
 
 ### M0.2 Stop `MAX_JOBS` from capping the Library
 
-**Status:** [ ] · **P0** · **Area:** backend
+**Status:** [x] · **P0** · **Area:** backend
 
 `server.go:846` rejects new jobs when `len(s.jobs) >= s.cfg.maxJobs`, and `s.jobs` includes finished jobs. The error message even says "wait for retained jobs to expire".
 
@@ -92,6 +93,8 @@ Goal: remove data-loss paths, close the framing/console exposure, and make the p
 - Count only queued, active, and paused jobs against `MAX_JOBS`, and rename or document it as a concurrency/backlog cap.
 - Size the scheduler queue channel independently of the Library size (`main.go:189`).
 - Add a test showing that 100 finished jobs do not block a new job.
+
+`MAX_JOBS` now counts queued, downloading, processing, and paused jobs. Terminal Library records no longer consume capacity. The scheduler uses its existing change signal instead of a size-limited token channel; single-item playlist retries obey the same cap. Tests cover 100 finished records, full-cap rejection, recovery after cancellation, paused jobs, and retry admission on `fix/active-job-cap`.
 
 ### M0.3 Remove preview-host / app-builder scaffolding from production
 
@@ -1094,6 +1097,7 @@ v2 adds:
 - The independent `fix/4k-browser-representation` branch (`de754d7`) now passes a network-enabled live test of `https://youtu.be/7PIji8OubXU?si=WRtj7oVFiAXW07Ra`. Browser Network response streaming captured the complete 2160p VP9 video (itag 315) and Opus audio (itag 251) without intercepting playback responses. The finalized WebM is 2,335,115,476 bytes; the job completed at height 2160. `go test ./...` and `go vet ./...` pass.
 - The saved GitHub CLI token is invalid, so draft PRs and their CI runs are pending reauthentication.
 - M0.1 is implemented on `fix/safe-retention`, stacked on M0.9. The default now keeps Library records; explicit retention verifies all published media before removing managed files, and empty failed/cancelled jobs still expire after 24 hours by default. Targeted Go tests and frontend typecheck pass.
+- M0.2 is implemented on `fix/active-job-cap`, stacked on M0.1. The live-job count replaces `len(s.jobs)` for admissions, the redundant fixed-size scheduler wake channel is removed, and item retry uses the same cap. Tests with 100 retained terminal records and paused/retry capacity pass, as do the full Go suite and vet.
 
 ### Roadmap v2 created
 

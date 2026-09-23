@@ -144,7 +144,6 @@ type server struct {
 	jobs                map[string]*jobState
 	order               []string
 	tickets             map[string]ticket
-	queue               chan string
 	slots               chan struct{}
 	scheduleChanged     chan struct{}
 	activeDownloads     int
@@ -166,6 +165,19 @@ type server struct {
 
 func terminal(status string) bool {
 	return status == "completed" || status == "partial" || status == "failed" || status == "cancelled"
+}
+
+// activeJobCountLocked counts jobs that still occupy the download backlog.
+// Finished Library records do not consume MAX_JOBS capacity.
+func (s *server) activeJobCountLocked() int {
+	count := 0
+	for _, job := range s.jobs {
+		switch job.Status {
+		case "queued", "downloading", "processing", "paused":
+			count++
+		}
+	}
+	return count
 }
 
 func (s *server) notifySchedulerLocked() {
@@ -631,22 +643,17 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			fail(w, 409, "Only paused jobs can be resumed")
 			return
 		}
-		select {
-		case s.queue <- j.ID:
-			j.pauseRequested = false
-			j.cancelRequested = false
-			j.Status, j.Error, j.done = "queued", "", time.Time{}
-			j.QueuePosition = s.nextQueuePositionLocked()
-			s.refreshAllQueueItemsLocked(j)
-			if err := s.persistJobLocked(j); err != nil {
-				fail(w, 500, "Could not save the resume state")
-				return
-			}
-			s.notifySchedulerLocked()
-			reply(w, 200, snapshot(j))
-		default:
-			fail(w, 429, "Download queue is full; try resuming again shortly")
+		j.pauseRequested = false
+		j.cancelRequested = false
+		j.Status, j.Error, j.done = "queued", "", time.Time{}
+		j.QueuePosition = s.nextQueuePositionLocked()
+		s.refreshAllQueueItemsLocked(j)
+		if err := s.persistJobLocked(j); err != nil {
+			fail(w, 500, "Could not save the resume state")
+			return
 		}
+		s.notifySchedulerLocked()
+		reply(w, 200, snapshot(j))
 	case len(parts) == 2 && parts[1] == "cancel" && r.Method == http.MethodPost:
 		if !terminal(j.Status) {
 			if j.Status == "paused" {
@@ -907,7 +914,7 @@ func (s *server) create(w http.ResponseWriter, r *http.Request) {
 }
 
 // enqueueJob allocates private per-job storage, persists a queued job, and
-// returns 202 only after the job has entered the bounded worker queue.
+// returns 202 only after the job has entered the bounded worker backlog.
 func (s *server) enqueueJob(w http.ResponseWriter, u, kind, quality, requestedVideoStrategy, mediaType, audioFormat, audioBitrate, subtitleLanguage, subtitleFormat, requestedCategory, requestedStorageMode string, inspectedItems ...[]inspectedItem) {
 	s.enqueueJobWithFallback(w, u, kind, quality, requestedVideoStrategy, mediaType, audioFormat, audioBitrate, subtitleLanguage, subtitleFormat, requestedCategory, requestedStorageMode, nil, inspectedItems...)
 }
@@ -923,8 +930,8 @@ func (s *server) enqueueJobWithFallback(w http.ResponseWriter, u, kind, quality,
 		fail(w, 503, "Downloader service is stopping")
 		return
 	}
-	if len(s.jobs) >= s.cfg.maxJobs {
-		fail(w, 429, "Job capacity reached; wait for retained jobs to expire")
+	if s.activeJobCountLocked() >= s.cfg.maxJobs {
+		fail(w, 429, "Active job capacity reached; wait for a job to finish or cancel one")
 		return
 	}
 	items := []queueItem{}
@@ -997,26 +1004,19 @@ func (s *server) enqueueJobWithFallback(w http.ResponseWriter, u, kind, quality,
 		total := 1
 		j.TotalCount = &total
 	}
-	// Cancelled queue entries can still occupy slots until the worker reaches them.
-	select {
-	case s.queue <- j.ID:
-		s.jobs[j.ID], s.order = j, append(s.order, j.ID)
-		s.notifySchedulerLocked()
-		if err := s.store.saveJob(j); err != nil {
-			s.recordPersistenceFailure("create job", j.ID, err)
-			delete(s.jobs, j.ID)
-			s.order = s.order[:len(s.order)-1]
-			_ = os.RemoveAll(j.dir)
-			fail(w, 500, "Cannot persist download job")
-			return
-		}
-		s.recordPersistenceSuccess()
-		s.publishJobEventLocked("job-created", j)
-		reply(w, 202, snapshot(j))
-	default:
+	s.jobs[j.ID], s.order = j, append(s.order, j.ID)
+	if err := s.store.saveJob(j); err != nil {
+		s.recordPersistenceFailure("create job", j.ID, err)
+		delete(s.jobs, j.ID)
+		s.order = s.order[:len(s.order)-1]
 		_ = os.RemoveAll(j.dir)
-		fail(w, 429, "Download queue is full")
+		fail(w, 500, "Cannot persist download job")
+		return
 	}
+	s.recordPersistenceSuccess()
+	s.publishJobEventLocked("job-created", j)
+	s.notifySchedulerLocked()
+	reply(w, 202, snapshot(j))
 }
 
 // issueTicket creates a short-lived random capability for a stopped job's ZIP

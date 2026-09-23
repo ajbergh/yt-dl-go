@@ -418,8 +418,8 @@ func selectAudioFormat(video *youtube.Video) (*youtube.Format, string, error) {
 }
 
 // start launches the bounded download scheduler and periodic retention pruning.
-// The queue channel is only a wake-up signal; persisted QueuePosition selects
-// which queued job starts next.
+// Persisted QueuePosition selects which queued job starts next. scheduleChanged
+// wakes the scheduler when a job is added, resumed, or reordered.
 func (s *server) start() {
 	s.wg.Add(2)
 	go func() {
@@ -459,7 +459,6 @@ func (s *server) start() {
 			select {
 			case <-s.ctx.Done():
 				return
-			case <-s.queue:
 			case <-changed:
 			}
 		}

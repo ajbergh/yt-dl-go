@@ -37,6 +37,10 @@ func (s *server) handleRetryItem(w http.ResponseWriter, r *http.Request, jobID s
 		fail(w, http.StatusConflict, "This playlist item already has valid finalized media")
 		return
 	}
+	if s.activeJobCountLocked() >= s.cfg.maxJobs {
+		fail(w, http.StatusTooManyRequests, "Active job capacity reached; wait for a job to finish or cancel one")
+		return
+	}
 
 	oldJob := job.Job
 	oldItems := append([]queueItem(nil), job.Items...)

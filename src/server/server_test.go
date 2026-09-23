@@ -184,6 +184,67 @@ func waitTerminal(t *testing.T, s *server, id string) Job {
 	return waitJob(t, s, id, func(j Job) bool { return terminal(j.Status) })
 }
 
+func TestMaxJobsCountsOnlyLiveJobs(t *testing.T) {
+	fake := fixtureClient(0)
+	fake.videoFn = func(ctx context.Context, _ string) (*youtube.Video, error) {
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
+	s := testServer(t, fake, func(c *config) { c.maxJobs = 1 })
+	s.mu.Lock()
+	for i := 0; i < 100; i++ {
+		id := fmt.Sprintf("finished-%03d", i)
+		job := &jobState{Job: Job{ID: id, URL: testVideo, Kind: "video", Status: "completed", CreatedAt: time.Now().UTC().Format(time.RFC3339Nano)}}
+		if err := s.store.saveJob(job); err != nil {
+			s.mu.Unlock()
+			t.Fatal(err)
+		}
+		s.jobs[id] = job
+		s.order = append(s.order, id)
+	}
+	s.mu.Unlock()
+
+	first := createJob(t, s, testVideo)
+	waitJob(t, s, first.ID, func(j Job) bool { return j.Status == "downloading" })
+	if response := request(s, "POST", "/api/jobs", `{"url":"`+testVideo+`","quality":"best","rightsConfirmed":true}`, nil); response.Code != 429 {
+		t.Fatalf("second live job admitted over MAX_JOBS: %d %s", response.Code, response.Body.String())
+	}
+	if response := request(s, "POST", "/api/jobs/"+first.ID+"/cancel", "", nil); response.Code != 200 {
+		t.Fatalf("cancel: %d %s", response.Code, response.Body.String())
+	}
+	waitTerminal(t, s, first.ID)
+	createJob(t, s, testVideo)
+}
+
+func TestMaxJobsCountsPausedJobsAndItemRetries(t *testing.T) {
+	fake := fixtureClient(0)
+	fake.videoFn = func(ctx context.Context, _ string) (*youtube.Video, error) {
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
+	s := testServer(t, fake, func(c *config) { c.maxJobs = 2 })
+	s.settings.MaxConcurrentDownloads = 1
+	first := createJob(t, s, testVideo)
+	waitJob(t, s, first.ID, func(j Job) bool { return j.Status == "downloading" })
+	second := createJob(t, s, testVideo)
+	if response := request(s, "POST", "/api/jobs/"+second.ID+"/pause", "", nil); response.Code != 200 {
+		t.Fatalf("pause queued job: %d %s", response.Code, response.Body.String())
+	}
+	if response := request(s, "POST", "/api/jobs", `{"url":"`+testVideo+`","quality":"best","rightsConfirmed":true}`, nil); response.Code != 429 {
+		t.Fatalf("paused job did not count against MAX_JOBS: %d %s", response.Code, response.Body.String())
+	}
+
+	stopped := &jobState{Job: Job{ID: "retry-capacity", Kind: "playlist", Status: "partial", Items: []queueItem{{Index: 1, Status: "failed"}}}}
+	s.mu.Lock()
+	s.jobs[stopped.ID] = stopped
+	s.order = append(s.order, stopped.ID)
+	s.mu.Unlock()
+	response := request(s, "POST", "/api/jobs/"+stopped.ID+"/retry-item", `{"index":1}`, nil)
+	if response.Code != 429 || stopped.Status != "partial" {
+		t.Fatalf("retry exceeded MAX_JOBS or changed stopped job: %d %s status=%s", response.Code, response.Body.String(), stopped.Status)
+	}
+}
+
 func assertFinalFiles(t *testing.T, s *server, j Job) {
 	t.Helper()
 	entries, err := os.ReadDir(filepath.Join(s.cfg.root, j.ID))

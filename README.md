@@ -107,7 +107,7 @@ All settings are optional environment variables. The default loopback configurat
 | `API_TOKEN` | unset | Bearer token for protected API routes. The bundled UI sends no token; leave unset when using the executable's UI. |
 | `ALLOWED_ORIGINS` | Local Vite and service origins | Exact comma-separated HTTP(S) origins accepted by CORS |
 | `ALLOWED_HOSTS` | Loopback authorities at the listener port | Additional exact `host[:port]` values accepted by the host check |
-| `MAX_JOBS` | `32` | Maximum queued, active, and retained jobs |
+| `MAX_JOBS` | `32` | Maximum queued, downloading, processing, and paused jobs; finished Library records do not count |
 | `MAX_JOB_BYTES` | `10737418240` | Per-job media byte limit (10 GiB) |
 | `JOB_TIMEOUT` | `6h` | Whole-job deadline |
 | `RETENTION` | `never` | Keep finished Library records by default. An explicit duration of at least `5m` expires a record only when every finalized file has a verified published copy. Failed or cancelled jobs with no files are cleaned after 24h by default. |

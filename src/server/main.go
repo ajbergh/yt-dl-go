@@ -189,7 +189,7 @@ func newServer(c config) (*server, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 	s := &server{
 		cfg: c, settings: settings, jobs: map[string]*jobState{}, tickets: map[string]ticket{},
-		queue: make(chan string, c.maxJobs), slots: make(chan struct{}, 4), scheduleChanged: make(chan struct{}),
+		slots: make(chan struct{}, 4), scheduleChanged: make(chan struct{}),
 		ctx: ctx, stop: cancel,
 		store:     store,
 		bandwidth: newBandwidthLimiter(settings.BandwidthLimitBytesPerSec),
@@ -213,18 +213,12 @@ func newServer(c config) (*server, error) {
 		_ = store.close()
 		return nil, errors.New("cannot load download history")
 	}
+	// The scheduler scans queued jobs when it starts; no per-job wake token
+	// or fixed-size channel is needed for resumed jobs.
 	for _, saved := range loaded {
 		j := &jobState{Job: saved.job, dir: saved.dir, done: saved.done, fileItems: fileIndexes(saved.items), cancelRequested: saved.cancelled}
 		s.jobs[j.ID] = j
 		s.order = append(s.order, j.ID)
-		if saved.resuming {
-			select {
-			case s.queue <- j.ID:
-			default:
-				_ = store.close()
-				return nil, errors.New("download history exceeds configured queue capacity")
-			}
-		}
 	}
 	return s, nil
 }
