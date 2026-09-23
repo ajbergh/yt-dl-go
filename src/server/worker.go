@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"math/rand/v2"
 	"mime"
 	"net/http"
 	"net/url"
@@ -17,6 +18,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/kkdai/youtube/v2"
@@ -46,6 +48,16 @@ var (
 	errNative            = errors.New("native engine failed unexpectedly; completeness could not be verified")
 	errNoAudio           = errors.New("no compatible standalone audio stream is available")
 	errAudioConvert      = errors.New("AAC audio could not be decoded and encoded to MP3")
+	errItemTimeout       = errors.New("item timed out before its media transfer completed; retry the item")
+)
+
+const (
+	metadataTimeout     = 2 * time.Minute
+	transferIdleTimeout = 60 * time.Second
+	minimumItemTimeout  = 15 * time.Minute
+	maximumItemTimeout  = 7 * 24 * time.Hour
+	defaultTransferRate = 512 * 1024 // bytes per second when no bandwidth limit is configured
+	itemTimeoutOverhead = 10 * time.Minute
 )
 
 type nativeClient interface {
@@ -109,9 +121,26 @@ func (c synchronizedNativeClient) GetStreamContext(ctx context.Context, video *y
 // injectable through server.engine.
 func (s *server) operationEngine() nativeClient {
 	if _, ok := s.engine.(*youtube.Client); ok {
-		return newNativeClient(s.cfg.timeout)
+		return newNativeClient(0)
 	}
 	return synchronizedNativeClient{client: s.engine, mu: &s.engineMu}
+}
+
+func newJobContext(parent context.Context, overallTimeout time.Duration) (context.Context, context.CancelFunc) {
+	if overallTimeout > 0 {
+		return context.WithTimeout(parent, overallTimeout)
+	}
+	return context.WithCancel(parent)
+}
+
+func itemDeadlineError(parent, item context.Context, err error) error {
+	if parent.Err() != nil {
+		return parent.Err()
+	}
+	if errors.Is(item.Err(), context.DeadlineExceeded) || errors.Is(err, context.DeadlineExceeded) {
+		return errItemTimeout
+	}
+	return err
 }
 
 func formatType(f *youtube.Format) (string, string, bool) {
@@ -476,7 +505,7 @@ func (s *server) start() {
 				if j := s.nextQueuedJobLocked(); j != nil {
 					s.activeDownloads++
 					requested := append([]queueItem(nil), j.Items...)
-					ctx, cancel := context.WithTimeout(s.ctx, s.cfg.timeout)
+					ctx, cancel := newJobContext(s.ctx, s.cfg.timeout)
 					j.Status, j.cancel = "downloading", cancel
 					s.persistJobLocked(j)
 					s.mu.Unlock()
@@ -582,7 +611,9 @@ func (s *server) run(ctx context.Context, j *jobState, requested []queueItem) {
 	}
 	work := []playlistWorkItem{{entry: &youtube.PlaylistEntry{ID: strings.TrimPrefix(j.URL, "https://www.youtube.com/watch?v=")}}}
 	if j.Kind == "playlist" {
-		playlist, err := engine.GetPlaylistContext(ctx, j.URL)
+		playlistCtx, cancelPlaylist := context.WithTimeout(ctx, metadataTimeout)
+		playlist, err := engine.GetPlaylistContext(playlistCtx, j.URL)
+		cancelPlaylist()
 		if playlist == nil {
 			fatal = errPlaylist
 			return
@@ -1132,14 +1163,22 @@ func (s *server) processItem(ctx context.Context, j *jobState, entry *youtube.Pl
 	engine := s.operationEngine()
 	var video *youtube.Video
 	var err error
+	metadataCtx, cancelMetadata := context.WithTimeout(ctx, metadataTimeout)
 	if j.Kind == "video" {
-		video, err = engine.GetVideoContext(ctx, j.URL)
+		video, err = engine.GetVideoContext(metadataCtx, j.URL)
 	} else {
-		video, err = engine.VideoFromPlaylistEntryContext(ctx, entry)
+		video, err = engine.VideoFromPlaylistEntryContext(metadataCtx, entry)
 	}
+	cancelMetadata()
 	if err != nil || video == nil || video.ID != entry.ID {
-		if ctx.Err() != nil {
+		if err != nil {
+			if deadlineErr := itemDeadlineError(ctx, metadataCtx, err); deadlineErr != err {
+				return deadlineErr
+			}
+		} else if ctx.Err() != nil {
 			return ctx.Err()
+		} else if errors.Is(metadataCtx.Err(), context.DeadlineExceeded) {
+			return errItemTimeout
 		}
 		return errMetadata
 	}
@@ -1163,6 +1202,15 @@ func (s *server) processItem(ctx context.Context, j *jobState, entry *youtube.Pl
 	if err != nil {
 		return err
 	}
+	if requested <= 0 {
+		requested = s.cfg.maxBytes
+	}
+	bandwidthLimit := int64(0)
+	if s.bandwidth != nil {
+		bandwidthLimit = s.bandwidth.Limit()
+	}
+	transferCtx, cancelTransfer := context.WithTimeout(ctx, itemTransferTimeout(video, requested, bandwidthLimit))
+	defer cancelTransfer()
 	leaseOpen := true
 	defer func() {
 		if leaseOpen {
@@ -1172,15 +1220,15 @@ func (s *server) processItem(ctx context.Context, j *jobState, entry *youtube.Pl
 	var file mediaFile
 	if j.MediaType == "audio" {
 		if j.AudioFormat == "m4a" {
-			file, err = s.transferOriginalAudio(ctx, j, engine, video, format, current, outputIndex, budget)
+			file, err = s.transferOriginalAudio(transferCtx, j, engine, video, format, current, outputIndex, budget)
 		} else {
-			file, err = s.transferAudio(ctx, j, engine, video, format, extension, current, outputIndex, budget)
+			file, err = s.transferAudio(transferCtx, j, engine, video, format, extension, current, outputIndex, budget)
 		}
 	} else {
-		file, err = s.transfer(ctx, j, engine, video, selection, current, outputIndex, budget)
+		file, err = s.transfer(transferCtx, j, engine, video, selection, current, outputIndex, budget)
 	}
 	if err != nil {
-		return err
+		return itemDeadlineError(ctx, transferCtx, err)
 	}
 	if j.MediaType != "audio" {
 		applyVideoMetadata(&file, video)
@@ -1255,6 +1303,23 @@ func (s *server) processItem(ctx context.Context, j *jobState, entry *youtube.Pl
 	return nil
 }
 
+func itemTransferTimeout(video *youtube.Video, expectedBytes, bandwidthLimit int64) time.Duration {
+	rate := int64(defaultTransferRate)
+	if bandwidthLimit > 0 {
+		rate = bandwidthLimit
+	}
+	byteSeconds := float64(max(int64(0), expectedBytes)) / float64(rate) * 2
+	durationSeconds := 0.0
+	if video != nil && video.Duration > 0 {
+		durationSeconds = video.Duration.Seconds() * 4
+	}
+	seconds := max(float64(minimumItemTimeout.Seconds()), byteSeconds+itemTimeoutOverhead.Seconds(), durationSeconds+itemTimeoutOverhead.Seconds())
+	if seconds >= maximumItemTimeout.Seconds() {
+		return maximumItemTimeout
+	}
+	return time.Duration(seconds * float64(time.Second))
+}
+
 func (s *server) safeProcessItem(ctx context.Context, j *jobState, entry *youtube.PlaylistEntry, current, outputIndex int, tracker *jobBudget) (err error) {
 	defer func() {
 		if recover() != nil {
@@ -1323,8 +1388,10 @@ func (s *server) transferAudio(ctx context.Context, j *jobState, engine nativeCl
 		}
 		return result, errRead
 	}
-	stopClose := context.AfterFunc(ctx, func() { _ = stream.Close() })
-	defer func() { stopClose(); _ = stream.Close() }()
+	var closeOnce sync.Once
+	closeStream := func() { closeOnce.Do(func() { _ = stream.Close() }) }
+	stopClose := context.AfterFunc(ctx, closeStream)
+	defer func() { stopClose(); closeStream() }()
 	if ctx.Err() != nil {
 		return result, ctx.Err()
 	}
@@ -1352,7 +1419,7 @@ func (s *server) transferAudio(ctx context.Context, j *jobState, engine nativeCl
 	if openErr != nil {
 		return result, errStorage
 	}
-	sourceSize, copyErr := copyStream(ctx, source, s.bandwidthReader(ctx, stream), budget, expected, func(written int64) {
+	sourceSize, copyErr := copyStream(ctx, source, s.bandwidthReader(ctx, idleDeadlineReader{reader: stream, timeout: transferIdleTimeout, onIdle: closeStream}), budget, expected, func(written int64) {
 		s.updateProgress(j, queueIndex, written, expected)
 	})
 	if copyErr != nil {
@@ -1462,8 +1529,10 @@ func (s *server) transferOriginalAudio(ctx context.Context, j *jobState, engine 
 		}
 		return result, errRead
 	}
-	stopClose := context.AfterFunc(ctx, func() { _ = stream.Close() })
-	defer func() { stopClose(); _ = stream.Close() }()
+	var closeOnce sync.Once
+	closeStream := func() { closeOnce.Do(func() { _ = stream.Close() }) }
+	stopClose := context.AfterFunc(ctx, closeStream)
+	defer func() { stopClose(); closeStream() }()
 	if ctx.Err() != nil {
 		return result, ctx.Err()
 	}
@@ -1500,7 +1569,7 @@ func (s *server) transferOriginalAudio(ctx context.Context, j *jobState, engine 
 			}
 		}
 	}()
-	result.Size, err = copyStream(ctx, output, s.bandwidthReader(ctx, stream), budget, expected, func(written int64) {
+	result.Size, err = copyStream(ctx, output, s.bandwidthReader(ctx, idleDeadlineReader{reader: stream, timeout: transferIdleTimeout, onIdle: closeStream}), budget, expected, func(written int64) {
 		s.updateProgress(j, queueIndex, written, expected)
 	})
 	if err != nil {
@@ -1568,7 +1637,7 @@ func (s *server) keepPartial(j *jobState) bool {
 
 func (s *server) recordFailure(j *jobState, index int, err error) {
 	message := "Download interrupted"
-	for _, safe := range []error{errMetadata, errPlaylist, errCombined, errManifest, errRead, errLength, errMux, errStorage, errLimit, errNative, errNoAudio, errAudioConvert} {
+	for _, safe := range []error{errMetadata, errPlaylist, errCombined, errManifest, errRead, errLength, errMux, errStorage, errLimit, errNative, errNoAudio, errAudioConvert, errItemTimeout} {
 		if errors.Is(err, safe) {
 			message = safe.Error()
 			break
@@ -1710,7 +1779,7 @@ func (s *server) transferProgressive(ctx context.Context, j *jobState, engine na
 			}
 		}
 	}()
-	result.Size, err = copyStream(ctx, f, s.bandwidthReader(ctx, stream), budget, expected, func(written int64) {
+	result.Size, err = copyStream(ctx, f, s.bandwidthReader(ctx, idleDeadlineReader{reader: stream, timeout: transferIdleTimeout, onIdle: closeStream}), budget, expected, func(written int64) {
 		s.updateProgress(j, queueIndex, written, expected)
 	})
 	closeStream()
@@ -2085,7 +2154,33 @@ func adaptiveFallbackAllowed(j *jobState, selection streamSelection) bool {
 	return j != nil && j.Allow360pFallback && selection.progressiveFallback != nil
 }
 
-const adaptiveRangeChunkSize int64 = 8 * 1024 * 1024
+const (
+	adaptiveRangeChunkSize int64 = 8 * 1024 * 1024
+	adaptiveRangeAttempts        = 3
+)
+
+func adaptiveRangeRetryDelay(retry int) time.Duration {
+	if retry < 1 {
+		return 0
+	}
+	base := 250 * time.Millisecond * time.Duration(1<<min(retry-1, 4))
+	return base + time.Duration(rand.Int64N(int64(base)))
+}
+
+func waitAdaptiveRangeRetry(ctx context.Context, retry int) error {
+	delay := adaptiveRangeRetryDelay(retry)
+	if delay <= 0 {
+		return ctx.Err()
+	}
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}
 
 func (s *server) downloadAdaptiveRanges(ctx context.Context, j *jobState, engine nativeClient, video *youtube.Video, format *youtube.Format, path string, itemIndex int, budget int64, progress func(int64), browserProvider browserMediaProvider) (result int64, browserUsed bool, err error) {
 	if budget <= 0 || format.ContentLength <= 0 || format.ContentLength > budget {
@@ -2145,7 +2240,7 @@ func (s *server) downloadAdaptiveRanges(ctx context.Context, j *jobState, engine
 			}
 		}
 	}()
-	client := nativeHTTPClient(s.cfg.timeout)
+	client := nativeHTTPClient(0)
 	current := format
 	result = start
 	if start > 0 {
@@ -2165,7 +2260,12 @@ func (s *server) downloadAdaptiveRanges(ctx context.Context, j *jobState, engine
 		end := min(start+adaptiveRangeChunkSize, format.ContentLength) - 1
 		chunkSize := end - start + 1
 		chunkOK := false
-		for attempt := 0; attempt < 2; attempt++ {
+		for attempt := 0; attempt < adaptiveRangeAttempts; attempt++ {
+			if attempt > 0 {
+				if retryErr := waitAdaptiveRangeRetry(ctx, attempt); retryErr != nil {
+					return result, browserUsed, retryErr
+				}
+			}
 			if attempt > 0 || current == nil || current.URL == "" {
 				current, err = s.refreshFormat(ctx, engine, video.ID, format.ItagNo)
 				if err != nil {
@@ -2206,7 +2306,8 @@ func (s *server) downloadAdaptiveRanges(ctx context.Context, j *jobState, engine
 				s.recordPersistenceFailure("truncate adaptive download part", j.ID, truncateErr)
 				return result, browserUsed, errStorage
 			}
-			written, copyErr := io.Copy(f, io.LimitReader(s.bandwidthReader(ctx, resp.Body), chunkSize+1))
+			idleBody := idleDeadlineReader{reader: resp.Body, timeout: transferIdleTimeout, onIdle: func() { _ = resp.Body.Close() }}
+			written, copyErr := io.Copy(f, io.LimitReader(s.bandwidthReader(ctx, idleBody), chunkSize+1))
 			_ = resp.Body.Close()
 			if copyErr == nil && written == chunkSize && (resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusPartialContent) {
 				chunkOK = true
@@ -2323,7 +2424,7 @@ func (s *server) downloadSource(ctx context.Context, j *jobState, engine nativeC
 	if progress == nil {
 		progress = func(int64) {}
 	}
-	result, err = copyStream(ctx, f, s.bandwidthReader(ctx, stream), budget, expected, progress)
+	result, err = copyStream(ctx, f, s.bandwidthReader(ctx, idleDeadlineReader{reader: stream, timeout: transferIdleTimeout, onIdle: closeStream}), budget, expected, progress)
 	closeStream()
 	if ctx.Err() != nil {
 		return result, ctx.Err()
@@ -2406,6 +2507,36 @@ func muxMP4Track(ctx context.Context, path string, muxer *mp4.Movmuxer, track ui
 		return errMux
 	}
 	return nil
+}
+
+type idleDeadlineReader struct {
+	reader  io.Reader
+	timeout time.Duration
+	onIdle  func()
+}
+
+func (r idleDeadlineReader) Read(buffer []byte) (int, error) {
+	if r.timeout <= 0 || r.onIdle == nil {
+		return r.reader.Read(buffer)
+	}
+	var timedOut atomic.Bool
+	timerDone := make(chan struct{})
+	timer := time.AfterFunc(r.timeout, func() {
+		timedOut.Store(true)
+		func() {
+			defer func() { _ = recover() }()
+			r.onIdle()
+		}()
+		close(timerDone)
+	})
+	n, err := r.reader.Read(buffer)
+	if !timer.Stop() {
+		<-timerDone
+		if timedOut.Load() {
+			return n, errRead
+		}
+	}
+	return n, err
 }
 
 func copyStream(ctx context.Context, dst io.Writer, src io.Reader, budget, expected int64, progress func(int64)) (int64, error) {

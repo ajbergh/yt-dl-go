@@ -63,7 +63,10 @@ func (s *server) inspect(w http.ResponseWriter, r *http.Request) {
 		fail(w, 503, "Native download engine is not initialized")
 		return
 	}
-	timeout := min(s.cfg.timeout, 25*time.Second)
+	timeout := 25 * time.Second
+	if s.cfg.timeout > 0 {
+		timeout = min(s.cfg.timeout, timeout)
+	}
 	ctx, cancel := context.WithTimeout(s.ctx, timeout)
 	defer cancel()
 	engine := s.operationEngine()

@@ -311,18 +311,20 @@ Goal: no hung slots, no silent corruption, no avoidable restarts from zero.
 
 ### M2.1 Stall detection and per-item timeouts
 
-**Status:** [ ] · **P0** · **Area:** engine
+**Status:** [~] Implementation complete; PR validation pending · **P0** · **Area:** engine
 
-- `JOB_TIMEOUT` (6h) is used as the whole-job context (`worker.go:440`) and as `http.Client.Timeout` (`network.go:216`). The transport only sets `ResponseHeaderTimeout: 20s` (`network.go:211`).
-- `copyStream` (`worker.go:2281`) and the range `io.Copy` (`worker.go:2097`) have no idle timer, so a stalled body can hold an item slot for hours.
-- A long 4K playlist can hit the job-wide deadline even though every item is healthy.
+- `JOB_TIMEOUT` is now an optional overall job cap and defaults to disabled. Playlist and item metadata retain bounded lookup deadlines.
+- Native progressive/audio reads and adaptive range bodies close after 60 seconds without data and return retryable `errRead`; the watchdog runs before bandwidth throttling.
+- Each media transfer has a size-, duration-, and bandwidth-aware deadline (15-minute minimum, seven-day cap). Long playlists are not limited by one shared six-hour deadline unless an overall cap is configured.
 
 #### Scope
 
-- Add a per-read idle deadline (e.g. no bytes for 60s means retryable `errRead`).
-- Add a per-item timeout derived from the item's size and duration.
-- Turn the job timeout into an optional overall cap.
-- Add exponential backoff with jitter for range retries, which today are 2 attempts with no backoff (`worker.go:2010, 2070`).
+- [x] Add a per-read idle deadline; 60 seconds without data closes the reader and returns retryable `errRead`.
+- [x] Add per-item metadata and transfer deadlines, with transfer time derived from expected bytes, media duration, and the configured bandwidth limit.
+- [x] Turn `JOB_TIMEOUT` into an optional overall cap; `none` and `0` disable it.
+- [x] Add bounded exponential backoff with jitter between adaptive range retries; retain retries at three attempts.
+
+**Progress (2026-09-23):** Implemented on `roadmap/m2-1-stall-and-item-timeouts`. Native read watchdogs cover progressive video/audio sources and adaptive HTTP ranges, and close the underlying stream so a blocked `Read` cannot hold a worker slot. Item deadline errors become visible failed queue entries eligible for the existing playlist item retry action; parent cancellation and pause remain distinct. Range attempts now back off exponentially with jitter. `JOB_TIMEOUT` defaults to `none` and remains available as a configured overall cap; metadata lookups stay bounded. The full Go server suite and `go vet ./...` pass locally; PR CI is pending.
 
 ### M2.2 Atomic, durable finalization everywhere
 

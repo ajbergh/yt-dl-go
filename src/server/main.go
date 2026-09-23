@@ -140,9 +140,12 @@ func loadConfig() (config, error) {
 	if err != nil || c.maxBytes < 1 {
 		return c, errors.New("MAX_JOB_BYTES must be a positive byte count")
 	}
-	c.timeout, err = time.ParseDuration(env("JOB_TIMEOUT", "6h"))
-	if err != nil || c.timeout < time.Second {
-		return c, errors.New("JOB_TIMEOUT must be at least 1s")
+	jobTimeout := strings.TrimSpace(os.Getenv("JOB_TIMEOUT"))
+	if jobTimeout != "" && !strings.EqualFold(jobTimeout, "none") {
+		c.timeout, err = time.ParseDuration(jobTimeout)
+		if err != nil || (c.timeout != 0 && c.timeout < time.Second) || c.timeout < 0 {
+			return c, errors.New("JOB_TIMEOUT must be 'none', 0, or at least 1s")
+		}
 	}
 	retention := strings.TrimSpace(env("RETENTION", "never"))
 	if !strings.EqualFold(retention, "never") {
@@ -198,7 +201,7 @@ func newServer(c config) (*server, error) {
 		store:     store,
 		bandwidth: newBandwidthLimiter(settings.BandwidthLimitBytesPerSec),
 		events:    newEventBroker(),
-		engine:    newNativeClient(c.timeout),
+		engine:    newNativeClient(0),
 		browserFactory: func(ctx context.Context) (browserMediaProvider, error) {
 			return newChromeBrowserProvider(ctx, c.browserPath)
 		},

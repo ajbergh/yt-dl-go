@@ -54,7 +54,7 @@ Managed sidecars use the finalized media basename plus `.<language>.vtt` or `.<l
 | `ALLOWED_HOSTS` | loopback authorities at listener port | Additional exact `host[:port]` authorities |
 | `MAX_JOBS` | `32` | 1 through 1000 queued, downloading, processing, and paused jobs; finished Library records do not count |
 | `MAX_JOB_BYTES` | `10737418240` | Positive per-job media byte budget (10 GiB by default) |
-| `JOB_TIMEOUT` | `6h` | Whole-job deadline; at least one second |
+| `JOB_TIMEOUT` | `none` | Optional overall job deadline; accepts `none`, `0`, or a duration of at least one second. Items have separate size- and duration-aware deadlines, and network reads fail after 60 seconds without data. |
 | `RETENTION` | `never` | Keep finished Library records by default. An explicit duration of at least five minutes expires only records whose finalized files have verified published copies; empty failed/cancelled jobs are cleaned after 24h by default. |
 | `CHROME_PATH` | unset | Chrome/Chromium/Edge executable for adaptive capture |
 | `NO_BROWSER` | unset | Legacy/automation switch; `1` suppresses automatic OS browser launch |
