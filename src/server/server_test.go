@@ -78,7 +78,7 @@ func (f *fakeClient) GetStreamContext(ctx context.Context, video *youtube.Video,
 	return io.NopCloser(strings.NewReader(fixtureData)), int64(len(fixtureData)), nil
 }
 
-func testServer(t *testing.T, engine nativeClient, change func(*config)) *server {
+func testServer(t *testing.T, engine nativeClient, change func(*config), configureSettings ...func(*AppSettings)) *server {
 	t.Helper()
 	c := config{
 		addr: "127.0.0.1:8080", root: filepath.Join(t.TempDir(), "private"), token: strings.Repeat("a", 32),
@@ -100,6 +100,9 @@ func testServer(t *testing.T, engine nativeClient, change func(*config)) *server
 		}
 	})
 	s.settings.DownloadLocation = filepath.Join(s.cfg.root, "published")
+	for _, configure := range configureSettings {
+		configure(&s.settings)
+	}
 	if err := s.store.saveAppSettings(s.settings); err != nil {
 		t.Fatal(err)
 	}
@@ -222,8 +225,9 @@ func TestMaxJobsCountsPausedJobsAndItemRetries(t *testing.T) {
 		<-ctx.Done()
 		return nil, ctx.Err()
 	}
-	s := testServer(t, fake, func(c *config) { c.maxJobs = 2 })
-	s.settings.MaxConcurrentDownloads = 1
+	s := testServer(t, fake, func(c *config) { c.maxJobs = 2 }, func(settings *AppSettings) {
+		settings.MaxConcurrentDownloads = 1
+	})
 	first := createJob(t, s, testVideo)
 	waitJob(t, s, first.ID, func(j Job) bool { return j.Status == "downloading" })
 	second := createJob(t, s, testVideo)

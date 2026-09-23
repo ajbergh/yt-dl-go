@@ -475,20 +475,21 @@ func (s *server) start() {
 			if s.activeDownloads < limit {
 				if j := s.nextQueuedJobLocked(); j != nil {
 					s.activeDownloads++
+					requested := append([]queueItem(nil), j.Items...)
 					ctx, cancel := context.WithTimeout(s.ctx, s.cfg.timeout)
 					j.Status, j.cancel = "downloading", cancel
 					s.persistJobLocked(j)
 					s.mu.Unlock()
 					s.wg.Add(1)
-					go func(job *jobState, jobCtx context.Context, jobCancel context.CancelFunc) {
+					go func(job *jobState, jobCtx context.Context, jobCancel context.CancelFunc, requested []queueItem) {
 						defer s.wg.Done()
 						defer jobCancel()
-						s.run(jobCtx, job)
+						s.run(jobCtx, job, requested)
 						s.mu.Lock()
 						s.activeDownloads--
 						s.notifySchedulerLocked()
 						s.mu.Unlock()
-					}(j, ctx, cancel)
+					}(j, ctx, cancel, requested)
 					continue
 				}
 			}
@@ -564,7 +565,7 @@ func playlistWorkItems(playlist *youtube.Playlist, requested []queueItem) ([]pla
 	return work, nil
 }
 
-func (s *server) run(ctx context.Context, j *jobState) {
+func (s *server) run(ctx context.Context, j *jobState, requested []queueItem) {
 	var fatal error
 	engine := s.operationEngine()
 	defer func() {
@@ -573,7 +574,6 @@ func (s *server) run(ctx context.Context, j *jobState) {
 		}
 		s.finish(ctx, j, fatal)
 	}()
-	requested := append([]queueItem(nil), j.Items...)
 	retryTargets := make(map[int]struct{})
 	for _, item := range requested {
 		if item.RetryRequested {
