@@ -44,6 +44,9 @@ jobs:
       - name: Type-check frontend
         run: npm run typecheck
 
+      - name: Lint frontend
+        run: npm run lint
+
       - name: Build embedded frontend
         run: npm run build -- --outDir src/server/dist
 

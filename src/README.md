@@ -24,7 +24,7 @@ npm run typecheck
 npm run build
 ~~~
 
-The UI tests are written for Bun and can be run with `bun test src/downloader.test.mjs src/ui.test.mjs`. CI also runs `npm run e2e:browser`, which requires Chrome/Chromium and Go, builds the service with the test-only `e2e` build tag, and exercises the real browser/service/SQLite workflow. The fixture build is never used by the production executable. `npm run lint` checks the whole repository, including the separate mock project under `dev_mock_new_ui`; lint currently reports unused imports and conditional-hook errors in that mock.
+The UI tests are written for Bun and can be run with `bun test src/downloader.test.mjs src/ui.test.mjs`. CI also runs `npm run e2e:browser`, which requires Chrome/Chromium and Go, builds the service with the test-only `e2e` build tag, and exercises the real browser/service/SQLite workflow. The fixture build is never used by the production executable. CI runs `npm run lint` against the production project; the separate `dev_mock_new_ui` prototype is excluded from that gate.
 
 `npm run build` emits the static SPA to root `dist` and empties that directory first. The Go program embeds assets from `src/server/dist`, so copy the build there before compiling the executable. Do not put `DATA_DIR` under root `dist`; a build removes its contents.
 

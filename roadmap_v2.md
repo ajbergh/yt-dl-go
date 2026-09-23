@@ -4,6 +4,20 @@
 >
 > **Last updated:** 2026-09-23
 
+## Current implementation branches (2026-09-23)
+
+The checked items below are implemented on branches; none of these fixes is merged into `main` (`cb6523e`) yet. The branches are stacked in this order: `fix/fresh-checkout-build` → `fix/security-headers-m07` → `fix/persistence-errors` → `fix/lint-gate`. Review each stacked PR against its immediate predecessor. The 4K work is on a separate branch from `main`.
+
+| Work | Branch / commit | Current state |
+| --- | --- | --- |
+| M0.7 fresh checkout build | `fix/fresh-checkout-build` / `baa8887` | Pushed; clean Go build and tests passed. |
+| M0.4 security headers | `fix/security-headers-m07` / `2c61f5d` | Pushed; Go tests passed. |
+| M0.8 persistence errors | `fix/persistence-errors` / `cf34220` | Pushed; Go tests and vet passed. |
+| M0.9 lint gate | `fix/lint-gate` | Implemented locally; `npm run lint` and `npm run typecheck` pass. Pending commit, push, and PR. |
+| 4K adaptive capture | `fix/4k-browser-representation` / `3bf9fc2` | Pushed, but **not validated**: the latest live retest of `7PIji8OubXU` selected 2160p and failed after audio capture stalled. Further engine work is required. |
+
+Draft PR creation is pending GitHub authentication: `gh auth status` reports that the saved `ajbergh` token is invalid. CI runs on pull requests; the current workflow does not run on direct pushes to `fix/**` branches.
+
 ## Why a v2
 
 v1 built the features for a "private local media acquisition and library application." The review found that the foundations underneath those features have not caught up:
@@ -158,9 +172,9 @@ Log these failures and fail the job or item where state is lost. Job, checkpoint
 
 ### M0.9 Gate CI on lint
 
-**Status:** [ ] · **P0** · **Area:** CI
+**Status:** [x] · **P0** · **Area:** CI
 
-`npm run lint` currently reports 49 errors, mostly unused imports in `home.tsx:15-30`. CI never runs lint, and `src/README.md:27` notes that lint also scans `dev_mock_new_ui`.
+Before this branch, `npm run lint` reported 49 production errors, mostly unused imports in `home.tsx:15-30`. CI did not run lint, and the command also scanned `dev_mock_new_ui`.
 
 #### Scope
 
@@ -168,6 +182,8 @@ Log these failures and fail the job or item where state is lost. Job, checkpoint
 - Fix the existing errors.
 - Enable `noUnusedLocals`/`noUnusedParameters` (`tsconfig.app.json:17-18`).
 - Add `npm run lint` to `ci.yml`.
+
+The production lint gate now excludes the separate `dev_mock_new_ui` prototype, removes unused production imports and locals, and enables TypeScript's unused checks. Lint passes with 21 existing warnings; typecheck passes.
 
 ---
 
@@ -1066,6 +1082,14 @@ v2 adds:
 # Implementation journal
 
 ## 2026-09-23
+
+### Stabilization branches and 4K retest
+
+**Status:** [~] In progress
+
+- M0.7 is on `fix/fresh-checkout-build` (`baa8887`); M0.4 is stacked on it in `fix/security-headers-m07` (`2c61f5d`); M0.8 is stacked next in `fix/persistence-errors` (`cf34220`); M0.9 is implemented on the local `fix/lint-gate` branch.
+- The independent `fix/4k-browser-representation` branch (`3bf9fc2`) still needs work. A network-enabled live test of `https://youtu.be/7PIji8OubXU?si=WRtj7oVFiAXW07Ra` selected a 2160p video stream (itag 337), then dual browser capture stalled its audio track after 60 seconds. The subsequent WebM transfer ended as `Media stream could not be read completely` after about 73 seconds. The result does not satisfy the 4K acceptance criterion.
+- The saved GitHub CLI token is invalid, so draft PRs and their CI runs are pending reauthentication.
 
 ### Roadmap v2 created
 

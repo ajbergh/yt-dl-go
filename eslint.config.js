@@ -12,6 +12,7 @@ export default tseslint.config(
       "dist",
       "node_modules",
       "generated",
+      "dev_mock_new_ui",
       ".vite-cache",
       "*.timestamp-*.mjs",
     ],
