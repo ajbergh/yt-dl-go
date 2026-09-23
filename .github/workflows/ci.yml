@@ -44,6 +44,12 @@ jobs:
       - name: Type-check frontend
         run: npm run typecheck
 
+      - name: Lint frontend
+        run: npm run lint
+
+      - name: Check production bundle for preview-host code
+        run: npm run build:check
+
       - name: Build embedded frontend
         run: npm run build -- --outDir src/server/dist
 
@@ -53,6 +59,10 @@ jobs:
       - name: Run Go tests
         working-directory: src/server
         run: go test ./...
+
+      - name: Check development origin policy
+        working-directory: src/server
+        run: go test -tags=dev -run TestDevelopmentOriginsIncludeVite ./...
 
       - name: Run Go vet
         working-directory: src/server

@@ -12,6 +12,7 @@ export default tseslint.config(
       "dist",
       "node_modules",
       "generated",
+      "dev_mock_new_ui",
       ".vite-cache",
       "*.timestamp-*.mjs",
     ],
@@ -68,33 +69,13 @@ export default tseslint.config(
           selector:
             "MemberExpression[object.name='window'][property.name=/^(parent|top)$/]",
           message:
-            "Parent-frame access is limited to the dedicated preview transport modules.",
+            "Production code must not access a parent frame.",
         },
         {
           selector:
             "CallExpression[callee.name='postMessage'], CallExpression[callee.property.name='postMessage']",
           message:
-            "postMessage is limited to the dedicated preview transport modules.",
-        },
-      ],
-    },
-  },
-  {
-    files: [
-      "src/lib/console-capture.ts",
-      "src/lib/cowork-parent-transport.ts",
-      "src/lib/app-mounted-transport.ts",
-      "src/lib/app-view-transport.ts",
-    ],
-    rules: {
-      // Defense in depth against direct wildcard target-origin literals.
-      "no-restricted-syntax": [
-        "error",
-        {
-          selector:
-            "CallExpression[callee.name='postMessage'] Literal[value='*'], CallExpression[callee.property.name='postMessage'] Literal[value='*']",
-          message:
-            "Parent-frame messages must not use a direct wildcard target-origin literal.",
+            "Production code must not post messages to another window.",
         },
       ],
     },

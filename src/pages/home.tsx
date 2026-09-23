@@ -2,32 +2,24 @@
  * Production downloader screen. The bundled page connects to the Go API served
  * by the same executable, then uses that API for jobs and SQLite preferences.
  */
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { LibraryPage } from "./library";
 import { QueuePage } from "./queue";
 import { SettingsPage } from "./settings";
 import { useService } from "../hooks/use-service";
 import { useSettings } from "../hooks/use-settings";
 import { useJobs } from "../hooks/use-jobs";
-import type { DragEndEvent } from "@dnd-kit/core";
-import { arrayMove } from "@dnd-kit/sortable";
 import {
-  Activity, AlertCircle, ArrowDownToLine, Check, ChevronDown, CircleHelp, Clock3,
-  DownloadCloud, FileText, Film, Folder, FolderTree, Gauge, HardDrive, Layers, ListVideo, LoaderCircle,
-  Pause, Play, Plus, RefreshCw, Search, Settings, ShieldCheck, Sparkles, Trash2, X,
+  Activity, AlertCircle, Check, Clock3, DownloadCloud, Film, HardDrive, Layers, Plus, Settings, X,
 } from "lucide-react";
 import {
-  api, formatBytes, isActive, parseYouTubeURL, streamServiceEvents,
-  type AppSettings, type DownloadFile, type DownloadJob, type Inspection, type QueueItem, type Quality,
-  type ServiceConnection, type ServiceEvent, type ServiceHealth,
+  api, parseYouTubeURL,
+  type DownloadJob, type Inspection, type Quality,
 } from "../lib/downloader";
 
 import {
-  LibraryThumbnail, SortableQueueOrderRow, approximateMP3Bytes, builtInServiceConnection,
-  button, clearedQueueItemsKey, dateLabel, durationLabel, durationMetric, errorMessage, etaLabel,
-  field, inspectedVideoID, libraryLayoutKey, notificationAPI, panel, playlistEntries, primaryButton,
-  qualityLabels, queueItemKey, queueItemsFor, selectablePlaylistEntries, selectedPlaylistEntries,
-  statusClass, statusLabels, terminalNotification,
+  button, errorMessage, inspectedVideoID, libraryLayoutKey, primaryButton,
+  queueItemKey, queueItemsFor, selectedPlaylistEntries,
   type Draft, type LibraryFilter, type QueueFilter, type QueueRow, type Tab,
 } from "../components/downloader/view-model";
 
@@ -101,12 +93,7 @@ export function HomePage() {
   const activeCount = visibleQueueRows.filter(({ item }) => item.status === "downloading" || item.status === "processing").length;
   const queuedCount = visibleQueueRows.filter(({ item }) => item.status === "queued").length;
   const completedQueueCount = visibleQueueRows.filter(({ item }) => item.status === "completed").length;
-  const finishedFiles = jobs.reduce((sum, job) => sum + job.files.length, 0);
   const totalCurrentSpeed = queueRows.reduce((sum, { item }) => sum + ((item.status === "downloading" || item.status === "processing") ? item.speedBytesPerSec : 0), 0);
-  const queueJobs = useMemo(
-    () => jobs.filter(job => job.status === "queued" || job.status === "downloading" || job.status === "processing" || job.status === "paused" || ((job.status === "failed" || job.status === "cancelled") && job.files.length === 0)),
-    [jobs],
-  );
   const libraryJobs = useMemo(
     () => jobs.filter(job => ["completed", "partial", "failed", "cancelled"].includes(job.status) && job.files.length > 0),
     [jobs],

@@ -13,9 +13,9 @@ npm ci
 npm run dev
 ~~~
 
-Vite listens on `http://127.0.0.1:5173`. In a second terminal, start the Go service with `go run .` from `src/server`, then open the Vite address to use the development UI; it connects to `http://127.0.0.1:8080` automatically. This address is fixed for `npm run dev`; custom Vite ports and `npm run preview` are not detected by the current connection logic. The packaged UI uses its own origin (including a custom `ADDR`), so no endpoint setup is needed in the executable.
+Vite listens on `http://127.0.0.1:5173`. In a second terminal, start the Go service with `go run -tags=dev .` from `src/server`, then open the Vite address to use the development UI; it connects to `http://127.0.0.1:8080` automatically. This address is fixed for `npm run dev`; custom Vite ports and `npm run preview` are not detected by the current connection logic. The packaged UI uses its own origin (including a custom `ADDR`), so no endpoint setup is needed in the executable.
 
-The service's default CORS allowlist includes both `localhost:5173` and `127.0.0.1:5173`. The current UI connection logic supports the configured Vite dev port and the executable's same-origin UI; changing to another frontend origin requires adapting that logic as well as adding the exact origin to `ALLOWED_ORIGINS`. Keep `API_TOKEN` unset for the built-in UI: it does not prompt for or send bearer tokens, and protected API requests will otherwise return `401`.
+The `dev` build tag adds `localhost:5173` and `127.0.0.1:5173` to the default CORS allowlist. Release builds default to their own listener origin only. The current UI connection logic supports the configured Vite dev port and the executable's same-origin UI; changing to another frontend origin requires adapting that logic as well as adding the exact origin to `ALLOWED_ORIGINS`. Keep `API_TOKEN` unset for the built-in UI: it does not prompt for or send bearer tokens, and protected API requests will otherwise return `401`.
 
 ## Checks and production UI build
 
@@ -24,7 +24,7 @@ npm run typecheck
 npm run build
 ~~~
 
-The UI tests are written for Bun and can be run with `bun test src/downloader.test.mjs src/ui.test.mjs`. CI also runs `npm run e2e:browser`, which requires Chrome/Chromium and Go, builds the service with the test-only `e2e` build tag, and exercises the real browser/service/SQLite workflow. The fixture build is never used by the production executable. `npm run lint` checks the whole repository, including the separate mock project under `dev_mock_new_ui`; lint currently reports unused imports and conditional-hook errors in that mock.
+The UI tests are written for Bun and can be run with `bun test src/downloader.test.mjs src/ui.test.mjs`. CI also runs `npm run e2e:browser`, which requires Chrome/Chromium and Go, builds the service with the test-only `e2e` build tag, and exercises the real browser/service/SQLite workflow. The fixture build is never used by the production executable. CI runs `npm run lint` against the production project; the separate `dev_mock_new_ui` prototype is excluded from that gate.
 
 `npm run build` emits the static SPA to root `dist` and empties that directory first. The Go program embeds assets from `src/server/dist`, so copy the build there before compiling the executable. Do not put `DATA_DIR` under root `dist`; a build removes its contents.
 

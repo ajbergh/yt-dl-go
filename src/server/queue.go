@@ -85,8 +85,10 @@ func validateExactJobOrder(queued []*jobState, requested []string) error {
 
 func (s *server) applyQueueOrderLocked(jobIDs []string) error {
 	if err := s.store.saveQueueOrder(jobIDs); err != nil {
+		s.recordPersistenceFailure("save queue order", "", err)
 		return err
 	}
+	s.recordPersistenceSuccess()
 	for index, id := range jobIDs {
 		if job := s.jobs[id]; job != nil {
 			job.QueuePosition = int64(index + 1)
@@ -198,10 +200,12 @@ func (s *server) handleItemOrder(w http.ResponseWriter, r *http.Request, jobID s
 	previous := job.Items
 	job.Items = reordered
 	if err := s.store.saveJob(job); err != nil {
+		s.recordPersistenceFailure("save playlist item order", job.ID, err)
 		job.Items = previous
 		fail(w, http.StatusInternalServerError, "Could not persist playlist item order")
 		return
 	}
+	s.recordPersistenceSuccess()
 	s.publishJobEventLocked("job-status", job)
 	reply(w, http.StatusOK, snapshot(job))
 }

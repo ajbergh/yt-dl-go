@@ -4,6 +4,24 @@
 >
 > **Last updated:** 2026-09-23
 
+## Current implementation branches (2026-09-23)
+
+The checked items below are implemented on branches; none of these fixes is merged into `main` (`cb6523e`) yet. The branches are stacked in this order: `fix/fresh-checkout-build` → `fix/security-headers-m07` → `fix/persistence-errors` → `fix/lint-gate` → `fix/safe-retention` → `fix/active-job-cap` → `fix/remove-preview-scaffolding` → `fix/dev-only-origins`. Review each stacked PR against its immediate predecessor. The 4K work is on a separate branch from `main`.
+
+| Work | Branch / commit | Current state |
+| --- | --- | --- |
+| M0.7 fresh checkout build | `fix/fresh-checkout-build` / `baa8887` | Pushed; clean Go build and tests passed. |
+| M0.4 security headers | `fix/security-headers-m07` / `2c61f5d` | Pushed; Go tests passed. |
+| M0.8 persistence errors | `fix/persistence-errors` / `cf34220` | Pushed; Go tests and vet passed. |
+| M0.9 lint gate | `fix/lint-gate` / `45f4f1d` | Pushed; `npm run lint` and `npm run typecheck` pass. |
+| M0.1 safe retention | `fix/safe-retention` / `53a3abb` | Pushed; Go tests, vet, frontend typecheck and lint pass. |
+| M0.2 active job cap | `fix/active-job-cap` / `a8f6c58` | Pushed; 100 retained Library records do not block admission. Full Go tests and vet pass. |
+| M0.3 remove preview scaffolding | `fix/remove-preview-scaffolding` / `46605dc` | Pushed; production bundle scan, typecheck, and lint pass. |
+| M0.5 dev-only origins | `fix/dev-only-origins` / `8291aa0` | Pushed; release and dev policy checks, full Go tests, and vet pass. |
+| 4K adaptive capture | `fix/4k-browser-representation` / `de754d7` | Pushed; the exact live URL completed at 2160p with audio and a verified 2,335,115,476-byte WebM. Go tests and vet pass. |
+
+CI passed on [the stacked stabilization validation branch](https://github.com/ajbergh/yt-dl-go/actions/runs/35869093121) at `8291aa0` and [the independent 4K validation branch](https://github.com/ajbergh/yt-dl-go/actions/runs/35869587270) at `de754d7`: all six jobs succeeded in each run. These temporary `roadmap/validate-stabilization` and `roadmap/validate-4k` refs trigger the push workflow; direct pushes to `fix/**` do not. Draft PR creation is pending GitHub authentication: `gh auth status` reports that the saved `ajbergh` token is invalid. M0.6 awaits the owner's project-license choice; dependency notice generation and LGPL source/relink packaging are still open.
+
 ## Why a v2
 
 v1 built the features for a "private local media acquisition and library application." The review found that the foundations underneath those features have not caught up:
@@ -48,7 +66,7 @@ Goal: remove data-loss paths, close the framing/console exposure, and make the p
 
 ### M0.1 Retention must never delete the only copy of user media
 
-**Status:** [ ] · **P0** · **Area:** backend
+**Status:** [x] · **P0** · **Area:** backend
 
 `prune()` (`src/server/worker.go:2329-2354`) removes every terminal job older than `RETENTION` (default `24h`, `main.go:143`). It calls `removeManagedCopies` (`output.go:325`, `os.RemoveAll(j.dir)`) and then `store.deleteJob`, with no check on storage mode. Under `managed-only`, published output does not exist, so the media is gone for good.
 
@@ -64,9 +82,11 @@ Goal: remove data-loss paths, close the framing/console exposure, and make the p
 - A `managed-published` job's Library record survives pruning unless retention was explicitly enabled.
 - The README and Settings text explain exactly what retention removes.
 
+`RETENTION` now defaults to `never` for Library records. Empty failed/cancelled jobs retain the previous 24-hour scratch cleanup by default. An explicit duration can prune a Library record only after every finalized media file and managed caption sidecar has a verified published copy. Regression cases cover all three storage modes, missing published media, scratch jobs, and configuration parsing on `fix/safe-retention`.
+
 ### M0.2 Stop `MAX_JOBS` from capping the Library
 
-**Status:** [ ] · **P0** · **Area:** backend
+**Status:** [x] · **P0** · **Area:** backend
 
 `server.go:846` rejects new jobs when `len(s.jobs) >= s.cfg.maxJobs`, and `s.jobs` includes finished jobs. The error message even says "wait for retained jobs to expire".
 
@@ -76,9 +96,11 @@ Goal: remove data-loss paths, close the framing/console exposure, and make the p
 - Size the scheduler queue channel independently of the Library size (`main.go:189`).
 - Add a test showing that 100 finished jobs do not block a new job.
 
+`MAX_JOBS` now counts queued, downloading, processing, and paused jobs. Terminal Library records no longer consume capacity. The scheduler uses its existing change signal instead of a size-limited token channel; single-item playlist retries obey the same cap. Tests cover 100 finished records, full-cap rejection, recovery after cancellation, paused jobs, and retry admission on `fix/active-job-cap`.
+
 ### M0.3 Remove preview-host / app-builder scaffolding from production
 
-**Status:** [ ] · **P0** · **Area:** frontend / security
+**Status:** [x] · **P0** · **Area:** frontend / security
 
 The production bundle contains the following:
 
@@ -97,26 +119,30 @@ The production bundle contains the following:
 - Fix `getRouterBasename` (`App.tsx:14-26`) so unknown paths reach the not-found route.
 - Add a build check that fails if `dist/assets/*.js` contains `ancestorOrigins`, `m365.cloud.microsoft`, or `__dev/console`.
 
+The seven preview transport/serializer modules and their production call sites are removed on `fix/remove-preview-scaffolding`. Unknown paths now use the root router basename and reach the not-found route. `npm run build:check` builds into a temporary directory and scans every JavaScript asset for the three forbidden strings; CI runs it on pull requests. Frontend typecheck and lint pass.
+
 ### M0.4 Security headers: CSP and frame protection
 
-**Status:** [ ] · **P0** · **Area:** backend / security
+**Status:** [x] · **P0** · **Area:** backend / security
 
 Only `Cache-Control`, `Referrer-Policy`, `X-Content-Type-Options`, and `Vary` are set (`server.go:309-312`). Any site can iframe `http://127.0.0.1:8080`. Requests from inside the frame are same-origin, so they pass the Host/Origin checks and destructive buttons can be clickjacked.
 
 #### Scope
 
-- On every response, send `Content-Security-Policy: default-src 'self'; img-src 'self' data: blob: https://i.ytimg.com; media-src 'self' blob:; frame-ancestors 'none'; base-uri 'none'; form-action 'self'` (adjust after M0.3), plus `X-Frame-Options: DENY`.
+- On every response, send a same-origin CSP with `script-src 'self'`, `frame-ancestors 'none'`, `base-uri 'none'`, and `form-action 'self'`, plus `X-Frame-Options: DENY`. `style-src 'unsafe-inline'` preserves the app's current dynamic React styles; `img-src` includes the specific YouTube image hosts already accepted by thumbnail validation.
 - Add header regression tests for static, API, and ticket responses.
 
 ### M0.5 Allow the dev-server origins only in development builds
 
-**Status:** [ ] · **P0** · **Area:** backend / security
+**Status:** [x] · **P0** · **Area:** backend / security
 
 The default `ALLOWED_ORIGINS` includes `http://localhost:5173` and `http://127.0.0.1:5173` (`main.go:97`) in release builds. Any local process serving port 5173 therefore becomes a trusted origin.
 
 #### Scope
 
 Move the Vite origins behind a `dev` build tag or an explicit `--dev` flag. Release builds trust only their own listener origin.
+
+The default Vite origins now compile only with `-tags=dev`; release builds allow their own configured loopback listener origin by default. `ALLOWED_ORIGINS` remains an explicit override. The documented manual development command and `dev:all` use the dev build tag. Release and dev origin checks run in CI on `fix/dev-only-origins`.
 
 ### M0.6 Add a project LICENSE and complete third-party notices
 
@@ -135,17 +161,17 @@ Move the Vite origins behind a `dev` build tag or an explicit `--dev` flag. Rele
 
 ### M0.7 A fresh clone must build and test
 
-**Status:** [ ] · **P0** · **Area:** DX
+**Status:** [x] · **P0** · **Area:** DX
 
-`//go:embed dist` (`src/server/static.go:13`) needs `src/server/dist`, which is gitignored. So `go build`, `go test`, gopls, and `start-dev.sh`'s `go run .` all fail until the UI has been built.
+`//go:embed dist` (`src/server/static.go:13`) needs `src/server/dist`, which is gitignored. A tracked `.gitkeep` plus `//go:embed all:dist` keeps the Go embed target available in a fresh checkout; the `all:` prefix is needed because Go otherwise ignores dotfiles. If `index.html` is absent, the server returns a clear 503 build hint.
 
 #### Scope
 
-Commit `src/server/dist/.gitkeep` plus a minimal placeholder `index.html` with a `.gitignore` exception, or embed a fallback page under a build tag. `static.go` should serve a clear "UI not built — run `npm run build`" page in that case.
+Track `src/server/dist/.gitkeep` with a `.gitignore` exception, embed all files under `dist`, and serve a clear "UI not built" page with the frontend build command when assets are missing.
 
 ### M0.8 Surface swallowed persistence errors
 
-**Status:** [ ] · **P0** · **Area:** backend
+**Status:** [x] · **P0** · **Area:** backend
 
 - `persistJobLocked` ignores `saveJob` errors (`server.go:203`).
 - `savePart`/`deletePart` ignore theirs (`store.go:739, 749`).
@@ -154,13 +180,13 @@ Commit `src/server/dist/.gitkeep` plus a minimal placeholder `index.html` with a
 
 #### Scope
 
-Log every failure, and fail the job or item where the error means state is lost. After N consecutive failures, report the problem as a degraded state through `/api/health`.
+Log these failures and fail the job or item where state is lost. Job, checkpoint, settings, queue, and finalization persistence failures contribute to a consecutive failure count; a successful persistence operation resets it. `/api/health` reports degraded persistence after three consecutive failures. Failed job-state saves stop the job and expose a failure to the API/UI.
 
 ### M0.9 Gate CI on lint
 
-**Status:** [ ] · **P0** · **Area:** CI
+**Status:** [x] · **P0** · **Area:** CI
 
-`npm run lint` currently reports 49 errors, mostly unused imports in `home.tsx:15-30`. CI never runs lint, and `src/README.md:27` notes that lint also scans `dev_mock_new_ui`.
+Before this branch, `npm run lint` reported 49 production errors, mostly unused imports in `home.tsx:15-30`. CI did not run lint, and the command also scanned `dev_mock_new_ui`.
 
 #### Scope
 
@@ -168,6 +194,8 @@ Log every failure, and fail the job or item where the error means state is lost.
 - Fix the existing errors.
 - Enable `noUnusedLocals`/`noUnusedParameters` (`tsconfig.app.json:17-18`).
 - Add `npm run lint` to `ci.yml`.
+
+The production lint gate now excludes the separate `dev_mock_new_ui` prototype, removes unused production imports and locals, and enables TypeScript's unused checks. Lint passes with 21 existing warnings; typecheck passes.
 
 ---
 
@@ -1066,6 +1094,19 @@ v2 adds:
 # Implementation journal
 
 ## 2026-09-23
+
+### Stabilization branches and 4K retest
+
+**Status:** [~] In progress
+
+- M0.7 is on `fix/fresh-checkout-build` (`baa8887`); M0.4 is stacked on it in `fix/security-headers-m07` (`2c61f5d`); M0.8 is stacked next in `fix/persistence-errors` (`cf34220`); M0.9 is stacked next in `fix/lint-gate` (`45f4f1d`). All four branches are pushed.
+- The independent `fix/4k-browser-representation` branch (`de754d7`) now passes a network-enabled live test of `https://youtu.be/7PIji8OubXU?si=WRtj7oVFiAXW07Ra`. Browser Network response streaming captured the complete 2160p VP9 video (itag 315) and Opus audio (itag 251) without intercepting playback responses. The finalized WebM is 2,335,115,476 bytes; the job completed at height 2160. `go test ./...` and `go vet ./...` pass.
+- The saved GitHub CLI token is invalid, so draft PRs and their CI runs are pending reauthentication.
+- M0.1 is implemented on `fix/safe-retention`, stacked on M0.9. The default now keeps Library records; explicit retention verifies all published media before removing managed files, and empty failed/cancelled jobs still expire after 24 hours by default. Targeted Go tests and frontend typecheck pass.
+- M0.2 is implemented on `fix/active-job-cap`, stacked on M0.1. The live-job count replaces `len(s.jobs)` for admissions, the redundant fixed-size scheduler wake channel is removed, and item retry uses the same cap. Tests with 100 retained terminal records and paused/retry capacity pass, as do the full Go suite and vet.
+- M0.3 is implemented on `fix/remove-preview-scaffolding`, stacked on M0.2. Production preview messaging and console forwarding are removed, and CI now scans a built JavaScript bundle for the forbidden preview strings. `npm run build:check`, typecheck, and lint pass.
+- M0.5 is implemented on `fix/dev-only-origins`, stacked on M0.3. Production defaults omit the Vite origins; the `dev` build tag restores them for local development. Release and dev policy tests, the full Go suite, and vet pass.
+- Both CI validation runs passed all six jobs: stacked stabilization at `8291aa0` on `roadmap/validate-stabilization`, and independent 4K capture at `de754d7` on `roadmap/validate-4k`. Draft PRs are still pending a valid GitHub CLI login. M0.6 requires a project-license decision; the current notices omit linked Go and bundled npm dependencies, and release archives lack the LGPL source/relink materials.
 
 ### Roadmap v2 created
 

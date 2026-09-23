@@ -184,6 +184,67 @@ func waitTerminal(t *testing.T, s *server, id string) Job {
 	return waitJob(t, s, id, func(j Job) bool { return terminal(j.Status) })
 }
 
+func TestMaxJobsCountsOnlyLiveJobs(t *testing.T) {
+	fake := fixtureClient(0)
+	fake.videoFn = func(ctx context.Context, _ string) (*youtube.Video, error) {
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
+	s := testServer(t, fake, func(c *config) { c.maxJobs = 1 })
+	s.mu.Lock()
+	for i := 0; i < 100; i++ {
+		id := fmt.Sprintf("finished-%03d", i)
+		job := &jobState{Job: Job{ID: id, URL: testVideo, Kind: "video", Status: "completed", CreatedAt: time.Now().UTC().Format(time.RFC3339Nano)}}
+		if err := s.store.saveJob(job); err != nil {
+			s.mu.Unlock()
+			t.Fatal(err)
+		}
+		s.jobs[id] = job
+		s.order = append(s.order, id)
+	}
+	s.mu.Unlock()
+
+	first := createJob(t, s, testVideo)
+	waitJob(t, s, first.ID, func(j Job) bool { return j.Status == "downloading" })
+	if response := request(s, "POST", "/api/jobs", `{"url":"`+testVideo+`","quality":"best","rightsConfirmed":true}`, nil); response.Code != 429 {
+		t.Fatalf("second live job admitted over MAX_JOBS: %d %s", response.Code, response.Body.String())
+	}
+	if response := request(s, "POST", "/api/jobs/"+first.ID+"/cancel", "", nil); response.Code != 200 {
+		t.Fatalf("cancel: %d %s", response.Code, response.Body.String())
+	}
+	waitTerminal(t, s, first.ID)
+	createJob(t, s, testVideo)
+}
+
+func TestMaxJobsCountsPausedJobsAndItemRetries(t *testing.T) {
+	fake := fixtureClient(0)
+	fake.videoFn = func(ctx context.Context, _ string) (*youtube.Video, error) {
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
+	s := testServer(t, fake, func(c *config) { c.maxJobs = 2 })
+	s.settings.MaxConcurrentDownloads = 1
+	first := createJob(t, s, testVideo)
+	waitJob(t, s, first.ID, func(j Job) bool { return j.Status == "downloading" })
+	second := createJob(t, s, testVideo)
+	if response := request(s, "POST", "/api/jobs/"+second.ID+"/pause", "", nil); response.Code != 200 {
+		t.Fatalf("pause queued job: %d %s", response.Code, response.Body.String())
+	}
+	if response := request(s, "POST", "/api/jobs", `{"url":"`+testVideo+`","quality":"best","rightsConfirmed":true}`, nil); response.Code != 429 {
+		t.Fatalf("paused job did not count against MAX_JOBS: %d %s", response.Code, response.Body.String())
+	}
+
+	stopped := &jobState{Job: Job{ID: "retry-capacity", Kind: "playlist", Status: "partial", Items: []queueItem{{Index: 1, Status: "failed"}}}}
+	s.mu.Lock()
+	s.jobs[stopped.ID] = stopped
+	s.order = append(s.order, stopped.ID)
+	s.mu.Unlock()
+	response := request(s, "POST", "/api/jobs/"+stopped.ID+"/retry-item", `{"index":1}`, nil)
+	if response.Code != 429 || stopped.Status != "partial" {
+		t.Fatalf("retry exceeded MAX_JOBS or changed stopped job: %d %s status=%s", response.Code, response.Body.String(), stopped.Status)
+	}
+}
+
 func assertFinalFiles(t *testing.T, s *server, j Job) {
 	t.Helper()
 	entries, err := os.ReadDir(filepath.Join(s.cfg.root, j.ID))
@@ -628,6 +689,138 @@ func TestStoragePolicies(t *testing.T) {
 				t.Fatalf("managed-only job unexpectedly published to %q", outputPath)
 			}
 		})
+	}
+}
+
+func TestRetentionAcrossStoragePolicies(t *testing.T) {
+	for _, mode := range []string{"managed-published", "published-only", "managed-only"} {
+		for _, retention := range []struct {
+			name     string
+			duration time.Duration
+		}{
+			{name: "default-never"},
+			{name: "explicit", duration: 5 * time.Minute},
+		} {
+			t.Run(mode+"/"+retention.name, func(t *testing.T) {
+				s := testServer(t, fixtureClient(1), func(c *config) { c.retain = retention.duration })
+				settings := request(s, "PUT", "/api/settings", `{"storageMode":"`+mode+`"}`, nil)
+				if settings.Code != 200 {
+					t.Fatalf("set storage mode: %d %s", settings.Code, settings.Body.String())
+				}
+				job := waitTerminal(t, s, createJob(t, s, testVideo).ID)
+				if job.Status != "completed" || len(job.Files) != 1 {
+					t.Fatalf("fixture did not finalize media: %+v", job)
+				}
+				managedPath := filepath.Join(s.cfg.root, job.ID, job.Files[0].Name)
+				publishedPath := trackedOutputPath(t, s, job.ID, job.Files[0].ID)
+				s.mu.Lock()
+				s.jobs[job.ID].done = time.Now().Add(-time.Hour)
+				s.mu.Unlock()
+				for cycle := 0; cycle < 3; cycle++ {
+					s.prune(time.Now().Add(time.Duration(cycle) * 24 * time.Hour))
+				}
+				wantPruned := retention.duration > 0 && mode != "managed-only"
+				response := request(s, "GET", "/api/jobs/"+job.ID, "", nil)
+				if (wantPruned && response.Code != 404) || (!wantPruned && response.Code != 200) {
+					t.Fatalf("retention mode=%s duration=%s job status=%d", mode, retention.duration, response.Code)
+				}
+				if mode == "managed-only" || (mode == "managed-published" && !wantPruned) {
+					if _, err := os.Stat(managedPath); err != nil {
+						t.Fatalf("managed copy lost under %s: %v", mode, err)
+					}
+				} else if _, err := os.Stat(managedPath); !errors.Is(err, os.ErrNotExist) {
+					t.Fatalf("managed copy unexpectedly retained: %v", err)
+				}
+				if publishedPath != "" {
+					if _, err := os.Stat(publishedPath); err != nil {
+						t.Fatalf("published copy lost under %s: %v", mode, err)
+					}
+				}
+			})
+		}
+	}
+}
+
+func TestRetentionKeepsManagedCopyWhenPublishedCopyDisappears(t *testing.T) {
+	s := testServer(t, fixtureClient(1), func(c *config) { c.retain = 5 * time.Minute })
+	job := waitTerminal(t, s, createJob(t, s, testVideo).ID)
+	if job.Status != "completed" || len(job.Files) != 1 {
+		t.Fatalf("fixture did not finalize media: %+v", job)
+	}
+	publishedPath := trackedOutputPath(t, s, job.ID, job.Files[0].ID)
+	if err := os.Remove(publishedPath); err != nil {
+		t.Fatal(err)
+	}
+	s.mu.Lock()
+	s.jobs[job.ID].done = time.Now().Add(-time.Hour)
+	s.mu.Unlock()
+	s.prune(time.Now())
+	if request(s, "GET", "/api/jobs/"+job.ID, "", nil).Code != 200 {
+		t.Fatal("retention removed the Library record after its published copy disappeared")
+	}
+	if _, err := os.Stat(filepath.Join(s.cfg.root, job.ID, job.Files[0].Name)); err != nil {
+		t.Fatalf("retention removed the only remaining media copy: %v", err)
+	}
+}
+
+func TestRetentionCleansEmptyFailedAndCancelledJobs(t *testing.T) {
+	for _, status := range []string{"failed", "cancelled"} {
+		t.Run(status, func(t *testing.T) {
+			client := fixtureClient(1)
+			client.videoFn = func(ctx context.Context, _ string) (*youtube.Video, error) {
+				if status == "failed" {
+					return nil, errors.New("fixture metadata unavailable")
+				}
+				<-ctx.Done()
+				return nil, ctx.Err()
+			}
+			s := testServer(t, client, func(c *config) { c.retain = 0 })
+			job := createJob(t, s, testVideo)
+			if status == "cancelled" {
+				if response := request(s, "POST", "/api/jobs/"+job.ID+"/cancel", "", nil); response.Code != 200 {
+					t.Fatalf("cancel: %d %s", response.Code, response.Body.String())
+				}
+			}
+			job = waitTerminal(t, s, job.ID)
+			if job.Status != status || len(job.Files) != 0 {
+				t.Fatalf("expected an empty %s job, got %+v", status, job)
+			}
+			s.mu.Lock()
+			s.jobs[job.ID].done = time.Now().Add(-25 * time.Hour)
+			s.mu.Unlock()
+			s.prune(time.Now())
+			if request(s, "GET", "/api/jobs/"+job.ID, "", nil).Code != 404 {
+				t.Fatal("empty scratch job survived its default cleanup period")
+			}
+		})
+	}
+}
+
+func TestRetentionConfig(t *testing.T) {
+	for _, key := range []string{"ADDR", "API_TOKEN", "ALLOWED_HOSTS", "ALLOWED_ORIGINS", "MAX_JOBS", "MAX_JOB_BYTES", "JOB_TIMEOUT"} {
+		t.Setenv(key, "")
+	}
+	for _, entry := range []struct {
+		value   string
+		want    time.Duration
+		wantErr bool
+	}{
+		{value: "", want: 0},
+		{value: "never", want: 0},
+		{value: "0", want: 0},
+		{value: "5m", want: 5 * time.Minute},
+		{value: "1m", wantErr: true},
+		{value: "-1h", wantErr: true},
+	} {
+		t.Setenv("RETENTION", entry.value)
+		config, err := loadConfig()
+		if entry.wantErr {
+			if err == nil {
+				t.Fatalf("RETENTION=%q accepted", entry.value)
+			}
+		} else if err != nil || config.retain != entry.want {
+			t.Fatalf("RETENTION=%q parsed as %s, error=%v; want %s", entry.value, config.retain, err, entry.want)
+		}
 	}
 }
 

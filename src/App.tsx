@@ -3,8 +3,6 @@ import { ErrorBoundary } from "@/components/error-boundary";
 import { AppShell } from "@/components/app-shell";
 import { NotFoundPage } from "@/pages/not-found";
 import { routes } from "@/routes";
-import { AppViewSignal } from "@/lib/app-view-signal";
-import { isPreviewMount } from "@/lib/app-view-serializer";
 
 /**
  * React application root. The packaged Go server hosts the app at `/`;
@@ -21,13 +19,10 @@ function getRouterBasename(): string {
   ) {
     return buildBase;
   }
-  const parts = window.location.pathname.split("/").filter(Boolean);
-  return parts.length ? `/${parts[0]}/` : "/";
+  return "/";
 }
 
 const ROUTER_BASENAME = getRouterBasename();
-const APP_VIEW_ROUTE_PATTERNS: readonly string[] = routes.map((route) => route.path);
-const APP_VIEW_PREVIEW_MOUNT: boolean = isPreviewMount(import.meta.env.BASE_URL);
 
 export function App() {
   return (
@@ -45,7 +40,6 @@ export function App() {
             <Route path="*" element={<NotFoundPage />} />
           </Route>
         </Routes>
-        {APP_VIEW_PREVIEW_MOUNT && <AppViewSignal patterns={APP_VIEW_ROUTE_PATTERNS} />}
       </BrowserRouter>
     </ErrorBoundary>
   );
