@@ -49,16 +49,16 @@ func (f *e2eFixtureClient) VideoFromPlaylistEntryContext(_ context.Context, entr
 		return nil, errors.New("unknown E2E fixture video")
 	}
 	return &youtube.Video{
-		ID: entry.ID,
-		Title: "E2E Fixture Video",
-		Author: "E2E Fixture Channel",
+		ID:       entry.ID,
+		Title:    "E2E Fixture Video",
+		Author:   "E2E Fixture Channel",
 		Duration: 2 * time.Minute,
 		Formats: youtube.FormatList{{
-			ItagNo: 18,
-			MimeType: `video/mp4; codecs="avc1.42001E, mp4a.40.2"`,
-			Height: 360,
-			Width: 640,
-			FPS: 30,
+			ItagNo:        18,
+			MimeType:      `video/mp4; codecs="avc1.42001E, mp4a.40.2"`,
+			Height:        360,
+			Width:         640,
+			FPS:           30,
 			AudioChannels: 2,
 			ContentLength: e2eFixtureBytes,
 		}},
@@ -66,7 +66,7 @@ func (f *e2eFixtureClient) VideoFromPlaylistEntryContext(_ context.Context, entr
 }
 
 type e2eSlowStream struct {
-	ctx context.Context
+	ctx       context.Context
 	remaining int
 }
 

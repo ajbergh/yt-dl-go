@@ -103,7 +103,6 @@ func openTrackedOutput(ctx context.Context, action, path string) error {
 	return exec.CommandContext(ctx, commandName, args...).Run()
 }
 
-
 func (s *server) handleFilesystem(w http.ResponseWriter, r *http.Request, jobID string) {
 	var request struct {
 		FileID string `json:"fileId"`
@@ -188,7 +187,6 @@ func (s *server) handleFilesystem(w http.ResponseWriter, r *http.Request, jobID 
 	}
 	reply(w, 200, map[string]string{"path": path})
 }
-
 
 func (s *server) handleFolderSelection(w http.ResponseWriter, r *http.Request) {
 	var request struct{}
