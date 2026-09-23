@@ -894,7 +894,7 @@ No tests exist for:
 - Add fuzz tests for the UMP/SABR parser, WebVTT→SRT conversion, the naming tokenizer, and the URL/ID validation.
 - Collect coverage reports (`go test -cover`, `bun test --coverage`) and publish them in CI summaries.
 
-**Progress (2026-09-23):** M7.3 PR #26's first CI attempt exposed an intermittent ordering assumption in `TestCancellationQueueAndTimeout`: with a single active-item slot, playlist workers may let blocked item 2 start before item 1 completes, while the test waits for item 1 before issuing cancellation. The failed Go test passed on the workflow rerun, but the fixture still needs deterministic ordering. Stabilize the test before extending this milestone's coverage work.
+**Progress (2026-09-23):** M7.3 PR #26's first CI attempt exposed an intermittent ordering assumption in `TestCancellationQueueAndTimeout`: with a single active-item slot, playlist workers may let blocked item 2 start before item 1 completes, while the test waits for item 1 before issuing cancellation. The failed Go test passed on the workflow rerun, but the fixture still needs deterministic ordering. PR #31's race-detector run also found an actual queue ownership race: `setQueueItems` copied `j.Items` before locking while cancellation refreshed the slice under the mutex. The lock now covers the snapshot, replacement, refresh, and persistence. Both scheduler findings should be addressed before extending this milestone's coverage work.
 
 ### M7.5 Typed frontend tests and E2E robustness
 
