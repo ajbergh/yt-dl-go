@@ -17,5 +17,4 @@ Generated from production dependencies in the root `package-lock.json` with `lic
 | `react@19.2.5` | `19.2.5` | MIT | [repository](https://github.com/facebook/react) | [text](licenses/npm/react-19.2.5-658f6af3.txt) |
 | `scheduler@0.27.0` | `0.27.0` | MIT | [repository](https://github.com/facebook/react) | [text](licenses/npm/scheduler-0.27.0-e21311c6.txt) |
 | `set-cookie-parser@2.7.2` | `2.7.2` | MIT | [repository](https://github.com/nfriedly/set-cookie-parser) | [text](licenses/npm/set-cookie-parser-2.7.2-ffda4466.txt) |
-| `tailwindcss@4.2.4` | `4.2.4` | MIT | [repository](https://github.com/tailwindlabs/tailwindcss) | [text](licenses/npm/tailwindcss-4.2.4-4e325af4.txt) |
 | `tslib@2.8.1` | `2.8.1` | 0BSD | [repository](https://github.com/Microsoft/tslib) | [text](licenses/npm/tslib-2.8.1-b1547103.txt) |

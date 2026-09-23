@@ -88,15 +88,5 @@ export default tseslint.config(
     rules: {
       "react-refresh/only-export-components": "off",
     },
-  },
-  {
-    // The development reload plugin handles Vite internals that are not fully
-    // typed and intentionally ignores some best-effort broadcast failures.
-    // Limit these lint exceptions to that plugin.
-    files: ["vite-dev-reload.ts"],
-    rules: {
-      "@typescript-eslint/no-explicit-any": "off",
-      "no-empty": "off",
-    },
   }
 );

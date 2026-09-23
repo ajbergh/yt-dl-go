@@ -1040,12 +1040,16 @@ The v1 P2.3 gates still apply: checksum plus signature/provenance verification, 
 
 ### M9.4 Remove stray and legacy files
 
-**Status:** [ ] · **P1** · **Area:** hygiene
+**Status:** [~] · **P1** · **Area:** hygiene · implementation complete on `roadmap/m9-4-hmr-cleanup`; PR/CI and manual HMR smoke check pending
 
-- **`SOURCE_MANIFEST.sha256`**: nothing references it. Of its 106 entries, 55 point to files that no longer exist and 46 have mismatched hashes; only 5 are valid. Delete it.
-- **`vite-dev-reload.ts`** (1,051 lines), the `devWsMute` WebSocket stub (`vite.config.ts:11-87`), and polling file watching (`vite.config.ts:149-151`) exist only because a preview proxy forced `hmr:false` (`vite.config.ts:146`). Delete them and re-enable native Vite HMR and React Fast Refresh; today every edit is a full reload that loses state.
-- **`dev_mock_new_ui/`** is an AI Studio export (Gemini capability, `@google/genai`, express, no lockfile). Move it to an archive branch after M4.9 captures its ideas, or at least exclude it from lint and Dependabot.
-- Move `tailwindcss` to `devDependencies` (`package.json:26`).
+- [x] Delete the unreferenced, stale `SOURCE_MANIFEST.sha256`.
+- [x] Delete `vite-dev-reload.ts` and remove the WebSocket mute shim and its TypeScript/lint references from the Vite setup.
+- [x] Restore native Vite HMR and React Fast Refresh; remove disabled HMR and polling while preserving the watcher ignore list.
+- [x] Move `tailwindcss` to `devDependencies` and refresh npm/Bun lockfiles and generated production npm notices.
+- [x] Keep `dev_mock_new_ui/` available as a design reference because M4.9 has not captured its ideas yet; ESLint already excludes it and this repository has no Dependabot configuration.
+- [ ] Manually verify a frontend edit hot-updates through the local dev server without a full reload.
+
+**Progress (2026-09-23):** Removed the stale manifest and SSE reload plugin, returned Vite to native HMR defaults, retained the existing file-watch exclusions, and moved Tailwind out of production dependencies. npm now reports 14 production packages in its generated notice report. The source scan found the old manifest substantially stale (62 missing paths, 40 hash mismatches, and 4 valid entries), so it was deleted rather than repaired. Local HMR interaction remains to be checked; no test suite was run for this task.
 
 ### M9.5 Cross-platform developer workflow
 
