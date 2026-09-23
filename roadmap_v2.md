@@ -871,7 +871,7 @@ Before this item, `.github/` had no automated dependency or code scanning config
 
 ### M7.4 Close the test gaps
 
-**Status:** [ ] · **P1** · **Area:** testing
+**Status:** [~] · **P1** · **Area:** testing
 
 No tests exist for:
 
@@ -893,6 +893,8 @@ No tests exist for:
 - Add the tests above.
 - Add fuzz tests for the UMP/SABR parser, WebVTT→SRT conversion, the naming tokenizer, and the URL/ID validation.
 - Collect coverage reports (`go test -cover`, `bun test --coverage`) and publish them in CI summaries.
+
+**Progress (2026-09-23):** M7.3 PR #26's first CI attempt exposed an intermittent ordering assumption in `TestCancellationQueueAndTimeout`: with a single active-item slot, playlist workers may let blocked item 2 start before item 1 completes, while the test waits for item 1 before issuing cancellation. The failed Go test passed on the workflow rerun, but the fixture still needs deterministic ordering. Stabilize the test before extending this milestone's coverage work.
 
 ### M7.5 Typed frontend tests and E2E robustness
 
