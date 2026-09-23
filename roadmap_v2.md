@@ -135,13 +135,13 @@ Move the Vite origins behind a `dev` build tag or an explicit `--dev` flag. Rele
 
 ### M0.7 A fresh clone must build and test
 
-**Status:** [ ] · **P0** · **Area:** DX
+**Status:** [x] · **P0** · **Area:** DX
 
-`//go:embed dist` (`src/server/static.go:13`) needs `src/server/dist`, which is gitignored. So `go build`, `go test`, gopls, and `start-dev.sh`'s `go run .` all fail until the UI has been built.
+`//go:embed dist` (`src/server/static.go:13`) needs `src/server/dist`, which is gitignored. A tracked `.gitkeep` plus `//go:embed all:dist` keeps the Go embed target available in a fresh checkout; the `all:` prefix is needed because Go otherwise ignores dotfiles. If `index.html` is absent, the server returns a clear 503 build hint.
 
 #### Scope
 
-Commit `src/server/dist/.gitkeep` plus a minimal placeholder `index.html` with a `.gitignore` exception, or embed a fallback page under a build tag. `static.go` should serve a clear "UI not built — run `npm run build`" page in that case.
+Track `src/server/dist/.gitkeep` with a `.gitignore` exception, embed all files under `dist`, and serve a clear "UI not built" page with the frontend build command when assets are missing.
 
 ### M0.8 Surface swallowed persistence errors
 

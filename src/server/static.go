@@ -10,7 +10,7 @@ import (
 	"strings"
 )
 
-//go:embed dist
+//go:embed all:dist
 var embeddedAssets embed.FS
 
 func getMimeType(filePath string) string {
