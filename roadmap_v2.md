@@ -17,10 +17,10 @@ The checked items below are implemented on branches; none of these fixes is merg
 | M0.1 safe retention | `fix/safe-retention` / `53a3abb` | Pushed; Go tests, vet, frontend typecheck and lint pass. |
 | M0.2 active job cap | `fix/active-job-cap` / `a8f6c58` | Pushed; 100 retained Library records do not block admission. Full Go tests and vet pass. |
 | M0.3 remove preview scaffolding | `fix/remove-preview-scaffolding` / `46605dc` | Pushed; production bundle scan, typecheck, and lint pass. |
-| M0.5 dev-only origins | `fix/dev-only-origins` | Implemented locally; release and dev policy checks, full Go tests, and vet pass. |
+| M0.5 dev-only origins | `fix/dev-only-origins` / `8291aa0` | Pushed; release and dev policy checks, full Go tests, and vet pass. |
 | 4K adaptive capture | `fix/4k-browser-representation` / `de754d7` | Pushed; the exact live URL completed at 2160p with audio and a verified 2,335,115,476-byte WebM. Go tests and vet pass. |
 
-Draft PR creation is pending GitHub authentication: `gh auth status` reports that the saved `ajbergh` token is invalid. CI runs on pull requests; the current workflow does not run on direct pushes to `fix/**` branches.
+CI passed on [the stacked stabilization validation branch](https://github.com/ajbergh/yt-dl-go/actions/runs/35869093121) at `8291aa0` and [the independent 4K validation branch](https://github.com/ajbergh/yt-dl-go/actions/runs/35869587270) at `de754d7`: all six jobs succeeded in each run. These temporary `roadmap/validate-stabilization` and `roadmap/validate-4k` refs trigger the push workflow; direct pushes to `fix/**` do not. Draft PR creation is pending GitHub authentication: `gh auth status` reports that the saved `ajbergh` token is invalid. M0.6 awaits the owner's project-license choice; dependency notice generation and LGPL source/relink packaging are still open.
 
 ## Why a v2
 
@@ -1106,6 +1106,7 @@ v2 adds:
 - M0.2 is implemented on `fix/active-job-cap`, stacked on M0.1. The live-job count replaces `len(s.jobs)` for admissions, the redundant fixed-size scheduler wake channel is removed, and item retry uses the same cap. Tests with 100 retained terminal records and paused/retry capacity pass, as do the full Go suite and vet.
 - M0.3 is implemented on `fix/remove-preview-scaffolding`, stacked on M0.2. Production preview messaging and console forwarding are removed, and CI now scans a built JavaScript bundle for the forbidden preview strings. `npm run build:check`, typecheck, and lint pass.
 - M0.5 is implemented on `fix/dev-only-origins`, stacked on M0.3. Production defaults omit the Vite origins; the `dev` build tag restores them for local development. Release and dev policy tests, the full Go suite, and vet pass.
+- Both CI validation runs passed all six jobs: stacked stabilization at `8291aa0` on `roadmap/validate-stabilization`, and independent 4K capture at `de754d7` on `roadmap/validate-4k`. Draft PRs are still pending a valid GitHub CLI login. M0.6 requires a project-license decision; the current notices omit linked Go and bundled npm dependencies, and release archives lack the LGPL source/relink materials.
 
 ### Roadmap v2 created
 
