@@ -9,4 +9,9 @@ dist/
 # Keep application source tracked if an inherited ignore rule matches `lib/`.
 !src/lib/
 !src/lib/**
+
+# Keep the Go embed target present in a fresh checkout; generated UI assets stay ignored.
+!src/server/dist/
+!src/server/dist/.gitkeep
+
 downloads/

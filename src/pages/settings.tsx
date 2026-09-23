@@ -98,10 +98,10 @@ export function SettingsPage({
                   {([
                     ["managed-published", "Managed + Published", "Keep a private Library copy and a copy in your configured output folder. Uses the most disk space."],
                     ["published-only", "Published only", "Keep only the configured output copy after publishing. Library metadata remains, but in-app Save links are unavailable."],
-                    ["managed-only", "Managed only", "Keep only the private Library copy and do not publish to the output folder. Managed media follows app retention."],
+                    ["managed-only", "Managed only", "Keep only the private Library copy and do not publish to the output folder. Background cleanup preserves this sole copy."],
                   ] as const).map(([value, label, description]) => <label key={value} className={`cursor-pointer rounded-lg border p-3 ${settings.storageMode === value ? "border-rose-600/70 bg-rose-950/20" : "border-neutral-800 bg-neutral-900/50"}`}><span className="flex items-center justify-between gap-2 text-[11px] font-semibold text-neutral-200">{label}<input type="radio" name="storage-mode" value={value} checked={settings.storageMode === value} onChange={() => changeSetting("storageMode", value)} className="accent-rose-600" /></span><span className="mt-1 block text-[10px] leading-relaxed text-neutral-500">{description}</span></label>)}
                 </div>
-                <p className="mt-3 text-[10px] leading-relaxed text-neutral-500">The selected policy is captured when a job is queued. Changing this setting later does not alter existing jobs.</p>
+                <p className="mt-3 text-[10px] leading-relaxed text-neutral-500">The selected policy is captured when a job is queued. Changing this setting later does not alter existing jobs. By default, finished Library entries stay and failed or cancelled jobs without files are cleared after 24 hours.</p>
               </div>
 
               <div className="rounded-xl border border-neutral-800 bg-neutral-950/60 p-4">

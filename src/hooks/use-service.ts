@@ -138,7 +138,6 @@ export function useService() {
     if (!serviceReady) return;
     const controller = new AbortController();
     let reconnectTimer: ReturnType<typeof setTimeout>;
-    let reconcileTimer: ReturnType<typeof setInterval>;
 
     const mergeLiveJob = (job: DownloadJob) => {
       setJobs(previous => previous.some(item => item.id === job.id)
@@ -217,7 +216,7 @@ export function useService() {
     }
 
     void connect();
-    reconcileTimer = setInterval(() => { void reconcile(); }, 30000);
+    const reconcileTimer = setInterval(() => { void reconcile(); }, 30000);
     return () => {
       controller.abort();
       clearTimeout(reconnectTimer);

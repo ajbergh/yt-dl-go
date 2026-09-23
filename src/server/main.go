@@ -94,7 +94,11 @@ func loadConfig() (config, error) {
 	if strings.ContainsAny(c.token, " \t\r\n") || (!loopback && len(c.token) < 32) {
 		return c, errors.New("non-loopback binding requires API_TOKEN of at least 32 characters; tokens cannot contain whitespace")
 	}
-	for _, origin := range strings.Split(env("ALLOWED_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173,http://localhost:8080,http://127.0.0.1:8080"), ",") {
+	origins := defaultDevOrigins()
+	if configured := strings.TrimSpace(os.Getenv("ALLOWED_ORIGINS")); configured != "" {
+		origins = strings.Split(configured, ",")
+	}
+	for _, origin := range origins {
 		origin = strings.TrimSpace(origin)
 		u, e := url.Parse(origin)
 		if e != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" || u.User != nil || u.Path != "" || u.RawQuery != "" || u.Fragment != "" || strings.Contains(origin, "*") {
@@ -140,9 +144,12 @@ func loadConfig() (config, error) {
 	if err != nil || c.timeout < time.Second {
 		return c, errors.New("JOB_TIMEOUT must be at least 1s")
 	}
-	c.retain, err = time.ParseDuration(env("RETENTION", "24h"))
-	if err != nil || c.retain < 5*time.Minute {
-		return c, errors.New("RETENTION must be at least 5m")
+	retention := strings.TrimSpace(env("RETENTION", "never"))
+	if !strings.EqualFold(retention, "never") {
+		c.retain, err = time.ParseDuration(retention)
+		if err != nil || (c.retain != 0 && c.retain < 5*time.Minute) {
+			return c, errors.New("RETENTION must be 'never', zero, or at least 5m")
+		}
 	}
 	return c, nil
 }
@@ -186,7 +193,7 @@ func newServer(c config) (*server, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 	s := &server{
 		cfg: c, settings: settings, jobs: map[string]*jobState{}, tickets: map[string]ticket{},
-		queue: make(chan string, c.maxJobs), slots: make(chan struct{}, 4), scheduleChanged: make(chan struct{}),
+		slots: make(chan struct{}, 4), scheduleChanged: make(chan struct{}),
 		ctx: ctx, stop: cancel,
 		store:     store,
 		bandwidth: newBandwidthLimiter(settings.BandwidthLimitBytesPerSec),
@@ -210,18 +217,12 @@ func newServer(c config) (*server, error) {
 		_ = store.close()
 		return nil, errors.New("cannot load download history")
 	}
+	// The scheduler scans queued jobs when it starts; no per-job wake token
+	// or fixed-size channel is needed for resumed jobs.
 	for _, saved := range loaded {
 		j := &jobState{Job: saved.job, dir: saved.dir, done: saved.done, fileItems: fileIndexes(saved.items), cancelRequested: saved.cancelled}
 		s.jobs[j.ID] = j
 		s.order = append(s.order, j.ID)
-		if saved.resuming {
-			select {
-			case s.queue <- j.ID:
-			default:
-				_ = store.close()
-				return nil, errors.New("download history exceeds configured queue capacity")
-			}
-		}
 	}
 	return s, nil
 }

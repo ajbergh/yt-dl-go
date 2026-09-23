@@ -1,6 +1,4 @@
-import { Component, type ErrorInfo, type ReactNode } from "react";
-import { reportPrivateRuntimeError } from "@/lib/console-capture";
-import { postAppRuntimeErrorToCoworkParent } from "@/lib/cowork-parent-transport";
+import { Component, type ReactNode } from "react";
 
 interface Props {
   children: ReactNode;
@@ -16,20 +14,6 @@ export class ErrorBoundary extends Component<Props, State> {
 
   static getDerivedStateFromError(error: Error): State {
     return { hasError: true, error };
-  }
-
-  componentDidCatch(error: Error, info: ErrorInfo) {
-    // Keep error details in local diagnostics; only the fixed crash signal is
-    // sent to a compatible embedding host.
-    reportPrivateRuntimeError("[App Error]", error, info.componentStack);
-
-    // Tell a compatible embedding host the preview crashed, using a fixed,
-    // detail-free signal. No error name/message/stack/URL crosses the boundary.
-    try {
-      postAppRuntimeErrorToCoworkParent();
-    } catch (postError) {
-      reportPrivateRuntimeError("[App Error] failed to post crash signal", postError);
-    }
   }
 
   render() {
