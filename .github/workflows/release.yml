@@ -4,6 +4,16 @@ on:
   push:
     tags:
       - "v*.*.*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Stable release version to validate (for example, v0.1.0)
+        required: true
+        default: v0.1.0
+        type: string
+
+env:
+  RELEASE_VERSION: ${{ inputs.version || github.ref_name }}
 
 permissions:
   contents: read
@@ -21,34 +31,34 @@ jobs:
       contents: read
     steps:
       - name: Check out repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@v4
 
       - name: Set up Node.js
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@v4
         with:
           node-version: "24"
           cache: npm
 
-      - name: Validate release tag and package version
+      - name: Validate release version and package version
         shell: bash
         run: |
           set -euo pipefail
-          if [[ ! "${GITHUB_REF_NAME}" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+          if [[ ! "${RELEASE_VERSION}" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
             echo "Release tags must use stable semantic version format vMAJOR.MINOR.PATCH." >&2
             exit 1
           fi
           package_version="$(node -e 'const fs=require("fs"); console.log(JSON.parse(fs.readFileSync("package.json","utf8")).version)')"
           expected_tag="v${package_version}"
-          if [[ "${GITHUB_REF_NAME}" != "${expected_tag}" ]]; then
-            echo "Release tag ${GITHUB_REF_NAME} does not match package.json version ${expected_tag}." >&2
+          if [[ "${RELEASE_VERSION}" != "${expected_tag}" ]]; then
+            echo "Release version ${RELEASE_VERSION} does not match package.json version ${expected_tag}." >&2
             exit 1
           fi
 
       - name: Set up Bun
-        uses: oven-sh/setup-bun@v2.2.0
+        uses: oven-sh/setup-bun@v2
 
       - name: Set up Go
-        uses: actions/setup-go@v7
+        uses: actions/setup-go@v5
         with:
           go-version: "1.26.x"
           cache-dependency-path: src/server/go.sum
@@ -98,16 +108,16 @@ jobs:
       attestations: write
     steps:
       - name: Check out repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@v4
 
       - name: Set up Node.js
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@v4
         with:
           node-version: "24"
           cache: npm
 
       - name: Set up Go
-        uses: actions/setup-go@v7
+        uses: actions/setup-go@v5
         with:
           go-version: "1.26.x"
           cache-dependency-path: src/server/go.sum
@@ -118,7 +128,7 @@ jobs:
       - name: Set release metadata
         shell: pwsh
         run: |
-          "VERSION=${{ github.ref_name }}" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "VERSION=${{ env.RELEASE_VERSION }}" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
           "COMMIT=${{ github.sha }}" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
           $commitDate = [DateTimeOffset]::Parse((git show -s --format=%cI "${{ github.sha }}").Trim()).ToUniversalTime()
           $buildDate = $commitDate.ToString("yyyy-MM-dd'T'HH:mm:ss'Z'")
@@ -149,7 +159,7 @@ jobs:
         run: '"youtube-downloader-windows-${{ steps.platform.outputs.arch }}.zip" | Set-Content -Path "dist/release/expected-windows-${{ steps.platform.outputs.arch }}.txt" -Encoding ascii'
 
       - name: Upload Windows release package
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@v4
         with:
           name: release-windows-${{ steps.platform.outputs.arch }}
           path: |
@@ -190,16 +200,16 @@ jobs:
       attestations: write
     steps:
       - name: Check out repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@v4
 
       - name: Set up Node.js
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@v4
         with:
           node-version: "24"
           cache: npm
 
       - name: Set up Go
-        uses: actions/setup-go@v7
+        uses: actions/setup-go@v5
         with:
           go-version: "1.26.x"
           cache-dependency-path: src/server/go.sum
@@ -210,7 +220,7 @@ jobs:
       - name: Set release metadata
         shell: bash
         run: |
-          echo "VERSION=${GITHUB_REF_NAME}" >> "$GITHUB_ENV"
+          echo "VERSION=${RELEASE_VERSION}" >> "$GITHUB_ENV"
           echo "COMMIT=${GITHUB_SHA}" >> "$GITHUB_ENV"
           commit_date="$(git show -s --format=%cI "${GITHUB_SHA}")"
           build_date="$(node -e 'const date = new Date(process.argv[1]); if (Number.isNaN(date.getTime())) process.exit(1); console.log(date.toISOString().replace(/\.\d{3}Z$/, "Z"))' "$commit_date")"
@@ -233,7 +243,7 @@ jobs:
         run: echo "youtube-downloader-${{ matrix.target }}-${{ matrix.arch }}.tar.gz" > "dist/release/expected-${{ matrix.target }}-${{ matrix.arch }}.txt"
 
       - name: Upload ${{ matrix.label }} release package
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@v4
         with:
           name: release-${{ matrix.target }}-${{ matrix.arch }}
           path: |
@@ -256,10 +266,10 @@ jobs:
       attestations: write
     steps:
       - name: Check out repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@v4
 
       - name: Download release packages
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@v4
         with:
           pattern: release-*
           path: dist/release
@@ -268,8 +278,8 @@ jobs:
       - name: Create LGPL source and relinking archive
         shell: bash
         run: |
-          source_archive="yt-dl-go-source-${GITHUB_REF_NAME}.tar.gz"
-          git archive --format=tar --prefix="yt-dl-go-${GITHUB_REF_NAME}/" "${GITHUB_SHA}" | gzip -n > "dist/release/${source_archive}"
+          source_archive="yt-dl-go-source-${RELEASE_VERSION}.tar.gz"
+          git archive --format=tar --prefix="yt-dl-go-${RELEASE_VERSION}/" "${GITHUB_SHA}" | gzip -n > "dist/release/${source_archive}"
           sha256sum "dist/release/${source_archive}" > "dist/release/${source_archive}.sha256"
           printf '%s\n' "${source_archive}" > dist/release/expected-source.txt
 
@@ -296,15 +306,29 @@ jobs:
         with:
           subject-path: dist/release/SHA256SUMS.txt
 
+      - name: Upload dry-run release artifacts
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-dry-run-${{ env.RELEASE_VERSION }}
+          path: |
+            dist/release/*.zip
+            dist/release/*.tar.gz
+            dist/release/*.sha256
+            dist/release/SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 7
+
       - name: Create draft GitHub Release
+        if: github.event_name != 'workflow_dispatch'
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
-          gh release create "${GITHUB_REF_NAME}" \
+          gh release create "${RELEASE_VERSION}" \
             --verify-tag \
             --draft \
-            --title "${GITHUB_REF_NAME}" \
+            --title "${RELEASE_VERSION}" \
             --generate-notes \
             dist/release/*.zip \
             dist/release/*.tar.gz \
