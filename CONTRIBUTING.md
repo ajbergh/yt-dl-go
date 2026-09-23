@@ -4,7 +4,7 @@ Thanks for helping improve yt-dl-go. Keep changes focused, explain user-visible 
 
 ## Development setup
 
-The project uses npm for frontend dependency installation and builds. Bun is used to run the frontend test files; it does not replace npm. Install Go 1.26 or newer, Node.js 24 with npm, Bun, and Git. Browser end-to-end checks also need Chrome or Chromium.
+The project uses npm 11.19.0 for frontend dependency installation and builds. Bun 1.4.2 runs the frontend test files; it does not install packages or replace npm. Install the pinned Node.js version from `.nvmrc`, Go 1.26.8 (the `toolchain` version in `src/server/go.mod`), Bun 1.4.2, and Git. Browser end-to-end checks also need Chrome or Chromium.
 
 From the repository root, install dependencies and start the frontend:
 

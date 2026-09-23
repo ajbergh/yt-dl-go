@@ -855,7 +855,7 @@ Add `go test -race ./...` on Ubuntu, a gofmt check for first-party Go source, `g
 
 ### M7.3 Supply-chain automation
 
-**Status:** [ ] · **P1** · **Area:** CI / security
+**Status:** [~] · **P1** · **Area:** CI / security
 
 `.github/` contains only workflows.
 
@@ -866,6 +866,8 @@ Add `go test -race ./...` on Ubuntu, a gofmt check for first-party Go source, `g
 - Pin actions by SHA.
 - Pin Node (`.nvmrc`), Bun (`bun-version`), and the Go `toolchain` directive.
 - Choose a single JavaScript package manager. CI installs with npm, tests run with Bun, and both `bun.lock` and `package-lock.json` are committed. Remove the other lockfile or add a sync check.
+
+**Progress (2026-09-23):** Implementation is in progress on `roadmap/m7-3-supply-chain`. npm is the single package manager (CI/build scripts already install with `npm ci`); the redundant root `bun.lock` is removed while Bun remains pinned as the test runtime. Added weekly Dependabot updates for Go, both npm projects, and GitHub Actions; a CodeQL workflow scans Go and JavaScript/TypeScript; every CI/release/CodeQL action reference is pinned to a full commit SHA. Node is pinned by `.nvmrc` (24.21.0), Bun by `bun-version` (1.4.2), and the Go module toolchain by `go1.26.8`. PR checks and the scheduled/manual CodeQL run are still pending.
 
 ### M7.4 Close the test gaps
 
