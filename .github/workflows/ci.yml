@@ -79,8 +79,11 @@ jobs:
       - name: Check Go formatting
         shell: bash
         run: |
-          files="$(git ls-files 'src/server/*.go' ':!src/server/licenses/**')"
-          test -z "$(gofmt -l $files)"
+          unformatted="$(find src/server -maxdepth 1 -type f -name '*.go' -print0 | xargs -0 gofmt -l)"
+          if [[ -n "$unformatted" ]]; then
+            printf '%s\n' "$unformatted"
+            exit 1
+          fi
 
       - name: Run Go race tests
         working-directory: src/server
