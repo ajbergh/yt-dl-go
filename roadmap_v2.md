@@ -6,7 +6,7 @@
 
 ## Current implementation branches (2026-09-23)
 
-The checked items below are implemented on branches; none of these fixes is merged into `main` (`cb6523e`) yet. The branches are stacked in this order: `fix/fresh-checkout-build` → `fix/security-headers-m07` → `fix/persistence-errors` → `fix/lint-gate` → `fix/safe-retention` → `fix/active-job-cap` → `fix/remove-preview-scaffolding`. Review each stacked PR against its immediate predecessor. The 4K work is on a separate branch from `main`.
+The checked items below are implemented on branches; none of these fixes is merged into `main` (`cb6523e`) yet. The branches are stacked in this order: `fix/fresh-checkout-build` → `fix/security-headers-m07` → `fix/persistence-errors` → `fix/lint-gate` → `fix/safe-retention` → `fix/active-job-cap` → `fix/remove-preview-scaffolding` → `fix/dev-only-origins`. Review each stacked PR against its immediate predecessor. The 4K work is on a separate branch from `main`.
 
 | Work | Branch / commit | Current state |
 | --- | --- | --- |
@@ -16,7 +16,8 @@ The checked items below are implemented on branches; none of these fixes is merg
 | M0.9 lint gate | `fix/lint-gate` / `45f4f1d` | Pushed; `npm run lint` and `npm run typecheck` pass. |
 | M0.1 safe retention | `fix/safe-retention` / `53a3abb` | Pushed; Go tests, vet, frontend typecheck and lint pass. |
 | M0.2 active job cap | `fix/active-job-cap` / `a8f6c58` | Pushed; 100 retained Library records do not block admission. Full Go tests and vet pass. |
-| M0.3 remove preview scaffolding | `fix/remove-preview-scaffolding` | Implemented locally; production bundle scan, typecheck, and lint pass. |
+| M0.3 remove preview scaffolding | `fix/remove-preview-scaffolding` / `46605dc` | Pushed; production bundle scan, typecheck, and lint pass. |
+| M0.5 dev-only origins | `fix/dev-only-origins` | Implemented locally; release and dev policy checks, full Go tests, and vet pass. |
 | 4K adaptive capture | `fix/4k-browser-representation` / `de754d7` | Pushed; the exact live URL completed at 2160p with audio and a verified 2,335,115,476-byte WebM. Go tests and vet pass. |
 
 Draft PR creation is pending GitHub authentication: `gh auth status` reports that the saved `ajbergh` token is invalid. CI runs on pull requests; the current workflow does not run on direct pushes to `fix/**` branches.
@@ -133,13 +134,15 @@ Only `Cache-Control`, `Referrer-Policy`, `X-Content-Type-Options`, and `Vary` ar
 
 ### M0.5 Allow the dev-server origins only in development builds
 
-**Status:** [ ] · **P0** · **Area:** backend / security
+**Status:** [x] · **P0** · **Area:** backend / security
 
 The default `ALLOWED_ORIGINS` includes `http://localhost:5173` and `http://127.0.0.1:5173` (`main.go:97`) in release builds. Any local process serving port 5173 therefore becomes a trusted origin.
 
 #### Scope
 
 Move the Vite origins behind a `dev` build tag or an explicit `--dev` flag. Release builds trust only their own listener origin.
+
+The default Vite origins now compile only with `-tags=dev`; release builds allow their own configured loopback listener origin by default. `ALLOWED_ORIGINS` remains an explicit override. The documented manual development command and `dev:all` use the dev build tag. Release and dev origin checks run in CI on `fix/dev-only-origins`.
 
 ### M0.6 Add a project LICENSE and complete third-party notices
 
@@ -1102,6 +1105,7 @@ v2 adds:
 - M0.1 is implemented on `fix/safe-retention`, stacked on M0.9. The default now keeps Library records; explicit retention verifies all published media before removing managed files, and empty failed/cancelled jobs still expire after 24 hours by default. Targeted Go tests and frontend typecheck pass.
 - M0.2 is implemented on `fix/active-job-cap`, stacked on M0.1. The live-job count replaces `len(s.jobs)` for admissions, the redundant fixed-size scheduler wake channel is removed, and item retry uses the same cap. Tests with 100 retained terminal records and paused/retry capacity pass, as do the full Go suite and vet.
 - M0.3 is implemented on `fix/remove-preview-scaffolding`, stacked on M0.2. Production preview messaging and console forwarding are removed, and CI now scans a built JavaScript bundle for the forbidden preview strings. `npm run build:check`, typecheck, and lint pass.
+- M0.5 is implemented on `fix/dev-only-origins`, stacked on M0.3. Production defaults omit the Vite origins; the `dev` build tag restores them for local development. Release and dev policy tests, the full Go suite, and vet pass.
 
 ### Roadmap v2 created
 

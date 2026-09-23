@@ -222,7 +222,7 @@ if ($SeparateWindows) {
     $feCmd = "title YouTube Downloader - Frontend (Vite) && cd /d `"$repoRoot`" && node .\node_modules\vite\bin\vite.js --port $FrontendPort $feHostArg"
     $frontendProc = Start-Process -FilePath "cmd.exe" -ArgumentList "/k $feCmd" -PassThru
 
-    $beCmd = "title YouTube Downloader - Backend (Go API) && cd /d `"$serverDir`" && set CGO_ENABLED=0 && set ADDR=127.0.0.1:$BackendPort && set ALLOWED_ORIGINS=$allowedOriginsStr && set DATA_DIR=$dataDir && go run ."
+    $beCmd = "title YouTube Downloader - Backend (Go API) && cd /d `"$serverDir`" && set CGO_ENABLED=0 && set ADDR=127.0.0.1:$BackendPort && set ALLOWED_ORIGINS=$allowedOriginsStr && set DATA_DIR=$dataDir && go run -tags=dev ."
     $backendProc = Start-Process -FilePath "cmd.exe" -ArgumentList "/k $beCmd" -PassThru
 
     if ($OpenBrowser) {
@@ -259,7 +259,7 @@ $backendJob = Start-Job -ScriptBlock {
     $env:ALLOWED_ORIGINS = $origins
     $env:DATA_DIR = $data
     $env:NO_BROWSER = "1"
-    & go run . 2>&1
+    & go run -tags=dev . 2>&1
 } -ArgumentList $serverDir, $allowedOriginsStr, "127.0.0.1:$BackendPort", $dataDir
 
 $frontendJob = Start-Job -ScriptBlock {

@@ -105,7 +105,7 @@ All settings are optional environment variables. The default loopback configurat
 | `DATA_DIR` | `./downloads` | Directory for private job files |
 | `CHROME_PATH` | unset | Explicit Chrome/Chromium/Edge executable path |
 | `API_TOKEN` | unset | Bearer token for protected API routes. The bundled UI sends no token; leave unset when using the executable's UI. |
-| `ALLOWED_ORIGINS` | Local Vite and service origins | Exact comma-separated HTTP(S) origins accepted by CORS |
+| `ALLOWED_ORIGINS` | Own loopback listener origin; Vite origins in `dev` builds | Exact comma-separated HTTP(S) origins accepted by CORS; release builds require an explicit setting for cross-origin access |
 | `ALLOWED_HOSTS` | Loopback authorities at the listener port | Additional exact `host[:port]` values accepted by the host check |
 | `MAX_JOBS` | `32` | Maximum queued, downloading, processing, and paused jobs; finished Library records do not count |
 | `MAX_JOB_BYTES` | `10737418240` | Per-job media byte limit (10 GiB) |

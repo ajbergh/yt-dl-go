@@ -94,7 +94,11 @@ func loadConfig() (config, error) {
 	if strings.ContainsAny(c.token, " \t\r\n") || (!loopback && len(c.token) < 32) {
 		return c, errors.New("non-loopback binding requires API_TOKEN of at least 32 characters; tokens cannot contain whitespace")
 	}
-	for _, origin := range strings.Split(env("ALLOWED_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173,http://localhost:8080,http://127.0.0.1:8080"), ",") {
+	origins := defaultDevOrigins()
+	if configured := strings.TrimSpace(os.Getenv("ALLOWED_ORIGINS")); configured != "" {
+		origins = strings.Split(configured, ",")
+	}
+	for _, origin := range origins {
 		origin = strings.TrimSpace(origin)
 		u, e := url.Parse(origin)
 		if e != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" || u.User != nil || u.Path != "" || u.RawQuery != "" || u.Fragment != "" || strings.Contains(origin, "*") {

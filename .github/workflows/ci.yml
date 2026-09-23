@@ -60,6 +60,10 @@ jobs:
         working-directory: src/server
         run: go test ./...
 
+      - name: Check development origin policy
+        working-directory: src/server
+        run: go test -tags=dev -run TestDevelopmentOriginsIncludeVite ./...
+
       - name: Run Go vet
         working-directory: src/server
         run: go vet ./...

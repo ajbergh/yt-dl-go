@@ -50,7 +50,7 @@ Managed sidecars use the finalized media basename plus `.<language>.vtt` or `.<l
 | `ADDR` | `127.0.0.1:8080` | Valid `host:port`; non-loopback requires a token and explicit hosts |
 | `DATA_DIR` | `./downloads` | Private real directory; each job receives a random subdirectory |
 | `API_TOKEN` | unset | Bearer token for protected API routes; non-loopback bindings require at least 32 non-whitespace characters. The bundled UI does not send a token, so leave unset when using it. |
-| `ALLOWED_ORIGINS` | local Vite and service origins | Exact comma-separated HTTP(S) origins; no wildcards or trailing slash |
+| `ALLOWED_ORIGINS` | own loopback listener origin; Vite origins with `-tags=dev` | Exact comma-separated HTTP(S) origins; no wildcards or trailing slash. Release builds require an explicit setting for cross-origin access. |
 | `ALLOWED_HOSTS` | loopback authorities at listener port | Additional exact `host[:port]` authorities |
 | `MAX_JOBS` | `32` | 1 through 1000 queued, downloading, processing, and paused jobs; finished Library records do not count |
 | `MAX_JOB_BYTES` | `10737418240` | Positive per-job media byte budget (10 GiB by default) |
