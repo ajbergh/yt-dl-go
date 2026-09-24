@@ -74,20 +74,20 @@ func (s *jobStore) loadLibraryPage(limit int, cursor libraryCursor, filters ...l
 	}
 	filterClause, filterArgs := libraryFilterClause(filter, "li")
 	var total int
-	countQuery := `SELECT COUNT(DISTINCT j.id) FROM jobs j WHERE j.status IN ('completed','partial','failed','cancelled') AND EXISTS (
-		SELECT 1 FROM library_items li WHERE li.source_job_id=j.id` + filterClause + `)`
+	countQuery := `SELECT COUNT(DISTINCT j.source_job_id) FROM library_sources j WHERE j.status IN ('completed','partial','failed','cancelled') AND EXISTS (
+		SELECT 1 FROM library_items li WHERE li.source_job_id=j.source_job_id` + filterClause + `)`
 	if err := s.db.QueryRow(countQuery, filterArgs...).Scan(&total); err != nil {
 		return libraryPage{}, err
 	}
-	query := `SELECT j.id,j.created_at FROM jobs j
+	query := `SELECT j.source_job_id,j.created_at FROM library_sources j
 		WHERE j.status IN ('completed','partial','failed','cancelled')
-		AND EXISTS (SELECT 1 FROM library_items li WHERE li.source_job_id=j.id` + filterClause + `)`
+		AND EXISTS (SELECT 1 FROM library_items li WHERE li.source_job_id=j.source_job_id` + filterClause + `)`
 	args := append([]any(nil), filterArgs...)
 	if cursor.JobID != "" {
-		query += ` AND (j.created_at < ? OR (j.created_at = ? AND j.id < ?))`
+		query += ` AND (j.created_at < ? OR (j.created_at = ? AND j.source_job_id < ?))`
 		args = append(args, cursor.CreatedAt, cursor.CreatedAt, cursor.JobID)
 	}
-	query += ` ORDER BY j.created_at DESC,j.id DESC LIMIT ?`
+	query += ` ORDER BY j.created_at DESC,j.source_job_id DESC LIMIT ?`
 	args = append(args, limit+1)
 	rows, err := s.db.Query(query, args...)
 	if err != nil {
@@ -162,7 +162,7 @@ func libraryFilterClause(filter libraryFilter, itemAlias string) (string, []any)
 
 func (s *jobStore) loadLibraryMetadata(page *libraryPage) error {
 	rows, err := s.db.Query(`SELECT COALESCE(NULLIF(j.category,''),NULLIF(json_extract(li.file_json,'$.category'),''),'Uncategorized'),COUNT(*)
-		FROM library_items li JOIN jobs j ON j.id=li.source_job_id
+		FROM library_items li JOIN library_sources j ON j.source_job_id=li.source_job_id
 		WHERE j.status IN ('completed','partial','failed','cancelled') GROUP BY 1 ORDER BY 1 COLLATE NOCASE`)
 	if err != nil {
 		return err
@@ -183,7 +183,7 @@ func (s *jobStore) loadLibraryMetadata(page *libraryPage) error {
 		return err
 	}
 	rows, err = s.db.Query(`SELECT COALESCE(NULLIF(TRIM(json_extract(li.file_json,'$.author')),''),'Unknown channel'),COUNT(*)
-		FROM library_items li JOIN jobs j ON j.id=li.source_job_id
+		FROM library_items li JOIN library_sources j ON j.source_job_id=li.source_job_id
 		WHERE j.status IN ('completed','partial','failed','cancelled') GROUP BY 1 ORDER BY 1 COLLATE NOCASE`)
 	if err != nil {
 		return err
@@ -207,7 +207,7 @@ func (s *jobStore) loadLibraryMetadata(page *libraryPage) error {
 		COALESCE(SUM(CAST(json_extract(file_json,'$.size') AS INTEGER)+COALESCE(CAST(json_extract(file_json,'$.subtitle.size') AS INTEGER),0)),0),
 		COALESCE(SUM(CASE WHEN json_extract(file_json,'$.managedAvailable')=1 THEN CAST(json_extract(file_json,'$.size') AS INTEGER) ELSE 0 END + CASE WHEN json_extract(file_json,'$.subtitle.managedAvailable')=1 THEN CAST(json_extract(file_json,'$.subtitle.size') AS INTEGER) ELSE 0 END),0),
 		COALESCE(SUM(CASE WHEN json_extract(file_json,'$.publishedAvailable')=1 AND COALESCE(json_extract(file_json,'$.outputRelativePath'),'')<>'' THEN CAST(json_extract(file_json,'$.size') AS INTEGER) ELSE 0 END + CASE WHEN json_extract(file_json,'$.subtitle.publishedAvailable')=1 AND COALESCE(json_extract(file_json,'$.subtitle.outputRelativePath'),'')<>'' THEN CAST(json_extract(file_json,'$.subtitle.size') AS INTEGER) ELSE 0 END),0)
-		FROM library_items li JOIN jobs j ON j.id=li.source_job_id
+		FROM library_items li JOIN library_sources j ON j.source_job_id=li.source_job_id
 		WHERE j.status IN ('completed','partial','failed','cancelled')`).Scan(&page.Stats.Files, &page.Stats.LogicalBytes, &page.Stats.ManagedBytes, &page.Stats.PublishedBytes)
 }
 
