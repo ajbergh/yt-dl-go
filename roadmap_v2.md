@@ -263,7 +263,7 @@ Today a Library entry is a retained job (`src/pages/library.tsx:51`), so Library
 
 ### M1.4 Stable default data directory
 
-**Status:** [~] Implementation in review · **P1** · **Area:** backend / UX
+**Status:** [x] Merged by PR #65 as `28dd800` · **P1** · **Area:** backend / UX
 
 `DATA_DIR` defaults to `./downloads` relative to the current working directory (`main.go:80`). Launching from a different folder, a shortcut, or a terminal gives an empty library.
 
@@ -273,7 +273,7 @@ Today a Library entry is a retained job (`src/pages/library.tsx:51`), so Library
 - Keep `DATA_DIR` as an override.
 - Detect a legacy `./downloads/state.db` and offer a one-time migration.
 
-**Progress (2026-09-24):** The per-user default, DATA_DIR override, and explicit copy-based migration are under review in [PR #65](https://github.com/ajbergh/yt-dl-go/pull/65). The command snapshots SQLite, copies managed data to staging, rebases job and resume paths, preserves the original legacy tree, and refuses to overwrite a destination containing user data. Review corrections support rebasing the original pre-v16 resume schema and resolve existing parent symlinks before checking source/destination overlap. The repository README now documents the OS-specific default and copy-migration command.
+**Progress (2026-09-24):** Merged in [PR #65](https://github.com/ajbergh/yt-dl-go/pull/65) as `28dd800`. The per-user default and `DATA_DIR` override are now documented at repository and server level. The explicit copy-based migration snapshots SQLite, copies managed data to staging, rebases job/resume paths (including the original pre-v16 schema), resolves existing parent symlinks before checking source/destination overlap, preserves the original legacy tree, and refuses to overwrite a destination containing user data. All PR CI checks passed, including race validation and platform builds.
 
 ### M1.5 Startup resilience, integrity, and backup
 
