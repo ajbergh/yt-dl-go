@@ -234,6 +234,10 @@ func openJobStore(root string) (*jobStore, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("migrate state database: %w", err)
 	}
+	if err := store.migrateV26(); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("migrate state database: %w", err)
+	}
 	store.queueItemsReady = true
 	return store, nil
 }
@@ -418,6 +422,33 @@ func (s *jobStore) migrateV25() error {
 		return err
 	}
 	if _, err := tx.Exec(`INSERT INTO schema_migrations(version) VALUES (25)`); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// migrateV26 captures each Library source's original published-output root so
+// its files remain safely manageable after download history is removed.
+func (s *jobStore) migrateV26() error {
+	var version int
+	if err := s.db.QueryRow(`SELECT COALESCE(MAX(version), 0) FROM schema_migrations`).Scan(&version); err != nil {
+		return err
+	}
+	if version >= 26 {
+		return nil
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.Exec(`ALTER TABLE library_sources ADD COLUMN download_location TEXT NOT NULL DEFAULT ''`); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`UPDATE library_sources SET download_location=COALESCE((SELECT output_location FROM jobs WHERE jobs.id=library_sources.source_job_id),'')`); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`INSERT INTO schema_migrations(version) VALUES (26)`); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -1574,10 +1605,10 @@ func (s *jobStore) saveJob(j *jobState) error {
 	}
 	if j.Status == "completed" || j.Status == "partial" || j.Status == "failed" || j.Status == "cancelled" {
 		if _, err := tx.Exec(`INSERT OR REPLACE INTO library_sources (
-			source_job_id,url,kind,quality,video_strategy,allow_360p_fallback,media_type,audio_format,audio_bitrate,subtitle_language,subtitle_format,split_by_chapter,status,title,progress,current_item,completed_count,total_count,error,created_at,note,category,storage_mode,queue_position,search_text
+			source_job_id,url,kind,quality,video_strategy,allow_360p_fallback,media_type,audio_format,audio_bitrate,subtitle_language,subtitle_format,split_by_chapter,status,title,progress,current_item,completed_count,total_count,error,created_at,note,category,storage_mode,queue_position,search_text,download_location
 		)
 		SELECT id,url,kind,quality,video_strategy,allow_360p_fallback,media_type,audio_format,audio_bitrate,subtitle_language,subtitle_format,split_by_chapter,status,title,progress,current_item,completed_count,total_count,error,created_at,note,category,storage_mode,queue_position,
-			COALESCE(title,'')||' '||COALESCE(url,'')||' '||COALESCE(category,'')||' '||COALESCE(audio_format,'')||' '||COALESCE(subtitle_language,'')
+			COALESCE(title,'')||' '||COALESCE(url,'')||' '||COALESCE(category,'')||' '||COALESCE(audio_format,'')||' '||COALESCE(subtitle_language,''),output_location
 		FROM jobs WHERE id=? AND EXISTS (SELECT 1 FROM library_items li WHERE li.source_job_id=jobs.id)`, j.ID); err != nil {
 			return err
 		}
@@ -1789,6 +1820,60 @@ func (s *jobStore) deleteJob(jobID string) error {
 		return err
 	}
 	s.releaseJobCaches(jobID)
+	return nil
+}
+
+// deleteJobHistory removes only the finished work record and its job-scoped
+// tables. Library rows and their compact source metadata have no jobs FK and
+// deliberately survive this operation.
+func (s *jobStore) deleteJobHistory(jobID string) error {
+	if s == nil {
+		return nil
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.Exec(`DELETE FROM jobs WHERE id=?`, jobID); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	s.releaseJobCaches(jobID)
+	return nil
+}
+
+func (s *jobStore) saveLibraryJob(j *jobState) error {
+	if s == nil || j == nil {
+		return nil
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	for _, file := range j.Files {
+		fileID, data, _, err := prepareLibraryItem(j.ID, file.SourceItemIndex, file)
+		if err != nil {
+			return err
+		}
+		result, err := tx.Exec(`UPDATE library_items SET file_json=?,output_path=? WHERE file_id=? AND source_job_id=?`, string(data), file.OutputPath, fileID, j.ID)
+		if err != nil {
+			return err
+		}
+		updated, err := result.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if updated != 1 {
+			return sql.ErrNoRows
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -2078,7 +2163,7 @@ func (s *jobStore) loadLibraryJobsForIDs(jobIDs []string) ([]Job, error) {
 	if err != nil {
 		return nil, err
 	}
-	query := `SELECT j.source_job_id,j.url,j.kind,j.quality,j.video_strategy,j.allow_360p_fallback,j.media_type,j.audio_format,j.audio_bitrate,j.subtitle_language,j.subtitle_format,j.split_by_chapter,j.status,j.title,j.progress,j.current_item,j.completed_count,j.total_count,j.error,j.created_at,j.note,j.category,j.storage_mode,j.queue_position,li.file_json,li.output_path
+	query := `SELECT j.source_job_id,j.url,j.kind,j.quality,j.video_strategy,j.allow_360p_fallback,j.media_type,j.audio_format,j.audio_bitrate,j.subtitle_language,j.subtitle_format,j.split_by_chapter,j.status,j.title,j.progress,j.current_item,j.completed_count,j.total_count,j.error,j.created_at,j.note,j.category,j.storage_mode,j.queue_position,j.download_location,li.file_json,li.output_path
 		FROM library_items li JOIN library_sources j ON j.source_job_id=li.source_job_id
 		WHERE j.status IN ('completed','partial','failed','cancelled')
 		`
@@ -2105,9 +2190,9 @@ func (s *jobStore) loadLibraryJobsForIDs(jobIDs []string) ([]Job, error) {
 		var j Job
 		var progress sql.NullFloat64
 		var totalCount sql.NullInt64
-		var fileJSON, outputPath string
+		var downloadLocation, fileJSON, outputPath string
 		if err := rows.Scan(&j.ID, &j.URL, &j.Kind, &j.Quality, &j.VideoStrategy, &j.Allow360pFallback, &j.MediaType, &j.AudioFormat, &j.AudioBitrate, &j.SubtitleLanguage, &j.SubtitleFormat, &j.SplitByChapter, &j.Status, &j.Title, &progress, &j.CurrentItem,
-			&j.CompletedCount, &totalCount, &j.Error, &j.CreatedAt, &j.Note, &j.Category, &j.StorageMode, &j.QueuePosition, &fileJSON, &outputPath); err != nil {
+			&j.CompletedCount, &totalCount, &j.Error, &j.CreatedAt, &j.Note, &j.Category, &j.StorageMode, &j.QueuePosition, &downloadLocation, &fileJSON, &outputPath); err != nil {
 			_ = rows.Close()
 			return nil, err
 		}
@@ -2120,6 +2205,7 @@ func (s *jobStore) loadLibraryJobsForIDs(jobIDs []string) ([]Job, error) {
 			j.TotalCount = &value
 		}
 		j.Items = []queueItem{}
+		j.DownloadLocation = downloadLocation
 		if j.MediaType == "" {
 			j.MediaType = "video"
 		}
@@ -2162,6 +2248,36 @@ func (s *jobStore) loadLibraryJobsForIDs(jobIDs []string) ([]Job, error) {
 		result = []Job{}
 	}
 	return result, nil
+}
+
+func (s *jobStore) loadLibraryJob(root, jobID string) (*storedJob, error) {
+	if filepath.Base(jobID) != jobID || jobID == "." || jobID == ".." {
+		return nil, errors.New("state database contains an unsafe Library source id")
+	}
+	jobs, err := s.loadLibraryJobsForIDs([]string{jobID})
+	if err != nil || len(jobs) == 0 {
+		return nil, err
+	}
+	job := jobs[0]
+	if !terminal(job.Status) || !filepath.IsAbs(job.DownloadLocation) {
+		return nil, nil
+	}
+	loaded := &storedJob{
+		job:   job,
+		dir:   filepath.Join(root, jobID),
+		done:  time.Now(),
+		items: map[int][]mediaFile{},
+	}
+	loaded.job.Failures = []itemFailure{}
+	loaded.job.Items = []queueItem{}
+	for _, file := range loaded.job.Files {
+		index := file.SourceItemIndex
+		if index < 1 {
+			index = 1
+		}
+		loaded.items[index] = append(loaded.items[index], file)
+	}
+	return loaded, nil
 }
 
 func (s *jobStore) normalizeResumingJob(loaded *storedJob) error {

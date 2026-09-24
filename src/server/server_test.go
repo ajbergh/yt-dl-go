@@ -780,8 +780,8 @@ func TestRetentionAcrossStoragePolicies(t *testing.T) {
 				if err := s.store.db.QueryRow(`SELECT COUNT(*) FROM library_items WHERE source_job_id=?`, job.ID).Scan(&libraryRows); err != nil {
 					t.Fatal(err)
 				}
-				if wantPruned && libraryRows != 0 {
-					t.Fatalf("retention left %d Library rows for pruned job", libraryRows)
+				if libraryRows != 1 {
+					t.Fatalf("retention left %d Library rows; want 1 retained item", libraryRows)
 				}
 				if mode == "managed-only" || (mode == "managed-published" && !wantPruned) {
 					if _, err := os.Stat(managedPath); err != nil {

@@ -12,7 +12,7 @@ import {
   selectedPlaylistEntries, statusClass, statusLabels, videoStrategyLabels, type Draft, type QueueFilter, type QueueRow,
 } from "../components/downloader/view-model";
 
-type QueueJobAction = "pause" | "resume" | "cancel" | "retry" | "remove";
+type QueueJobAction = "pause" | "resume" | "cancel" | "retry" | "remove" | "forget-history";
 
 type QueuePageProps = {
   url: string;
@@ -332,6 +332,7 @@ export function QueuePage({
                         {job.kind === "video" && (job.status === "failed" || job.status === "cancelled") && <button type="button" className={button} disabled={busyAction === job.id} onClick={() => void jobAction(job, "retry")} aria-label={`Retry ${item.title}`}><RefreshCw className="size-3.5" aria-hidden="true" /></button>}
                         {batchControls && (job.status === "failed" || job.status === "partial" || job.status === "cancelled") && <button type="button" className={button} disabled={busyAction === job.id} onClick={() => void jobAction(job, "retry")} aria-label={`Retry playlist ${job.title}`}><RefreshCw className="size-3.5" aria-hidden="true" /><span className="hidden md:inline">Retry batch</span></button>}
                         {job.kind === "playlist" && (job.status === "partial" || job.status === "failed" || job.status === "cancelled") && (item.status === "failed" || item.status === "cancelled") && <button type="button" className={button} disabled={busyAction === `${job.id}:retry-item:${item.index}` || item.retryRequested === true} onClick={() => void retryPlaylistItem(job, item)} aria-label={`Retry item ${item.title}`}><RefreshCw className="size-3.5" aria-hidden="true" /><span className="hidden md:inline">{item.retryRequested ? "Retry queued" : "Retry item"}</span></button>}
+                        {item.index === 1 && ["completed", "partial", "failed", "cancelled"].includes(job.status) && <button type="button" className={button} disabled={busyAction === job.id} onClick={() => void jobAction(job, "forget-history")} aria-label={`Forget history for ${job.title}`}><Trash2 className="size-3.5" aria-hidden="true" /><span className="hidden md:inline">Forget history</span></button>}
                         {item.status === "failed" && job.kind === "video" && <button type="button" className={button} disabled={busyAction === job.id} onClick={() => void jobAction(job, "remove")} aria-label={`Remove ${item.title}`}><Trash2 className="size-3.5" aria-hidden="true" /></button>}
                       </div>
                     </div>
