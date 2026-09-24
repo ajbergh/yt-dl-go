@@ -627,6 +627,13 @@ func TestLibraryRemovalPreservesPublishedMedia(t *testing.T) {
 	if request(s, "GET", "/api/jobs/"+j.ID, "", nil).Code != 404 {
 		t.Fatal("removed Library job is still available")
 	}
+	var libraryRows int
+	if err := s.store.db.QueryRow(`SELECT COUNT(*) FROM library_items WHERE source_job_id=?`, j.ID).Scan(&libraryRows); err != nil {
+		t.Fatal(err)
+	}
+	if libraryRows != 0 {
+		t.Fatalf("Library rows remained after history removal: %d", libraryRows)
+	}
 	if _, err := os.Stat(outputPath); err != nil {
 		t.Fatalf("Library removal deleted published media: %v", err)
 	}
@@ -765,6 +772,13 @@ func TestRetentionAcrossStoragePolicies(t *testing.T) {
 				response := request(s, "GET", "/api/jobs/"+job.ID, "", nil)
 				if (wantPruned && response.Code != 404) || (!wantPruned && response.Code != 200) {
 					t.Fatalf("retention mode=%s duration=%s job status=%d", mode, retention.duration, response.Code)
+				}
+				var libraryRows int
+				if err := s.store.db.QueryRow(`SELECT COUNT(*) FROM library_items WHERE source_job_id=?`, job.ID).Scan(&libraryRows); err != nil {
+					t.Fatal(err)
+				}
+				if wantPruned && libraryRows != 0 {
+					t.Fatalf("retention left %d Library rows for pruned job", libraryRows)
 				}
 				if mode == "managed-only" || (mode == "managed-published" && !wantPruned) {
 					if _, err := os.Stat(managedPath); err != nil {

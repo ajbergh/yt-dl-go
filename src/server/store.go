@@ -3,10 +3,12 @@
 package main
 
 import (
+	"crypto/sha256"
 	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -199,7 +201,133 @@ func openJobStore(root string) (*jobStore, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("migrate state database: %w", err)
 	}
+	if err := store.migrateV20(root); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("migrate state database: %w", err)
+	}
 	return store, nil
+}
+
+// migrateV20 introduces durable per-file Library rows alongside the existing
+// job history. Job deletion semantics remain explicit because library_items
+// deliberately has no foreign key to jobs.
+func (s *jobStore) migrateV20(root string) error {
+	var version int
+	if err := s.db.QueryRow(`SELECT COALESCE(MAX(version), 0) FROM schema_migrations`).Scan(&version); err != nil {
+		return err
+	}
+	if version >= 20 {
+		return nil
+	}
+	createTx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = createTx.Rollback() }()
+	for _, statement := range []string{
+		`CREATE TABLE IF NOT EXISTS library_items (
+			file_id TEXT PRIMARY KEY,
+			source_job_id TEXT NOT NULL,
+			source_item_index INTEGER NOT NULL,
+			file_json TEXT NOT NULL,
+			output_path TEXT NOT NULL,
+			created_at INTEGER NOT NULL
+		)`,
+		`CREATE INDEX IF NOT EXISTS library_items_source_job ON library_items(source_job_id, source_item_index)`,
+	} {
+		if _, err := createTx.Exec(statement); err != nil {
+			return err
+		}
+	}
+	if err := createTx.Commit(); err != nil {
+		return err
+	}
+
+	// Reuse the canonical row loader so the migration includes every finalized
+	// primary and grouped file, including chapter outputs stored in JSON.
+	loaded, err := s.loadJobs(root)
+	if err != nil {
+		return err
+	}
+	backfillTx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = backfillTx.Rollback() }()
+	for _, saved := range loaded {
+		createdAt := int64(0)
+		if !saved.done.IsZero() {
+			createdAt = saved.done.UnixNano()
+		}
+		for itemIndex, group := range saved.items {
+			for _, file := range group {
+				if err := upsertLibraryItem(backfillTx, saved.job.ID, itemIndex, file, createdAt); err != nil {
+					return err
+				}
+			}
+		}
+	}
+	if _, err := backfillTx.Exec(`INSERT INTO schema_migrations(version) VALUES (20)`); err != nil {
+		return err
+	}
+	return backfillTx.Commit()
+}
+
+func upsertLibraryItem(tx *sql.Tx, sourceJobID string, sourceItemIndex int, file mediaFile, createdAt int64) error {
+	if sourceItemIndex < 1 {
+		sourceItemIndex = file.SourceItemIndex
+	}
+	if sourceItemIndex < 1 {
+		sourceItemIndex = 1
+	}
+	file.SourceItemIndex = sourceItemIndex
+	fileID, data, _, err := prepareLibraryItem(sourceJobID, sourceItemIndex, file)
+	if err != nil {
+		return err
+	}
+	if createdAt == 0 {
+		createdAt = time.Now().UnixNano()
+	}
+	_, err = tx.Exec(`INSERT INTO library_items(file_id,source_job_id,source_item_index,file_json,output_path,created_at)
+		VALUES(?,?,?,?,?,?)
+		ON CONFLICT(file_id) DO UPDATE SET source_job_id=excluded.source_job_id,source_item_index=excluded.source_item_index,file_json=excluded.file_json,output_path=excluded.output_path`,
+		fileID, sourceJobID, sourceItemIndex, string(data), file.OutputPath, createdAt)
+	return err
+}
+
+func prepareLibraryItem(sourceJobID string, sourceItemIndex int, file mediaFile) (string, []byte, [32]byte, error) {
+	if sourceItemIndex < 1 {
+		sourceItemIndex = file.SourceItemIndex
+	}
+	if sourceItemIndex < 1 {
+		sourceItemIndex = 1
+	}
+	file.ID = libraryItemID(sourceJobID, sourceItemIndex, file)
+	file.SourceItemIndex = sourceItemIndex
+	data, err := json.Marshal(file)
+	if err != nil {
+		return "", nil, [32]byte{}, err
+	}
+	hasher := sha256.New()
+	_, _ = hasher.Write(data)
+	_, _ = hasher.Write([]byte{0})
+	_, _ = io.WriteString(hasher, file.OutputPath)
+	var signature [32]byte
+	copy(signature[:], hasher.Sum(nil))
+	return file.ID, data, signature, nil
+}
+
+func libraryItemID(sourceJobID string, sourceItemIndex int, file mediaFile) string {
+	if file.ID != "" {
+		return file.ID
+	}
+	if sourceItemIndex < 1 {
+		sourceItemIndex = file.SourceItemIndex
+	}
+	if sourceItemIndex < 1 {
+		sourceItemIndex = 1
+	}
+	return fmt.Sprintf("%s:%d:%s", sourceJobID, sourceItemIndex, file.Name)
 }
 
 func (s *jobStore) migrateV19() error {
@@ -825,6 +953,10 @@ func (s *jobStore) saveJob(j *jobState) error {
 		return err
 	}
 	groups := groupedJobFiles(j)
+	libraryCreatedAt := time.Now().UnixNano()
+	if !j.done.IsZero() {
+		libraryCreatedAt = j.done.UnixNano()
+	}
 	itemIndexes := make([]int, 0, len(groups))
 	for itemIndex := range groups {
 		itemIndexes = append(itemIndexes, itemIndex)
@@ -880,6 +1012,10 @@ func (s *jobStore) saveJob(j *jobState) error {
 			return err
 		}
 	}
+	newLibrarySignatures, err := syncLibraryItems(tx, j, groups, libraryCreatedAt)
+	if err != nil {
+		return err
+	}
 	if _, err = tx.Exec(`DELETE FROM job_failures WHERE job_id=?`, j.ID); err != nil {
 		return err
 	}
@@ -888,7 +1024,73 @@ func (s *jobStore) saveJob(j *jobState) error {
 			return err
 		}
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	j.librarySignatures = newLibrarySignatures
+	return nil
+}
+
+func syncLibraryItems(tx *sql.Tx, j *jobState, groups map[int][]mediaFile, createdAt int64) (map[string][32]byte, error) {
+	current := make(map[string][32]byte, len(j.Files))
+	for itemIndex, group := range groups {
+		for _, file := range group {
+			fileID, data, signature, err := prepareLibraryItem(j.ID, itemIndex, file)
+			if err != nil {
+				return nil, err
+			}
+			current[fileID] = signature
+			if prior, exists := j.librarySignatures[fileID]; exists && prior == signature {
+				continue
+			}
+			if createdAt == 0 {
+				createdAt = time.Now().UnixNano()
+			}
+			if _, err := tx.Exec(`INSERT INTO library_items(file_id,source_job_id,source_item_index,file_json,output_path,created_at)
+				VALUES(?,?,?,?,?,?)
+				ON CONFLICT(file_id) DO UPDATE SET source_job_id=excluded.source_job_id,source_item_index=excluded.source_item_index,file_json=excluded.file_json,output_path=excluded.output_path`,
+				fileID, j.ID, itemIndex, string(data), file.OutputPath, createdAt); err != nil {
+				return nil, err
+			}
+		}
+	}
+
+	var stale []string
+	if j.librarySignatures == nil {
+		rows, err := tx.Query(`SELECT file_id FROM library_items WHERE source_job_id=?`, j.ID)
+		if err != nil {
+			return nil, err
+		}
+		for rows.Next() {
+			var fileID string
+			if err := rows.Scan(&fileID); err != nil {
+				_ = rows.Close()
+				return nil, err
+			}
+			if _, exists := current[fileID]; !exists {
+				stale = append(stale, fileID)
+			}
+		}
+		if err := rows.Err(); err != nil {
+			_ = rows.Close()
+			return nil, err
+		}
+		if err := rows.Close(); err != nil {
+			return nil, err
+		}
+	} else {
+		for fileID := range j.librarySignatures {
+			if _, exists := current[fileID]; !exists {
+				stale = append(stale, fileID)
+			}
+		}
+	}
+	for _, fileID := range stale {
+		if _, err := tx.Exec(`DELETE FROM library_items WHERE file_id=? AND source_job_id=?`, fileID, j.ID); err != nil {
+			return nil, err
+		}
+	}
+	return current, nil
 }
 
 func (s *jobStore) saveQueueOrder(jobIDs []string) error {
@@ -963,8 +1165,18 @@ func (s *jobStore) deleteJob(jobID string) error {
 	if s == nil {
 		return nil
 	}
-	_, err := s.db.Exec(`DELETE FROM jobs WHERE id=?`, jobID)
-	return err
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.Exec(`DELETE FROM library_items WHERE source_job_id=?`, jobID); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`DELETE FROM jobs WHERE id=?`, jobID); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (s *jobStore) loadJobs(root string) ([]*storedJob, error) {

@@ -128,6 +128,7 @@ type jobState struct {
 	dir               string
 	fileItems         map[int]mediaFile
 	fileGroups        map[int][]mediaFile
+	librarySignatures map[string][32]byte
 	cancel            context.CancelFunc
 	cancelRequested   bool
 	pauseRequested    bool
