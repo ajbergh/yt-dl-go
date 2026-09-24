@@ -188,3 +188,41 @@ func firstLibraryJobID(jobs []Job) string {
 	}
 	return jobs[0].ID
 }
+
+func BenchmarkLibraryAPIAt10100Files(b *testing.B) {
+	root := filepath.Join(b.TempDir(), "data")
+	config := config{
+		addr: "127.0.0.1:8080", root: root, token: "",
+		origins: map[string]bool{}, hosts: map[string]bool{"127.0.0.1:8080": true},
+		maxJobs: 8, maxBytes: 1 << 20, timeout: time.Minute, retain: time.Minute,
+	}
+	s, err := newServer(config)
+	if err != nil {
+		b.Fatal(err)
+	}
+	b.Cleanup(s.stop)
+	if err := seedLibraryScaleFixture(s.store, 101, 100); err != nil {
+		b.Fatal(err)
+	}
+
+	for _, benchmark := range []struct {
+		name string
+		path string
+	}{
+		{name: "first-page-100-groups", path: "/api/library?limit=100"},
+		{name: "substring-search-one-group", path: "/api/library?limit=100&q=needle"},
+	} {
+		b.Run(benchmark.name, func(b *testing.B) {
+			b.ReportAllocs()
+			b.ResetTimer()
+			for range b.N {
+				req := httptest.NewRequest(http.MethodGet, "http://127.0.0.1:8080"+benchmark.path, nil)
+				response := httptest.NewRecorder()
+				s.ServeHTTP(response, req)
+				if response.Code != http.StatusOK {
+					b.Fatalf("GET %s returned %d: %s", benchmark.path, response.Code, response.Body.String())
+				}
+			}
+		})
+	}
+}
