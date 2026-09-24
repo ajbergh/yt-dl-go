@@ -949,6 +949,8 @@ No tests exist for:
 
 **Progress (2026-09-23):** M7.3 PR #26's first CI attempt exposed an intermittent ordering assumption in `TestCancellationQueueAndTimeout`: with a single active-item slot, playlist workers may let blocked item 2 start before item 1 completes, while the test waits for item 1 before issuing cancellation. The failed Go test passed on the workflow rerun, but the fixture still needs deterministic ordering. PR #31's race-detector run also found an actual queue ownership race: `setQueueItems` copied `j.Items` before locking while cancellation refreshed the slice under the mutex. The lock now covers the snapshot, replacement, refresh, and persistence. Both scheduler findings should be addressed before extending this milestone's coverage work.
 
+**Progress (2026-09-24):** The M1.5 Library export CI package run exposed a timing-sensitive terminal-thumbnail race on Linux arm64. Completion evicts terminal jobs from memory; a thumbnail request could pass the shared job preflight, lose the job to eviction, then fail its second lookup with 404 despite the persisted Library record and thumbnail being available. The thumbnail handler now hydrates the terminal record again under the same lock as file selection, and its regression removes the in-memory job before requesting the persisted thumbnail. The regression passed 20 repetitions; the full Go suite and `go vet ./...` pass locally. Tracked in [PR #77](https://github.com/ajbergh/yt-dl-go/pull/77); cross-platform CI is pending.
+
 ### M7.5 Typed frontend tests and E2E robustness
 
 **Status:** [ ] · **P2** · **Area:** testing
