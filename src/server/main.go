@@ -213,6 +213,9 @@ func newServer(c config) (*server, error) {
 		cancel()
 		s.wg.Wait()
 		_ = browserPool.Close()
+		if s.persistenceWriter != nil {
+			s.persistenceWriter.close()
+		}
 		_ = store.close()
 	}
 	loaded, err := store.loadJobs(root)
@@ -227,6 +230,7 @@ func newServer(c config) (*server, error) {
 		s.jobs[j.ID] = j
 		s.order = append(s.order, j.ID)
 	}
+	s.persistenceWriter = newPersistenceWriter(store)
 	return s, nil
 }
 
@@ -282,10 +286,9 @@ func main() {
 	case <-result:
 		log.Print("HTTP listener stopped")
 	}
-	s.stop()
 	ctx, done := context.WithTimeout(context.Background(), 10*time.Second)
 	defer done()
 	_ = h.Shutdown(ctx)
+	s.stop()
 	s.wg.Wait()
-	_ = s.store.close()
 }

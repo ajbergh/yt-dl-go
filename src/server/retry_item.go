@@ -56,6 +56,7 @@ func (s *server) handleRetryItem(w http.ResponseWriter, r *http.Request, jobID s
 	oldFailures := append([]itemFailure(nil), job.Failures...)
 	oldDone := job.done
 	oldCancelRequested, oldPauseRequested := job.cancelRequested, job.pauseRequested
+	revision := job.persistenceRevision + 1
 
 	for index := range job.Items {
 		job.Items[index].RetryRequested = index == request.Index-1
@@ -77,17 +78,17 @@ func (s *server) handleRetryItem(w http.ResponseWriter, r *http.Request, jobID s
 	job.QueuePosition = s.nextQueuePositionLocked()
 	s.refreshAllQueueItemsLocked(job)
 
-	if err := s.store.saveJob(job); err != nil {
-		s.recordPersistenceFailure("save item retry state", job.ID, err)
-		job.Job = oldJob
-		job.Items = oldItems
-		job.Failures = oldFailures
-		job.done = oldDone
-		job.cancelRequested, job.pauseRequested = oldCancelRequested, oldPauseRequested
+	if err := s.persistJobSnapshotLocked(job, "save item retry state"); err != nil {
+		if job.persistenceRevision == revision {
+			job.Job = oldJob
+			job.Items = oldItems
+			job.Failures = oldFailures
+			job.done = oldDone
+			job.cancelRequested, job.pauseRequested = oldCancelRequested, oldPauseRequested
+		}
 		fail(w, http.StatusInternalServerError, "Could not persist item retry state")
 		return
 	}
-	s.recordPersistenceSuccess()
 	s.publishJobEventLocked("job-status", job)
 	s.notifySchedulerLocked()
 	reply(w, http.StatusAccepted, snapshot(job))

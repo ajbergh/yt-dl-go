@@ -35,20 +35,23 @@ func (s *server) orderedQueuedJobsLocked() []*jobState {
 
 func (s *server) nextQueuedJobLocked() *jobState {
 	queued := s.orderedQueuedJobsLocked()
-	if len(queued) == 0 {
-		return nil
+	for _, job := range queued {
+		if job.persistencePending == 0 {
+			return job
+		}
 	}
-	return queued[0]
+	return nil
 }
 
 func (s *server) nextQueuePositionLocked() int64 {
-	var maxPosition int64
+	maxPosition := s.queuePositionSerial
 	for _, job := range s.jobs {
 		if job != nil && job.QueuePosition > maxPosition {
 			maxPosition = job.QueuePosition
 		}
 	}
-	return maxPosition + 1
+	s.queuePositionSerial = maxPosition + 1
+	return s.queuePositionSerial
 }
 
 func queueSnapshots(jobs []*jobState) []Job {
@@ -84,18 +87,51 @@ func validateExactJobOrder(queued []*jobState, requested []string) error {
 }
 
 func (s *server) applyQueueOrderLocked(jobIDs []string) error {
-	if err := s.store.saveQueueOrder(jobIDs); err != nil {
-		s.recordPersistenceFailure("save queue order", "", err)
-		return err
+	ids := append([]string(nil), jobIDs...)
+	previous := make(map[string]int64, len(ids))
+	for _, id := range ids {
+		if job := s.jobs[id]; job != nil {
+			previous[id] = job.QueuePosition
+		}
 	}
-	s.recordPersistenceSuccess()
-	for index, id := range jobIDs {
+	s.queueOrderRevision++
+	revision := s.queueOrderRevision
+	for index, id := range ids {
 		if job := s.jobs[id]; job != nil {
 			job.QueuePosition = int64(index + 1)
-			s.publishJobEventLocked("job-status", job)
 		}
 	}
 	s.notifySchedulerLocked()
+	if err := s.persistOperationLocked("save queue order", "", func(store *jobStore) error {
+		return store.saveQueueOrder(ids)
+	}); err != nil {
+		s.recordPersistenceFailure("save queue order", "", err)
+		if s.queueOrderRevision == revision {
+			current := s.orderedQueuedJobsLocked()
+			matches := len(current) == len(ids)
+			for index, job := range current {
+				if !matches || job.ID != ids[index] {
+					matches = false
+					break
+				}
+			}
+			if matches {
+				for id, position := range previous {
+					if job := s.jobs[id]; job != nil {
+						job.QueuePosition = position
+					}
+				}
+				s.notifySchedulerLocked()
+			}
+		}
+		return err
+	}
+	s.recordPersistenceSuccess()
+	for _, id := range ids {
+		if job := s.jobs[id]; job != nil {
+			s.publishJobEventLocked("job-status", job)
+		}
+	}
 	return nil
 }
 
@@ -199,13 +235,14 @@ func (s *server) handleItemOrder(w http.ResponseWriter, r *http.Request, jobID s
 	}
 	previous := job.Items
 	job.Items = reordered
-	if err := s.store.saveJob(job); err != nil {
-		s.recordPersistenceFailure("save playlist item order", job.ID, err)
-		job.Items = previous
+	revision := job.persistenceRevision + 1
+	if err := s.persistJobSnapshotLocked(job, "save playlist item order"); err != nil {
+		if job.persistenceRevision == revision {
+			job.Items = previous
+		}
 		fail(w, http.StatusInternalServerError, "Could not persist playlist item order")
 		return
 	}
-	s.recordPersistenceSuccess()
 	s.publishJobEventLocked("job-status", job)
 	reply(w, http.StatusOK, snapshot(job))
 }

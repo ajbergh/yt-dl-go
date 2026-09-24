@@ -3,6 +3,7 @@
 package main
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"database/sql"
 	"encoding/json"
@@ -12,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"sync"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -20,7 +22,13 @@ import (
 // jobStore is the durable source of truth for job history, completed items,
 // preferences, and resume state; live queue and cancellation handles stay in RAM.
 type jobStore struct {
-	db *sql.DB
+	db                *sql.DB
+	queueItemsReady   bool
+	queueItemsCacheMu sync.Mutex
+	queueItemsCache   map[string]map[string][]byte
+	jobFilesCache     map[string]map[int][]byte
+	jobFailuresCache  map[string]map[int]string
+	libraryItemsCache map[string]map[string][32]byte
 }
 
 type AppSettings struct {
@@ -205,7 +213,287 @@ func openJobStore(root string) (*jobStore, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("migrate state database: %w", err)
 	}
+	if err := store.migrateV21(); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("migrate state database: %w", err)
+	}
+	store.queueItemsReady = true
 	return store, nil
+}
+
+func (s *jobStore) migrateV21() error {
+	var version int
+	if err := s.db.QueryRow(`SELECT COALESCE(MAX(version), 0) FROM schema_migrations`).Scan(&version); err != nil {
+		return err
+	}
+	if version >= 21 {
+		return nil
+	}
+	type legacyQueue struct {
+		jobID string
+		data  string
+	}
+	rows, err := s.db.Query(`SELECT id,queue_items FROM jobs ORDER BY created_at,id`)
+	if err != nil {
+		return err
+	}
+	var legacy []legacyQueue
+	for rows.Next() {
+		var item legacyQueue
+		if err := rows.Scan(&item.jobID, &item.data); err != nil {
+			_ = rows.Close()
+			return err
+		}
+		legacy = append(legacy, item)
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return err
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.Exec(`CREATE TABLE IF NOT EXISTS queue_items (
+		job_id TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+		item_key TEXT NOT NULL,
+		position INTEGER NOT NULL,
+		playlist_index INTEGER NOT NULL,
+		video_id TEXT NOT NULL,
+		title TEXT NOT NULL,
+		author TEXT NOT NULL,
+		duration_seconds INTEGER NOT NULL,
+		thumbnail_url TEXT NOT NULL,
+		status TEXT NOT NULL,
+		progress REAL,
+		downloaded_bytes INTEGER NOT NULL,
+		total_bytes INTEGER NOT NULL,
+		speed_bytes_per_sec INTEGER NOT NULL,
+		eta_seconds INTEGER NOT NULL,
+		error TEXT NOT NULL,
+		file_id TEXT NOT NULL,
+		file_ids_json TEXT NOT NULL,
+		retry_requested INTEGER NOT NULL,
+		PRIMARY KEY(job_id,item_key)
+	)`); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`CREATE INDEX IF NOT EXISTS queue_items_job_position ON queue_items(job_id,position)`); err != nil {
+		return err
+	}
+	for _, saved := range legacy {
+		var items []queueItem
+		if err := json.Unmarshal([]byte(saved.data), &items); err != nil {
+			return fmt.Errorf("decode legacy queue items for job %s: %w", saved.jobID, err)
+		}
+		if err := replaceQueueItems(tx, saved.jobID, items); err != nil {
+			return fmt.Errorf("migrate queue items for job %s: %w", saved.jobID, err)
+		}
+	}
+	if _, err := tx.Exec(`INSERT INTO schema_migrations(version) VALUES (21)`); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func queueItemKey(item queueItem) string {
+	if item.PlaylistIndex > 0 {
+		return fmt.Sprintf("playlist:%d", item.PlaylistIndex)
+	}
+	return fmt.Sprintf("item:%d", item.Index)
+}
+
+func replaceQueueItems(tx *sql.Tx, jobID string, items []queueItem) error {
+	existing := make(map[string]struct{})
+	rows, err := tx.Query(`SELECT item_key FROM queue_items WHERE job_id=?`, jobID)
+	if err != nil {
+		return err
+	}
+	for rows.Next() {
+		var key string
+		if err := rows.Scan(&key); err != nil {
+			_ = rows.Close()
+			return err
+		}
+		existing[key] = struct{}{}
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return err
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	for position, item := range items {
+		key := queueItemKey(item)
+		if err := upsertQueueItem(tx, jobID, key, position+1, item); err != nil {
+			return err
+		}
+		delete(existing, key)
+	}
+	for key := range existing {
+		if _, err := tx.Exec(`DELETE FROM queue_items WHERE job_id=? AND item_key=?`, jobID, key); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *jobStore) loadQueueItems() (map[string][]queueItem, error) {
+	rows, err := s.db.Query(`SELECT job_id,position,playlist_index,video_id,title,author,duration_seconds,thumbnail_url,status,progress,downloaded_bytes,total_bytes,speed_bytes_per_sec,eta_seconds,error,file_id,file_ids_json,retry_requested
+		FROM queue_items ORDER BY job_id,position`)
+	if err != nil {
+		return nil, err
+	}
+	result := make(map[string][]queueItem)
+	for rows.Next() {
+		var jobID, fileIDsJSON string
+		var item queueItem
+		var progress sql.NullFloat64
+		var retryRequested int
+		if err := rows.Scan(&jobID, &item.Index, &item.PlaylistIndex, &item.VideoID, &item.Title, &item.Author, &item.DurationSeconds, &item.ThumbnailURL, &item.Status, &progress, &item.DownloadedBytes, &item.TotalBytes, &item.SpeedBytesPerSec, &item.ETASeconds, &item.Error, &item.FileID, &fileIDsJSON, &retryRequested); err != nil {
+			_ = rows.Close()
+			return nil, err
+		}
+		if progress.Valid {
+			value := progress.Float64
+			item.Progress = &value
+		}
+		if err := json.Unmarshal([]byte(fileIDsJSON), &item.FileIDs); err != nil {
+			_ = rows.Close()
+			return nil, fmt.Errorf("decode saved queue file IDs: %w", err)
+		}
+		if retryRequested != 0 {
+			item.RetryRequested = true
+		}
+		result[jobID] = append(result[jobID], item)
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return nil, err
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	cache := make(map[string]map[string][]byte, len(result))
+	for jobID, items := range result {
+		cache[jobID] = make(map[string][]byte, len(items))
+		for _, item := range items {
+			encoded, err := json.Marshal(item)
+			if err != nil {
+				return nil, err
+			}
+			cache[jobID][queueItemKey(item)] = encoded
+		}
+	}
+	s.queueItemsCacheMu.Lock()
+	s.queueItemsCache = cache
+	s.queueItemsCacheMu.Unlock()
+	return result, nil
+}
+
+func saveChangedQueueItems(tx *sql.Tx, jobID string, items []queueItem, cached map[string][]byte) (map[string][]byte, error) {
+	existing := make(map[string]struct{}, len(cached))
+	for key := range cached {
+		existing[key] = struct{}{}
+	}
+	if cached == nil {
+		rows, err := tx.Query(`SELECT item_key FROM queue_items WHERE job_id=?`, jobID)
+		if err != nil {
+			return nil, err
+		}
+		for rows.Next() {
+			var key string
+			if err := rows.Scan(&key); err != nil {
+				_ = rows.Close()
+				return nil, err
+			}
+			existing[key] = struct{}{}
+		}
+		if err := rows.Err(); err != nil {
+			_ = rows.Close()
+			return nil, err
+		}
+		if err := rows.Close(); err != nil {
+			return nil, err
+		}
+	}
+	updated := make(map[string][]byte, len(items))
+	for position, item := range items {
+		key := queueItemKey(item)
+		encoded, err := json.Marshal(item)
+		if err != nil {
+			return nil, err
+		}
+		updated[key] = encoded
+		delete(existing, key)
+		if previous, ok := cached[key]; ok && bytes.Equal(previous, encoded) {
+			continue
+		}
+		if err := upsertQueueItem(tx, jobID, key, position+1, item); err != nil {
+			return nil, err
+		}
+	}
+	for key := range existing {
+		if _, err := tx.Exec(`DELETE FROM queue_items WHERE job_id=? AND item_key=?`, jobID, key); err != nil {
+			return nil, err
+		}
+	}
+	return updated, nil
+}
+
+func upsertQueueItem(tx *sql.Tx, jobID, key string, position int, item queueItem) error {
+	fileIDs, err := json.Marshal(item.FileIDs)
+	if err != nil {
+		return err
+	}
+	progress := any(nil)
+	if item.Progress != nil {
+		progress = *item.Progress
+	}
+	retryRequested := 0
+	if item.RetryRequested {
+		retryRequested = 1
+	}
+	_, err = tx.Exec(`INSERT INTO queue_items(job_id,item_key,position,playlist_index,video_id,title,author,duration_seconds,thumbnail_url,status,progress,downloaded_bytes,total_bytes,speed_bytes_per_sec,eta_seconds,error,file_id,file_ids_json,retry_requested)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+		ON CONFLICT(job_id,item_key) DO UPDATE SET position=excluded.position,playlist_index=excluded.playlist_index,video_id=excluded.video_id,title=excluded.title,author=excluded.author,duration_seconds=excluded.duration_seconds,thumbnail_url=excluded.thumbnail_url,status=excluded.status,progress=excluded.progress,downloaded_bytes=excluded.downloaded_bytes,total_bytes=excluded.total_bytes,speed_bytes_per_sec=excluded.speed_bytes_per_sec,eta_seconds=excluded.eta_seconds,error=excluded.error,file_id=excluded.file_id,file_ids_json=excluded.file_ids_json,retry_requested=excluded.retry_requested
+		WHERE queue_items.position IS NOT excluded.position OR queue_items.playlist_index IS NOT excluded.playlist_index OR queue_items.video_id IS NOT excluded.video_id OR queue_items.title IS NOT excluded.title OR queue_items.author IS NOT excluded.author OR queue_items.duration_seconds IS NOT excluded.duration_seconds OR queue_items.thumbnail_url IS NOT excluded.thumbnail_url OR queue_items.status IS NOT excluded.status OR queue_items.progress IS NOT excluded.progress OR queue_items.downloaded_bytes IS NOT excluded.downloaded_bytes OR queue_items.total_bytes IS NOT excluded.total_bytes OR queue_items.speed_bytes_per_sec IS NOT excluded.speed_bytes_per_sec OR queue_items.eta_seconds IS NOT excluded.eta_seconds OR queue_items.error IS NOT excluded.error OR queue_items.file_id IS NOT excluded.file_id OR queue_items.file_ids_json IS NOT excluded.file_ids_json OR queue_items.retry_requested IS NOT excluded.retry_requested`,
+		jobID, key, position, item.PlaylistIndex, item.VideoID, item.Title, item.Author, item.DurationSeconds, item.ThumbnailURL, item.Status, progress, item.DownloadedBytes, item.TotalBytes, item.SpeedBytesPerSec, item.ETASeconds, item.Error, item.FileID, string(fileIDs), retryRequested)
+	return err
+}
+
+func (s *jobStore) loadLegacyQueueItems() (map[string][]queueItem, error) {
+	rows, err := s.db.Query(`SELECT id,queue_items FROM jobs ORDER BY created_at,id`)
+	if err != nil {
+		return nil, err
+	}
+	result := make(map[string][]queueItem)
+	for rows.Next() {
+		var jobID, data string
+		var items []queueItem
+		if err := rows.Scan(&jobID, &data); err != nil {
+			_ = rows.Close()
+			return nil, err
+		}
+		if err := json.Unmarshal([]byte(data), &items); err != nil {
+			_ = rows.Close()
+			return nil, fmt.Errorf("decode saved queue entries for job %s: %w", jobID, err)
+		}
+		result[jobID] = items
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return nil, err
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	return result, nil
 }
 
 // migrateV20 introduces durable per-file Library rows alongside the existing
@@ -217,7 +505,13 @@ func (s *jobStore) migrateV20(root string) error {
 		return err
 	}
 	if version >= 20 {
-		return nil
+		var exists int
+		if err := s.db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='library_items'`).Scan(&exists); err != nil {
+			return err
+		}
+		if exists != 0 {
+			return nil
+		}
 	}
 	createTx, err := s.db.Begin()
 	if err != nil {
@@ -267,7 +561,7 @@ func (s *jobStore) migrateV20(root string) error {
 			}
 		}
 	}
-	if _, err := backfillTx.Exec(`INSERT INTO schema_migrations(version) VALUES (20)`); err != nil {
+	if _, err := backfillTx.Exec(`INSERT OR IGNORE INTO schema_migrations(version) VALUES (20)`); err != nil {
 		return err
 	}
 	return backfillTx.Commit()
@@ -906,6 +1200,20 @@ func (s *jobStore) saveJob(j *jobState) error {
 	if s == nil {
 		return nil
 	}
+	s.queueItemsCacheMu.Lock()
+	defer s.queueItemsCacheMu.Unlock()
+	if s.queueItemsCache == nil {
+		s.queueItemsCache = make(map[string]map[string][]byte)
+	}
+	if s.jobFilesCache == nil {
+		s.jobFilesCache = make(map[string]map[int][]byte)
+	}
+	if s.jobFailuresCache == nil {
+		s.jobFailuresCache = make(map[string]map[int]string)
+	}
+	if s.libraryItemsCache == nil {
+		s.libraryItemsCache = make(map[string]map[string][32]byte)
+	}
 	var progress any
 	if j.Progress != nil {
 		progress = *j.Progress
@@ -922,10 +1230,15 @@ func (s *jobStore) saveJob(j *jobState) error {
 	if j.cancelRequested {
 		cancelRequested = 1
 	}
-	queueItems, err := json.Marshal(j.Items)
-	if err != nil {
-		return err
+	legacyQueueItems := "[]"
+	if !s.queueItemsReady {
+		encoded, err := json.Marshal(j.Items)
+		if err != nil {
+			return err
+		}
+		legacyQueueItems = string(encoded)
 	}
+	var updatedQueueCache map[string][]byte
 	tx, err := s.db.Begin()
 	if err != nil {
 		return err
@@ -944,15 +1257,45 @@ func (s *jobStore) saveJob(j *jobState) error {
 		done_at=excluded.done_at,updated_at=excluded.updated_at,queue_items=excluded.queue_items,
 		output_location=excluded.output_location,naming_pattern=excluded.naming_pattern,subfolder_sorting=excluded.subfolder_sorting,category=excluded.category,storage_mode=excluded.storage_mode,queue_position=excluded.queue_position,output_file_mode=excluded.output_file_mode,output_folder_mode=excluded.output_folder_mode`,
 		j.ID, j.URL, j.Kind, j.Quality, j.VideoStrategy, j.Allow360pFallback, j.MediaType, j.AudioFormat, j.AudioBitrate, j.SubtitleLanguage, j.SubtitleFormat, j.SplitByChapter, j.Status, j.Title, progress, j.CurrentItem, j.CompletedCount, total,
-		j.Error, j.CreatedAt, j.Note, j.dir, cancelRequested, done, time.Now().UnixNano(), string(queueItems),
+		j.Error, j.CreatedAt, j.Note, j.dir, cancelRequested, done, time.Now().UnixNano(), legacyQueueItems,
 		j.DownloadLocation, j.NamingPattern, j.SubfolderSorting, j.Category, j.StorageMode, j.QueuePosition, j.OutputFileMode, j.OutputFolderMode)
 	if err != nil {
 		return err
 	}
-	if _, err = tx.Exec(`DELETE FROM job_files WHERE job_id=?`, j.ID); err != nil {
-		return err
+	if s.queueItemsReady {
+		updatedQueueCache, err = saveChangedQueueItems(tx, j.ID, j.Items, s.queueItemsCache[j.ID])
+		if err != nil {
+			return err
+		}
 	}
 	groups := groupedJobFiles(j)
+	fileCache := s.jobFilesCache[j.ID]
+	existingFileIndexes := make(map[int]struct{}, len(fileCache))
+	for index := range fileCache {
+		existingFileIndexes[index] = struct{}{}
+	}
+	if fileCache == nil {
+		fileRows, err := tx.Query(`SELECT item_index FROM job_files WHERE job_id=?`, j.ID)
+		if err != nil {
+			return err
+		}
+		for fileRows.Next() {
+			var index int
+			if err := fileRows.Scan(&index); err != nil {
+				_ = fileRows.Close()
+				return err
+			}
+			existingFileIndexes[index] = struct{}{}
+		}
+		if err := fileRows.Err(); err != nil {
+			_ = fileRows.Close()
+			return err
+		}
+		if err := fileRows.Close(); err != nil {
+			return err
+		}
+	}
+	updatedFileCache := make(map[int][]byte, len(groups))
 	libraryCreatedAt := time.Now().UnixNano()
 	if !j.done.IsZero() {
 		libraryCreatedAt = j.done.UnixNano()
@@ -965,6 +1308,15 @@ func (s *jobStore) saveJob(j *jobState) error {
 	for _, itemIndex := range itemIndexes {
 		group := groups[itemIndex]
 		if len(group) == 0 {
+			continue
+		}
+		delete(existingFileIndexes, itemIndex)
+		rowSignature, err := json.Marshal(group)
+		if err != nil {
+			return err
+		}
+		updatedFileCache[itemIndex] = rowSignature
+		if previous, exists := fileCache[itemIndex]; exists && bytes.Equal(previous, rowSignature) {
 			continue
 		}
 		file := group[0]
@@ -1006,27 +1358,79 @@ func (s *jobStore) saveJob(j *jobState) error {
 			}
 			additionalFilesJSON = string(encoded)
 		}
-		if _, err = tx.Exec(`INSERT INTO job_files(job_id,item_index,file_id,name,size,height,mime_type,title,author,duration_seconds,thumbnail_url,thumbnail_mime_type,thumbnail_local_available,publish_date,category,output_name,output_path,output_relative_path,managed_available,published_available,subtitle_json,subtitle_error,chapters_json,additional_files_json) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		if _, err = tx.Exec(`INSERT INTO job_files(job_id,item_index,file_id,name,size,height,mime_type,title,author,duration_seconds,thumbnail_url,thumbnail_mime_type,thumbnail_local_available,publish_date,category,output_name,output_path,output_relative_path,managed_available,published_available,subtitle_json,subtitle_error,chapters_json,additional_files_json) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+			ON CONFLICT(job_id,item_index) DO UPDATE SET file_id=excluded.file_id,name=excluded.name,size=excluded.size,height=excluded.height,mime_type=excluded.mime_type,title=excluded.title,author=excluded.author,duration_seconds=excluded.duration_seconds,thumbnail_url=excluded.thumbnail_url,thumbnail_mime_type=excluded.thumbnail_mime_type,thumbnail_local_available=excluded.thumbnail_local_available,publish_date=excluded.publish_date,category=excluded.category,output_name=excluded.output_name,output_path=excluded.output_path,output_relative_path=excluded.output_relative_path,managed_available=excluded.managed_available,published_available=excluded.published_available,subtitle_json=excluded.subtitle_json,subtitle_error=excluded.subtitle_error,chapters_json=excluded.chapters_json,additional_files_json=excluded.additional_files_json
+			WHERE job_files.file_id IS NOT excluded.file_id OR job_files.name IS NOT excluded.name OR job_files.size IS NOT excluded.size OR job_files.height IS NOT excluded.height OR job_files.mime_type IS NOT excluded.mime_type OR job_files.title IS NOT excluded.title OR job_files.author IS NOT excluded.author OR job_files.duration_seconds IS NOT excluded.duration_seconds OR job_files.thumbnail_url IS NOT excluded.thumbnail_url OR job_files.thumbnail_mime_type IS NOT excluded.thumbnail_mime_type OR job_files.thumbnail_local_available IS NOT excluded.thumbnail_local_available OR job_files.publish_date IS NOT excluded.publish_date OR job_files.category IS NOT excluded.category OR job_files.output_name IS NOT excluded.output_name OR job_files.output_path IS NOT excluded.output_path OR job_files.output_relative_path IS NOT excluded.output_relative_path OR job_files.managed_available IS NOT excluded.managed_available OR job_files.published_available IS NOT excluded.published_available OR job_files.subtitle_json IS NOT excluded.subtitle_json OR job_files.subtitle_error IS NOT excluded.subtitle_error OR job_files.chapters_json IS NOT excluded.chapters_json OR job_files.additional_files_json IS NOT excluded.additional_files_json`,
 			j.ID, itemIndex, file.ID, file.Name, file.Size, file.Height, file.MimeType, file.Title, file.Author,
 			file.DurationSeconds, file.ThumbnailURL, file.ThumbnailMimeType, thumbnailLocalAvailable, file.PublishDate, file.Category, file.OutputName, file.OutputPath, file.OutputRelativePath, managedAvailable, publishedAvailable, subtitleJSON, file.SubtitleError, chaptersJSON, additionalFilesJSON); err != nil {
 			return err
 		}
 	}
-	newLibrarySignatures, err := syncLibraryItems(tx, j, groups, libraryCreatedAt)
+	for index := range existingFileIndexes {
+		if _, err := tx.Exec(`DELETE FROM job_files WHERE job_id=? AND item_index=?`, j.ID, index); err != nil {
+			return err
+		}
+	}
+	libraryState := *j
+	libraryState.librarySignatures = s.libraryItemsCache[j.ID]
+	if libraryState.librarySignatures == nil {
+		libraryState.librarySignatures = j.librarySignatures
+	}
+	newLibrarySignatures, err := syncLibraryItems(tx, &libraryState, groups, libraryCreatedAt)
 	if err != nil {
 		return err
 	}
-	if _, err = tx.Exec(`DELETE FROM job_failures WHERE job_id=?`, j.ID); err != nil {
-		return err
+	failureCache := s.jobFailuresCache[j.ID]
+	existingFailureIndexes := make(map[int]struct{}, len(failureCache))
+	for index := range failureCache {
+		existingFailureIndexes[index] = struct{}{}
 	}
+	if failureCache == nil {
+		failureRows, err := tx.Query(`SELECT item_index FROM job_failures WHERE job_id=?`, j.ID)
+		if err != nil {
+			return err
+		}
+		for failureRows.Next() {
+			var index int
+			if err := failureRows.Scan(&index); err != nil {
+				_ = failureRows.Close()
+				return err
+			}
+			existingFailureIndexes[index] = struct{}{}
+		}
+		if err := failureRows.Err(); err != nil {
+			_ = failureRows.Close()
+			return err
+		}
+		if err := failureRows.Close(); err != nil {
+			return err
+		}
+	}
+	updatedFailureCache := make(map[int]string, len(j.Failures))
 	for _, failure := range j.Failures {
-		if _, err = tx.Exec(`INSERT INTO job_failures(job_id,item_index,error) VALUES(?,?,?)`, j.ID, failure.Index, failure.Error); err != nil {
+		delete(existingFailureIndexes, failure.Index)
+		updatedFailureCache[failure.Index] = failure.Error
+		if previous, exists := failureCache[failure.Index]; exists && previous == failure.Error {
+			continue
+		}
+		if _, err = tx.Exec(`INSERT INTO job_failures(job_id,item_index,error) VALUES(?,?,?) ON CONFLICT(job_id,item_index) DO UPDATE SET error=excluded.error WHERE job_failures.error IS NOT excluded.error`, j.ID, failure.Index, failure.Error); err != nil {
+			return err
+		}
+	}
+	for index := range existingFailureIndexes {
+		if _, err := tx.Exec(`DELETE FROM job_failures WHERE job_id=? AND item_index=?`, j.ID, index); err != nil {
 			return err
 		}
 	}
 	if err := tx.Commit(); err != nil {
 		return err
 	}
+	if s.queueItemsReady {
+		s.queueItemsCache[j.ID] = updatedQueueCache
+	}
+	s.jobFilesCache[j.ID] = updatedFileCache
+	s.jobFailuresCache[j.ID] = updatedFailureCache
+	s.libraryItemsCache[j.ID] = newLibrarySignatures
 	j.librarySignatures = newLibrarySignatures
 	return nil
 }
@@ -1176,7 +1580,16 @@ func (s *jobStore) deleteJob(jobID string) error {
 	if _, err := tx.Exec(`DELETE FROM jobs WHERE id=?`, jobID); err != nil {
 		return err
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	s.queueItemsCacheMu.Lock()
+	delete(s.queueItemsCache, jobID)
+	delete(s.jobFilesCache, jobID)
+	delete(s.jobFailuresCache, jobID)
+	delete(s.libraryItemsCache, jobID)
+	s.queueItemsCacheMu.Unlock()
+	return nil
 }
 
 func (s *jobStore) loadJobs(root string) ([]*storedJob, error) {
@@ -1184,7 +1597,16 @@ func (s *jobStore) loadJobs(root string) ([]*storedJob, error) {
 	if err != nil {
 		return nil, err
 	}
-	rows, err := s.db.Query(`SELECT id,url,kind,quality,video_strategy,allow_360p_fallback,media_type,audio_format,audio_bitrate,subtitle_language,subtitle_format,split_by_chapter,status,title,progress,current_item,completed_count,total_count,error,created_at,note,dir,cancel_requested,done_at,queue_items,output_location,naming_pattern,subfolder_sorting,category,storage_mode,queue_position,output_file_mode,output_folder_mode FROM jobs ORDER BY created_at ASC`)
+	var queueItemsByJob map[string][]queueItem
+	if s.queueItemsReady {
+		queueItemsByJob, err = s.loadQueueItems()
+	} else {
+		queueItemsByJob, err = s.loadLegacyQueueItems()
+	}
+	if err != nil {
+		return nil, err
+	}
+	rows, err := s.db.Query(`SELECT id,url,kind,quality,video_strategy,allow_360p_fallback,media_type,audio_format,audio_bitrate,subtitle_language,subtitle_format,split_by_chapter,status,title,progress,current_item,completed_count,total_count,error,created_at,note,dir,cancel_requested,done_at,output_location,naming_pattern,subfolder_sorting,category,storage_mode,queue_position,output_file_mode,output_folder_mode FROM jobs ORDER BY created_at ASC`)
 	if err != nil {
 		return nil, err
 	}
@@ -1202,15 +1624,12 @@ func (s *jobStore) loadJobs(root string) ([]*storedJob, error) {
 		var dir string
 		var cancelRequested int
 		var doneAt sql.NullInt64
-		var queueItems string
 		if err := rows.Scan(&j.ID, &j.URL, &j.Kind, &j.Quality, &j.VideoStrategy, &j.Allow360pFallback, &j.MediaType, &j.AudioFormat, &j.AudioBitrate, &j.SubtitleLanguage, &j.SubtitleFormat, &j.SplitByChapter, &j.Status, &j.Title, &progress, &j.CurrentItem,
-			&j.CompletedCount, &totalCount, &j.Error, &j.CreatedAt, &j.Note, &dir, &cancelRequested, &doneAt, &queueItems,
+			&j.CompletedCount, &totalCount, &j.Error, &j.CreatedAt, &j.Note, &dir, &cancelRequested, &doneAt,
 			&j.DownloadLocation, &j.NamingPattern, &j.SubfolderSorting, &j.Category, &j.StorageMode, &j.QueuePosition, &j.OutputFileMode, &j.OutputFolderMode); err != nil {
 			return nil, err
 		}
-		if err := json.Unmarshal([]byte(queueItems), &j.Items); err != nil {
-			return nil, fmt.Errorf("decode saved queue entries: %w", err)
-		}
+		j.Items = queueItemsByJob[j.ID]
 		if j.Items == nil {
 			j.Items = []queueItem{}
 		}
@@ -1372,7 +1791,7 @@ func (s *jobStore) loadLibraryJobs() ([]Job, error) {
 	if err != nil {
 		return nil, err
 	}
-	rows, err := s.db.Query(`SELECT j.id,j.url,j.kind,j.quality,j.video_strategy,j.allow_360p_fallback,j.media_type,j.audio_format,j.audio_bitrate,j.subtitle_language,j.subtitle_format,j.split_by_chapter,j.status,j.title,j.progress,j.current_item,j.completed_count,j.total_count,j.error,j.created_at,j.note,j.queue_items,j.category,j.storage_mode,j.queue_position,li.file_json,li.output_path
+	rows, err := s.db.Query(`SELECT j.id,j.url,j.kind,j.quality,j.video_strategy,j.allow_360p_fallback,j.media_type,j.audio_format,j.audio_bitrate,j.subtitle_language,j.subtitle_format,j.split_by_chapter,j.status,j.title,j.progress,j.current_item,j.completed_count,j.total_count,j.error,j.created_at,j.note,j.category,j.storage_mode,j.queue_position,li.file_json,li.output_path
 		FROM library_items li JOIN jobs j ON j.id=li.source_job_id
 		WHERE j.status IN ('completed','partial','failed','cancelled')
 		ORDER BY j.created_at DESC,li.source_item_index ASC,li.file_id ASC`)
@@ -1385,9 +1804,9 @@ func (s *jobStore) loadLibraryJobs() ([]Job, error) {
 		var j Job
 		var progress sql.NullFloat64
 		var totalCount sql.NullInt64
-		var queueItems, fileJSON, outputPath string
+		var fileJSON, outputPath string
 		if err := rows.Scan(&j.ID, &j.URL, &j.Kind, &j.Quality, &j.VideoStrategy, &j.Allow360pFallback, &j.MediaType, &j.AudioFormat, &j.AudioBitrate, &j.SubtitleLanguage, &j.SubtitleFormat, &j.SplitByChapter, &j.Status, &j.Title, &progress, &j.CurrentItem,
-			&j.CompletedCount, &totalCount, &j.Error, &j.CreatedAt, &j.Note, &queueItems, &j.Category, &j.StorageMode, &j.QueuePosition, &fileJSON, &outputPath); err != nil {
+			&j.CompletedCount, &totalCount, &j.Error, &j.CreatedAt, &j.Note, &j.Category, &j.StorageMode, &j.QueuePosition, &fileJSON, &outputPath); err != nil {
 			_ = rows.Close()
 			return nil, err
 		}
@@ -1399,13 +1818,7 @@ func (s *jobStore) loadLibraryJobs() ([]Job, error) {
 			value := int(totalCount.Int64)
 			j.TotalCount = &value
 		}
-		if err := json.Unmarshal([]byte(queueItems), &j.Items); err != nil {
-			_ = rows.Close()
-			return nil, fmt.Errorf("decode saved Library queue entries: %w", err)
-		}
-		if j.Items == nil {
-			j.Items = []queueItem{}
-		}
+		j.Items = []queueItem{}
 		if j.MediaType == "" {
 			j.MediaType = "video"
 		}

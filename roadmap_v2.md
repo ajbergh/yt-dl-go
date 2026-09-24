@@ -2,7 +2,7 @@
 
 > Successor to [`roadmap.md`](roadmap.md). Roadmap v1 (Milestones 1–6) is complete apart from two deliberately deferred items: native tray and automatic self-update. v2 comes from a full review of the backend engine, the API/persistence/security layers, the React frontend, and build/CI/release/docs as of `63f3658`.
 >
-> **Last updated:** 2026-09-23
+> **Last updated:** 2026-09-24
 
 ## Merged fixes and source branches (2026-09-23)
 
@@ -228,7 +228,7 @@ Today a Library entry is a retained job (`src/pages/library.tsx:51`), so Library
 
 ### M1.2 Normalize queue items and write incrementally
 
-**Status:** [ ] · **P1** · **Area:** persistence / performance
+**Status:** [~] · **P1** · **Area:** persistence / performance
 
 `queue_items` is a JSON blob of up to 10,000 items (`store.go:485, 639, 798`). Every `saveJob`:
 
@@ -242,6 +242,8 @@ Today a Library entry is a retained job (`src/pages/library.tsx:51`), so Library
 - Add a `queue_items` table with a migration from the JSON column.
 - Update only the changed item rows.
 - Move persistence out of the global lock via a single writer goroutine or a per-job lock.
+
+**Progress (2026-09-24):** M1.2 implementation is underway on `feat/incremental-queue-persistence` ([PR #55](https://github.com/ajbergh/yt-dl-go/pull/55)). The branch adds a transactional migration from the legacy queue JSON to normalized `queue_items`, updates queue/file/failure rows only when their stored fields change, and routes job snapshots, settings, queue order, and deletion writes through a FIFO persistence writer that releases the global job mutex while SQLite runs. Shutdown now drains the writer after HTTP handlers and workers stop. CI exposed a retry becoming schedulable before its save finished and a Library migration repair case after the schema advanced; both were corrected. Repeated race runs showed that no-op SQL calls remained for child rows, so the latest follow-up adds persisted-state caches for queue, file, failure, and Library rows; only changed or removed records now issue SQL. M1.2 remains in progress pending passing CI and merge.
 
 ### M1.3 Pagination, filtering, and indexes
 
