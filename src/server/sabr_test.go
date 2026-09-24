@@ -4,8 +4,43 @@ import (
 	"bytes"
 	"errors"
 	"os"
+	"path/filepath"
 	"testing"
 )
+
+func TestSABRCaptureAssemblesCheckedInFixture(t *testing.T) {
+	body, err := os.ReadFile(filepath.Join("testdata", "youtube", "sabr-selected-track.ump"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "track.mp4")
+	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer file.Close()
+	capture := newSABRCapture(file, 299, 1000, 1024, nil)
+	if err := capture.consume(body); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-capture.done; err != nil {
+		t.Fatal(err)
+	}
+	size, err := capture.finish()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if size != 9 || !bytes.Equal(data, []byte("initvideo")) {
+		t.Fatalf("assembled fixture size=%d data=%q, want selected init+video", size, data)
+	}
+}
 
 func TestSABRCaptureAssemblesSelectedTrack(t *testing.T) {
 	path := t.TempDir() + "\\track.mp4"

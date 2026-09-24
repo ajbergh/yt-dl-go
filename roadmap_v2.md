@@ -414,7 +414,7 @@ Adaptive H.264 MP4 output takes its AAC track from the progressive itag-18 strea
 
 ### M2.8 Extraction resilience against YouTube changes
 
-**Status:** [~] Implementation underway on `roadmap/m2-8-extractor-resilience` · **P1** · **Area:** engine / resilience
+**Status:** [~] Core merged by PR #42; fixture follow-up on `roadmap/m2-8-fixture-drift-tests` · **P1** · **Area:** engine / resilience
 
 - Native extraction uses `kkdai/youtube/v2`; before M2.8 it was forced to `AndroidClient`, and range requests hard-coded that profile's User-Agent and Origin. One upstream break could stop every download.
 - Browser preparation now uses player API calls and no longer depends on the Settings/Quality DOM text; consent dismissal still checks English labels (`browser_provider.go:199-208`).
@@ -428,7 +428,7 @@ Adaptive H.264 MP4 output takes its AAC track from the progressive itag-18 strea
 - Build a recorded-fixture corpus of player responses and UMP streams, with drift tests that fail loudly when the format changes.
 - Keep kkdai upstream releases monitored through Dependabot (weekly Go-module updates are already configured).
 
-**Progress (2026-09-24):** M2.8 is in implementation on `roadmap/m2-8-extractor-resilience`. RepoTracer confirmed the pinned kkdai v2.10.6 dependency exports Android, iOS, embedded-player, and web profiles but no TV profile. Profile switching is serialized around the dependency call; the chosen profile follows metadata into stream URL resolution, range request headers, and resume fingerprints. Retry classification preserves permanent access/playlist errors, and a missing profile set fails explicitly. HTTP 200 is now rejected for nonzero range offsets. `/api/health` reports a local profile-configuration probe and profile list (it does not claim YouTube is reachable); browser watch URLs pin `hl=en`. Tests parse a checked-in representative player-response fixture through the pinned library and cover generated UMP fixtures. Local Go tests, `go vet`, frontend typecheck/build, and lint pass; lint reports 20 existing warnings. CI, cross-platform builds, browser E2E, and expanded recorded player/UMP capture coverage are pending. Weekly Go Dependabot already covers the dependency.
+**Progress (2026-09-24):** The extractor profiles, serialized profile selection, profile-matched stream/range requests, safe resume validation, local health probe, and `hl=en` browser locale merged as [PR #42](https://github.com/ajbergh/yt-dl-go/pull/42) (`79c4405`). CI passed Go/race tests, lint, dependency/security scans, vet, browser E2E, CodeQL, and Linux/Windows/macOS builds. CI initially caught a Staticcheck warning in the fixture transport; the assignment was removed and the rerun passed. Checked-in player and UMP fixtures are synthetic deterministic parser/assembly inputs; see `src/server/testdata/youtube/PROVENANCE.md`. They are not captured YouTube responses or playable media. The follow-up branch adds the persisted UMP parser regression fixture. Captured, redistributable player/UMP samples and broader format-drift coverage remain open before M2.8 can be marked complete. Weekly Go Dependabot already covers the dependency.
 
 ### M2.9 Bandwidth limiter improvements
 
