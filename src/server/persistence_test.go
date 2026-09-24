@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"reflect"
 	"testing"
 	"time"
 )
@@ -107,6 +108,32 @@ func TestDownloadCheckpointMethodsReturnDatabaseErrors(t *testing.T) {
 	if err := s.store.deletePart("job", 1, "video"); err == nil {
 		t.Fatal("deletePart hid the database error")
 	}
+}
+
+func TestFileChaptersPersistThroughSQLite(t *testing.T) {
+	s := newPersistenceTestServer(t)
+	chapters := []mediaChapter{{StartMs: 0, EndMs: 30_000, Title: "Opening"}, {StartMs: 30_000, EndMs: 90_000, Title: "第二章"}}
+	job := &jobState{Job: Job{
+		ID: "job-chapters", URL: testVideo, Kind: "video", Quality: "best", Status: "completed",
+		CreatedAt: time.Now().UTC().Format(time.RFC3339Nano),
+		Files:     []mediaFile{{ID: "file-chapters", Name: "chapters.mp4", Size: 123, MimeType: "video/mp4", Chapters: chapters}},
+	}, dir: filepath.Join(s.cfg.root, "job-chapters")}
+	if err := s.store.saveJob(job); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := s.store.loadJobs(s.cfg.root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, stored := range loaded {
+		if stored.job.ID == job.ID {
+			if len(stored.job.Files) != 1 || !reflect.DeepEqual(stored.job.Files[0].Chapters, chapters) {
+				t.Fatalf("persisted chapters = %+v", stored.job.Files)
+			}
+			return
+		}
+	}
+	t.Fatal("job with chapters was not loaded from SQLite")
 }
 
 func TestDownloadPartCheckpointsAreIndependentPerTrack(t *testing.T) {

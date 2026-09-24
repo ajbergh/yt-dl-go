@@ -17,7 +17,7 @@ import (
 	"github.com/at-wat/ebml-go/webm"
 )
 
-const containerMetadataHeadroom int64 = maxEmbeddedArtworkBytes + 64*1024
+const containerMetadataHeadroom int64 = maxEmbeddedArtworkBytes + 80*1024
 
 type containerTagMetadata struct {
 	Title       string
@@ -27,6 +27,7 @@ type containerTagMetadata struct {
 	SourceURL   string
 	Artwork     []byte
 	ArtworkMIME string
+	Chapters    []mediaChapter
 }
 
 func containerMetadataFor(j *jobState, file mediaFile, videoID string) containerTagMetadata {
@@ -34,6 +35,7 @@ func containerMetadataFor(j *jobState, file mediaFile, videoID string) container
 		Title:       file.Title,
 		Artist:      file.Author,
 		PublishDate: file.PublishDate,
+		Chapters:    file.Chapters,
 		SourceURL:   "https://www.youtube.com/watch?v=" + url.PathEscape(videoID),
 	}
 	if j != nil && j.Kind == "playlist" {
@@ -46,7 +48,7 @@ func containerMetadataFor(j *jobState, file mediaFile, videoID string) container
 func hasContainerTags(metadata containerTagMetadata) bool {
 	return strings.TrimSpace(metadata.Title) != "" || strings.TrimSpace(metadata.Artist) != "" ||
 		strings.TrimSpace(metadata.Album) != "" || strings.TrimSpace(metadata.PublishDate) != "" ||
-		strings.TrimSpace(metadata.SourceURL) != "" || len(metadata.Artwork) > 0
+		strings.TrimSpace(metadata.SourceURL) != "" || len(metadata.Artwork) > 0 || len(metadata.Chapters) > 0
 }
 
 func supportsContainerMetadata(mimeType string) bool {
@@ -235,6 +237,7 @@ func makeMP4Item(kind string, value []byte, dataKind uint32) ([]byte, error) {
 
 func makeMP4MetadataBox(metadata containerTagMetadata) ([]byte, error) {
 	items := make([][]byte, 0, 6)
+	var chapterBox []byte
 	textItems := []struct{ atom, value string }{
 		{string([]byte{0xA9, 'n', 'a', 'm'}), strings.TrimSpace(metadata.Title)},
 		{string([]byte{0xA9, 'A', 'R', 'T'}), strings.TrimSpace(metadata.Artist)},
@@ -268,31 +271,66 @@ func makeMP4MetadataBox(metadata containerTagMetadata) ([]byte, error) {
 			items = append(items, artwork)
 		}
 	}
-	if len(items) == 0 {
+	if len(metadata.Chapters) > 0 {
+		var err error
+		chapterBox, err = makeMP4ChapterList(metadata.Chapters)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if len(items) == 0 && len(chapterBox) == 0 {
 		return nil, nil
 	}
-	var ilstPayload bytes.Buffer
-	for _, item := range items {
-		_, _ = ilstPayload.Write(item)
+	var udtaPayload []byte
+	if len(items) > 0 {
+		var ilstPayload bytes.Buffer
+		for _, item := range items {
+			_, _ = ilstPayload.Write(item)
+		}
+		ilst, err := makeISOBox("ilst", ilstPayload.Bytes(), false)
+		if err != nil {
+			return nil, err
+		}
+		handlerPayload := make([]byte, 24)
+		copy(handlerPayload[8:12], "mdir")
+		handler, err := makeISOBox("hdlr", handlerPayload, false)
+		if err != nil {
+			return nil, err
+		}
+		metaPayload := make([]byte, 4, 4+len(handler)+len(ilst)) // FullBox version/flags.
+		metaPayload = append(metaPayload, handler...)
+		metaPayload = append(metaPayload, ilst...)
+		meta, err := makeISOBox("meta", metaPayload, false)
+		if err != nil {
+			return nil, err
+		}
+		udtaPayload = append(udtaPayload, meta...)
 	}
-	ilst, err := makeISOBox("ilst", ilstPayload.Bytes(), false)
-	if err != nil {
-		return nil, err
+	udtaPayload = append(udtaPayload, chapterBox...)
+	return makeISOBox("udta", udtaPayload, false)
+}
+
+func makeMP4ChapterList(chapters []mediaChapter) ([]byte, error) {
+	if len(chapters) > 255 {
+		chapters = chapters[:255]
 	}
-	handlerPayload := make([]byte, 24)
-	copy(handlerPayload[8:12], "mdir")
-	handler, err := makeISOBox("hdlr", handlerPayload, false)
-	if err != nil {
-		return nil, err
+	if len(chapters) == 0 {
+		return nil, nil
 	}
-	metaPayload := make([]byte, 4, 4+len(handler)+len(ilst)) // FullBox version/flags.
-	metaPayload = append(metaPayload, handler...)
-	metaPayload = append(metaPayload, ilst...)
-	meta, err := makeISOBox("meta", metaPayload, false)
-	if err != nil {
-		return nil, err
+	payload := make([]byte, 9)
+	payload[8] = byte(len(chapters))
+	for _, chapter := range chapters {
+		if chapter.StartMs < 0 || chapter.StartMs > math.MaxUint64/10000 || chapter.Title == "" {
+			return nil, errMux
+		}
+		title := truncateUTF8(chapter.Title, 255)
+		entry := make([]byte, 9+len(title))
+		binary.BigEndian.PutUint64(entry[:8], uint64(chapter.StartMs)*10000)
+		entry[8] = byte(len(title))
+		copy(entry[9:], title)
+		payload = append(payload, entry...)
 	}
-	return makeISOBox("udta", meta, false)
+	return makeISOBox("chpl", payload, false)
 }
 
 func rewriteISOContainerFile(ctx context.Context, path string, metadata containerTagMetadata, maxBytes int64) (int64, error) {
@@ -505,9 +543,30 @@ type webMAttachments struct {
 	AttachedFile []webMAttachedFile `ebml:"AttachedFile"`
 }
 
+type webMChapterDisplay struct {
+	String   string `ebml:"ChapString"`
+	Language string `ebml:"ChapLanguage,omitempty"`
+}
+
+type webMChapterAtom struct {
+	UID     uint64             `ebml:"ChapterUID"`
+	Start   uint64             `ebml:"ChapterTimeStart"`
+	End     uint64             `ebml:"ChapterTimeEnd"`
+	Display webMChapterDisplay `ebml:"ChapterDisplay"`
+}
+
+type webMEditionEntry struct {
+	ChapterAtom []webMChapterAtom `ebml:"ChapterAtom"`
+}
+
+type webMChapters struct {
+	EditionEntry []webMEditionEntry `ebml:"EditionEntry"`
+}
+
 type webMMetadataEnvelope struct {
 	Tags        *webMTags        `ebml:"Tags,omitempty"`
 	Attachments *webMAttachments `ebml:"Attachments,omitempty"`
+	Chapters    *webMChapters    `ebml:"Chapters,omitempty"`
 }
 
 func makeWebMMetadataBox(metadata containerTagMetadata) ([]byte, error) {
@@ -536,7 +595,20 @@ func makeWebMMetadataBox(metadata containerTagMetadata) ([]byte, error) {
 			}}}
 		}
 	}
-	if envelope.Tags == nil && envelope.Attachments == nil {
+	chapterAtoms := make([]webMChapterAtom, 0, len(metadata.Chapters))
+	for index, chapter := range metadata.Chapters {
+		if chapter.StartMs < 0 || chapter.EndMs <= chapter.StartMs || chapter.Title == "" {
+			continue
+		}
+		chapterAtoms = append(chapterAtoms, webMChapterAtom{
+			UID: uint64(index + 1), Start: uint64(chapter.StartMs) * 1_000_000, End: uint64(chapter.EndMs) * 1_000_000,
+			Display: webMChapterDisplay{String: chapter.Title, Language: "eng"},
+		})
+	}
+	if len(chapterAtoms) > 0 {
+		envelope.Chapters = &webMChapters{EditionEntry: []webMEditionEntry{{ChapterAtom: chapterAtoms}}}
+	}
+	if envelope.Tags == nil && envelope.Attachments == nil && envelope.Chapters == nil {
 		return nil, nil
 	}
 	var encoded bytes.Buffer

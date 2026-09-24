@@ -34,6 +34,7 @@ type inspection struct {
 	Title              string                  `json:"title"`
 	Author             string                  `json:"author,omitempty"`
 	DurationSeconds    int64                   `json:"durationSeconds,omitempty"`
+	Chapters           []mediaChapter          `json:"chapters,omitempty"`
 	ThumbnailURL       string                  `json:"thumbnailUrl,omitempty"`
 	PublishDate        string                  `json:"publishDate,omitempty"`
 	AvailableQuality   []inspectedQuality      `json:"availableQualities,omitempty"`
@@ -85,6 +86,7 @@ func (s *server) inspect(w http.ResponseWriter, r *http.Request) {
 		result := inspection{
 			URL: canonical, Kind: kind, Title: video.Title, Author: video.Author,
 			DurationSeconds: int64(video.Duration.Seconds()), ThumbnailURL: safeThumbnailURL(video.Thumbnails),
+			Chapters: parseDescriptionChapters(video.Description, video.Duration),
 		}
 		_, _, audioErr := selectAudioFormat(video)
 		result.AudioOnlyAvailable = audioErr == nil
@@ -244,6 +246,7 @@ func applyVideoMetadata(file *mediaFile, video *youtube.Video) {
 	file.Title = video.Title
 	file.Author = video.Author
 	file.DurationSeconds = int64(video.Duration.Seconds())
+	file.Chapters = parseDescriptionChapters(video.Description, video.Duration)
 	file.ThumbnailURL = safeThumbnailURL(video.Thumbnails)
 	if !video.PublishDate.IsZero() {
 		file.PublishDate = video.PublishDate.UTC().Format("2006-01-02")

@@ -76,6 +76,7 @@ func TestRewriteISOContainerEmbedsMetadataAndMovesChunkOffsets(t *testing.T) {
 	metadata := containerTagMetadata{
 		Title: "Títle – 你好", Artist: "Fixture Artist", Album: "Travel Mix", PublishDate: "2026-09-23",
 		SourceURL: "https://www.youtube.com/watch?v=dQw4w9WgXcQ", Artwork: []byte{0xff, 0xd8, 0xff, 0xe0, 1, 2}, ArtworkMIME: "image/jpeg",
+		Chapters: []mediaChapter{{StartMs: 0, EndMs: 65_000, Title: "Opening"}, {StartMs: 65_000, EndMs: 120_000, Title: "深い話"}},
 	}
 	size, err := rewriteISOContainerFile(context.Background(), path, metadata, 1<<20)
 	if err != nil {
@@ -145,6 +146,27 @@ func TestRewriteISOContainerEmbedsMetadataAndMovesChunkOffsets(t *testing.T) {
 	}
 	if !bytes.Contains(data, []byte(metadata.Title)) || !bytes.Contains(data, []byte(metadata.SourceURL)) {
 		t.Fatal("Unicode title or canonical source URL is absent")
+	}
+	chapterList, ok := findISOBox(udta[8:], "chpl")
+	if !ok {
+		t.Fatal("udta has no Nero chapter list")
+	}
+	chapterHeader, _ := decodeISOBoxHeader(chapterList)
+	chapterPayload := chapterList[chapterHeader.headerBytes:]
+	if len(chapterPayload) < 9 || chapterPayload[8] != 2 {
+		t.Fatalf("chpl payload = %x", chapterPayload)
+	}
+	if got := binary.BigEndian.Uint64(chapterPayload[9:17]); got != 0 {
+		t.Errorf("first chpl timestamp = %d, want 0", got)
+	}
+	if string(chapterPayload[18:25]) != "Opening" {
+		t.Errorf("first chpl title = %q", chapterPayload[18:25])
+	}
+}
+
+func TestMakeMP4ChapterListRejectsInvalidChapters(t *testing.T) {
+	if _, err := makeMP4ChapterList([]mediaChapter{{StartMs: -1, Title: "bad"}}); !errors.Is(err, errMux) {
+		t.Fatalf("negative timestamp error = %v, want errMux", err)
 	}
 }
 
@@ -224,6 +246,7 @@ func TestRewriteWebMContainerAddsTagsAttachmentAndAdjustsCues(t *testing.T) {
 	metadata := containerTagMetadata{
 		Title: "Títle – 你好", Artist: "Fixture Artist", Album: "Fixture Playlist", PublishDate: "2026-09-23",
 		SourceURL: "https://www.youtube.com/watch?v=dQw4w9WgXcQ", Artwork: []byte{0xff, 0xd8, 0xff, 0xe0, 1, 2}, ArtworkMIME: "image/jpeg",
+		Chapters: []mediaChapter{{StartMs: 0, EndMs: 65_000, Title: "Opening"}, {StartMs: 65_000, EndMs: 120_000, Title: "深い話"}},
 	}
 	encodedMetadata, err := makeWebMMetadataBox(metadata)
 	if err != nil {
@@ -300,6 +323,13 @@ func TestRewriteWebMContainerAddsTagsAttachmentAndAdjustsCues(t *testing.T) {
 	cover := parsed.Attachments.AttachedFile[0]
 	if cover.MIME != "image/jpeg" || !bytes.Equal(cover.Data, metadata.Artwork) {
 		t.Fatalf("cover attachment = %+v", cover)
+	}
+	if parsed.Chapters == nil || len(parsed.Chapters.EditionEntry) != 1 || len(parsed.Chapters.EditionEntry[0].ChapterAtom) != 2 {
+		t.Fatalf("WebM Chapters = %+v", parsed.Chapters)
+	}
+	chapter := parsed.Chapters.EditionEntry[0].ChapterAtom[1]
+	if chapter.Start != 65_000_000_000 || chapter.End != 120_000_000_000 || chapter.Display.String != "深い話" {
+		t.Fatalf("WebM chapter = %+v", chapter)
 	}
 }
 

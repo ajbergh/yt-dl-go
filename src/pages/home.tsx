@@ -2,7 +2,7 @@
  * Production downloader screen. The bundled page connects to the Go API served
  * by the same executable, then uses that API for jobs and SQLite preferences.
  */
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { LibraryPage } from "./library";
 import { QueuePage } from "./queue";
 import { SettingsPage } from "./settings";
@@ -24,6 +24,7 @@ import {
 } from "../components/downloader/view-model";
 
 export function HomePage() {
+  const previewMedia = useRef<HTMLMediaElement | null>(null);
   const [tab, setTab] = useState<Tab>("queue");
   const {
     connection, serviceReady, jobs, setJobs, settings, setSettings, mp3Supported,
@@ -441,8 +442,17 @@ export function HomePage() {
         <div className="w-full max-w-4xl overflow-hidden rounded-2xl border border-neutral-700 bg-neutral-950 shadow-2xl">
           <div className="flex items-center justify-between gap-3 border-b border-neutral-800 px-4 py-3"><div className="min-w-0"><p className="text-[10px] font-bold uppercase tracking-wider text-rose-400">Local preview</p><h2 id="media-preview-title" className="truncate text-sm font-semibold text-white">{preview.title}</h2></div><button type="button" className={button} onClick={() => setPreview(null)} aria-label="Close media preview"><X className="size-4" aria-hidden="true" />Close</button></div>
           <div className="bg-black p-3 sm:p-5">
-            {preview.mimeType.startsWith("audio/") ? <audio controls preload="metadata" src={preview.url} className="w-full">Your browser cannot play this audio format.</audio>
-              : <video controls preload="metadata" src={preview.url} className="max-h-[70vh] w-full rounded-lg bg-black">Your browser cannot play this video format.</video>}
+            {preview.mimeType.startsWith("audio/") ? <audio ref={element => { previewMedia.current = element; }} controls preload="metadata" src={preview.url} className="w-full">Your browser cannot play this audio format.</audio>
+              : <video ref={element => { previewMedia.current = element; }} controls preload="metadata" src={preview.url} className="max-h-[70vh] w-full rounded-lg bg-black">Your browser cannot play this video format.</video>}
+            {preview.chapters.length > 0 && <div className="mt-4 max-h-48 overflow-y-auto rounded-lg border border-neutral-800 p-2">
+              <h3 className="px-2 pb-2 text-xs font-semibold text-neutral-300">Chapters</h3>
+              <div className="grid gap-1 sm:grid-cols-2">
+                {preview.chapters.map(chapter => <button key={`${chapter.startMs}-${chapter.title}`} type="button" className="flex min-w-0 items-center gap-3 rounded-md px-2 py-2 text-left text-xs text-neutral-200 hover:bg-neutral-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-rose-400" onClick={() => { if (previewMedia.current) previewMedia.current.currentTime = chapter.startMs / 1000; }}>
+                  <span className="shrink-0 font-mono text-neutral-500">{Math.floor(chapter.startMs / 60000)}:{String(Math.floor(chapter.startMs / 1000) % 60).padStart(2, "0")}</span>
+                  <span className="truncate">{chapter.title}</span>
+                </button>)}
+              </div>
+            </div>}
             <p className="mt-3 text-[10px] text-neutral-500">Preview uses a short-lived file-scoped ticket with HTTP Range support. Playback never starts automatically.</p>
           </div>
         </div>

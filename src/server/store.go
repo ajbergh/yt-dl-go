@@ -186,7 +186,35 @@ func openJobStore(root string) (*jobStore, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("migrate state database: %w", err)
 	}
+	if err := store.migrateV18(); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("migrate state database: %w", err)
+	}
 	return store, nil
+}
+
+func (s *jobStore) migrateV18() error {
+	var version int
+	if err := s.db.QueryRow(`SELECT COALESCE(MAX(version), 0) FROM schema_migrations`).Scan(&version); err != nil {
+		return err
+	}
+	if version >= 18 {
+		return nil
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	for _, statement := range []string{
+		`ALTER TABLE job_files ADD COLUMN chapters_json TEXT NOT NULL DEFAULT ''`,
+		`INSERT INTO schema_migrations(version) VALUES (18)`,
+	} {
+		if _, err := tx.Exec(statement); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 func (s *jobStore) migrateV17() error {
@@ -766,9 +794,17 @@ func (s *jobStore) saveJob(j *jobState) error {
 			}
 			subtitleJSON = string(encoded)
 		}
-		if _, err = tx.Exec(`INSERT INTO job_files(job_id,item_index,file_id,name,size,height,mime_type,title,author,duration_seconds,thumbnail_url,thumbnail_mime_type,thumbnail_local_available,publish_date,category,output_name,output_path,output_relative_path,managed_available,published_available,subtitle_json,subtitle_error) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		chaptersJSON := ""
+		if len(file.Chapters) > 0 {
+			encoded, marshalErr := json.Marshal(file.Chapters)
+			if marshalErr != nil {
+				return marshalErr
+			}
+			chaptersJSON = string(encoded)
+		}
+		if _, err = tx.Exec(`INSERT INTO job_files(job_id,item_index,file_id,name,size,height,mime_type,title,author,duration_seconds,thumbnail_url,thumbnail_mime_type,thumbnail_local_available,publish_date,category,output_name,output_path,output_relative_path,managed_available,published_available,subtitle_json,subtitle_error,chapters_json) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 			j.ID, itemIndex, file.ID, file.Name, file.Size, file.Height, file.MimeType, file.Title, file.Author,
-			file.DurationSeconds, file.ThumbnailURL, file.ThumbnailMimeType, thumbnailLocalAvailable, file.PublishDate, file.Category, file.OutputName, file.OutputPath, file.OutputRelativePath, managedAvailable, publishedAvailable, subtitleJSON, file.SubtitleError); err != nil {
+			file.DurationSeconds, file.ThumbnailURL, file.ThumbnailMimeType, thumbnailLocalAvailable, file.PublishDate, file.Category, file.OutputName, file.OutputPath, file.OutputRelativePath, managedAvailable, publishedAvailable, subtitleJSON, file.SubtitleError, chaptersJSON); err != nil {
 			return err
 		}
 	}
@@ -964,7 +1000,7 @@ func (s *jobStore) loadJobs(root string) ([]*storedJob, error) {
 				return nil, err
 			}
 		}
-		files, err := s.db.Query(`SELECT item_index,file_id,name,size,height,mime_type,title,author,duration_seconds,thumbnail_url,thumbnail_mime_type,thumbnail_local_available,publish_date,category,output_name,output_path,output_relative_path,managed_available,published_available,subtitle_json,subtitle_error FROM job_files WHERE job_id=? ORDER BY item_index`, j.ID)
+		files, err := s.db.Query(`SELECT item_index,file_id,name,size,height,mime_type,title,author,duration_seconds,thumbnail_url,thumbnail_mime_type,thumbnail_local_available,publish_date,category,output_name,output_path,output_relative_path,managed_available,published_available,subtitle_json,subtitle_error,chapters_json FROM job_files WHERE job_id=? ORDER BY item_index`, j.ID)
 		if err != nil {
 			return nil, err
 		}
@@ -972,9 +1008,9 @@ func (s *jobStore) loadJobs(root string) ([]*storedJob, error) {
 			var index int
 			var file mediaFile
 			var managedAvailable, publishedAvailable, thumbnailLocalAvailable int
-			var subtitleJSON string
+			var subtitleJSON, chaptersJSON string
 			if err := files.Scan(&index, &file.ID, &file.Name, &file.Size, &file.Height, &file.MimeType, &file.Title, &file.Author,
-				&file.DurationSeconds, &file.ThumbnailURL, &file.ThumbnailMimeType, &thumbnailLocalAvailable, &file.PublishDate, &file.Category, &file.OutputName, &file.OutputPath, &file.OutputRelativePath, &managedAvailable, &publishedAvailable, &subtitleJSON, &file.SubtitleError); err != nil {
+				&file.DurationSeconds, &file.ThumbnailURL, &file.ThumbnailMimeType, &thumbnailLocalAvailable, &file.PublishDate, &file.Category, &file.OutputName, &file.OutputPath, &file.OutputRelativePath, &managedAvailable, &publishedAvailable, &subtitleJSON, &file.SubtitleError, &chaptersJSON); err != nil {
 				_ = files.Close()
 				return nil, err
 			}
@@ -988,6 +1024,12 @@ func (s *jobStore) loadJobs(root string) ([]*storedJob, error) {
 					return nil, fmt.Errorf("decode saved caption sidecar: %w", err)
 				}
 				file.Subtitle = &subtitle
+			}
+			if chaptersJSON != "" {
+				if err := json.Unmarshal([]byte(chaptersJSON), &file.Chapters); err != nil {
+					_ = files.Close()
+					return nil, fmt.Errorf("decode saved chapters: %w", err)
+				}
 			}
 			loaded.items[index] = file
 			loaded.job.Files = append(loaded.job.Files, file)

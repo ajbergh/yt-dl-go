@@ -19,6 +19,12 @@ export interface SubtitleFile {
   publishedAvailable: boolean;
 }
 
+export interface MediaChapter {
+  startMs: number;
+  endMs: number;
+  title: string;
+}
+
 export interface DownloadFile {
   id: string;
   name: string;
@@ -40,6 +46,7 @@ export interface DownloadFile {
   publishedAvailable?: boolean;
   subtitle?: SubtitleFile;
   subtitleError?: string;
+  chapters?: MediaChapter[];
 }
 export interface QueueItem {
   index: number;
@@ -182,6 +189,7 @@ export interface Inspection {
   title: string;
   author?: string;
   durationSeconds?: number;
+  chapters?: MediaChapter[];
   thumbnailUrl?: string;
   publishDate?: string;
   availableQualities?: InspectedQuality[];
