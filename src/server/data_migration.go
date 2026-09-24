@@ -37,15 +37,15 @@ func migrateLegacyData(legacyRoot, dataRoot string) (err error) {
 	if err != nil {
 		return errors.New("cannot resolve destination data directory")
 	}
-	legacyRoot, err = canonicalizeParentPath(legacyRoot)
+	canonicalLegacyRoot, err := canonicalizeParentPath(legacyRoot)
 	if err != nil {
 		return fmt.Errorf("resolve legacy data directory: %w", err)
 	}
-	dataRoot, err = canonicalizeParentPath(dataRoot)
+	canonicalDataRoot, err := canonicalizeParentPath(dataRoot)
 	if err != nil {
 		return fmt.Errorf("resolve destination data directory: %w", err)
 	}
-	if samePath(legacyRoot, dataRoot) || pathContains(legacyRoot, dataRoot) || pathContains(dataRoot, legacyRoot) {
+	if samePath(canonicalLegacyRoot, canonicalDataRoot) || pathContains(canonicalLegacyRoot, canonicalDataRoot) || pathContains(canonicalDataRoot, canonicalLegacyRoot) {
 		return errors.New("legacy and destination data directories must be different")
 	}
 	legacyInfo, err := os.Lstat(legacyRoot)
