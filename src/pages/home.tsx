@@ -98,7 +98,16 @@ export function HomePage() {
   const libraryCategories = useMemo(() => libraryPage.categories.map(facet => [facet.value, facet.count] as [string, number]), [libraryPage.categories]);
   const libraryChannels = useMemo(() => libraryPage.channels.map(facet => [facet.value, facet.count] as [string, number]), [libraryPage.channels]);
   const libraryStats = libraryPage.stats;
-  const visibleLibraryJobs = libraryJobs;
+  const visibleLibraryJobs = useMemo(() => libraryJobs.filter(job => {
+    const query = librarySearch.trim().toLowerCase();
+    const category = job.category || job.files.find(file => file.category)?.category || "Uncategorized";
+    const channels = job.files.map(file => file.author?.trim() || "Unknown channel");
+    const text = `${job.title} ${job.url} ${job.category ?? ""} ${job.audioFormat ?? ""} ${job.subtitleLanguage ?? ""} ${job.files.map(file => `${file.title ?? ""} ${file.author ?? ""} ${file.category ?? ""} ${file.name} ${file.outputName ?? ""} ${file.outputRelativePath ?? ""} ${file.subtitle?.label ?? ""} ${file.subtitle?.languageCode ?? ""}`).join(" ")}`.toLowerCase();
+    return (!query || text.includes(query))
+      && (libraryFilter === "all" || (job.mediaType ?? "video") === libraryFilter)
+      && (libraryCategory === "all" || category === libraryCategory)
+      && (libraryChannel === "all" || channels.includes(libraryChannel));
+  }), [libraryJobs, libraryFilter, librarySearch, libraryCategory, libraryChannel]);
   const libraryTotalJobs = libraryPage.totalJobs;
 
   useEffect(() => {
