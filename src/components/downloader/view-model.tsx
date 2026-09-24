@@ -14,6 +14,7 @@ export type Draft = Inspection & {
   selectedVideoStrategy: VideoStrategy;
   mediaType: "video" | "audio";
   audioFormat: "mp3" | "m4a";
+  splitByChapter: boolean;
   audioBitrate: string;
   subtitleLanguage: string;
   subtitleFormat: "vtt" | "srt";

@@ -176,7 +176,7 @@ export function HomePage() {
           ? entries.filter(item => Number.isInteger(item.index) && (item.index ?? 0) > 0 && inspectedVideoID.test(item.id)).map(item => item.index!)
           : [];
         return {
-          ...result, selectedQuality, selectedVideoStrategy: settings.defaultVideoStrategy, mediaType: "video" as const, audioFormat: "mp3" as const, audioBitrate: "192k",
+          ...result, selectedQuality, selectedVideoStrategy: settings.defaultVideoStrategy, mediaType: "video" as const, audioFormat: "mp3" as const, audioBitrate: "192k", splitByChapter: false,
           subtitleLanguage: "", subtitleFormat: "vtt" as const,
           category: settings.defaultCategory || settings.userCategories[0] || "General",
           selectedPlaylistIndexes, playlistExpanded: false,
@@ -263,6 +263,7 @@ export function HomePage() {
             url: draft.url, quality: draft.selectedQuality, mediaType: draft.mediaType,
             ...(draft.mediaType === "video" ? { videoStrategy: draft.selectedVideoStrategy } : {}),
             ...(draft.mediaType === "audio" ? { audioFormat: draft.audioFormat } : {}),
+            ...(draft.mediaType === "audio" && draft.audioFormat === "mp3" && draft.splitByChapter ? { splitByChapter: true } : {}),
             ...(draft.mediaType === "audio" && draft.audioFormat === "mp3" ? { audioBitrate: draft.audioBitrate } : {}),
             ...(draft.subtitleLanguage ? { subtitleLanguage: draft.subtitleLanguage, subtitleFormat: draft.subtitleFormat } : {}),
             category: draft.category, rightsConfirmed: true,

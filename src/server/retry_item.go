@@ -33,9 +33,18 @@ func (s *server) handleRetryItem(w http.ResponseWriter, r *http.Request, jobID s
 		fail(w, http.StatusConflict, "Only failed or cancelled playlist items can be retried")
 		return
 	}
-	if file, exists := job.fileItems[request.Index]; exists && s.validCompletedFile(job, file) {
-		fail(w, http.StatusConflict, "This playlist item already has valid finalized media")
-		return
+	if files := itemFiles(job, request.Index); len(files) > 0 {
+		valid := true
+		for _, file := range files {
+			if !s.validCompletedFile(job, file) {
+				valid = false
+				break
+			}
+		}
+		if valid {
+			fail(w, http.StatusConflict, "This playlist item already has valid finalized media")
+			return
+		}
 	}
 	if s.activeJobCountLocked() >= s.cfg.maxJobs {
 		fail(w, http.StatusTooManyRequests, "Active job capacity reached; wait for a job to finish or cancel one")

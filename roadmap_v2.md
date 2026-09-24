@@ -480,7 +480,7 @@ MP3, MP4/M4A, and WebM outputs now receive supported metadata and cover art.
 
 ### M3.2 Chapters
 
-**Status:** [~] Chapter metadata and container/preview work underway · **P1** · **Area:** engine / media
+**Status:** [~] MP3 chapter-splitting option and grouped outputs underway · **P1** · **Area:** engine / media
 
 The current metadata pipeline has no chapter model. YouTube chapter timestamps are available in the description, but parsing, Library persistence, container writing, and preview navigation need to be added.
 
@@ -491,7 +491,7 @@ The current metadata pipeline has no chapter model. YouTube chapter timestamps a
 - [x] Show chapters in the preview player.
 - Offer an option to split audio downloads by chapter.
 
-**Progress (2026-09-24):** Chapter parsing, Library/SQLite persistence, MP4/WebM chapter metadata, and preview navigation merged by [PR #47](https://github.com/ajbergh/yt-dl-go/pull/47) (`15f9369`). Full CI passed, including Go/race tests, Bun UI tests, browser E2E, lint, vet, CodeQL, and Linux/Windows/macOS builds. The split-audio option is the remaining M3.2 scope and is underway on `roadmap/m3-2-split-audio`; it will preserve the current one-file default and represent split output files as a group belonging to one source item.
+**Progress (2026-09-24):** Chapter parsing, Library/SQLite persistence, MP4/WebM chapter metadata, and preview navigation merged by [PR #47](https://github.com/ajbergh/yt-dl-go/pull/47) (`15f9369`). Full CI passed, including Go/race tests, Bun UI tests, browser E2E, lint, vet, CodeQL, and Linux/Windows/macOS builds. The opt-in MP3 split path is underway on `roadmap/m3-2-split-audio`: it decodes a source once, writes chapter-tagged MP3s, models outputs as a source-item group, and persists extra outputs alongside the existing source row. The one-file default and M4A path stay unchanged; chapter-clipped captions and M4A splitting remain open scope. Local Go build and `npm run check` pass; PR CI will validate the database migration, UI behavior, and Go test suites.
 
 ### M3.3 Embedded subtitles and thumbnails
 
