@@ -208,7 +208,7 @@ Goal: make the "searchable local media library" durable over months and thousand
 
 ### M1.1 Separate Library records from download jobs
 
-**Status:** [~] Durable Library storage foundation underway on `roadmap/m1-1-library-storage`; UI/API cutover remains · **P1** · **Area:** backend / data model
+**Status:** [~] Durable Library storage foundation merged; UI/API cutover remains · **P1** · **Area:** backend / data model
 
 Today a Library entry is a retained job (`src/pages/library.tsx:51`), so Library lifetime equals job retention.
 
@@ -224,7 +224,7 @@ Today a Library entry is a retained job (`src/pages/library.tsx:51`), so Library
 - The Library can hold 10,000+ items with no in-memory job state kept for finished work.
 - All v1 deletion scopes (P0.3) still behave as documented.
 
-**Progress (2026-09-24):** The current increment adds a durable per-file `library_items` table with job/item provenance, migration backfill (including grouped chapter files), same-transaction mirroring on job saves, and explicit history deletion cleanup. The table is independent of `jobs` and has no cascading foreign key. CI exposed excess repeated mirror work on large playlists; the follow-up now skips unchanged Library rows and cleans stale rows only when file state changes. Validation is pending. The full M1.1 acceptance remains open: Library API/UI cutover, independent file ownership and access, finished-job eviction from memory, and scale validation are not part of this storage-foundation increment.
+**Progress (2026-09-24):** The storage foundation merged in [PR #51](https://github.com/ajbergh/yt-dl-go/pull/51) as `64c501b`. It adds a durable per-file `library_items` table with job/item provenance, migration backfill (including grouped chapter files), same-transaction mirroring on job saves, and explicit history deletion cleanup. The table is independent of `jobs` and has no cascading foreign key. CI exposed excess repeated mirror work on large playlists; the follow-up skips unchanged Library rows and cleans stale rows only when file state changes. Final CI passed Go/race and source validation, lint/static analysis, CodeQL, and Linux, Windows, and macOS package/build checks. The full M1.1 acceptance remains open: Library API/UI cutover, independent file ownership and access, finished-job eviction from memory, and scale validation are not part of this storage-foundation increment.
 
 ### M1.2 Normalize queue items and write incrementally
 
