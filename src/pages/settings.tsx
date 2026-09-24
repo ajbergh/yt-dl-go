@@ -1,4 +1,4 @@
-import { useEffect, useState, type Dispatch, type FormEvent, type SetStateAction } from "react";
+import { useEffect, useRef, useState, type Dispatch, type FormEvent, type SetStateAction } from "react";
 import {
 	Check, Download, ExternalLink, FileText, Folder, FolderTree, Gauge, HardDrive, LoaderCircle, Plus, RefreshCw, ShieldCheck, Sparkles, X,
 } from "lucide-react";
@@ -49,7 +49,7 @@ export function SettingsPage({
 
           <CorruptionDiagnosticsPanel connection={connection} serviceReady={serviceReady} />
 
-          <LibraryExportPanel connection={connection} serviceReady={serviceReady} />
+          <LibraryTransferPanel connection={connection} serviceReady={serviceReady} />
 
           <section className={`${panel} p-5 sm:p-6`} aria-labelledby="updates-heading">
             <div className="flex flex-wrap items-start justify-between gap-3">
@@ -272,8 +272,10 @@ function CorruptionDiagnosticsPanel({ connection, serviceReady }: Pick<SettingsP
   </section>;
 }
 
-function LibraryExportPanel({ connection, serviceReady }: Pick<SettingsPageProps, "connection" | "serviceReady">) {
+function LibraryTransferPanel({ connection, serviceReady }: Pick<SettingsPageProps, "connection" | "serviceReady">) {
+  const importInput = useRef<HTMLInputElement>(null);
   const [exporting, setExporting] = useState(false);
+  const [importing, setImporting] = useState(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
 
@@ -300,16 +302,41 @@ function LibraryExportPanel({ connection, serviceReady }: Pick<SettingsPageProps
     }
   }
 
+  async function importLibrary(file: File) {
+    setImporting(true);
+    setMessage("");
+    setError("");
+    try {
+      const result = await api<{ imported: number; idempotent: boolean }>(connection, "/api/library/import", {
+        method: "POST", headers: { "Content-Type": "application/zip" }, body: file,
+        signal: AbortSignal.timeout(5 * 60 * 1000),
+      });
+      setMessage(result.idempotent ? "This Library archive is already imported." : `Imported ${result.imported} Library file${result.imported === 1 ? "" : "s"}.`);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Could not import the Library.");
+    } finally {
+      setImporting(false);
+      if (importInput.current) importInput.current.value = "";
+    }
+  }
+
   return <section className={`${panel} p-5 sm:p-6`} aria-labelledby="library-export-heading">
     <div className="flex flex-wrap items-start justify-between gap-3">
       <div>
-        <h3 id="library-export-heading" className="text-sm font-bold">Export Library</h3>
-        <p className="mt-1 max-w-2xl text-xs leading-relaxed text-neutral-400">Download a ZIP with a consistent SQLite database snapshot and Library metadata in JSON and CSV. The database contains saved settings, local paths, and quarantined original values. Media files are not included.</p>
+        <h3 id="library-export-heading" className="text-sm font-bold">Library backup and import</h3>
+        <p className="mt-1 max-w-2xl text-xs leading-relaxed text-neutral-400">Export a ZIP with a consistent SQLite snapshot and portable Library metadata. Media files are not included. Import merges Library metadata only; settings, queues, and history stay on this device, and imported media is marked unavailable.</p>
       </div>
-      <button type="button" className={button} onClick={() => void exportLibrary()} disabled={!serviceReady || exporting}>
-        {exporting ? <LoaderCircle className="size-3.5 animate-spin" aria-hidden="true" /> : <Download className="size-3.5" aria-hidden="true" />}
-        {exporting ? "Preparing export…" : "Export Library"}
-      </button>
+      <div className="flex flex-wrap gap-2">
+        <button type="button" className={button} onClick={() => void exportLibrary()} disabled={!serviceReady || exporting || importing}>
+          {exporting ? <LoaderCircle className="size-3.5 animate-spin" aria-hidden="true" /> : <Download className="size-3.5" aria-hidden="true" />}
+          {exporting ? "Preparing export…" : "Export Library"}
+        </button>
+        <input ref={importInput} type="file" accept=".zip,application/zip" className="sr-only" aria-label="Choose Library export ZIP" onChange={event => { const file = event.currentTarget.files?.[0]; if (file) void importLibrary(file); }} />
+        <button type="button" className={button} onClick={() => importInput.current?.click()} disabled={!serviceReady || exporting || importing}>
+          {importing ? <LoaderCircle className="size-3.5 animate-spin" aria-hidden="true" /> : <Folder className="size-3.5" aria-hidden="true" />}
+          {importing ? "Importing…" : "Import Library ZIP"}
+        </button>
+      </div>
     </div>
     {message && <p role="status" className="mt-3 text-xs text-emerald-300">{message}</p>}
     {error && <p role="alert" className="mt-3 text-xs text-amber-300">{error}</p>}

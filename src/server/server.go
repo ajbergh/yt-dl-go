@@ -516,7 +516,7 @@ func canonicalURL(raw string) (string, string, error) {
 func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Path != "/api/events" {
 		writeTimeout := 30 * time.Second
-		if r.URL.Path == "/api/library/export" {
+		if r.URL.Path == "/api/library/export" || r.URL.Path == "/api/library/import" {
 			writeTimeout = 5 * time.Minute
 		}
 		_ = http.NewResponseController(w).SetWriteDeadline(time.Now().Add(writeTimeout))
@@ -647,6 +647,14 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.handleLibraryExport(w, r)
+		return
+	}
+	if r.URL.Path == "/api/library/import" {
+		if r.Method != http.MethodPost {
+			fail(w, http.StatusMethodNotAllowed, "Method not allowed")
+			return
+		}
+		s.handleLibraryImport(w, r)
 		return
 	}
 	if r.URL.Path == "/api/settings" {

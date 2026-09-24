@@ -95,6 +95,7 @@ beforeEach(async () => {
     if (path === "/api/health") return Response.json({ ready: missing.length === 0, missing, engine: healthEngine, version: healthVersion, commit: healthVersion === "dev" ? "unknown" : "abc123def456", buildDate: healthVersion === "dev" ? "unknown" : "2026-09-21T12:00:00Z", capabilities: { combinedStreamsOnly: false, adaptiveStreamsSupported: true, externalBinariesRequired: false, mp3AudioSupported: true } });
     if (path === "/api/diagnostics") return Response.json(diagnosticsResponse);
     if (path === "/api/library/export") return new Response("zip archive bytes", { headers: { "Content-Type": "application/zip" } });
+    if (path === "/api/library/import" && init.method === "POST") return Response.json({ imported: 3, idempotent: false });
     if (path === "/api/update") return Response.json(updateResponse);
     if (path === "/api/settings" && init.method === "PUT") {
       const settings = JSON.parse(init.body);
@@ -275,6 +276,22 @@ describe("Downloader UI and Go API integration", () => {
       URL.revokeObjectURL = originalRevoke;
       testWindow.HTMLAnchorElement.prototype.click = originalClick;
     }
+  });
+  test("uploads a Library export ZIP from Settings", async () => {
+    await remount();
+    await click(button("Settings"));
+    const input = container.querySelector('input[type="file"][aria-label="Choose Library export ZIP"]');
+    expect(input).toBeTruthy();
+    const archive = new testWindow.File(["zip archive bytes"], "library.zip", { type: "application/zip" });
+    Object.defineProperty(input, "files", { configurable: true, value: [archive] });
+    await act(async () => { input.dispatchEvent(new testWindow.Event("change", { bubbles: true })); });
+    await act(async () => new Promise(resolve => setTimeout(resolve, 0)));
+    const request = requests.find(item => item.path === "/api/library/import");
+    expect(request?.method).toBe("POST");
+    expect(new Headers(request?.headers).get("Content-Type")).toBe("application/zip");
+    expect(request?.body).toBe(archive);
+    expect(container.textContent).toContain("Imported 3 Library files.");
+    expect(container.textContent).toContain("settings, queues, and history stay on this device");
   });
   test("rejects an incompatible backend without manual setup", async () => {
     healthEngine = undefined;

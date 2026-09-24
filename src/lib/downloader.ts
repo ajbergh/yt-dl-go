@@ -307,7 +307,7 @@ export function serviceURL(value: string): string {
 export async function api<T>(connection: ServiceConnection, path: string, init: RequestInit = {}): Promise<T> {
   const headers = new Headers(init.headers);
   if (connection.token) headers.set("Authorization", `Bearer ${connection.token}`);
-  if (init.body) headers.set("Content-Type", "application/json");
+  if (init.body && !headers.has("Content-Type")) headers.set("Content-Type", "application/json");
   const response = await fetch(`${connection.base}${path}`, { ...init, headers, credentials: "omit" });
   if (response.status === 204) return undefined as T;
   const payload: unknown = await response.json().catch(() => null);

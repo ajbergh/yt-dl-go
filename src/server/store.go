@@ -2370,8 +2370,16 @@ func (s *jobStore) loadLibraryJob(root, jobID string) (*storedJob, error) {
 		return nil, err
 	}
 	job := jobs[0]
-	if !terminal(job.Status) || !filepath.IsAbs(job.DownloadLocation) {
+	if !terminal(job.Status) {
 		return nil, nil
+	}
+	if !filepath.IsAbs(job.DownloadLocation) {
+		for _, file := range job.Files {
+			if file.OutputPath != "" || file.ManagedAvailable || file.PublishedAvailable || file.ThumbnailLocalAvailable ||
+				(file.Subtitle != nil && (file.Subtitle.OutputPath != "" || file.Subtitle.ManagedAvailable || file.Subtitle.PublishedAvailable)) {
+				return nil, nil
+			}
+		}
 	}
 	loaded := &storedJob{
 		job:   job,
