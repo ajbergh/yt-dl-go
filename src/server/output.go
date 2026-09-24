@@ -535,7 +535,7 @@ func removeManagedCopies(j *jobState) error {
 // sidecars while preserving every sibling and all published output.
 func removeManagedCopyForFile(j *jobState, file *mediaFile) error {
 	if j == nil || file == nil {
-		return errors.New("Library file is unavailable")
+		return errors.New("library file is unavailable")
 	}
 	if file.ManagedAvailable {
 		path := filepath.Join(j.dir, file.Name)
