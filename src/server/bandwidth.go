@@ -21,11 +21,12 @@ type bandwidthLimiter struct {
 	tokens float64
 	last   time.Time
 	queue  []*bandwidthWaiter
+	wake   chan struct{}
 }
 
 func newBandwidthLimiter(limit int64) *bandwidthLimiter {
 	now := time.Now()
-	limiter := &bandwidthLimiter{limit: max(int64(0), limit), last: now}
+	limiter := &bandwidthLimiter{limit: max(int64(0), limit), last: now, wake: make(chan struct{})}
 	limiter.tokens = float64(limiter.burstCapacityLocked())
 	return limiter
 }
@@ -81,7 +82,15 @@ func (l *bandwidthLimiter) SetLimit(limit int64) {
 	l.limit = limit
 	l.last = time.Now()
 	l.tokens = float64(l.burstCapacityLocked())
+	l.wakeWaitersLocked()
 	l.mu.Unlock()
+}
+
+// wakeWaitersLocked notifies queued callers that the limit or available tokens
+// changed. Replacing a closed channel lets each acquire wait without polling.
+func (l *bandwidthLimiter) wakeWaitersLocked() {
+	close(l.wake)
+	l.wake = make(chan struct{})
 }
 
 func (l *bandwidthLimiter) Limit() int64 {
@@ -98,6 +107,9 @@ func (l *bandwidthLimiter) removeWaiterLocked(waiter *bandwidthWaiter) {
 		if queued == waiter {
 			copy(l.queue[index:], l.queue[index+1:])
 			l.queue = l.queue[:len(l.queue)-1]
+			if index == 0 {
+				l.wakeWaitersLocked()
+			}
 			return
 		}
 	}
@@ -124,7 +136,27 @@ func (l *bandwidthLimiter) tryGrantLocked(waiter *bandwidthWaiter, requested int
 	}
 	l.tokens -= float64(grant)
 	l.queue = l.queue[1:]
+	l.wakeWaitersLocked()
 	return grant
+}
+
+// waitDurationLocked returns the time until the FIFO head can receive a useful
+// read chunk. Non-head waiters sleep until the queue or limit changes.
+func (l *bandwidthLimiter) waitDurationLocked(waiter *bandwidthWaiter, requested int, now time.Time) time.Duration {
+	if l.limit <= 0 || len(l.queue) == 0 || l.queue[0] != waiter {
+		return 0
+	}
+	l.refillLocked(now)
+	target := min(requested, int(l.burstCapacityLocked()))
+	if target <= 0 || l.tokens >= float64(target) {
+		return 0
+	}
+	missing := float64(target) - l.tokens
+	wait := time.Duration(missing / float64(l.limit) * float64(time.Second))
+	if wait < time.Nanosecond {
+		return time.Nanosecond
+	}
+	return wait
 }
 
 // acquire grants read capacity in FIFO order. Each caller re-enters the queue
@@ -145,25 +177,46 @@ func (l *bandwidthLimiter) acquire(ctx context.Context, requested int) (int, err
 	l.queue = append(l.queue, waiter)
 	l.mu.Unlock()
 
-	ticker := time.NewTicker(5 * time.Millisecond)
-	defer ticker.Stop()
 	for {
+		l.mu.Lock()
 		if err := ctx.Err(); err != nil {
-			l.mu.Lock()
 			l.removeWaiterLocked(waiter)
 			l.mu.Unlock()
 			return 0, err
 		}
-		l.mu.Lock()
 		grant := l.tryGrantLocked(waiter, requested, time.Now())
-		l.mu.Unlock()
 		if grant > 0 {
+			l.mu.Unlock()
 			return grant, nil
 		}
+		wake := l.wake
+		wait := l.waitDurationLocked(waiter, requested, time.Now())
+		l.mu.Unlock()
 
+		if wait <= 0 {
+			select {
+			case <-ctx.Done():
+			case <-wake:
+			}
+			continue
+		}
+		timer := time.NewTimer(wait)
 		select {
 		case <-ctx.Done():
-		case <-ticker.C:
+			if !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
+			}
+		case <-wake:
+			if !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
+			}
+		case <-timer.C:
 		}
 	}
 }
@@ -182,6 +235,7 @@ func (l *bandwidthLimiter) refund(bytes int) {
 	if capacity := float64(l.burstCapacityLocked()); l.tokens > capacity {
 		l.tokens = capacity
 	}
+	l.wakeWaitersLocked()
 }
 
 type bandwidthReader struct {
@@ -206,7 +260,7 @@ func (r bandwidthReader) Read(buffer []byte) (int, error) {
 }
 
 func (s *server) bandwidthReader(ctx context.Context, reader io.Reader) io.Reader {
-	if s == nil || s.bandwidth == nil || s.bandwidth.Limit() <= 0 {
+	if s == nil || s.bandwidth == nil {
 		return reader
 	}
 	return bandwidthReader{ctx: ctx, reader: reader, limiter: s.bandwidth}
