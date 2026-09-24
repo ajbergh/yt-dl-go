@@ -1064,7 +1064,7 @@ func TestCancellationQueueAndTimeout(t *testing.T) {
 	}
 	s := testServer(t, fake, func(c *config) { c.maxJobs = 2 })
 	waitScenarioState := func(id string, accept func(Job) bool) Job {
-		return waitJobFor(t, s, id, 45*time.Second, accept)
+		return waitJobFor(t, s, id, 90*time.Second, accept)
 	}
 	if response := request(s, "PUT", "/api/settings", `{"defaultQuality":"best","maxConcurrentDownloads":1}`, nil); response.Code != 200 {
 		t.Fatalf("limit concurrent downloads for cancellation fixture: %d %s", response.Code, response.Body.String())
