@@ -27,7 +27,7 @@ export function HomePage() {
   const previewMedia = useRef<HTMLMediaElement | null>(null);
   const [tab, setTab] = useState<Tab>("queue");
   const {
-    connection, serviceReady, jobs, setJobs, libraryJobs, refreshLibrary, settings, setSettings, mp3Supported,
+    connection, serviceReady, jobs, setJobs, libraryJobs, libraryPage, setLibraryQuery, loadMoreLibrary, loadingLibraryMore, refreshLibrary, settings, setSettings, mp3Supported,
     buildInfo, updateStatus, updateError, checkingUpdates, checkForUpdates,
     serviceError, setServiceError, pollError,
   } = useService();
@@ -95,35 +95,9 @@ export function HomePage() {
   const queuedCount = visibleQueueRows.filter(({ item }) => item.status === "queued").length;
   const completedQueueCount = visibleQueueRows.filter(({ item }) => item.status === "completed").length;
   const totalCurrentSpeed = queueRows.reduce((sum, { item }) => sum + ((item.status === "downloading" || item.status === "processing") ? item.speedBytesPerSec : 0), 0);
-  const libraryCategories = useMemo(() => {
-    const counts = new Map<string, number>();
-    for (const job of libraryJobs) {
-      const category = job.category || job.files.find(file => file.category)?.category || "Uncategorized";
-      counts.set(category, (counts.get(category) ?? 0) + job.files.length);
-    }
-    return [...counts.entries()].sort(([a], [b]) => a.localeCompare(b));
-  }, [libraryJobs]);
-  const libraryChannels = useMemo(() => {
-    const counts = new Map<string, number>();
-    for (const job of libraryJobs) {
-      for (const file of job.files) {
-        const channel = file.author?.trim() || "Unknown channel";
-        counts.set(channel, (counts.get(channel) ?? 0) + 1);
-      }
-    }
-    return [...counts.entries()].sort(([a], [b]) => a.localeCompare(b));
-  }, [libraryJobs]);
-  const libraryStats = useMemo(() => libraryJobs.reduce((stats, job) => {
-    for (const file of job.files) {
-      stats.files += 1;
-      stats.logicalBytes += file.size + (file.subtitle?.size ?? 0);
-      if (file.managedAvailable !== false) stats.managedBytes += file.size;
-      if (file.subtitle?.managedAvailable) stats.managedBytes += file.subtitle.size;
-      if (file.publishedAvailable !== false && file.outputRelativePath) stats.publishedBytes += file.size;
-      if (file.subtitle?.publishedAvailable && file.subtitle.outputRelativePath) stats.publishedBytes += file.subtitle.size;
-    }
-    return stats;
-  }, { files: 0, logicalBytes: 0, managedBytes: 0, publishedBytes: 0 }), [libraryJobs]);
+  const libraryCategories = useMemo(() => libraryPage.categories.map(facet => [facet.value, facet.count] as [string, number]), [libraryPage.categories]);
+  const libraryChannels = useMemo(() => libraryPage.channels.map(facet => [facet.value, facet.count] as [string, number]), [libraryPage.channels]);
+  const libraryStats = libraryPage.stats;
   const visibleLibraryJobs = useMemo(() => libraryJobs.filter(job => {
     const query = librarySearch.trim().toLowerCase();
     const category = job.category || job.files.find(file => file.category)?.category || "Uncategorized";
@@ -134,6 +108,17 @@ export function HomePage() {
       && (libraryCategory === "all" || category === libraryCategory)
       && (libraryChannel === "all" || channels.includes(libraryChannel));
   }), [libraryJobs, libraryFilter, librarySearch, libraryCategory, libraryChannel]);
+  const libraryTotalJobs = libraryPage.totalJobs;
+
+  useEffect(() => {
+    const timer = setTimeout(() => setLibraryQuery({
+      q: librarySearch.trim() || undefined,
+      type: libraryFilter === "all" ? undefined : libraryFilter,
+      category: libraryCategory === "all" ? undefined : libraryCategory,
+      channel: libraryChannel === "all" ? undefined : libraryChannel,
+    }), 250);
+    return () => clearTimeout(timer);
+  }, [librarySearch, libraryFilter, libraryCategory, libraryChannel, setLibraryQuery]);
 
   useEffect(() => {
     try { window.localStorage.setItem(libraryLayoutKey, libraryLayout); }
@@ -316,7 +301,7 @@ export function HomePage() {
                 className={`flex flex-1 items-center justify-center gap-2 rounded-lg px-3 py-2 text-xs font-semibold transition-colors sm:flex-none ${tab === value ? "bg-neutral-800 text-white shadow-sm" : "text-neutral-400 hover:text-neutral-200"}`}>
                 <Icon className="size-3.5 text-rose-400" aria-hidden="true" />{label}
                 {value === "queue" && visibleQueueRows.length > 0 && <span className="rounded-full bg-rose-600 px-1.5 text-[10px] text-white">{visibleQueueRows.length}</span>}
-                {value === "library" && libraryJobs.length > 0 && <span className="rounded-full bg-neutral-700 px-1.5 text-[10px] text-neutral-200">{libraryJobs.length}</span>}
+                {value === "library" && libraryTotalJobs > 0 && <span className="rounded-full bg-neutral-700 px-1.5 text-[10px] text-neutral-200">{libraryTotalJobs}</span>}
               </button>
             ))}
           </nav>
@@ -391,6 +376,7 @@ export function HomePage() {
         {tab === "library" && <LibraryPage
           libraryJobs={libraryJobs}
           visibleLibraryJobs={visibleLibraryJobs}
+          libraryTotalJobs={libraryTotalJobs}
           librarySearch={librarySearch}
           setLibrarySearch={setLibrarySearch}
           libraryFilter={libraryFilter}
@@ -404,6 +390,9 @@ export function HomePage() {
           libraryLayout={libraryLayout}
           setLibraryLayout={setLibraryLayout}
           libraryStats={libraryStats}
+          hasMoreLibrary={Boolean(libraryPage.nextCursor)}
+          loadingLibraryMore={loadingLibraryMore}
+          loadMoreLibrary={() => void loadMoreLibrary().catch(error => setServiceError(errorMessage(error)))}
           connection={connection}
           busyAction={busyAction}
           previewFile={previewFile}

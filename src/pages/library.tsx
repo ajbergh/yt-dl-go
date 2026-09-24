@@ -19,6 +19,7 @@ type LibraryJobAction = "retry" | "remove" | "delete-managed" | "delete-publishe
 type LibraryPageProps = {
   libraryJobs: DownloadJob[];
   visibleLibraryJobs: DownloadJob[];
+  libraryTotalJobs: number;
   librarySearch: string;
   setLibrarySearch: (value: string) => void;
   libraryFilter: LibraryFilter;
@@ -32,6 +33,9 @@ type LibraryPageProps = {
   libraryLayout: "grid" | "list";
   setLibraryLayout: (value: "grid" | "list") => void;
   libraryStats: LibraryStats;
+  hasMoreLibrary: boolean;
+  loadingLibraryMore: boolean;
+  loadMoreLibrary: () => void;
   connection: ServiceConnection;
   busyAction: string;
   previewFile: (job: DownloadJob, file: DownloadFile) => void | Promise<void>;
@@ -41,14 +45,14 @@ type LibraryPageProps = {
 };
 
 export function LibraryPage({
-  libraryJobs, visibleLibraryJobs, librarySearch, setLibrarySearch, libraryFilter, setLibraryFilter,
+  libraryJobs, visibleLibraryJobs, libraryTotalJobs, librarySearch, setLibrarySearch, libraryFilter, setLibraryFilter,
   libraryCategory, setLibraryCategory, libraryChannel, setLibraryChannel, libraryCategories,
-  libraryChannels, libraryLayout, setLibraryLayout, libraryStats, connection, busyAction,
+  libraryChannels, libraryLayout, setLibraryLayout, libraryStats, hasMoreLibrary, loadingLibraryMore, loadMoreLibrary, connection, busyAction,
   previewFile, saveFile, filesystemAction, jobAction,
 }: LibraryPageProps) {
   return (
 <section aria-labelledby="library-heading" className="space-y-4">
-          <div className="flex flex-wrap items-end justify-between gap-3"><div><p className="mb-1 text-[11px] font-bold uppercase tracking-[0.16em] text-neutral-500">Saved output</p><h2 id="library-heading" className="text-2xl font-bold">Download library</h2><p className="mt-1 text-xs text-neutral-400">Browse finalized media by type, category, channel, or tracked output metadata.</p></div><div className="flex items-center gap-2 rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-xs text-neutral-400"><HardDrive className="size-3.5 text-amber-400" aria-hidden="true" />{visibleLibraryJobs.length} of {libraryJobs.length} jobs visible</div></div>
+          <div className="flex flex-wrap items-end justify-between gap-3"><div><p className="mb-1 text-[11px] font-bold uppercase tracking-[0.16em] text-neutral-500">Saved output</p><h2 id="library-heading" className="text-2xl font-bold">Download library</h2><p className="mt-1 text-xs text-neutral-400">Browse finalized media by type, category, channel, or tracked output metadata.</p></div><div className="flex items-center gap-2 rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-xs text-neutral-400"><HardDrive className="size-3.5 text-amber-400" aria-hidden="true" />{visibleLibraryJobs.length} of {libraryTotalJobs} jobs visible (matching filters)</div></div>
           <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
             <div className={`${panel} px-4 py-3`}><p className="text-[10px] uppercase tracking-wider text-neutral-500">Files</p><p className="mt-1 text-lg font-bold text-white">{libraryStats.files}</p></div>
             <div className={`${panel} px-4 py-3`}><p className="text-[10px] uppercase tracking-wider text-neutral-500">Logical media</p><p className="mt-1 text-lg font-bold text-white">{formatBytes(libraryStats.logicalBytes)}</p></div>
@@ -71,8 +75,8 @@ export function LibraryPage({
               <button type="button" className={button} disabled={!librarySearch && libraryFilter === "all" && libraryCategory === "all" && libraryChannel === "all"} onClick={() => { setLibrarySearch(""); setLibraryFilter("all"); setLibraryCategory("all"); setLibraryChannel("all"); }}>Reset filters</button>
             </div>
           </div>
-          {libraryJobs.length === 0 ? <div className={`${panel} px-5 py-14 text-center`}><Film className="mx-auto mb-3 size-8 text-neutral-600" aria-hidden="true" /><h3 className="text-sm font-semibold text-neutral-200">Your library is empty</h3><p className="mt-1 text-xs text-neutral-500">Finalized downloads will appear here, with metadata and secure save links.</p></div>
-            : visibleLibraryJobs.length === 0 ? <div className={`${panel} px-5 py-12 text-center text-xs text-neutral-400`}>No saved downloads match this search and media filter.</div>
+          {libraryStats.files === 0 ? <div className={`${panel} px-5 py-14 text-center`}><Film className="mx-auto mb-3 size-8 text-neutral-600" aria-hidden="true" /><h3 className="text-sm font-semibold text-neutral-200">Your library is empty</h3><p className="mt-1 text-xs text-neutral-500">Finalized downloads will appear here, with metadata and secure save links.</p></div>
+            : visibleLibraryJobs.length === 0 ? <div className={`${panel} px-5 py-12 text-center text-xs text-neutral-400`}>No saved downloads match these filters.</div>
             : <div className={`grid gap-4 ${libraryLayout === "grid" ? "md:grid-cols-2" : "grid-cols-1"}`}>
               {visibleLibraryJobs.map(job => <article key={job.id} className={`${panel} overflow-hidden`}>
                 <div className="flex items-start justify-between gap-3 border-b border-neutral-800 p-4">
@@ -102,6 +106,7 @@ export function LibraryPage({
                 </div>
               </article>)}
             </div>}
+          {hasMoreLibrary && <div className="flex justify-center"><button type="button" className={button} onClick={loadMoreLibrary} disabled={loadingLibraryMore}>{loadingLibraryMore ? "Loading…" : `Load more (${libraryTotalJobs - libraryJobs.length} remaining)`}</button></div>}
         </section>
   );
 }
