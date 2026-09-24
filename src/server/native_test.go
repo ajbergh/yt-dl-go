@@ -119,8 +119,8 @@ type youtubeFixtureTransport struct {
 }
 
 func (transport youtubeFixtureTransport) RoundTrip(request *http.Request) (*http.Response, error) {
-	body := []byte("not found")
-	status := http.StatusNotFound
+	var body []byte
+	var status int
 	if request.Method == http.MethodGet && (request.URL.Path == "" || request.URL.Path == "/") {
 		body, status = []byte(`<!doctype html><script>ytcfg.set({"INNERTUBE_CONTEXT":{"client":{"visitorData":"fixture-visitor"}}});</script>`), http.StatusOK
 	} else if request.URL.Path == "/youtubei/v1/player" {
