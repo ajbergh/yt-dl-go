@@ -257,18 +257,23 @@ describe("Downloader UI and Go API integration", () => {
   test("downloads the Library export archive from Settings", async () => {
     const originalCreate = URL.createObjectURL;
     const originalRevoke = URL.revokeObjectURL;
+    const originalClick = testWindow.HTMLAnchorElement.prototype.click;
     URL.createObjectURL = () => "blob:library-export";
     URL.revokeObjectURL = () => {};
+    let target;
+    testWindow.HTMLAnchorElement.prototype.click = function () { target = this.href; };
     try {
       await remount();
       await click(button("Settings"));
       await click(button("Export Library"));
       expect(requests.some(item => item.path === "/api/library/export" && item.method === undefined)).toBe(true);
+      expect(target).toBe("blob:library-export");
       expect(container.textContent).toContain("Library export downloaded.");
       expect(container.textContent).toContain("Media files are not included.");
     } finally {
       URL.createObjectURL = originalCreate;
       URL.revokeObjectURL = originalRevoke;
+      testWindow.HTMLAnchorElement.prototype.click = originalClick;
     }
   });
   test("rejects an incompatible backend without manual setup", async () => {
