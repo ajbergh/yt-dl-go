@@ -520,6 +520,10 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			fail(w, http.StatusMethodNotAllowed, "Method not allowed")
 			return
 		}
+		if r.URL.Query().Has("limit") || r.URL.Query().Has("cursor") {
+			s.handleLibraryPage(w, r)
+			return
+		}
 		jobs, err := s.store.loadLibraryJobs()
 		if err != nil {
 			fail(w, http.StatusInternalServerError, "Could not load the Library")
