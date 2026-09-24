@@ -515,7 +515,11 @@ func canonicalURL(raw string) (string, string, error) {
 // the random ticket itself authorizes a download.
 func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Path != "/api/events" {
-		_ = http.NewResponseController(w).SetWriteDeadline(time.Now().Add(30 * time.Second))
+		writeTimeout := 30 * time.Second
+		if r.URL.Path == "/api/library/export" {
+			writeTimeout = 5 * time.Minute
+		}
+		_ = http.NewResponseController(w).SetWriteDeadline(time.Now().Add(writeTimeout))
 	}
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Referrer-Policy", "no-referrer")
@@ -635,6 +639,14 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		reply(w, http.StatusOK, diagnostics)
+		return
+	}
+	if r.URL.Path == "/api/library/export" {
+		if r.Method != http.MethodGet {
+			fail(w, http.StatusMethodNotAllowed, "Method not allowed")
+			return
+		}
+		s.handleLibraryExport(w, r)
 		return
 	}
 	if r.URL.Path == "/api/settings" {

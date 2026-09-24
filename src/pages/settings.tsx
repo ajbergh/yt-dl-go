@@ -1,8 +1,8 @@
 import { useEffect, useState, type Dispatch, type FormEvent, type SetStateAction } from "react";
 import {
-  Check, ExternalLink, FileText, Folder, FolderTree, Gauge, HardDrive, LoaderCircle, Plus, RefreshCw, ShieldCheck, Sparkles, X,
+	Check, Download, ExternalLink, FileText, Folder, FolderTree, Gauge, HardDrive, LoaderCircle, Plus, RefreshCw, ShieldCheck, Sparkles, X,
 } from "lucide-react";
-import { api, type AppSettings, type BuildInfo, type CorruptionDiagnostics, type Quality, type ServiceConnection, type UpdateStatus, type VideoStrategy } from "../lib/downloader";
+import { api, apiBlob, type AppSettings, type BuildInfo, type CorruptionDiagnostics, type Quality, type ServiceConnection, type UpdateStatus, type VideoStrategy } from "../lib/downloader";
 import { namingTokenNames, previewFilename, sanitizeFilenameComponent, type NamingValues } from "../lib/naming";
 import {
   button, field, notificationAPI, panel, primaryButton, qualityLabels, videoStrategyLabels,
@@ -48,6 +48,8 @@ export function SettingsPage({
           </section>
 
           <CorruptionDiagnosticsPanel connection={connection} serviceReady={serviceReady} />
+
+          <LibraryExportPanel connection={connection} serviceReady={serviceReady} />
 
           <section className={`${panel} p-5 sm:p-6`} aria-labelledby="updates-heading">
             <div className="flex flex-wrap items-start justify-between gap-3">
@@ -267,5 +269,50 @@ function CorruptionDiagnosticsPanel({ connection, serviceReady }: Pick<SettingsP
       </ul>
     </>}
     {!serviceReady && <p className="mt-3 text-[10px] text-neutral-500">Diagnostics will load when the local service is connected.</p>}
+  </section>;
+}
+
+function LibraryExportPanel({ connection, serviceReady }: Pick<SettingsPageProps, "connection" | "serviceReady">) {
+  const [exporting, setExporting] = useState(false);
+  const [message, setMessage] = useState("");
+  const [error, setError] = useState("");
+
+  async function exportLibrary() {
+    setExporting(true);
+    setMessage("");
+    setError("");
+    try {
+      const blob = await apiBlob(connection, "/api/library/export", { signal: AbortSignal.timeout(5 * 60 * 1000) });
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = "yt-dl-go-library-export.zip";
+      anchor.rel = "noopener noreferrer";
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+      setMessage("Library export downloaded.");
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Could not export the Library.");
+    } finally {
+      setExporting(false);
+    }
+  }
+
+  return <section className={`${panel} p-5 sm:p-6`} aria-labelledby="library-export-heading">
+    <div className="flex flex-wrap items-start justify-between gap-3">
+      <div>
+        <h3 id="library-export-heading" className="text-sm font-bold">Export Library</h3>
+        <p className="mt-1 max-w-2xl text-xs leading-relaxed text-neutral-400">Download a ZIP with a consistent SQLite database snapshot and Library metadata in JSON and CSV. The database contains saved settings, local paths, and quarantined original values. Media files are not included.</p>
+      </div>
+      <button type="button" className={button} onClick={() => void exportLibrary()} disabled={!serviceReady || exporting}>
+        {exporting ? <LoaderCircle className="size-3.5 animate-spin" aria-hidden="true" /> : <Download className="size-3.5" aria-hidden="true" />}
+        {exporting ? "Preparing export…" : "Export Library"}
+      </button>
+    </div>
+    {message && <p role="status" className="mt-3 text-xs text-emerald-300">{message}</p>}
+    {error && <p role="alert" className="mt-3 text-xs text-amber-300">{error}</p>}
+    {!serviceReady && <p className="mt-3 text-[10px] text-neutral-500">Export will be available when the local service is connected.</p>}
   </section>;
 }
