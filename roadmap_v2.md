@@ -343,7 +343,7 @@ Before M2.2, adaptive MP4/WebM outputs were renamed without `Sync`, `publishOutp
 
 ### M2.3 Resume on every transfer path
 
-**Status:** [~] Implementation complete; PR validation pending on `roadmap/m2-3-resume-every-transfer` · **P1** · **Area:** engine
+**Status:** [x] Merged by PR #37 · **P1** · **Area:** engine
 
 Before this work, only native adaptive ranges resumed. Progressive video, M4A, and MP3 source streams restarted from zero, and `download_parts` was write-only. Adaptive resume trusted `.part` size without validating source identity or acquisition method.
 
@@ -353,11 +353,11 @@ Before this work, only native adaptive ranges resumed. Progressive video, M4A, a
 - [x] Use per-track `download_parts` checkpoints to validate itag, expected length, source fingerprint, path, and acquisition method before appending.
 - [x] Confirm and prevent the browser SABR crash-recovery hazard: tag browser parts and discard incomplete browser-acquired bytes instead of appending native ranges.
 
-**Progress (2026-09-23):** Implemented on `roadmap/m2-3-resume-every-transfer`. Checkpoints now store a per-track key, path, committed byte count, expected size, itag, stable source fingerprint, and `native-range` or `browser-sabr` method. Schema migration v16 discards legacy untagged checkpoints; old partial files are removed instead of guessed at. Data is synced before each checkpoint advances; after a crash, uncheckpointed trailing bytes are truncated and identity mismatches are deleted. Progressive video, M4A, MP3 source audio, and adaptive tracks share the range downloader; refreshed stream URLs must match the original source fingerprint. Adaptive video/audio checkpoints remain until mux finalization. Browser partials are deleted before native range fallback. Unknown-length streams or streams without a resolvable URL keep the existing from-zero stream path because a safe range offset and completion size cannot be established. Added tests cover offset requests, independent track records, source mismatch restart, and browser/native separation. `go test ./... -count=1` and `go vet ./...` pass locally; PR validation is pending.
+**Progress (2026-09-23):** Merged by [PR #37](https://github.com/ajbergh/yt-dl-go/pull/37) (`29b745f`) after the full source-validation rerun, Go and frontend analysis, CodeQL, and Linux, Windows, and macOS package builds passed. The first race-test run hit a timeout in the existing cancellation-queue test; a second full source-validation run and the rerun both passed, and the focused test passed locally.
 
 ### M2.4 Deterministic output naming and richer tokens
 
-**Status:** [ ] · **P1** · **Area:** engine / output
+**Status:** [~] Implementation underway on `roadmap/m2-4-deterministic-output-naming` · **P1** · **Area:** engine / output
 
 Naming tokens are replaced by iterating a Go map (`output.go:165-169`), and map order is random. A title containing `{channel}` or `{resolution}` can therefore produce different filenames from run to run.
 
@@ -367,6 +367,8 @@ Naming tokens are replaced by iterating a Go map (`output.go:165-169`), and map 
 - Add tokens: `{id}`, `{upload_date}`, `{playlist}`, `{index}`, `{ext}`, `{fps}`, `{codec}`.
 - Show a live filename preview in Settings.
 - Make output file and folder permissions configurable. Today they are `0600`/`0700` (`output.go:187, 202`), which can hide media from Plex, Jellyfin, or other users on Linux/macOS.
+
+**Progress (2026-09-23):** M2.4 is implemented on `roadmap/m2-4-deterministic-output-naming` in [PR #38](https://github.com/ajbergh/yt-dl-go/pull/38). The backend uses a single-pass tokenizer for all 11 tokens; substituted title/channel text is never re-expanded. The Settings preview uses matching token expansion, sanitizing, and extension behavior. Schema migration v17 persists published file/folder modes in both settings and queued jobs; defaults remain private (`0600`/`0700`), and the modes apply to published media, captions, and destination directories. Local `go test ./... -count=1`, `go vet ./...`, TypeScript typecheck, production build scan, lint (20 existing warnings), and `git diff --check` pass. Local browser E2E and Bun unit execution could not run because Chrome/Chromium and Bun are not installed. PR CI found that a UI test expected an unnecessary underscore for `CON- sample`; the test now checks the actual sanitizer rule separately against the exact reserved name `CON`, and CI is rerunning.
 
 ### M2.5 Bound SABR capture memory
 

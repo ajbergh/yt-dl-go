@@ -1250,6 +1250,29 @@ func (s *server) processItem(ctx context.Context, j *jobState, entry *youtube.Pl
 		file.Category = j.Category
 		file.ManagedAvailable = true
 		s.captureThumbnail(ctx, j, &file)
+	} else {
+		if !video.PublishDate.IsZero() {
+			file.PublishDate = video.PublishDate.UTC().Format("2006-01-02")
+		}
+	}
+	formatForName := format
+	if j.MediaType != "audio" {
+		formatForName = selection.video
+	}
+	file.naming.ID = video.ID
+	file.naming.UploadDate = file.PublishDate
+	file.naming.Index = strconv.Itoa(outputIndex)
+	if j.Kind == "playlist" {
+		file.naming.Playlist = j.Title
+	}
+	if file.naming.FPS == "" && formatForName != nil && formatForName.FPS > 0 {
+		file.naming.FPS = strconv.Itoa(formatForName.FPS)
+	}
+	if file.naming.Codec == "" && formatForName != nil {
+		file.naming.Codec = namingCodec(formatForName.MimeType)
+	}
+	if j.MediaType == "audio" && j.AudioFormat == "mp3" {
+		file.naming.Codec = "mp3"
 	}
 	if j.StorageMode != "managed-only" {
 		if err := s.publishOutput(j, &file); err != nil {
@@ -1360,7 +1383,7 @@ func (s *server) transferAudio(ctx context.Context, j *jobState, engine nativeCl
 	if budget <= 0 || (format.ContentLength > 0 && format.ContentLength > budget) {
 		return result, errLimit
 	}
-	result = mediaFile{ID: randomID(16), Name: fmt.Sprintf("%06d-%s.mp3", outputIndex, video.ID), MimeType: "audio/mpeg", MediaType: "audio"}
+	result = mediaFile{ID: randomID(16), Name: fmt.Sprintf("%06d-%s.mp3", outputIndex, video.ID), MimeType: "audio/mpeg", MediaType: "audio", naming: namingValues{Codec: "mp3"}}
 	applyVideoMetadata(&result, video)
 	result.Category = j.Category
 	result.ManagedAvailable = true
@@ -1466,7 +1489,7 @@ func (s *server) transferOriginalAudio(ctx context.Context, j *jobState, engine 
 	if budget <= 0 || (format.ContentLength > 0 && format.ContentLength > budget) {
 		return result, errLimit
 	}
-	result = mediaFile{ID: randomID(16), Name: fmt.Sprintf("%06d-%s.m4a", outputIndex, video.ID), MimeType: "audio/mp4", MediaType: "audio"}
+	result = mediaFile{ID: randomID(16), Name: fmt.Sprintf("%06d-%s.m4a", outputIndex, video.ID), MimeType: "audio/mp4", MediaType: "audio", naming: formatNamingValues(format)}
 	applyVideoMetadata(&result, video)
 	result.Category = j.Category
 	result.ManagedAvailable = true
@@ -1696,11 +1719,22 @@ func (s *server) transfer(ctx context.Context, j *jobState, engine nativeClient,
 	return s.transferProgressive(ctx, j, engine, video, selection.video, selection.kind, queueIndex, outputIndex, budget)
 }
 
+func formatNamingValues(format *youtube.Format) namingValues {
+	if format == nil {
+		return namingValues{}
+	}
+	values := namingValues{Codec: namingCodec(format.MimeType)}
+	if format.FPS > 0 {
+		values.FPS = strconv.Itoa(format.FPS)
+	}
+	return values
+}
+
 func (s *server) transferProgressive(ctx context.Context, j *jobState, engine nativeClient, video *youtube.Video, format *youtube.Format, kind string, queueIndex, outputIndex int, budget int64) (result mediaFile, err error) {
 	if budget <= 0 || format.ContentLength > budget {
 		return result, errLimit
 	}
-	result = mediaFile{ID: randomID(16), Name: fmt.Sprintf("%06d-%s.%s", outputIndex, video.ID, strings.TrimPrefix(kind, "video/")), Height: format.Height, MimeType: kind}
+	result = mediaFile{ID: randomID(16), Name: fmt.Sprintf("%06d-%s.%s", outputIndex, video.ID, strings.TrimPrefix(kind, "video/")), Height: format.Height, MimeType: kind, naming: formatNamingValues(format)}
 	path := filepath.Join(j.dir, result.Name)
 	part := path + ".part"
 	rangeFormat := s.resolveRangeFormat(ctx, engine, video, format)
@@ -1875,7 +1909,7 @@ func (s *server) transferAdaptiveMP4(ctx context.Context, j *jobState, engine na
 	}
 	result = mediaFile{
 		ID: randomID(16), Name: fmt.Sprintf("%06d-%s.mp4", outputIndex, video.ID),
-		Height: selection.video.Height, MimeType: "video/mp4",
+		Height: selection.video.Height, MimeType: "video/mp4", naming: formatNamingValues(selection.video),
 	}
 	path := filepath.Join(j.dir, result.Name)
 	_ = os.Remove(path)
@@ -1987,7 +2021,7 @@ func (s *server) transferAdaptiveWebM(ctx context.Context, j *jobState, engine n
 	}
 	result = mediaFile{
 		ID: randomID(16), Name: fmt.Sprintf("%06d-%s.webm", outputIndex, video.ID),
-		Height: selection.video.Height, MimeType: "video/webm",
+		Height: selection.video.Height, MimeType: "video/webm", naming: formatNamingValues(selection.video),
 	}
 	path := filepath.Join(j.dir, result.Name)
 	_ = os.Remove(path)

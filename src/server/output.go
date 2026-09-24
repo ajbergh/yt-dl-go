@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"unicode"
 )
@@ -24,6 +25,7 @@ func defaultAppSettings() AppSettings {
 		DefaultQuality: "best", DefaultVideoStrategy: "best", MaxConcurrentDownloads: 3,
 		DownloadLocation: filepath.Join(home, "Downloads", "YouTube_Vault"),
 		NamingPattern:    defaultNamingPattern, SubfolderSorting: "channel",
+		OutputFileMode: "0600", OutputFolderMode: "0700",
 		DefaultCategory: "General", UserCategories: append([]string(nil), defaultUserCategories...),
 		StorageMode: "managed-published",
 	}
@@ -59,6 +61,12 @@ func mergeAppSettings(defaults, settings AppSettings) AppSettings {
 	if settings.StorageMode == "" {
 		settings.StorageMode = defaults.StorageMode
 	}
+	if settings.OutputFileMode == "" {
+		settings.OutputFileMode = defaults.OutputFileMode
+	}
+	if settings.OutputFolderMode == "" {
+		settings.OutputFolderMode = defaults.OutputFolderMode
+	}
 	return settings
 }
 
@@ -88,12 +96,14 @@ func validateAppSettings(settings AppSettings) error {
 	if len(settings.NamingPattern) == 0 || len(settings.NamingPattern) > 240 || strings.ContainsAny(settings.NamingPattern, `/\\`) {
 		return errors.New("namingPattern must be 1–240 characters and cannot contain path separators")
 	}
-	template := settings.NamingPattern
-	for _, token := range []string{"{channel}", "{title}", "{resolution}", "{category}"} {
-		template = strings.ReplaceAll(template, token, "value")
-	}
-	if strings.ContainsAny(template, "{}") {
+	if !validNamingPattern(settings.NamingPattern) {
 		return errors.New("namingPattern contains an unsupported token")
+	}
+	if _, err := parseOutputMode(settings.OutputFileMode); err != nil {
+		return errors.New("outputFileMode must be a four-digit octal permission from 0000 to 0777")
+	}
+	if _, err := parseOutputMode(settings.OutputFolderMode); err != nil {
+		return errors.New("outputFolderMode must be a four-digit octal permission from 0000 to 0777")
 	}
 	if !validVideoStrategy(settings.DefaultVideoStrategy) {
 		return errors.New("defaultVideoStrategy must be best, compatibility, vp9, or av1")
@@ -132,6 +142,116 @@ func validateAppSettings(settings AppSettings) error {
 	return nil
 }
 
+var namingTokens = []string{"{channel}", "{title}", "{resolution}", "{category}", "{id}", "{upload_date}", "{playlist}", "{index}", "{ext}", "{fps}", "{codec}"}
+
+func validNamingPattern(pattern string) bool {
+	if strings.ContainsAny(pattern, `/\\`) || strings.ContainsRune(pattern, '\x00') {
+		return false
+	}
+	for i := 0; i < len(pattern); {
+		if pattern[i] == '}' {
+			return false
+		}
+		if pattern[i] != '{' {
+			i++
+			continue
+		}
+		end := strings.IndexByte(pattern[i:], '}')
+		if end < 0 {
+			return false
+		}
+		token := pattern[i : i+end+1]
+		known := false
+		for _, allowed := range namingTokens {
+			if token == allowed {
+				known = true
+				break
+			}
+		}
+		if !known {
+			return false
+		}
+		i += end + 1
+	}
+	return true
+}
+
+func parseOutputMode(value string) (os.FileMode, error) {
+	if len(value) != 4 || value[0] != '0' {
+		return 0, errors.New("mode must use four octal digits")
+	}
+	parsed, err := strconv.ParseUint(value, 8, 16)
+	if err != nil || parsed > 0777 {
+		return 0, errors.New("mode must be between 0000 and 0777")
+	}
+	return os.FileMode(parsed), nil
+}
+
+type namingValues struct {
+	Channel, Title, Resolution, Category string
+	ID, UploadDate, Playlist, Index, Ext string
+	FPS, Codec                           string
+}
+
+func expandNamingPattern(pattern string, values namingValues) string {
+	tokens := map[string]string{
+		"{channel}": values.Channel, "{title}": values.Title, "{resolution}": values.Resolution, "{category}": values.Category,
+		"{id}": values.ID, "{upload_date}": values.UploadDate, "{playlist}": values.Playlist, "{index}": values.Index,
+		"{ext}": values.Ext, "{fps}": values.FPS, "{codec}": values.Codec,
+	}
+	var output strings.Builder
+	for i := 0; i < len(pattern); {
+		if pattern[i] != '{' {
+			output.WriteByte(pattern[i])
+			i++
+			continue
+		}
+		end := strings.IndexByte(pattern[i:], '}')
+		if end < 0 {
+			output.WriteString(pattern[i:])
+			break
+		}
+		end += i + 1
+		if value, ok := tokens[pattern[i:end]]; ok {
+			output.WriteString(value)
+			i = end
+			continue
+		}
+		output.WriteString(pattern[i:end])
+		i = end
+	}
+	return output.String()
+}
+
+func namingCodec(mimeType string) string {
+	start := strings.Index(mimeType, `codecs="`)
+	if start < 0 {
+		return ""
+	}
+	start += len(`codecs="`)
+	end := strings.IndexByte(mimeType[start:], '"')
+	if end < 0 {
+		return ""
+	}
+	codec := strings.ToLower(strings.TrimSpace(strings.SplitN(mimeType[start:start+end], ",", 2)[0]))
+	switch {
+	case strings.HasPrefix(codec, "avc1"):
+		return "h264"
+	case strings.HasPrefix(codec, "vp09"), strings.HasPrefix(codec, "vp9"):
+		return "vp9"
+	case strings.HasPrefix(codec, "av01"):
+		return "av1"
+	case strings.HasPrefix(codec, "mp4a"):
+		return "aac"
+	case strings.HasPrefix(codec, "opus"):
+		return "opus"
+	case strings.HasPrefix(codec, "mp3"):
+		return "mp3"
+	default:
+		return codec
+	}
+}
+
 func (s *server) publishOutput(j *jobState, file *mediaFile) error {
 	if j.DownloadLocation == "" || j.NamingPattern == "" {
 		return errors.New("job has no captured output preferences")
@@ -160,12 +280,10 @@ func (s *server) publishOutput(j *jobState, file *mediaFile) error {
 	if file.Height > 0 {
 		resolution = fmt.Sprintf("%dp", file.Height)
 	}
-	baseName := j.NamingPattern
-	for token, value := range map[string]string{
-		"{channel}": channel, "{title}": title, "{resolution}": resolution, "{category}": category,
-	} {
-		baseName = strings.ReplaceAll(baseName, token, value)
-	}
+	values := file.naming
+	values.Channel, values.Title, values.Resolution, values.Category = channel, title, resolution, category
+	values.Ext = strings.TrimPrefix(extension, ".")
+	baseName := expandNamingPattern(j.NamingPattern, values)
 	baseName = sanitizePathComponent(baseName)
 	if baseName == "" {
 		baseName = "Untitled"
@@ -183,14 +301,19 @@ func (s *server) publishOutput(j *jobState, file *mediaFile) error {
 	default:
 		return errors.New("job contains an unsupported folder sorting rule")
 	}
-	if err := os.MkdirAll(folder, 0700); err != nil {
+	folderMode, err := parseOutputMode(j.OutputFolderMode)
+	if err != nil {
+		return fmt.Errorf("invalid captured output folder mode: %w", err)
+	}
+	if err := os.MkdirAll(folder, folderMode); err != nil {
 		return fmt.Errorf("create download destination: %w", err)
 	}
+	// Apply the selected mode to directories created or reused for published files.
+	if err := os.Chmod(folder, folderMode); err != nil {
+		return fmt.Errorf("set download destination permissions: %w", err)
+	}
 	for suffix := 0; suffix < 10000; suffix++ {
-		name := baseName + extension
-		if suffix > 0 {
-			name = fmt.Sprintf("%s (%d)%s", baseName, suffix+1, extension)
-		}
+		name := outputNameForPattern(baseName, extension, suffix)
 		destination := filepath.Join(folder, name)
 		if _, err := os.Lstat(destination); err == nil {
 			continue
@@ -213,7 +336,18 @@ func (s *server) publishOutput(j *jobState, file *mediaFile) error {
 			sourcePath := filepath.Join(j.dir, file.Name)
 			moveErr := durableRename(sourcePath, temporaryPath)
 			if moveErr == nil {
+				fileMode, modeErr := parseOutputMode(j.OutputFileMode)
+				if modeErr != nil {
+					_ = durableRename(temporaryPath, sourcePath)
+					return fmt.Errorf("invalid captured output file mode: %w", modeErr)
+				}
+				if modeErr = os.Chmod(temporaryPath, fileMode); modeErr != nil {
+					_ = os.Chmod(temporaryPath, 0600)
+					_ = durableRename(temporaryPath, sourcePath)
+					return fmt.Errorf("set download file permissions: %w", modeErr)
+				}
 				if err := publishTemporary(temporaryPath, destination); err != nil {
+					_ = os.Chmod(temporaryPath, 0600)
 					_ = durableRename(temporaryPath, sourcePath)
 					return fmt.Errorf("publish moved download output: %w", err)
 				}
@@ -232,6 +366,15 @@ func (s *server) publishOutput(j *jobState, file *mediaFile) error {
 			closeErr := source.Close()
 			if copyErr != nil || closeErr != nil {
 				return fmt.Errorf("write temporary download output: %w", errors.Join(copyErr, closeErr))
+			}
+			fileMode, modeErr := parseOutputMode(j.OutputFileMode)
+			if modeErr != nil {
+				_ = os.Remove(temporary)
+				return fmt.Errorf("invalid captured output file mode: %w", modeErr)
+			}
+			if modeErr = os.Chmod(temporary, fileMode); modeErr != nil {
+				_ = os.Remove(temporary)
+				return fmt.Errorf("set download file permissions: %w", modeErr)
 			}
 			if err := publishTemporary(temporary, destination); err != nil {
 				if errors.Is(err, os.ErrExist) {
@@ -252,6 +395,18 @@ func (s *server) publishOutput(j *jobState, file *mediaFile) error {
 		return nil
 	}
 	return errors.New("could not choose an unused output filename")
+}
+
+func outputNameForPattern(baseName, extension string, suffix int) string {
+	outputExtension := extension
+	if actualExtension := filepath.Ext(baseName); strings.EqualFold(actualExtension, extension) {
+		baseName = strings.TrimSuffix(baseName, actualExtension)
+		outputExtension = actualExtension
+	}
+	if suffix > 0 {
+		baseName += fmt.Sprintf(" (%d)", suffix+1)
+	}
+	return baseName + outputExtension
 }
 
 func sanitizePathComponent(value string) string {
