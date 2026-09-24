@@ -545,28 +545,6 @@ func replaceQueueItems(tx *sql.Tx, jobID string, items []queueItem) error {
 	return nil
 }
 
-func (s *jobStore) loadQueueItems() (map[string][]queueItem, error) {
-	result, err := s.loadQueueItemsQuery("", nil)
-	if err != nil {
-		return nil, err
-	}
-	cache := make(map[string]map[string][]byte, len(result))
-	for jobID, items := range result {
-		cache[jobID] = make(map[string][]byte, len(items))
-		for _, item := range items {
-			encoded, err := json.Marshal(item)
-			if err != nil {
-				return nil, err
-			}
-			cache[jobID][queueItemKey(item)] = encoded
-		}
-	}
-	s.queueItemsCacheMu.Lock()
-	s.queueItemsCache = cache
-	s.queueItemsCacheMu.Unlock()
-	return result, nil
-}
-
 func (s *jobStore) loadQueueItemsQuery(where string, args []any) (map[string][]queueItem, error) {
 	query := `SELECT job_id,position,playlist_index,video_id,title,author,duration_seconds,thumbnail_url,status,progress,downloaded_bytes,total_bytes,speed_bytes_per_sec,eta_seconds,error,file_id,file_ids_json,retry_requested
 		FROM queue_items ` + where + ` ORDER BY job_id,position`
@@ -2017,6 +1995,7 @@ func (s *jobStore) loadJobsFiltered(root, jobID, selection string) ([]*storedJob
 				_ = files.Close()
 				return nil, err
 			}
+		restoreStoredFileMediaType(&file, j.MediaType)
 			file.ManagedAvailable = managedAvailable != 0
 			file.PublishedAvailable = publishedAvailable != 0
 			file.ThumbnailLocalAvailable = thumbnailLocalAvailable != 0
@@ -2043,6 +2022,7 @@ func (s *jobStore) loadJobsFiltered(root, jobID, selection string) ([]*storedJob
 					return nil, fmt.Errorf("decode saved chapter files: %w", err)
 				}
 				for _, stored := range additional {
+					restoreStoredFileMediaType(&stored.File, j.MediaType)
 					stored.File.OutputPath = stored.OutputPath
 					loaded.items[index] = append(loaded.items[index], stored.File)
 					loaded.job.Files = append(loaded.job.Files, stored.File)
@@ -2079,6 +2059,12 @@ func (s *jobStore) loadJobsFiltered(root, jobID, selection string) ([]*storedJob
 		result = append(result, loaded)
 	}
 	return result, nil
+}
+
+func restoreStoredFileMediaType(file *mediaFile, jobMediaType string) {
+	if file != nil && file.MediaType == "" && jobMediaType == "audio" {
+		file.MediaType = "audio"
+	}
 }
 
 // loadLibraryJobs builds the Library read model from durable finalized-file
