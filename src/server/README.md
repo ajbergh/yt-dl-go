@@ -75,7 +75,7 @@ Control-plane API responses and errors return JSON. `GET /api/downloads/{ticket}
 
 | Endpoint | Purpose |
 | --- | --- |
-| `GET /api/health` | Reports the native engine and capabilities |
+| `GET /api/health` | Reports native-engine readiness, configured YouTube extraction profiles, and capabilities. The extractor probe validates local profile configuration; it does not contact YouTube. |
 | `POST /api/inspect` | Inspects a video or playlist and returns metadata, supported quality ceilings, and available/sample caption tracks |
 | `GET /api/settings` | Reads persisted UI preferences |
 | `PUT /api/settings` | Saves validated preferences to SQLite |

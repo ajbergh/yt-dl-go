@@ -192,7 +192,7 @@ func (p *chromeBrowserProvider) Prepare(ctx context.Context, id string, format *
 	if format == nil || format.ItagNo <= 0 || !videoID.MatchString(id) {
 		return errBrowserUnavailable
 	}
-	videoURL := "https://www.youtube.com/watch?v=" + url.QueryEscape(id)
+	videoURL := browserWatchURL(id)
 	quality := ""
 	if format.Height > 0 {
 		quality = "hd" + strconv.Itoa(format.Height)
@@ -260,6 +260,11 @@ func (p *chromeBrowserProvider) Prepare(ctx context.Context, id string, format *
 		return errBrowserUnavailable
 	}
 	return nil
+}
+
+func browserWatchURL(id string) string {
+	query := url.Values{"v": []string{id}, "hl": []string{"en"}}
+	return "https://www.youtube.com/watch?" + query.Encode()
 }
 
 func (p *chromeBrowserProvider) prepareCapture(id string, format *youtube.Format, metrics *browserCaptureMetrics) error {

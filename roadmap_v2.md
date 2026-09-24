@@ -398,7 +398,7 @@ Adaptive H.264 MP4 output takes its AAC track from the progressive itag-18 strea
 
 ### M2.7 Browser session pooling and event-driven readiness
 
-**Status:** [~] Implementation underway on `roadmap/m2-7-browser-pool-readiness` · **P1** · **Area:** engine / performance
+**Status:** [x] Merged by PR #41 · **P1** · **Area:** engine / performance
 
 - `browserFactory` is called per adaptive item (`worker.go:1971, 2106`). Each item owns a Chrome process. `Prepare` has 8 seconds of fixed sleeps plus nested JavaScript timers (`browser_provider.go:195-238`), so up to 6 items can each start a Chrome and wait serially.
 - A capture has a byte-aware deadline capped at 45 minutes and may be retried twice per track; serial MP4 video/audio can repeat that path for each track before native fallback.
@@ -410,23 +410,25 @@ Adaptive H.264 MP4 output takes its AAC track from the progressive itag-18 strea
 - Cap browser-path time per item (e.g. a few minutes of no progress means fall back).
 - Deduplicate `CaptureTrack`/`CaptureTracks` (about 150 duplicated lines, `browser_provider.go:229-531`).
 
-**Progress (2026-09-24):** RepoTracer confirmed that providers own allocator/browser contexts and `Close` cancels the whole process, while capture state and CDP routing are target-specific. M2.7 now uses one process-owned browser pool with independent per-item tab leases; lease cleanup cannot terminate sibling captures. The pool shuts down after two idle minutes and at service shutdown. Preparation's fixed sleeps and nested timers have been replaced by bounded media-metadata and playing-state waits. Single- and dual-track capture now share setup, attachment, progress/stall monitoring, keep-alive, completion, and cleanup logic. The existing one-minute no-progress timeout is enforced per browser attempt (two attempts maximum per track); MP4's serial video/audio path therefore bounds consecutive stalled browser work before native fallback while retaining byte-aware completion time for active transfers. Six-way lease isolation, idle shutdown/restart, and pool shutdown tests pass with `go test ./...`; `go vet ./...` and `git diff --check` pass. Browser E2E and platform validation pending.
+**Progress (2026-09-24):** Merged by [PR #41](https://github.com/ajbergh/yt-dl-go/pull/41) (`4a1134d`). The service now owns one pooled Chrome process with independent per-item tab leases, two-minute idle shutdown, and service-shutdown cleanup. Preparation's fixed sleeps and nested timers are replaced by bounded metadata and playing-state waits. Single- and dual-track capture share setup, attachment, progress/stall monitoring, keep-alive, completion, and cleanup logic. The one-minute no-progress timeout remains enforced per browser attempt (two attempts maximum per track); byte-aware transfer deadlines remain for active captures. Six-way lease isolation, idle restart/shutdown, Go/race tests, vet, browser E2E, CodeQL, and Linux/Windows/macOS package builds passed. An initial lint run identified an obsolete constructor, which was removed before the green reruns.
 
 ### M2.8 Extraction resilience against YouTube changes
 
-**Status:** [ ] · **P1** · **Area:** engine / resilience
+**Status:** [~] Implementation underway on `roadmap/m2-8-extractor-resilience` · **P1** · **Area:** engine / resilience
 
-- All extraction goes through `kkdai/youtube/v2`, forced to `AndroidClient` (`native.go:18-20`), and the range requests hard-code the Android User-Agent and Origin (`worker.go:2088-2090`). One upstream break stops every download.
-- The browser path is DOM- and locale-dependent: English consent labels, `.ytp-settings-button`, and "Quality" text (`browser_provider.go:176-213`).
+- Native extraction uses `kkdai/youtube/v2`; before M2.8 it was forced to `AndroidClient`, and range requests hard-coded that profile's User-Agent and Origin. One upstream break could stop every download.
+- Browser preparation now uses player API calls and no longer depends on the Settings/Quality DOM text; consent dismissal still checks English labels (`browser_provider.go:199-208`).
 - SABR/UMP decoding uses hand-coded protobuf field numbers (`sabr.go:16-20, 736-767`).
 
 #### Scope
 
-- Put an `extractor` interface in front of kkdai with ordered client profiles (Android → iOS → TV-embedded → web) and automatic fallback.
+- Put an `extractor` interface in front of kkdai with ordered supported client profiles (Android → iOS → embedded-player → web) and automatic fallback. The pinned dependency exports no TV client profile; do not invent one without a verified implementation.
 - Run a startup/self-test capability probe and report it in `/api/health`.
 - Make browser automation locale-independent (use `hl=en` or player API calls instead of DOM text).
 - Build a recorded-fixture corpus of player responses and UMP streams, with drift tests that fail loudly when the format changes.
-- Track kkdai upstream releases with a Dependabot schedule so fixes can be adopted quickly.
+- Keep kkdai upstream releases monitored through Dependabot (weekly Go-module updates are already configured).
+
+**Progress (2026-09-24):** M2.8 is in implementation on `roadmap/m2-8-extractor-resilience`. RepoTracer confirmed the pinned kkdai v2.10.6 dependency exports Android, iOS, embedded-player, and web profiles but no TV profile. Profile switching is serialized around the dependency call; the chosen profile follows metadata into stream URL resolution, range request headers, and resume fingerprints. Retry classification preserves permanent access/playlist errors, and a missing profile set fails explicitly. HTTP 200 is now rejected for nonzero range offsets. `/api/health` reports a local profile-configuration probe and profile list (it does not claim YouTube is reachable); browser watch URLs pin `hl=en`. Tests parse a checked-in representative player-response fixture through the pinned library and cover generated UMP fixtures. Local Go tests, `go vet`, frontend typecheck/build, and lint pass; lint reports 20 existing warnings. CI, cross-platform builds, browser E2E, and expanded recorded player/UMP capture coverage are pending. Weekly Go Dependabot already covers the dependency.
 
 ### M2.9 Bandwidth limiter improvements
 

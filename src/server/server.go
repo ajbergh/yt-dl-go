@@ -401,9 +401,18 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Path == "/api/health" && r.Method == http.MethodGet {
 		info := currentBuildInfo()
 		degraded, consecutiveFailures := s.persistenceDegraded()
+		extractorHealth := youtubeExtractorHealth()
+		missing := make([]string, 0, 2)
+		if s.engine == nil {
+			missing = append(missing, "native-engine")
+		}
+		if !extractorHealth.Ready {
+			missing = append(missing, "youtube-extractor-profiles")
+		}
 		reply(w, 200, map[string]any{
-			"ready": s.engine != nil, "missing": []string{}, "engine": "native-go",
-			"version": info.Version, "commit": info.Commit, "buildDate": info.Date,
+			"ready": len(missing) == 0, "missing": missing, "engine": "native-go",
+			"extractor": extractorHealth,
+			"version":   info.Version, "commit": info.Commit, "buildDate": info.Date,
 			"degraded": degraded, "persistence": map[string]any{"degraded": degraded, "consecutiveFailures": consecutiveFailures},
 			"capabilities": map[string]bool{"combinedStreamsOnly": false, "adaptiveStreamsSupported": true, "externalBinariesRequired": false,
 				"mp3AudioSupported": true, "pureGoAudioConversion": true, "captionsSupported": true},
