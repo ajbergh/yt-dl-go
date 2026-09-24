@@ -28,6 +28,7 @@ func defaultAppSettings() AppSettings {
 		OutputFileMode: "0600", OutputFolderMode: "0700",
 		DefaultCategory: "General", UserCategories: append([]string(nil), defaultUserCategories...),
 		StorageMode: "managed-published",
+		Retention:   "never", MaxJobBytes: 10 << 30, JobTimeout: "none", DownloadSlots: 4,
 	}
 }
 
@@ -67,6 +68,18 @@ func mergeAppSettings(defaults, settings AppSettings) AppSettings {
 	if settings.OutputFolderMode == "" {
 		settings.OutputFolderMode = defaults.OutputFolderMode
 	}
+	if settings.Retention == "" {
+		settings.Retention = defaults.Retention
+	}
+	if settings.MaxJobBytes == 0 {
+		settings.MaxJobBytes = defaults.MaxJobBytes
+	}
+	if settings.JobTimeout == "" {
+		settings.JobTimeout = defaults.JobTimeout
+	}
+	if settings.DownloadSlots == 0 {
+		settings.DownloadSlots = defaults.DownloadSlots
+	}
 	return settings
 }
 
@@ -85,6 +98,21 @@ func resolveJobCategory(settings AppSettings, requested string) (string, error) 
 }
 
 func validateAppSettings(settings AppSettings) error {
+	if settings.MaxJobBytes < 1 {
+		return errors.New("maxJobBytes must be a positive byte count")
+	}
+	if _, err := parseJobTimeoutSetting(settings.JobTimeout); err != nil {
+		return err
+	}
+	if _, err := parseRetentionSetting(settings.Retention); err != nil {
+		return err
+	}
+	if settings.DownloadSlots < 1 || settings.DownloadSlots > 16 {
+		return errors.New("downloadSlots must be between 1 and 16")
+	}
+	if len(settings.ChromePath) > 32760 || strings.ContainsRune(settings.ChromePath, '\x00') {
+		return errors.New("chromePath is too long or contains an invalid character")
+	}
 	location := strings.TrimSpace(settings.DownloadLocation)
 	if location == "" || len(location) > 32760 || strings.ContainsRune(location, '\x00') || !filepath.IsAbs(location) {
 		return errors.New("downloadLocation must be an absolute path")

@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type Dispatch, type FormEvent, type SetSta
 import {
 	Check, Download, ExternalLink, FileText, Folder, FolderTree, Gauge, HardDrive, LoaderCircle, Plus, RefreshCw, ShieldCheck, Sparkles, X,
 } from "lucide-react";
-import { api, apiBlob, type AppSettings, type BuildInfo, type CorruptionDiagnostics, type Quality, type ServiceConnection, type UpdateStatus, type VideoStrategy } from "../lib/downloader";
+import { api, apiBlob, type AppSettings, type BuildInfo, type CorruptionDiagnostics, type Quality, type RuntimeSettingSources, type ServiceConnection, type UpdateStatus, type VideoStrategy } from "../lib/downloader";
 import { namingTokenNames, previewFilename, sanitizeFilenameComponent, type NamingValues } from "../lib/naming";
 import {
   button, field, notificationAPI, panel, primaryButton, qualityLabels, videoStrategyLabels,
@@ -13,6 +13,7 @@ type SettingsPageProps = {
   serviceReady: boolean;
   serviceError: string;
   settings: AppSettings;
+  runtimeSettingSources: RuntimeSettingSources;
   savingSettings: boolean;
   settingsSaved: boolean;
   mp3Supported: boolean;
@@ -32,7 +33,7 @@ type SettingsPageProps = {
 };
 
 export function SettingsPage({
-  connection, serviceReady, serviceError, settings, savingSettings, settingsSaved, mp3Supported,
+  connection, serviceReady, serviceError, settings, runtimeSettingSources, savingSettings, settingsSaved, mp3Supported,
   buildInfo, updateStatus, updateError, checkingUpdates, checkForUpdates,
   newCategoryInput, setNewCategoryInput, savePreferences, selectDownloadFolder, changeSetting,
   addCategory, removeCategory, toggleNotifications,
@@ -73,6 +74,39 @@ export function SettingsPage({
           </section>
 
           <form onSubmit={savePreferences} className="space-y-5">
+            <section className={`${panel} space-y-4 p-5 sm:p-6`} aria-labelledby="runtime-settings-heading">
+              <div className="border-b border-neutral-800 pb-3">
+                <h3 id="runtime-settings-heading" className="text-sm font-bold">Service runtime limits</h3>
+                <p className="mt-1 max-w-3xl text-xs leading-relaxed text-neutral-400">These values are saved to SQLite and applied when the service starts. Matching environment variables override the saved values. Restart the service after editing a saved runtime setting.</p>
+              </div>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <label className="block text-xs font-medium text-neutral-300">Finished Library retention
+                  <input aria-label="Library retention" type="text" className={`${field} mt-1.5`} value={settings.retention} onChange={event => changeSetting("retention", event.target.value)} placeholder="never or 720h" />
+                  <span className="mt-1 block text-[10px] leading-relaxed text-neutral-500">Use “never” to keep finished records, or a Go duration such as 720h. Minimum active retention is 5m.</span>
+                  <RuntimeSettingSource value={runtimeSettingSources.retention} />
+                </label>
+                <label className="block text-xs font-medium text-neutral-300">Maximum bytes per job
+                  <input aria-label="Maximum bytes per job" type="number" min="1" max="9007199254740991" step="1" className={`${field} mt-1.5`} value={settings.maxJobBytes} onChange={event => changeSetting("maxJobBytes", Number(event.target.value))} />
+                  <span className="mt-1 block text-[10px] leading-relaxed text-neutral-500">Default: 10 GiB. This limit applies to each new job after restart.</span>
+                  <RuntimeSettingSource value={runtimeSettingSources.maxJobBytes} />
+                </label>
+                <label className="block text-xs font-medium text-neutral-300">Overall job timeout
+                  <input aria-label="Overall job timeout" type="text" className={`${field} mt-1.5`} value={settings.jobTimeout} onChange={event => changeSetting("jobTimeout", event.target.value)} placeholder="none or 2h" />
+                  <span className="mt-1 block text-[10px] leading-relaxed text-neutral-500">Use “none” or “0” to disable the overall deadline, or enter at least 1s. Item transfers keep their own deadlines.</span>
+                  <RuntimeSettingSource value={runtimeSettingSources.jobTimeout} />
+                </label>
+                <label className="block text-xs font-medium text-neutral-300">Chrome/Chromium executable path
+                  <input aria-label="Chrome executable path" type="text" className={`${field} mt-1.5 font-mono text-xs`} value={settings.chromePath} onChange={event => changeSetting("chromePath", event.target.value)} placeholder="Use platform browser discovery" />
+                  <span className="mt-1 block text-[10px] leading-relaxed text-neutral-500">Optional. Leave blank to use platform browser discovery. CHROME_PATH overrides this saved value.</span>
+                  <RuntimeSettingSource value={runtimeSettingSources.chromePath} />
+                </label>
+                <label className="block text-xs font-medium text-neutral-300 sm:col-span-2">Concurrent file and ZIP responses <span className="float-right font-mono text-rose-300">{settings.downloadSlots}</span>
+                  <input aria-label="Concurrent file responses" type="range" min="1" max="16" step="1" value={settings.downloadSlots} onChange={event => changeSetting("downloadSlots", Number(event.target.value))} className="mt-2 w-full accent-rose-600" />
+                  <span className="mt-1 block text-[10px] leading-relaxed text-neutral-500">Separate from Maximum concurrent downloads above; this limits simultaneous saved-file/ZIP responses.</span>
+                  <RuntimeSettingSource value={runtimeSettingSources.downloadSlots} />
+                </label>
+              </div>
+            </section>
             <section className={`${panel} space-y-4 p-5 sm:p-6`}>
               <div className="flex flex-wrap items-start justify-between gap-3 border-b border-neutral-800 pb-4">
                 <div><h3 className="text-sm font-bold">Preferences & output configuration</h3><p className="mt-1 text-xs text-neutral-400">Choose where finished files go, how they are named, and how folders are organized.</p></div>
@@ -218,6 +252,10 @@ export function SettingsPage({
             <section className={`${panel} p-5`}><div className="flex items-start gap-3"><div className="grid size-9 shrink-0 place-items-center rounded-xl border border-blue-800/50 bg-blue-950/30 text-blue-300"><Gauge className="size-4" aria-hidden="true" /></div><div><h3 className="text-xs font-bold">What this backend supports</h3><ul className="mt-2 space-y-1.5 text-[11px] leading-relaxed text-neutral-400"><li>Video and playlist downloads, including adaptive H.264/AAC MP4, high-resolution VP9/AV1 + Opus WebM remuxing, and pure-Go MP3 conversion for AAC audio.</li><li>Up to six concurrent jobs, multi-routine stream transfers, fair global bandwidth limiting, pause/resume, retries, live speed/ETA, and optional system notifications.</li><li>Quality ceilings: best, 2160p (4K), 1440p, 1080p, 720p, or 480p, plus Best/Compatibility MP4/VP9/AV1 video strategies. Actual output quality and container are reported after completion.</li><li>Files are copied to the selected destination and remain available in the private SQLite-backed library.</li></ul>{!mp3Supported && <p className="mt-3 flex items-start gap-1.5 text-[10px] leading-relaxed text-amber-300"><ShieldCheck className="mt-0.5 size-3 shrink-0" aria-hidden="true" />This backend does not support MP3 conversion.</p>}</div></div></section>
         </div>
   );
+}
+
+function RuntimeSettingSource({ value }: { value?: string }) {
+  return <span className="mt-1 block text-[10px] text-neutral-500">Active source: <span className="font-medium text-neutral-300">{value || "Loading…"}</span></span>;
 }
 
 function CorruptionDiagnosticsPanel({ connection, serviceReady }: Pick<SettingsPageProps, "connection" | "serviceReady">) {

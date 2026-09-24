@@ -879,7 +879,7 @@ func TestRetentionCleansEmptyFailedAndCancelledJobs(t *testing.T) {
 }
 
 func TestRetentionConfig(t *testing.T) {
-	for _, key := range []string{"ADDR", "API_TOKEN", "ALLOWED_HOSTS", "ALLOWED_ORIGINS", "MAX_JOBS", "MAX_JOB_BYTES", "JOB_TIMEOUT"} {
+	for _, key := range []string{"ADDR", "API_TOKEN", "ALLOWED_HOSTS", "ALLOWED_ORIGINS", "MAX_JOBS", "MAX_JOB_BYTES", "JOB_TIMEOUT", "DOWNLOAD_SLOTS"} {
 		t.Setenv(key, "")
 	}
 	for _, entry := range []struct {

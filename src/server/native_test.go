@@ -1025,7 +1025,7 @@ func TestItemDeadlineErrorPreservesCancellation(t *testing.T) {
 }
 
 func TestOptionalJobTimeoutConfig(t *testing.T) {
-	for _, key := range []string{"ADDR", "API_TOKEN", "ALLOWED_HOSTS", "ALLOWED_ORIGINS", "MAX_JOBS", "MAX_JOB_BYTES", "JOB_TIMEOUT", "RETENTION"} {
+	for _, key := range []string{"ADDR", "API_TOKEN", "ALLOWED_HOSTS", "ALLOWED_ORIGINS", "MAX_JOBS", "MAX_JOB_BYTES", "JOB_TIMEOUT", "RETENTION", "DOWNLOAD_SLOTS"} {
 		t.Setenv(key, "")
 	}
 	for _, entry := range []struct {
@@ -1049,6 +1049,33 @@ func TestOptionalJobTimeoutConfig(t *testing.T) {
 			}
 		} else if err != nil || config.timeout != entry.want {
 			t.Fatalf("JOB_TIMEOUT=%q parsed as %s, error=%v; want %s", entry.value, config.timeout, err, entry.want)
+		}
+	}
+}
+
+func TestDownloadSlotsEnvironmentOverride(t *testing.T) {
+	for _, key := range []string{"ADDR", "API_TOKEN", "ALLOWED_HOSTS", "ALLOWED_ORIGINS", "MAX_JOBS", "MAX_JOB_BYTES", "JOB_TIMEOUT", "RETENTION", "DOWNLOAD_SLOTS"} {
+		t.Setenv(key, "")
+	}
+	defaults, err := loadConfig()
+	if err != nil || defaults.downloadSlots != 4 || defaults.downloadSlotsEnv {
+		t.Fatalf("download slot defaults = %d/%v, err=%v", defaults.downloadSlots, defaults.downloadSlotsEnv, err)
+	}
+	for _, entry := range []struct {
+		value   string
+		want    int
+		wantErr bool
+	}{{"1", 1, false}, {"16", 16, false}, {"0", 0, true}, {"17", 0, true}, {"invalid", 0, true}} {
+		t.Setenv("DOWNLOAD_SLOTS", entry.value)
+		config, err := loadConfig()
+		if entry.wantErr {
+			if err == nil {
+				t.Fatalf("DOWNLOAD_SLOTS=%q accepted", entry.value)
+			}
+			continue
+		}
+		if err != nil || config.downloadSlots != entry.want || !config.downloadSlotsEnv {
+			t.Fatalf("DOWNLOAD_SLOTS=%q parsed as %d/%v, error=%v; want %d/environment", entry.value, config.downloadSlots, config.downloadSlotsEnv, err, entry.want)
 		}
 	}
 }
@@ -1136,7 +1163,7 @@ func TestSymlinksAndBindConfiguration(t *testing.T) {
 			t.Fatal("symlink opened as media")
 		}
 	}
-	for _, key := range []string{"ADDR", "API_TOKEN", "ALLOWED_HOSTS", "ALLOWED_ORIGINS", "MAX_JOBS", "MAX_JOB_BYTES", "JOB_TIMEOUT", "RETENTION"} {
+	for _, key := range []string{"ADDR", "API_TOKEN", "ALLOWED_HOSTS", "ALLOWED_ORIGINS", "MAX_JOBS", "MAX_JOB_BYTES", "JOB_TIMEOUT", "RETENTION", "DOWNLOAD_SLOTS"} {
 		t.Setenv(key, "")
 	}
 	c, err := loadConfig()

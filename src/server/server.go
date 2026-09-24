@@ -185,6 +185,27 @@ type server struct {
 	events              *eventBroker
 }
 
+func runtimeSettingSources(settings AppSettings, cfg config) map[string]string {
+	source := func(envOverride bool, envName string, active bool) string {
+		if envOverride {
+			return "Environment variable " + envName
+		}
+		if !active {
+			return "SQLite (restart required)"
+		}
+		return "SQLite (active)"
+	}
+	timeout, _ := parseJobTimeoutSetting(settings.JobTimeout)
+	retention, _ := parseRetentionSetting(settings.Retention)
+	return map[string]string{
+		"retention":     source(cfg.retainEnv, "RETENTION", cfg.retainEnv || retention == cfg.retain),
+		"maxJobBytes":   source(cfg.maxBytesEnv, "MAX_JOB_BYTES", cfg.maxBytesEnv || settings.MaxJobBytes == cfg.maxBytes),
+		"jobTimeout":    source(cfg.timeoutEnv, "JOB_TIMEOUT", cfg.timeoutEnv || timeout == cfg.timeout),
+		"chromePath":    source(cfg.browserPathEnv, "CHROME_PATH", cfg.browserPathEnv || settings.ChromePath == cfg.browserPath),
+		"downloadSlots": source(cfg.downloadSlotsEnv, "DOWNLOAD_SLOTS", cfg.downloadSlotsEnv || settings.DownloadSlots == cfg.downloadSlots),
+	}
+}
+
 func terminal(status string) bool {
 	return status == "completed" || status == "partial" || status == "failed" || status == "cancelled"
 }
@@ -1104,8 +1125,9 @@ func (s *server) handleSettings(w http.ResponseWriter, r *http.Request) {
 	case http.MethodGet:
 		s.mu.Lock()
 		settings := mergeAppSettings(defaultAppSettings(), s.settings)
+		sources := runtimeSettingSources(settings, s.cfg)
 		s.mu.Unlock()
-		reply(w, 200, map[string]AppSettings{"settings": settings})
+		reply(w, 200, map[string]any{"settings": settings, "sources": sources})
 	case http.MethodPut:
 		var patch struct {
 			DefaultQuality            *string   `json:"defaultQuality"`
@@ -1122,6 +1144,11 @@ func (s *server) handleSettings(w http.ResponseWriter, r *http.Request) {
 			DefaultCategory           *string   `json:"defaultCategory"`
 			UserCategories            *[]string `json:"userCategories"`
 			StorageMode               *string   `json:"storageMode"`
+			Retention                 *string   `json:"retention"`
+			MaxJobBytes               *int64    `json:"maxJobBytes"`
+			JobTimeout                *string   `json:"jobTimeout"`
+			ChromePath                *string   `json:"chromePath"`
+			DownloadSlots             *int      `json:"downloadSlots"`
 		}
 		if !decode(w, r, &patch) {
 			return
@@ -1170,6 +1197,21 @@ func (s *server) handleSettings(w http.ResponseWriter, r *http.Request) {
 		if patch.StorageMode != nil {
 			settings.StorageMode = *patch.StorageMode
 		}
+		if patch.Retention != nil {
+			settings.Retention = strings.TrimSpace(*patch.Retention)
+		}
+		if patch.MaxJobBytes != nil {
+			settings.MaxJobBytes = *patch.MaxJobBytes
+		}
+		if patch.JobTimeout != nil {
+			settings.JobTimeout = strings.TrimSpace(*patch.JobTimeout)
+		}
+		if patch.ChromePath != nil {
+			settings.ChromePath = *patch.ChromePath
+		}
+		if patch.DownloadSlots != nil {
+			settings.DownloadSlots = *patch.DownloadSlots
+		}
 		settings.DownloadLocation = filepath.Clean(strings.TrimSpace(settings.DownloadLocation))
 		if settings.DefaultQuality != "best" && settings.DefaultQuality != "2160" && settings.DefaultQuality != "1440" && settings.DefaultQuality != "1080" && settings.DefaultQuality != "720" && settings.DefaultQuality != "480" {
 			s.mu.Unlock()
@@ -1185,6 +1227,16 @@ func (s *server) handleSettings(w http.ResponseWriter, r *http.Request) {
 			s.mu.Unlock()
 			fail(w, 400, err.Error())
 			return
+		}
+		if duration, _ := parseJobTimeoutSetting(settings.JobTimeout); duration == 0 {
+			settings.JobTimeout = "none"
+		} else {
+			settings.JobTimeout = duration.String()
+		}
+		if duration, _ := parseRetentionSetting(settings.Retention); duration == 0 {
+			settings.Retention = "never"
+		} else {
+			settings.Retention = duration.String()
 		}
 		previousSettings := s.settings
 		s.settings = settings
@@ -1209,9 +1261,10 @@ func (s *server) handleSettings(w http.ResponseWriter, r *http.Request) {
 		}
 		s.recordPersistenceSuccess()
 		s.publishSettingsEventLocked(settings)
+		sources := runtimeSettingSources(settings, s.cfg)
 		s.notifySchedulerLocked()
 		s.mu.Unlock()
-		reply(w, 200, map[string]AppSettings{"settings": settings})
+		reply(w, 200, map[string]any{"settings": settings, "sources": sources})
 	default:
 		fail(w, 405, "Method not allowed")
 	}

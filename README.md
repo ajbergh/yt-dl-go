@@ -97,21 +97,22 @@ Update discovery is advisory only. The app links to the validated GitHub Release
 
 ## Configuration
 
-All settings are optional environment variables. The default loopback configuration is suitable for a single local user.
+Deployment settings are optional environment variables. Runtime limits are also stored in SQLite and editable in Settings; matching environment variables take precedence. Saved runtime-limit changes apply when the service restarts.
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `ADDR` | `127.0.0.1:8080` | Listener address |
 | `DATA_DIR` | `%LOCALAPPDATA%\yt-dl-go` on Windows; `~/Library/Application Support/yt-dl-go` on macOS; `$XDG_DATA_HOME/yt-dl-go` or `~/.local/share/yt-dl-go` on Linux/Unix | Private local data directory; set this variable to choose a different location |
-| `CHROME_PATH` | unset | Explicit Chrome/Chromium/Edge executable path |
+| `CHROME_PATH` | unset | Override the saved Chrome/Chromium/Edge executable path |
 | `API_TOKEN` | unset | Bearer token for protected API routes. The bundled UI sends no token; leave unset when using the executable's UI. |
 | `HTTPS_PROXY` | unset | Optional `http://` or `https://` CONNECT proxy for native YouTube metadata, media, thumbnail, and caption requests. The target hostname is resolved and checked before CONNECT; browser-assisted Chrome traffic does not use this proxy. |
 | `ALLOWED_ORIGINS` | Own loopback listener origin; Vite origins in `dev` builds | Exact comma-separated HTTP(S) origins accepted by CORS; release builds require an explicit setting for cross-origin access |
 | `ALLOWED_HOSTS` | Loopback authorities at the listener port | Additional exact `host[:port]` values accepted by the host check |
 | `MAX_JOBS` | `32` | Maximum queued, downloading, processing, and paused jobs; finished Library records do not count |
-| `MAX_JOB_BYTES` | `10737418240` | Per-job media byte limit (10 GiB) |
-| `JOB_TIMEOUT` | `none` | Optional overall job deadline; accepts `none`, `0`, or a duration of at least one second. Items have separate size- and duration-aware deadlines, and network reads fail after 60 seconds without data. |
-| `RETENTION` | `never` | Keep finished Library records by default. An explicit duration of at least `5m` expires a record only when every finalized file has a verified published copy. Failed or cancelled jobs with no files are cleaned after 24h by default. |
+| `MAX_JOB_BYTES` | `10737418240` | Override the saved per-job media byte limit (10 GiB) |
+| `JOB_TIMEOUT` | `none` | Override the saved overall job deadline; accepts `none`, `0`, or a duration of at least one second. Items have separate size- and duration-aware deadlines, and network reads fail after 60 seconds without data. |
+| `RETENTION` | `never` | Override the saved retention. An explicit duration of at least `5m` expires a record only when every finalized file has a verified published copy. Failed or cancelled jobs with no files are cleaned after 24h by default. |
+| `DOWNLOAD_SLOTS` | `4` | Override the saved limit for concurrent file and ZIP responses; accepts `1`–`16` |
 | `NO_BROWSER` | unset | Backward-compatible environment switch; set to `1` to suppress automatic UI browser launch |
 
 If data from an older working-directory `./downloads` is found, close any running downloader and run `youtube-downloader --migrate-legacy-data` to copy it to the per-user location. The source is kept intact; set `DATA_DIR` first if you want a custom destination. See [server configuration](src/server/README.md) for details.

@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 )
@@ -83,6 +84,107 @@ func TestPersistenceFailuresAreLoggedAndExposeDegradedHealth(t *testing.T) {
 	s.mu.Unlock()
 	if degraded, failures := s.persistenceDegraded(); degraded || failures != 0 {
 		t.Fatalf("successful persistence did not clear consecutive failures: degraded=%t failures=%d", degraded, failures)
+	}
+}
+
+func TestRuntimeSettingsPersistAndReportEffectiveSource(t *testing.T) {
+	s := newPersistenceTestServer(t)
+	s.cfg.maxBytes = 10 << 30
+	s.cfg.timeout = 0
+	s.cfg.retain = 0
+	s.cfg.browserPath = ""
+	s.cfg.downloadSlots = 4
+	get := httptest.NewRecorder()
+	s.ServeHTTP(get, httptest.NewRequest(http.MethodGet, "http://127.0.0.1:8080/api/settings", nil))
+	var response struct {
+		Settings AppSettings       `json:"settings"`
+		Sources  map[string]string `json:"sources"`
+	}
+	if get.Code != http.StatusOK || json.Unmarshal(get.Body.Bytes(), &response) != nil {
+		t.Fatalf("get runtime settings: %d %s", get.Code, get.Body.String())
+	}
+	if response.Settings.Retention != "never" || response.Settings.MaxJobBytes != 10<<30 || response.Settings.JobTimeout != "none" || response.Settings.DownloadSlots != 4 {
+		t.Fatalf("runtime setting defaults = %+v", response.Settings)
+	}
+	for _, key := range []string{"retention", "maxJobBytes", "jobTimeout", "chromePath", "downloadSlots"} {
+		if response.Sources[key] != "SQLite (active)" {
+			t.Fatalf("default %s source = %q", key, response.Sources[key])
+		}
+	}
+
+	body := `{"retention":"720h","maxJobBytes":123456789,"jobTimeout":"2h","chromePath":"C:\\Tools\\Chrome\\chrome.exe","downloadSlots":8}`
+	put := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPut, "http://127.0.0.1:8080/api/settings", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	s.ServeHTTP(put, req)
+	if put.Code != http.StatusOK {
+		t.Fatalf("save runtime settings: %d %s", put.Code, put.Body.String())
+	}
+	if err := json.Unmarshal(put.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if response.Settings.Retention != "720h0m0s" || response.Settings.MaxJobBytes != 123456789 || response.Settings.JobTimeout != "2h0m0s" || response.Settings.DownloadSlots != 8 {
+		t.Fatalf("saved runtime settings = %+v", response.Settings)
+	}
+	for _, key := range []string{"retention", "maxJobBytes", "jobTimeout", "chromePath", "downloadSlots"} {
+		if response.Sources[key] != "SQLite (restart required)" {
+			t.Fatalf("edited %s source = %q, want restart required", key, response.Sources[key])
+		}
+	}
+	if s.cfg.maxBytes != 10<<30 || s.cfg.timeout != 0 || s.cfg.retain != 0 || s.cfg.browserPath != "" || s.cfg.downloadSlots != 4 {
+		t.Fatalf("runtime values changed before restart: %+v", s.cfg)
+	}
+	persisted, err := s.store.loadAppSettings()
+	if err != nil || !reflect.DeepEqual(persisted, response.Settings) {
+		t.Fatalf("runtime settings did not round-trip to SQLite: persisted=%+v response=%+v err=%v", persisted, response.Settings, err)
+	}
+
+	restartRoot := filepath.Join(t.TempDir(), "data")
+	if err := os.MkdirAll(restartRoot, 0700); err != nil {
+		t.Fatal(err)
+	}
+	prepareTestDataDir(t, restartRoot)
+	restartStore, err := openJobStore(restartRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := restartStore.saveAppSettings(persisted); err != nil {
+		_ = restartStore.close()
+		t.Fatal(err)
+	}
+	if err := restartStore.close(); err != nil {
+		t.Fatal(err)
+	}
+	restarted, err := newServer(config{
+		addr: "127.0.0.1:8080", root: restartRoot,
+		origins: map[string]bool{}, hosts: map[string]bool{"127.0.0.1:8080": true}, maxJobs: 8, runtimeSettingsFromDB: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer restarted.stop()
+	if restarted.cfg.maxBytes != persisted.MaxJobBytes || restarted.cfg.timeout != 2*time.Hour || restarted.cfg.retain != 720*time.Hour || restarted.cfg.browserPath != persisted.ChromePath || restarted.cfg.downloadSlots != persisted.DownloadSlots {
+		t.Fatalf("saved runtime settings did not activate after restart: cfg=%+v settings=%+v", restarted.cfg, persisted)
+	}
+
+	envConfig := s.cfg
+	envConfig.retainEnv, envConfig.maxBytesEnv, envConfig.timeoutEnv, envConfig.browserPathEnv, envConfig.downloadSlotsEnv = true, true, true, true, true
+	sources := runtimeSettingSources(persisted, envConfig)
+	for key, variable := range map[string]string{"retention": "RETENTION", "maxJobBytes": "MAX_JOB_BYTES", "jobTimeout": "JOB_TIMEOUT", "chromePath": "CHROME_PATH", "downloadSlots": "DOWNLOAD_SLOTS"} {
+		if sources[key] != "Environment variable "+variable {
+			t.Fatalf("%s environment source = %q", key, sources[key])
+		}
+	}
+	for _, invalid := range []string{
+		`{"retention":"3m"}`, `{"maxJobBytes":0}`, `{"jobTimeout":"500ms"}`, `{"downloadSlots":17}`,
+	} {
+		bad := httptest.NewRecorder()
+		badRequest := httptest.NewRequest(http.MethodPut, "http://127.0.0.1:8080/api/settings", strings.NewReader(invalid))
+		badRequest.Header.Set("Content-Type", "application/json")
+		s.ServeHTTP(bad, badRequest)
+		if bad.Code != http.StatusBadRequest {
+			t.Fatalf("invalid runtime setting %s status = %d, body=%s", invalid, bad.Code, bad.Body.String())
+		}
 	}
 }
 
