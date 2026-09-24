@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 )
 
 const (
@@ -151,6 +152,11 @@ func libraryFilterClause(filter libraryFilter, itemAlias string) (string, []any)
 		args = append(args, filter.Channel)
 	}
 	if filter.Query != "" {
+		if utf8.RuneCountInString(filter.Query) >= 3 && !strings.ContainsRune(filter.Query, '\x00') {
+			phrase := "\"" + strings.ReplaceAll(filter.Query, "\"", "\"\"") + "\""
+			clauses = append(clauses, `(j.rowid IN (SELECT rowid FROM library_search_jobs WHERE library_search_jobs MATCH ?) OR `+itemAlias+`.rowid IN (SELECT rowid FROM library_search_files WHERE library_search_files MATCH ?))`)
+			args = append(args, phrase, phrase)
+		}
 		clauses = append(clauses, `instr(lower(COALESCE(j.title,'')||' '||COALESCE(j.url,'')||' '||COALESCE(j.category,'')||' '||COALESCE(j.audio_format,'')||' '||COALESCE(j.subtitle_language,'')||' '||`+itemAlias+`.file_json),?)>0`)
 		args = append(args, filter.Query)
 	}
