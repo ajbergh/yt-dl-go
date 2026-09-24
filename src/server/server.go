@@ -626,7 +626,7 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		fail(w, 404, "Job not found")
 		return
 	}
-	if j.deleting && !(len(parts) == 1 && r.Method == http.MethodGet) {
+	if j.deleting && (len(parts) != 1 || r.Method != http.MethodGet) {
 		fail(w, http.StatusConflict, "This job is being removed")
 		return
 	}

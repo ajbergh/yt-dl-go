@@ -72,16 +72,16 @@ func (w *persistenceWriter) close() {
 func cloneJobStateForPersistence(source *jobState) *jobState {
 	clone := *source
 	clone.Job = source.Job
-	clone.Job.Files = cloneMediaFiles(source.Job.Files)
-	clone.Job.Items = cloneQueueItems(source.Job.Items)
-	clone.Job.Failures = append([]itemFailure(nil), source.Job.Failures...)
-	if source.Job.Progress != nil {
-		value := *source.Job.Progress
-		clone.Job.Progress = &value
+	clone.Files = cloneMediaFiles(source.Files)
+	clone.Items = cloneQueueItems(source.Items)
+	clone.Failures = append([]itemFailure(nil), source.Failures...)
+	if source.Progress != nil {
+		value := *source.Progress
+		clone.Progress = &value
 	}
-	if source.Job.TotalCount != nil {
-		value := *source.Job.TotalCount
-		clone.Job.TotalCount = &value
+	if source.TotalCount != nil {
+		value := *source.TotalCount
+		clone.TotalCount = &value
 	}
 	clone.fileItems = make(map[int]mediaFile, len(source.fileItems))
 	for index, file := range source.fileItems {
