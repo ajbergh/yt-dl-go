@@ -34,7 +34,18 @@ func migrateLegacyData(legacyRoot, dataRoot string) (err error) {
 		return errors.New("cannot resolve legacy data directory")
 	}
 	dataRoot, err = filepath.Abs(dataRoot)
-	if err != nil || samePath(legacyRoot, dataRoot) || pathContains(legacyRoot, dataRoot) || pathContains(dataRoot, legacyRoot) {
+	if err != nil {
+		return errors.New("cannot resolve destination data directory")
+	}
+	legacyRoot, err = canonicalizeParentPath(legacyRoot)
+	if err != nil {
+		return fmt.Errorf("resolve legacy data directory: %w", err)
+	}
+	dataRoot, err = canonicalizeParentPath(dataRoot)
+	if err != nil {
+		return fmt.Errorf("resolve destination data directory: %w", err)
+	}
+	if samePath(legacyRoot, dataRoot) || pathContains(legacyRoot, dataRoot) || pathContains(dataRoot, legacyRoot) {
 		return errors.New("legacy and destination data directories must be different")
 	}
 	legacyInfo, err := os.Lstat(legacyRoot)
@@ -250,18 +261,21 @@ func remapMigratedPaths(databasePath, legacyRoot, dataRoot string) error {
 			}
 		}
 	}
-	partRows, err := tx.Query(`SELECT job_id,item_index,part_key,path FROM download_parts`)
+	// Use rowid so path rebasing works with both the original download_parts
+	// schema (before v16 added part_key) and current multi-part schemas. This
+	// command runs before normal server startup, where schema migrations happen.
+	partRows, err := tx.Query(`SELECT rowid,path FROM download_parts`)
 	if err != nil {
 		return err
 	}
 	type partPath struct {
-		jobID, key, path string
-		index            int
+		rowID int64
+		path  string
 	}
 	var parts []partPath
 	for partRows.Next() {
 		var value partPath
-		if err := partRows.Scan(&value.jobID, &value.index, &value.key, &value.path); err != nil {
+		if err := partRows.Scan(&value.rowID, &value.path); err != nil {
 			_ = partRows.Close()
 			return err
 		}
@@ -276,7 +290,7 @@ func remapMigratedPaths(databasePath, legacyRoot, dataRoot string) error {
 	}
 	for _, value := range parts {
 		if mapped, ok := remapDataPath(legacyRoot, dataRoot, value.path); ok {
-			if _, err := tx.Exec(`UPDATE download_parts SET path=? WHERE job_id=? AND item_index=? AND part_key=?`, mapped, value.jobID, value.index, value.key); err != nil {
+			if _, err := tx.Exec(`UPDATE download_parts SET path=? WHERE rowid=?`, mapped, value.rowID); err != nil {
 				return err
 			}
 		}
@@ -317,4 +331,43 @@ func pathContains(root, path string) bool {
 		return false
 	}
 	return relative == "." || (relative != ".." && !strings.HasPrefix(relative, ".."+string(os.PathSeparator)) && !filepath.IsAbs(relative))
+}
+
+// canonicalizeParentPath resolves existing ancestors while leaving the final
+// path component untouched so callers can still reject it if it is a symlink.
+// For a destination that does not exist yet, this also resolves the nearest
+// existing ancestor before appending the missing components.
+func canonicalizeParentPath(path string) (string, error) {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
+	parent, name := filepath.Dir(abs), filepath.Base(abs)
+	resolvedParent, err := canonicalizeExistingOrFuture(parent)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(resolvedParent, name), nil
+}
+
+func canonicalizeExistingOrFuture(path string) (string, error) {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
+	abs = filepath.Clean(abs)
+	if _, err := os.Lstat(abs); err == nil {
+		return filepath.EvalSymlinks(abs)
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return "", err
+	}
+	parent := filepath.Dir(abs)
+	if parent == abs {
+		return abs, nil
+	}
+	resolvedParent, err := canonicalizeExistingOrFuture(parent)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(resolvedParent, filepath.Base(abs)), nil
 }

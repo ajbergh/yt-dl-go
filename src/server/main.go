@@ -88,7 +88,7 @@ func defaultDataDir() (string, error) {
 		return filepath.Join(localAppData, "yt-dl-go"), nil
 	}
 	home, err := os.UserHomeDir()
-	if err != nil || home == "" {
+	if err != nil || home == "" || !filepath.IsAbs(home) {
 		return "", errors.New("cannot determine the per-user data directory")
 	}
 	if runtime.GOOS == "darwin" {
