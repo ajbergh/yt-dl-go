@@ -357,7 +357,7 @@ Before this work, only native adaptive ranges resumed. Progressive video, M4A, a
 
 ### M2.4 Deterministic output naming and richer tokens
 
-**Status:** [~] Implementation underway on `roadmap/m2-4-deterministic-output-naming` · **P1** · **Area:** engine / output
+**Status:** [x] Merged by PR #38 · **P1** · **Area:** engine / output
 
 Naming tokens are replaced by iterating a Go map (`output.go:165-169`), and map order is random. A title containing `{channel}` or `{resolution}` can therefore produce different filenames from run to run.
 
@@ -368,11 +368,11 @@ Naming tokens are replaced by iterating a Go map (`output.go:165-169`), and map 
 - Show a live filename preview in Settings.
 - Make output file and folder permissions configurable. Today they are `0600`/`0700` (`output.go:187, 202`), which can hide media from Plex, Jellyfin, or other users on Linux/macOS.
 
-**Progress (2026-09-23):** M2.4 is implemented on `roadmap/m2-4-deterministic-output-naming` in [PR #38](https://github.com/ajbergh/yt-dl-go/pull/38). The backend uses a single-pass tokenizer for all 11 tokens; substituted title/channel text is never re-expanded. The Settings preview uses matching token expansion, sanitizing, and extension behavior. Schema migration v17 persists published file/folder modes in both settings and queued jobs; defaults remain private (`0600`/`0700`), and the modes apply to published media, captions, and destination directories. Local `go test ./... -count=1`, `go vet ./...`, TypeScript typecheck, production build scan, lint (20 existing warnings), and `git diff --check` pass. Local browser E2E and Bun unit execution could not run because Chrome/Chromium and Bun are not installed. PR CI found that a UI test expected an unnecessary underscore for `CON- sample`; the test now checks the actual sanitizer rule separately against the exact reserved name `CON`, and CI is rerunning.
+**Progress (2026-09-23):** Merged by [PR #38](https://github.com/ajbergh/yt-dl-go/pull/38) (`3029525`) after two full source-validation runs, Go/frontend analysis, CodeQL, and Linux, Windows, and macOS builds passed. The backend uses a single-pass tokenizer for all 11 tokens; substituted title/channel text is never re-expanded. The Settings preview uses matching token expansion, sanitizing, and extension behavior. Schema migration v17 persists published file/folder modes in both settings and queued jobs; defaults remain private (`0600`/`0700`), and the modes apply to published media, captions, and destination directories. Local browser E2E and Bun unit execution were unavailable because Chrome/Chromium and Bun are not installed; CI ran both.
 
 ### M2.5 Bound SABR capture memory
 
-**Status:** [ ] · **P1** · **Area:** engine
+**Status:** [~] Implementation underway on `roadmap/m2-5-bound-sabr-ready-memory` · **P1** · **Area:** engine
 
 Out-of-order SABR segments accumulate in `capture.ready` with no aggregate limit (`sabr.go:385`). The budget is checked per segment (`sabr.go:298`) and at write time (`sabr.go:450`), not across the buffer, so a missing first sequence can hold a whole track in RAM.
 
@@ -380,6 +380,8 @@ Out-of-order SABR segments accumulate in `capture.ready` with no aggregate limit
 
 - Cap the ready-buffer size in bytes, spilling to disk or failing over to the range path.
 - Re-evaluate `maxSABRParts = 10000` (`sabr.go:25`) for multi-hour 4K responses.
+
+**Progress (2026-09-23):** RepoTracer confirmed out-of-order `capture.ready` data had no aggregate accounting and reproduced it exceeding the track budget when the init/earlier sequence was missing. The implementation now caps queued out-of-order fragment data at 64 MiB and returns a SABR limit error so existing browser cleanup can fall through to native HTTP ranges. Byte accounting is released on ordered flush and reset with short-candidate state. The UMP part-count guard is raised to 100,000 while retaining the 32 MiB per-part and 128 MiB browser response limits. Focused tests pass for cap rejection, flush/reset accounting, native-range fallback, and the raised parser boundary. Full validation and PR pending. This limit covers `capture.ready`; it does not claim to cap all process memory used by the existing bounded browser response buffer or a fragment currently being assembled.
 
 ### M2.6 Higher-quality audio for adaptive MP4
 

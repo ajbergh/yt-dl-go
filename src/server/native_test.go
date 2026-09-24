@@ -405,6 +405,52 @@ func (provider *retryBrowserProvider) CaptureTrack(_ context.Context, _ string, 
 
 func (*retryBrowserProvider) Close() error { return nil }
 
+type readyLimitBrowserProvider struct{ calls int }
+
+func (provider *readyLimitBrowserProvider) CaptureTrack(_ context.Context, _ string, _ *youtube.Format, path string, _ int64, _ func(int64)) (int64, error) {
+	provider.calls++
+	if err := os.WriteFile(path, []byte("incomplete browser bytes"), 0600); err != nil {
+		return 0, err
+	}
+	return 0, errSABRReadyLimit
+}
+
+func (*readyLimitBrowserProvider) Close() error { return nil }
+
+func TestAdaptiveRangesFallsBackAfterSABRReadyLimit(t *testing.T) {
+	payload := []byte("verified range media")
+	var requestedRange string
+	serverHTTP := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestedRange = r.Header.Get("Range")
+		w.Header().Set("Content-Range", fmt.Sprintf("bytes 0-%d/%d", len(payload)-1, len(payload)))
+		w.WriteHeader(http.StatusPartialContent)
+		_, _ = w.Write(payload)
+	}))
+	defer serverHTTP.Close()
+
+	s := newPersistenceTestServer(t)
+	job := &jobState{Job: Job{ID: "job-sabr-ready-limit", URL: testVideo, Kind: "video", Quality: "best", Status: "queued", CreatedAt: time.Now().UTC().Format(time.RFC3339Nano)}}
+	if err := s.store.saveJob(job); err != nil {
+		t.Fatal(err)
+	}
+	provider := &readyLimitBrowserProvider{}
+	video := &youtube.Video{ID: "ready-limit-video"}
+	format := &youtube.Format{ItagNo: 137, URL: serverHTTP.URL, MimeType: "video/mp4", ContentLength: int64(len(payload))}
+	path := filepath.Join(t.TempDir(), "video.part")
+	s.rangeHTTPClient = serverHTTP.Client()
+	size, browserUsed, err := s.downloadAdaptiveRanges(context.Background(), job, nil, video, format, path, "video", 1, int64(len(payload)), nil, provider)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if provider.calls != 2 || browserUsed || size != int64(len(payload)) || requestedRange != fmt.Sprintf("bytes=0-%d", len(payload)-1) || !bytes.Equal(got, payload) {
+		t.Fatalf("SABR ready-limit fallback calls=%d browser=%t size=%d range=%q data=%q", provider.calls, browserUsed, size, requestedRange, got)
+	}
+}
+
 func TestAdaptiveRangesRetriesBrowserCapture(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "video.part")
 	provider := &retryBrowserProvider{data: []byte("verified adaptive media")}

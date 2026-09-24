@@ -22,10 +22,19 @@ const (
 	// multi-gigabyte. Responses are parsed as streams so their total size does
 	// not need an artificial in-memory ceiling.
 	maxSABRPartBytes = 32 * 1024 * 1024
-	maxSABRParts     = 10000
+	// Out-of-order selected fragments are retained until their missing sequence
+	// arrives. Fail the browser attempt above this cap so native ranges can take
+	// over instead of retaining an entire long track in memory.
+	maxSABRReadyBytes = 64 * 1024 * 1024
+	// Keep a generous count guard for long media with many small multiplexed
+	// UMP parts; the independent byte limits still bound payload memory.
+	maxSABRParts = 100000
 )
 
-var errSABR = errors.New("browser SABR media capture failed")
+var (
+	errSABR           = errors.New("browser SABR media capture failed")
+	errSABRReadyLimit = errors.New("browser SABR out-of-order buffer limit exceeded")
+)
 
 type sabrCapture struct {
 	mu                 sync.Mutex
@@ -47,6 +56,7 @@ type sabrCapture struct {
 	initDigest     [sha256.Size]byte
 	active         map[uint64][]*sabrSegment
 	ready          map[uint64]*sabrCompletedSegment
+	readyBytes     int64
 	written        map[uint64][sha256.Size]byte
 	nextSequence   uint64
 	sequenceSet    bool
@@ -401,7 +411,13 @@ func (capture *sabrCapture) commitSegment(segment *sabrSegment) error {
 		capture.nextSequence = segment.header.sequence
 		capture.sequenceSet = true
 	}
+	segmentBytes := int64(len(segment.data))
+	immediatelyFlushable := capture.initWritten && segment.header.sequence == capture.nextSequence
+	if !immediatelyFlushable && segmentBytes > int64(maxSABRReadyBytes)-capture.readyBytes {
+		return errSABRReadyLimit
+	}
 	capture.ready[segment.header.sequence] = &sabrCompletedSegment{data: segment.data, durationMs: duration}
+	capture.readyBytes += segmentBytes
 	return capture.flushReady()
 }
 
@@ -417,6 +433,7 @@ func (capture *sabrCapture) flushReady() error {
 		if err := capture.write(segment.data); err != nil {
 			return err
 		}
+		capture.readyBytes -= int64(len(segment.data))
 		capture.written[capture.nextSequence] = sha256.Sum256(segment.data)
 		delete(capture.ready, capture.nextSequence)
 		capture.nextSequence++
@@ -452,6 +469,7 @@ func (capture *sabrCapture) resetShortCandidate() error {
 	capture.initWritten = false
 	capture.initDigest = [sha256.Size]byte{}
 	capture.ready = map[uint64]*sabrCompletedSegment{}
+	capture.readyBytes = 0
 	capture.written = map[uint64][sha256.Size]byte{}
 	capture.nextSequence = 0
 	capture.sequenceSet = false

@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"errors"
 	"os"
 	"testing"
 )
@@ -204,10 +205,24 @@ func TestSABRCaptureFlushesMediaReceivedBeforeInit(t *testing.T) {
 	capture := newSABRCapture(file, 315, 1000, 1024, nil)
 	format := testProtoVarintField(nil, 1, 315)
 	body := testUMPPart(nil, umpPartFormatInitializationMetadata, testProtoBytesField(nil, 2, format))
-	body = testSelectedSegment(body, 2, 315, false, 1, 1000, []byte("video"), format)
-	body = testSelectedSegment(body, 1, 315, true, 0, 0, []byte("init"), format)
 	if err := capture.consume(body); err != nil {
 		t.Fatal(err)
+	}
+	body = testUMPPart(nil, umpPartMediaHeader, testMediaHeader(2, 315, false, 1, 1000, 5, format))
+	body = testUMPPart(body, umpPartMedia, append(testUMPVarint(2), []byte("video")...))
+	body = testUMPPart(body, umpPartMediaEnd, testUMPVarint(2))
+	if err := capture.consume(body); err != nil {
+		t.Fatal(err)
+	}
+	if capture.readyBytes != int64(len("video")) || capture.ready[1] == nil {
+		t.Fatalf("out-of-order ready bytes=%d entries=%d; want 5 bytes retained", capture.readyBytes, len(capture.ready))
+	}
+	body = testSelectedSegment(nil, 1, 315, true, 0, 0, []byte("init"), format)
+	if err := capture.consume(body); err != nil {
+		t.Fatal(err)
+	}
+	if capture.readyBytes != 0 || len(capture.ready) != 0 {
+		t.Fatalf("ready buffer after ordered flush: bytes=%d entries=%d", capture.readyBytes, len(capture.ready))
 	}
 	if err := <-capture.done; err != nil {
 		t.Fatal(err)
@@ -224,6 +239,55 @@ func TestSABRCaptureFlushesMediaReceivedBeforeInit(t *testing.T) {
 	}
 	if !bytes.Equal(data, []byte("initvideo")) {
 		t.Fatalf("assembled data=%q, want init followed by queued media", data)
+	}
+}
+
+func TestSABRCaptureEnforcesAggregateReadyLimitAndResetAccounting(t *testing.T) {
+	file, err := os.CreateTemp(t.TempDir(), "sabr-ready-limit-*.webm")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer file.Close()
+	capture := newSABRCapture(file, 315, 1000, int64(maxSABRReadyBytes)*2, nil)
+	capture.formatVerified = true
+	capture.sequenceSet = true
+	capture.nextSequence = 1
+	capture.readyBytes = int64(maxSABRReadyBytes) - 2
+	segment := &sabrSegment{header: sabrMediaHeader{sequence: 3, durationMs: 1000}, selected: true, data: []byte("abc")}
+	if err := capture.commitSegment(segment); !errors.Is(err, errSABRReadyLimit) {
+		t.Fatalf("commit over ready limit error = %v, want %v", err, errSABRReadyLimit)
+	}
+	if capture.ready[3] != nil || capture.readyBytes != int64(maxSABRReadyBytes)-2 {
+		t.Fatalf("over-limit segment was retained: entries=%d bytes=%d", len(capture.ready), capture.readyBytes)
+	}
+	capture.readyBytes = 17
+	if err := capture.resetShortCandidate(); err != nil {
+		t.Fatal(err)
+	}
+	if capture.readyBytes != 0 || len(capture.ready) != 0 {
+		t.Fatalf("short-candidate reset retained ready accounting: entries=%d bytes=%d", len(capture.ready), capture.readyBytes)
+	}
+}
+
+func TestParseUMPPartCountSupportsLongMediaAndKeepsHardLimit(t *testing.T) {
+	body := make([]byte, maxSABRParts*2)
+	for index := 0; index < maxSABRParts; index++ {
+		body[index*2] = 99
+		body[index*2+1] = 0
+	}
+	consume := func(uint64, []byte) error { return nil }
+	if err := parseUMP(body, consume); err != nil {
+		t.Fatalf("parse %d UMP parts: %v", maxSABRParts, err)
+	}
+	if err := parseUMPReader(bytes.NewReader(body), consume); err != nil {
+		t.Fatalf("stream-parse %d UMP parts: %v", maxSABRParts, err)
+	}
+	tooMany := append(body, 99, 0)
+	if err := parseUMP(tooMany, consume); !errors.Is(err, errSABR) {
+		t.Fatalf("parse over part limit error = %v, want %v", err, errSABR)
+	}
+	if err := parseUMPReader(bytes.NewReader(tooMany), consume); !errors.Is(err, errSABR) {
+		t.Fatalf("stream-parse over part limit error = %v, want %v", err, errSABR)
 	}
 }
 
