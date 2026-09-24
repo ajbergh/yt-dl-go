@@ -39,6 +39,7 @@ func TestLiveDownload(t *testing.T) {
 		origins:     map[string]bool{"http://127.0.0.1:8080": true}, hosts: map[string]bool{"127.0.0.1:8080": true},
 		maxJobs: 1, maxBytes: 10 * 1024 * 1024 * 1024, timeout: 30 * time.Minute, retain: 10 * time.Minute,
 	}
+	prepareTestDataDir(t, c.root)
 	s, err := newServer(c)
 	if err != nil {
 		t.Fatal(err)

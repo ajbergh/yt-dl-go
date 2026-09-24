@@ -12,7 +12,12 @@ import (
 	"github.com/kkdai/youtube/v2"
 )
 
-func persistentTestConfig(root string) config {
+func persistentTestConfig(t *testing.T, root string) config {
+	t.Helper()
+	if err := os.MkdirAll(root, 0700); err != nil {
+		t.Fatal(err)
+	}
+	prepareTestDataDir(t, root)
 	return config{
 		addr: "127.0.0.1:8080", root: root, token: strings.Repeat("a", 32),
 		origins: map[string]bool{"http://localhost:5173": true}, hosts: map[string]bool{"127.0.0.1:8080": true},
@@ -25,7 +30,7 @@ func TestPlaylistSelectionPersistsInQueueItems(t *testing.T) {
 	if err := os.Chmod(root, 0700); err != nil {
 		t.Fatal(err)
 	}
-	c := persistentTestConfig(root)
+	c := persistentTestConfig(t, root)
 	s, err := newServer(c)
 	if err != nil {
 		t.Fatal(err)
@@ -63,7 +68,7 @@ func TestPersistentQueueOrderControlsSchedulerPriority(t *testing.T) {
 	if err := os.Chmod(root, 0700); err != nil {
 		t.Fatal(err)
 	}
-	c := persistentTestConfig(root)
+	c := persistentTestConfig(t, root)
 	s, err := newServer(c)
 	if err != nil {
 		t.Fatal(err)
@@ -137,7 +142,7 @@ func TestRetryItemIntentPersistsAcrossRestart(t *testing.T) {
 	if err := os.Chmod(root, 0700); err != nil {
 		t.Fatal(err)
 	}
-	c := persistentTestConfig(root)
+	c := persistentTestConfig(t, root)
 	s, err := newServer(c)
 	if err != nil {
 		t.Fatal(err)
@@ -189,7 +194,7 @@ func TestPersistentHistoryAndQueueResume(t *testing.T) {
 	if err := os.Chmod(root, 0700); err != nil {
 		t.Fatal(err)
 	}
-	c := persistentTestConfig(root)
+	c := persistentTestConfig(t, root)
 	s, err := newServer(c)
 	if err != nil {
 		t.Fatal(err)

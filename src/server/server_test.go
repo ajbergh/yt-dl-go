@@ -88,6 +88,10 @@ func testServer(t *testing.T, engine nativeClient, change func(*config), configu
 	if change != nil {
 		change(&c)
 	}
+	if err := os.MkdirAll(c.root, 0700); err != nil {
+		t.Fatal(err)
+	}
+	prepareTestDataDir(t, c.root)
 	s, err := newServer(c)
 	if err != nil {
 		t.Fatal(err)

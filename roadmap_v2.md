@@ -289,7 +289,7 @@ The original unpaged `GET /api/jobs` and SSE snapshot return full active-job sta
 
 ### M1.5 Startup resilience, integrity, and backup
 
-**Status:** [~] Startup integrity preflight and automatic migration backups merged; corruption quarantine active; export/import and Windows ACL validation remain · **P1** · **Area:** persistence
+**Status:** [~] Startup integrity preflight, automatic migration backups, and corruption quarantine merged; Windows ACL validation active; export/import remain · **P1** · **Area:** persistence
 
 One malformed JSON row in `queue_items` or `subtitle_json` makes startup fail fatally with "cannot load download history" (`store.go:798-800, 887-890`; `main.go:208-211`). There is no integrity check or backup.
 
@@ -306,7 +306,9 @@ One malformed JSON row in `queue_items` or `subtitle_json` makes startup fail fa
 
 The startup integrity preflight merged in [PR #72](https://github.com/ajbergh/yt-dl-go/pull/72) as `f0e79fc`. Per-migration backups merged in [PR #73](https://github.com/ajbergh/yt-dl-go/pull/73) as `c79b6c3`: fresh installs keep one v1 snapshot; existing databases snapshot before each pending migration via `VACUUM INTO`; snapshot failures block migration; and v20 repair restores the version-appropriate Library indexes and FTS triggers. Snapshot/integrity tests and `go test ./... -count=1` passed locally. CI passed on the updated PR head, including race tests and Linux, Windows, and macOS builds; the test-specific 45-second timeout allowance stabilizes `TestCancellationQueueAndTimeout` under race instrumentation.
 
-`feat/corruption-quarantine` is the active slice. Migration v28 adds private diagnostics storage. Malformed legacy queues are quarantined in both v20 Library backfill and v21 queue migration; saved queue IDs, app categories, active-job caption/chapter/additional-file JSON, and malformed Library file JSON are repaired independently after a pre-repair snapshot. The authenticated diagnostics API and Settings panel expose source, record key, timestamp, and repair action without returning raw payloads. Regression coverage exercises those paths and snapshot preservation. Full Go tests, Go vet, and `npm run check` pass locally; Bun UI integration and cross-platform CI are pending because Bun is not installed in the local environment. Export/import and Windows ACL validation remain open.
+`feat/corruption-quarantine` merged in [PR #74](https://github.com/ajbergh/yt-dl-go/pull/74) as `3ffb9fb`. Migration v28 adds private diagnostics storage. Malformed legacy queues are quarantined in both v20 Library backfill and v21 queue migration; saved queue IDs, app categories, active-job caption/chapter/additional-file JSON, and malformed Library file JSON are repaired independently after a pre-repair snapshot. The authenticated diagnostics API and Settings panel expose source, record key, timestamp, and repair action without returning raw payloads. Regression coverage exercises those paths and snapshot preservation. Local Go tests, Go vet, and `npm run check` passed; full PR checks also passed, including race tests, frontend integration, and Linux, Windows, and macOS builds.
+
+`feat/windows-data-dir-acl` is active. Startup now reads the Windows DATA_DIR owner and DACL, requires ownership by the current user, and rejects grants to common shared logon groups and package-wide application principals; SYSTEM and Administrators remain allowed. The existing POSIX 0700 check remains in place. The full Windows Go suite, including real DACL acceptance/rejection coverage, and `go vet ./...` pass locally; Linux/macOS CI is pending. Library export/import remains open.
 
 ### M1.6 Table-driven migrations with fixture tests
 

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"reflect"
 	"testing"
@@ -13,6 +14,10 @@ import (
 func newPersistenceTestServer(t *testing.T) *server {
 	t.Helper()
 	root := filepath.Join(t.TempDir(), "data")
+	if err := os.MkdirAll(root, 0700); err != nil {
+		t.Fatal(err)
+	}
+	prepareTestDataDir(t, root)
 	s, err := newServer(config{
 		addr: "127.0.0.1:8080", root: root, token: "",
 		origins: map[string]bool{}, hosts: map[string]bool{"127.0.0.1:8080": true},
