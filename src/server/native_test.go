@@ -127,13 +127,13 @@ func (transport youtubeFixtureTransport) RoundTrip(request *http.Request) (*http
 		pattern := regexp.MustCompile(`var ytInitialPlayerResponse\s*=\s*(\{.+?\});`)
 		match := pattern.FindSubmatch(transport.page)
 		if len(match) < 2 {
-			return nil, errors.New("recorded player response fixture is malformed")
+			return nil, errors.New("synthetic player response fixture is malformed")
 		}
 		body, status = match[1], http.StatusOK
 	} else if request.URL.Path == "/watch" {
 		body, status = transport.page, http.StatusOK
 	} else {
-		return nil, fmt.Errorf("recorded YouTube fixture does not cover %s %s", request.Method, request.URL.Path)
+		return nil, fmt.Errorf("synthetic YouTube fixture does not cover %s %s", request.Method, request.URL.Path)
 	}
 	return &http.Response{
 		StatusCode: status, Status: http.StatusText(status),
@@ -142,7 +142,7 @@ func (transport youtubeFixtureTransport) RoundTrip(request *http.Request) (*http
 	}, nil
 }
 
-func TestRecordedPlayerResponseFixtureParsesThroughYouTubeClient(t *testing.T) {
+func TestSyntheticPlayerResponseFixtureParsesThroughYouTubeClient(t *testing.T) {
 	page, err := os.ReadFile(filepath.Join("testdata", "youtube", "player-response.html"))
 	if err != nil {
 		t.Fatal(err)
@@ -152,7 +152,7 @@ func TestRecordedPlayerResponseFixtureParsesThroughYouTubeClient(t *testing.T) {
 		return client.GetVideoContext(context.Background(), testVideo)
 	})
 	if err != nil {
-		t.Fatalf("parse recorded player response: %v", err)
+		t.Fatalf("parse synthetic player response: %v", err)
 	}
 	if video.ID != "dQw4w9WgXcQ" || video.Title != "Fixture video" || video.Author != "Fixture channel" || video.Duration != 5*time.Minute || video.PublishDate.Format("2006-01-02") != "2026-09-24" {
 		t.Fatalf("parsed player metadata = %+v", video)
@@ -160,6 +160,72 @@ func TestRecordedPlayerResponseFixtureParsesThroughYouTubeClient(t *testing.T) {
 	if len(video.Formats) != 1 || video.Formats[0].ItagNo != 18 || video.Formats[0].Height != 360 || video.Formats[0].AudioChannels != 2 {
 		t.Fatalf("parsed player formats = %+v", video.Formats)
 	}
+}
+
+func TestSyntheticPlayerResponseFormatDriftCases(t *testing.T) {
+	tests := []struct {
+		name      string
+		response  string
+		wantItags []int
+		wantErr   string
+	}{
+		{
+			name:      "progressive formats",
+			response:  `{"playabilityStatus":{"status":"OK","playableInEmbed":true},"videoDetails":{"videoId":"fixture"},"streamingData":{"formats":[{"itag":18,"url":"https://media.invalid/progressive","bitrate":100}]}}`,
+			wantItags: []int{18},
+		},
+		{
+			name:      "adaptive formats",
+			response:  `{"playabilityStatus":{"status":"OK","playableInEmbed":true},"videoDetails":{"videoId":"fixture"},"streamingData":{"adaptiveFormats":[{"itag":140,"url":"https://media.invalid/adaptive","bitrate":250}]}}`,
+			wantItags: []int{140},
+		},
+		{
+			name:      "combined formats sorted by bitrate",
+			response:  `{"playabilityStatus":{"status":"OK","playableInEmbed":true},"videoDetails":{"videoId":"fixture"},"streamingData":{"formats":[{"itag":18,"url":"https://media.invalid/progressive","bitrate":100}],"adaptiveFormats":[{"itag":140,"url":"https://media.invalid/audio","bitrate":300},{"itag":137,"url":"https://media.invalid/video","bitrate":200}]}}`,
+			wantItags: []int{140, 137, 18},
+		},
+		{
+			name:      "optional and unknown fields",
+			response:  `{"playabilityStatus":{"status":"OK","playableInEmbed":true,"newStatusField":{"enabled":true}},"videoDetails":{"videoId":"fixture","newDetailsField":"ignored"},"streamingData":{"formats":[{"itag":18,"url":"https://media.invalid/progressive","bitrate":100,"newFormatField":[1,2,3]}]},"newTopLevelField":true}`,
+			wantItags: []int{18},
+		},
+		{
+			name:     "empty format lists",
+			response: `{"playabilityStatus":{"status":"OK","playableInEmbed":true},"videoDetails":{"videoId":"fixture"},"streamingData":{}}`,
+			wantErr:  "no formats found",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			video, err := parseSyntheticPlayerResponse(t, test.response)
+			if test.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), test.wantErr) {
+					t.Fatalf("parse error = %v, want substring %q", err, test.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("parse synthetic player response: %v", err)
+			}
+			gotItags := make([]int, len(video.Formats))
+			for i, format := range video.Formats {
+				gotItags[i] = format.ItagNo
+			}
+			if !reflect.DeepEqual(gotItags, test.wantItags) {
+				t.Fatalf("format itags = %v, want %v", gotItags, test.wantItags)
+			}
+		})
+	}
+}
+
+func parseSyntheticPlayerResponse(t *testing.T, response string) (*youtube.Video, error) {
+	t.Helper()
+	page := []byte("<!doctype html><script>var ytInitialPlayerResponse = " + response + ";</script>")
+	client := &youtube.Client{HTTPClient: &http.Client{Transport: youtubeFixtureTransport{page: page}}}
+	return withYouTubeProfileClient(supportedYouTubeProfiles[0], client, func(client *youtube.Client) (*youtube.Video, error) {
+		return client.GetVideoContext(context.Background(), testVideo)
+	})
 }
 
 func TestAdaptiveFallbackRequiresExplicitOptIn(t *testing.T) {
