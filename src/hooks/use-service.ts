@@ -24,6 +24,46 @@ const emptyLibraryPage: LibraryPageResponse = {
   stats: { files: 0, logicalBytes: 0, managedBytes: 0, publishedBytes: 0 },
 };
 
+function normalizeLibraryPage(response: Partial<LibraryPageResponse>): LibraryPageResponse {
+  const jobs = response.jobs ?? [];
+  const categories = response.categories ?? (() => {
+    const counts = new Map<string, number>();
+    for (const job of jobs) {
+      const category = job.category || job.files.find(file => file.category)?.category || "Uncategorized";
+      counts.set(category, (counts.get(category) ?? 0) + job.files.length);
+    }
+    return [...counts].map(([value, count]) => ({ value, count }));
+  })();
+  const channels = response.channels ?? (() => {
+    const counts = new Map<string, number>();
+    for (const job of jobs) for (const file of job.files) {
+      const channel = file.author?.trim() || "Unknown channel";
+      counts.set(channel, (counts.get(channel) ?? 0) + 1);
+    }
+    return [...counts].map(([value, count]) => ({ value, count }));
+  })();
+  const stats = response.stats ?? jobs.reduce((total, job) => {
+    for (const file of job.files) {
+      total.files += 1;
+      total.logicalBytes += file.size + (file.subtitle?.size ?? 0);
+      if (file.managedAvailable !== false) total.managedBytes += file.size;
+      if (file.subtitle?.managedAvailable) total.managedBytes += file.subtitle.size;
+      if (file.publishedAvailable !== false && file.outputRelativePath) total.publishedBytes += file.size;
+      if (file.subtitle?.publishedAvailable && file.subtitle.outputRelativePath) total.publishedBytes += file.subtitle.size;
+    }
+    return total;
+  }, { ...emptyLibraryPage.stats });
+  return {
+    ...emptyLibraryPage,
+    ...response,
+    jobs,
+    totalJobs: response.totalJobs ?? jobs.length,
+    categories,
+    channels,
+    stats,
+  };
+}
+
 const defaultSettings: AppSettings = {
   defaultQuality: "best",
   defaultVideoStrategy: "best",
@@ -89,9 +129,10 @@ export function useService() {
   const refreshLibrary = useCallback(async () => {
     const requestID = ++libraryRequestSequence.current;
     setLoadingLibraryMore(false);
-    const result = await api<LibraryPageResponse>(connection, libraryPagePath(libraryQueryRef.current), {
+    const response = await api<LibraryPageResponse>(connection, libraryPagePath(libraryQueryRef.current), {
       signal: AbortSignal.timeout(10000),
     });
+    const result = normalizeLibraryPage(response);
     if (requestID === libraryRequestSequence.current) {
       setLibraryJobs(result.jobs);
       setLibraryPage(result);
@@ -106,9 +147,10 @@ export function useService() {
     const requestID = ++libraryRequestSequence.current;
     try {
       const query = libraryQueryRef.current;
-      const result = await api<LibraryPageResponse>(connection, libraryPagePath(query, cursor), {
+      const response = await api<LibraryPageResponse>(connection, libraryPagePath(query, cursor), {
         signal: AbortSignal.timeout(10000),
       });
+      const result = normalizeLibraryPage(response);
       if (requestID !== libraryRequestSequence.current || query !== libraryQueryRef.current) return;
       setLibraryJobs(previous => [...previous, ...result.jobs.filter(job => !previous.some(item => item.id === job.id))]);
       setLibraryPage(result);
@@ -177,7 +219,7 @@ export function useService() {
         if (controller.signal.aborted) return;
         setJobs(jobResult.jobs);
         setLibraryJobs(libraryResult.jobs);
-        setLibraryPage(libraryResult);
+        setLibraryPage(normalizeLibraryPage(libraryResult));
         knownJobStatuses.current = new Map(jobResult.jobs.map(job => [job.id, job.status]));
         setSettings(previous => hydratedSettings(settingResult.settings, previous));
         setServiceError("");
