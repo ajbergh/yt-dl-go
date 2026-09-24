@@ -25,12 +25,46 @@ import (
 // preferences, and resume state; live queue and cancellation handles stay in RAM.
 type jobStore struct {
 	db                *sql.DB
+	root              string
 	queueItemsReady   bool
 	queueItemsCacheMu sync.Mutex
+	corruptionMu      sync.Mutex
+	corruptionBackup  bool
+	migrationBackup   bool
 	queueItemsCache   map[string]map[string][]byte
 	jobFilesCache     map[string]map[int][]byte
 	jobFailuresCache  map[string]map[int]string
 	libraryItemsCache map[string]map[string][32]byte
+}
+
+type CorruptionDiagnostic struct {
+	ID           int64     `json:"id"`
+	DetectedAt   time.Time `json:"detectedAt"`
+	SourceTable  string    `json:"sourceTable"`
+	SourceColumn string    `json:"sourceColumn"`
+	RecordKey    string    `json:"recordKey"`
+	Error        string    `json:"error"`
+	Action       string    `json:"action"`
+}
+
+type CorruptionDiagnostics struct {
+	Count  int                    `json:"count"`
+	Issues []CorruptionDiagnostic `json:"issues"`
+}
+
+type corruptJSONIssue struct {
+	sourceTable  string
+	sourceColumn string
+	recordKey    string
+	rawValue     string
+	err          error
+	action       string
+	updateSQL    string
+	updateArgs   []any
+}
+
+type sqlExecer interface {
+	Exec(query string, args ...any) (sql.Result, error)
 }
 
 type AppSettings struct {
@@ -162,6 +196,109 @@ func removeFailedSnapshot(path string, cause error) error {
 	return cause
 }
 
+func createCorruptionTable(exec sqlExecer) error {
+	for _, statement := range []string{
+		`CREATE TABLE IF NOT EXISTS corrupt_records (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			detected_at INTEGER NOT NULL,
+			source_table TEXT NOT NULL,
+			source_column TEXT NOT NULL,
+			record_key TEXT NOT NULL,
+			error TEXT NOT NULL,
+			action TEXT NOT NULL,
+			raw_value BLOB NOT NULL
+		)`,
+		`CREATE INDEX IF NOT EXISTS corrupt_records_detected ON corrupt_records(detected_at DESC,id DESC)`,
+	} {
+		if _, err := exec.Exec(statement); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func recordCorruptJSON(exec sqlExecer, issue corruptJSONIssue) error {
+	message := "malformed JSON"
+	if issue.err != nil {
+		message = issue.err.Error()
+	}
+	if _, err := exec.Exec(`INSERT INTO corrupt_records(detected_at,source_table,source_column,record_key,error,action,raw_value) VALUES(?,?,?,?,?,?,?)`,
+		time.Now().UTC().UnixNano(), issue.sourceTable, issue.sourceColumn, issue.recordKey, message, issue.action, []byte(issue.rawValue)); err != nil {
+		return fmt.Errorf("record corrupted %s.%s value: %w", issue.sourceTable, issue.sourceColumn, err)
+	}
+	result, err := exec.Exec(issue.updateSQL, issue.updateArgs...)
+	if err != nil {
+		return fmt.Errorf("repair corrupted %s.%s value: %w", issue.sourceTable, issue.sourceColumn, err)
+	}
+	if affected, err := result.RowsAffected(); err != nil {
+		return err
+	} else if affected == 0 {
+		return fmt.Errorf("repair corrupted %s.%s value: source row was not updated", issue.sourceTable, issue.sourceColumn)
+	}
+	return nil
+}
+
+func (s *jobStore) quarantineJSONIssues(issues []corruptJSONIssue) error {
+	if len(issues) == 0 {
+		return nil
+	}
+	s.corruptionMu.Lock()
+	defer s.corruptionMu.Unlock()
+	if !s.corruptionBackup && !s.migrationBackup {
+		var version int
+		if err := s.db.QueryRow(`SELECT COALESCE(MAX(version), 0) FROM schema_migrations`).Scan(&version); err != nil {
+			return err
+		}
+		if _, err := s.snapshotBeforeMigration(s.root, version, version); err != nil {
+			return fmt.Errorf("snapshot state before corrupt-row repair: %w", err)
+		}
+		s.corruptionBackup = true
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if err := createCorruptionTable(tx); err != nil {
+		return err
+	}
+	for _, issue := range issues {
+		if err := recordCorruptJSON(tx, issue); err != nil {
+			return err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	s.corruptionBackup = true
+	return nil
+}
+
+func (s *jobStore) loadCorruptionDiagnostics() (CorruptionDiagnostics, error) {
+	result := CorruptionDiagnostics{Issues: []CorruptionDiagnostic{}}
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM corrupt_records`).Scan(&result.Count); err != nil {
+		return result, err
+	}
+	rows, err := s.db.Query(`SELECT id,detected_at,source_table,source_column,record_key,error,action FROM corrupt_records ORDER BY detected_at DESC,id DESC LIMIT 100`)
+	if err != nil {
+		return result, err
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var diagnostic CorruptionDiagnostic
+		var detectedAt int64
+		if err := rows.Scan(&diagnostic.ID, &detectedAt, &diagnostic.SourceTable, &diagnostic.SourceColumn, &diagnostic.RecordKey, &diagnostic.Error, &diagnostic.Action); err != nil {
+			return result, err
+		}
+		diagnostic.DetectedAt = time.Unix(0, detectedAt).UTC()
+		result.Issues = append(result.Issues, diagnostic)
+	}
+	if err := rows.Err(); err != nil {
+		return result, err
+	}
+	return result, nil
+}
+
 // openJobStore opens DATA_DIR/state.db, applies SQLite runtime pragmas, creates
 // missing tables, and runs schema migrations before any jobs are loaded.
 func openJobStore(root string) (*jobStore, error) {
@@ -179,7 +316,7 @@ func openJobStore(root string) (*jobStore, error) {
 	}
 	db.SetMaxOpenConns(1)
 	db.SetMaxIdleConns(1)
-	store := &jobStore{db: db}
+	store := &jobStore{db: db, root: root}
 	if err := checkDatabaseIntegrity(db); err != nil {
 		_ = db.Close()
 		return nil, err
@@ -260,13 +397,18 @@ func openJobStore(root string) (*jobStore, error) {
 			}
 			pending = libraryItemsTableCount == 0
 		}
+		snapshotCreated := false
 		if pending && (!freshDatabase || !freshSnapshotMade) {
 			if _, err := store.snapshotBeforeMigration(root, version, target); err != nil {
 				return err
 			}
 			freshSnapshotMade = freshSnapshotMade || freshDatabase
+			snapshotCreated = true
 		}
-		return migration()
+		store.migrationBackup = snapshotCreated
+		err := migration()
+		store.migrationBackup = false
+		return err
 	}
 	if err := runMigration(2, store.migrateV2); err != nil {
 		_ = db.Close()
@@ -369,6 +511,10 @@ func openJobStore(root string) (*jobStore, error) {
 		return nil, fmt.Errorf("migrate state database: %w", err)
 	}
 	if err := runMigration(27, store.migrateV27); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("migrate state database: %w", err)
+	}
+	if err := runMigration(28, store.migrateV28); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("migrate state database: %w", err)
 	}
@@ -620,6 +766,28 @@ func (s *jobStore) migrateV27() error {
 	return tx.Commit()
 }
 
+func (s *jobStore) migrateV28() error {
+	var version int
+	if err := s.db.QueryRow(`SELECT COALESCE(MAX(version), 0) FROM schema_migrations`).Scan(&version); err != nil {
+		return err
+	}
+	if version >= 28 {
+		return nil
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if err := createCorruptionTable(tx); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`INSERT INTO schema_migrations(version) VALUES (28)`); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
 func (s *jobStore) migrateV21() error {
 	var version int
 	if err := s.db.QueryRow(`SELECT COALESCE(MAX(version), 0) FROM schema_migrations`).Scan(&version); err != nil {
@@ -684,10 +852,22 @@ func (s *jobStore) migrateV21() error {
 	if _, err := tx.Exec(`CREATE INDEX IF NOT EXISTS queue_items_job_position ON queue_items(job_id,position)`); err != nil {
 		return err
 	}
+	if err := createCorruptionTable(tx); err != nil {
+		return err
+	}
 	for _, saved := range legacy {
 		var items []queueItem
 		if err := json.Unmarshal([]byte(saved.data), &items); err != nil {
-			return fmt.Errorf("decode legacy queue items for job %s: %w", saved.jobID, err)
+			issue := corruptJSONIssue{
+				sourceTable: "jobs", sourceColumn: "queue_items", recordKey: saved.jobID,
+				rawValue: saved.data, err: err,
+				action:    "Skipped the malformed saved queue; preserved the job history and original JSON in diagnostics.",
+				updateSQL: `UPDATE jobs SET queue_items='[]' WHERE id=?`, updateArgs: []any{saved.jobID},
+			}
+			if err := recordCorruptJSON(tx, issue); err != nil {
+				return err
+			}
+			items = nil
 		}
 		if err := replaceQueueItems(tx, saved.jobID, items); err != nil {
 			return fmt.Errorf("migrate queue items for job %s: %w", saved.jobID, err)
@@ -743,19 +923,20 @@ func replaceQueueItems(tx *sql.Tx, jobID string, items []queueItem) error {
 }
 
 func (s *jobStore) loadQueueItemsQuery(where string, args []any) (map[string][]queueItem, error) {
-	query := `SELECT job_id,position,playlist_index,video_id,title,author,duration_seconds,thumbnail_url,status,progress,downloaded_bytes,total_bytes,speed_bytes_per_sec,eta_seconds,error,file_id,file_ids_json,retry_requested
+	query := `SELECT job_id,item_key,position,playlist_index,video_id,title,author,duration_seconds,thumbnail_url,status,progress,downloaded_bytes,total_bytes,speed_bytes_per_sec,eta_seconds,error,file_id,file_ids_json,retry_requested
 		FROM queue_items ` + where + ` ORDER BY job_id,position`
 	rows, err := s.db.Query(query, args...)
 	if err != nil {
 		return nil, err
 	}
 	result := make(map[string][]queueItem)
+	var corruptions []corruptJSONIssue
 	for rows.Next() {
-		var jobID, fileIDsJSON string
+		var jobID, itemKey, fileIDsJSON string
 		var item queueItem
 		var progress sql.NullFloat64
 		var retryRequested int
-		if err := rows.Scan(&jobID, &item.Index, &item.PlaylistIndex, &item.VideoID, &item.Title, &item.Author, &item.DurationSeconds, &item.ThumbnailURL, &item.Status, &progress, &item.DownloadedBytes, &item.TotalBytes, &item.SpeedBytesPerSec, &item.ETASeconds, &item.Error, &item.FileID, &fileIDsJSON, &retryRequested); err != nil {
+		if err := rows.Scan(&jobID, &itemKey, &item.Index, &item.PlaylistIndex, &item.VideoID, &item.Title, &item.Author, &item.DurationSeconds, &item.ThumbnailURL, &item.Status, &progress, &item.DownloadedBytes, &item.TotalBytes, &item.SpeedBytesPerSec, &item.ETASeconds, &item.Error, &item.FileID, &fileIDsJSON, &retryRequested); err != nil {
 			_ = rows.Close()
 			return nil, err
 		}
@@ -764,8 +945,13 @@ func (s *jobStore) loadQueueItemsQuery(where string, args []any) (map[string][]q
 			item.Progress = &value
 		}
 		if err := json.Unmarshal([]byte(fileIDsJSON), &item.FileIDs); err != nil {
-			_ = rows.Close()
-			return nil, fmt.Errorf("decode saved queue file IDs: %w", err)
+			corruptions = append(corruptions, corruptJSONIssue{
+				sourceTable: "queue_items", sourceColumn: "file_ids_json", recordKey: jobID + "/" + itemKey,
+				rawValue: fileIDsJSON, err: err,
+				action:    "Cleared malformed grouped-file IDs for this queue item; the primary file and job were preserved.",
+				updateSQL: `UPDATE queue_items SET file_ids_json='[]' WHERE job_id=? AND item_key=?`, updateArgs: []any{jobID, itemKey},
+			})
+			item.FileIDs = nil
 		}
 		if retryRequested != 0 {
 			item.RetryRequested = true
@@ -777,6 +963,9 @@ func (s *jobStore) loadQueueItemsQuery(where string, args []any) (map[string][]q
 		return nil, err
 	}
 	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := s.quarantineJSONIssues(corruptions); err != nil {
 		return nil, err
 	}
 	return result, nil
@@ -859,6 +1048,7 @@ func (s *jobStore) loadLegacyQueueItems() (map[string][]queueItem, error) {
 		return nil, err
 	}
 	result := make(map[string][]queueItem)
+	var corruptions []corruptJSONIssue
 	for rows.Next() {
 		var jobID, data string
 		var items []queueItem
@@ -867,8 +1057,13 @@ func (s *jobStore) loadLegacyQueueItems() (map[string][]queueItem, error) {
 			return nil, err
 		}
 		if err := json.Unmarshal([]byte(data), &items); err != nil {
-			_ = rows.Close()
-			return nil, fmt.Errorf("decode saved queue entries for job %s: %w", jobID, err)
+			corruptions = append(corruptions, corruptJSONIssue{
+				sourceTable: "jobs", sourceColumn: "queue_items", recordKey: jobID,
+				rawValue: data, err: err,
+				action:    "Skipped the malformed saved queue; preserved the job history and original JSON in diagnostics.",
+				updateSQL: `UPDATE jobs SET queue_items='[]' WHERE id=?`, updateArgs: []any{jobID},
+			})
+			items = nil
 		}
 		result[jobID] = items
 	}
@@ -877,6 +1072,9 @@ func (s *jobStore) loadLegacyQueueItems() (map[string][]queueItem, error) {
 		return nil, err
 	}
 	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := s.quarantineJSONIssues(corruptions); err != nil {
 		return nil, err
 	}
 	return result, nil
@@ -1593,7 +1791,15 @@ func (s *jobStore) loadAppSettings() (AppSettings, error) {
 		return settings, err
 	}
 	if err := json.Unmarshal([]byte(categories), &settings.UserCategories); err != nil {
-		return settings, fmt.Errorf("decode saved categories: %w", err)
+		if quarantineErr := s.quarantineJSONIssues([]corruptJSONIssue{{
+			sourceTable: "app_settings", sourceColumn: "user_categories", recordKey: "1",
+			rawValue: categories, err: err,
+			action:    "Reset malformed user categories to an empty list; other saved preferences were preserved.",
+			updateSQL: `UPDATE app_settings SET user_categories='[]' WHERE id=1`,
+		}}); quarantineErr != nil {
+			return settings, fmt.Errorf("quarantine saved categories: %w", quarantineErr)
+		}
+		settings.UserCategories = []string{}
 	}
 	settings = mergeAppSettings(defaultAppSettings(), settings)
 	return settings, nil
@@ -2423,6 +2629,7 @@ func (s *jobStore) loadJobsFiltered(root, jobID, selection string) ([]*storedJob
 		if err != nil {
 			return nil, err
 		}
+		var corruptions []corruptJSONIssue
 		for files.Next() {
 			var index int
 			var file mediaFile
@@ -2440,15 +2647,24 @@ func (s *jobStore) loadJobsFiltered(root, jobID, selection string) ([]*storedJob
 			if subtitleJSON != "" {
 				var subtitle subtitleFile
 				if err := json.Unmarshal([]byte(subtitleJSON), &subtitle); err != nil {
-					_ = files.Close()
-					return nil, fmt.Errorf("decode saved caption sidecar: %w", err)
+					corruptions = append(corruptions, corruptJSONIssue{
+						sourceTable: "job_files", sourceColumn: "subtitle_json", recordKey: fmt.Sprintf("%s/%d", j.ID, index),
+						rawValue: subtitleJSON, err: err,
+						action:    "Removed the malformed caption sidecar; the media file and remaining metadata were preserved.",
+						updateSQL: `UPDATE job_files SET subtitle_json='' WHERE job_id=? AND item_index=?`, updateArgs: []any{j.ID, index},
+					})
+				} else {
+					file.Subtitle = &subtitle
 				}
-				file.Subtitle = &subtitle
 			}
 			if chaptersJSON != "" {
 				if err := json.Unmarshal([]byte(chaptersJSON), &file.Chapters); err != nil {
-					_ = files.Close()
-					return nil, fmt.Errorf("decode saved chapters: %w", err)
+					corruptions = append(corruptions, corruptJSONIssue{
+						sourceTable: "job_files", sourceColumn: "chapters_json", recordKey: fmt.Sprintf("%s/%d", j.ID, index),
+						rawValue: chaptersJSON, err: err,
+						action:    "Removed the malformed chapter metadata; the media file and remaining metadata were preserved.",
+						updateSQL: `UPDATE job_files SET chapters_json='' WHERE job_id=? AND item_index=?`, updateArgs: []any{j.ID, index},
+					})
 				}
 			}
 			loaded.items[index] = []mediaFile{file}
@@ -2456,14 +2672,19 @@ func (s *jobStore) loadJobsFiltered(root, jobID, selection string) ([]*storedJob
 			if additionalFilesJSON != "" {
 				var additional []additionalStoredFile
 				if err := json.Unmarshal([]byte(additionalFilesJSON), &additional); err != nil {
-					_ = files.Close()
-					return nil, fmt.Errorf("decode saved chapter files: %w", err)
-				}
-				for _, stored := range additional {
-					restoreStoredFileMediaType(&stored.File, j.MediaType)
-					stored.File.OutputPath = stored.OutputPath
-					loaded.items[index] = append(loaded.items[index], stored.File)
-					loaded.job.Files = append(loaded.job.Files, stored.File)
+					corruptions = append(corruptions, corruptJSONIssue{
+						sourceTable: "job_files", sourceColumn: "additional_files_json", recordKey: fmt.Sprintf("%s/%d", j.ID, index),
+						rawValue: additionalFilesJSON, err: err,
+						action:    "Removed the malformed additional-file metadata; the primary media file was preserved.",
+						updateSQL: `UPDATE job_files SET additional_files_json='' WHERE job_id=? AND item_index=?`, updateArgs: []any{j.ID, index},
+					})
+				} else {
+					for _, stored := range additional {
+						restoreStoredFileMediaType(&stored.File, j.MediaType)
+						stored.File.OutputPath = stored.OutputPath
+						loaded.items[index] = append(loaded.items[index], stored.File)
+						loaded.job.Files = append(loaded.job.Files, stored.File)
+					}
 				}
 			}
 		}
@@ -2472,6 +2693,9 @@ func (s *jobStore) loadJobsFiltered(root, jobID, selection string) ([]*storedJob
 			return nil, err
 		}
 		_ = files.Close()
+		if err := s.quarantineJSONIssues(corruptions); err != nil {
+			return nil, err
+		}
 		failures, err := s.db.Query(`SELECT item_index,error FROM job_failures WHERE job_id=? ORDER BY item_index`, j.ID)
 		if err != nil {
 			return nil, err
@@ -2516,7 +2740,7 @@ func (s *jobStore) loadLibraryJobsForIDs(jobIDs []string) ([]Job, error) {
 	if err != nil {
 		return nil, err
 	}
-	query := `SELECT j.source_job_id,j.url,j.kind,j.quality,j.video_strategy,j.allow_360p_fallback,j.media_type,j.audio_format,j.audio_bitrate,j.subtitle_language,j.subtitle_format,j.split_by_chapter,j.status,j.title,j.progress,j.current_item,j.completed_count,j.total_count,j.error,j.created_at,j.note,j.category,j.storage_mode,j.queue_position,j.download_location,li.file_json,li.output_path
+	query := `SELECT j.source_job_id,j.url,j.kind,j.quality,j.video_strategy,j.allow_360p_fallback,j.media_type,j.audio_format,j.audio_bitrate,j.subtitle_language,j.subtitle_format,j.split_by_chapter,j.status,j.title,j.progress,j.current_item,j.completed_count,j.total_count,j.error,j.created_at,j.note,j.category,j.storage_mode,j.queue_position,j.download_location,li.file_id,li.file_json,li.output_path
 		FROM library_items li JOIN library_sources j ON j.source_job_id=li.source_job_id
 		WHERE j.status IN ('completed','partial','failed','cancelled')
 		`
@@ -2538,14 +2762,15 @@ func (s *jobStore) loadLibraryJobsForIDs(jobIDs []string) ([]Job, error) {
 		return nil, err
 	}
 	var result []Job
+	var corruptions []corruptJSONIssue
 	indexes := make(map[string]int)
 	for rows.Next() {
 		var j Job
 		var progress sql.NullFloat64
 		var totalCount sql.NullInt64
-		var downloadLocation, fileJSON, outputPath string
+		var downloadLocation, fileID, fileJSON, outputPath string
 		if err := rows.Scan(&j.ID, &j.URL, &j.Kind, &j.Quality, &j.VideoStrategy, &j.Allow360pFallback, &j.MediaType, &j.AudioFormat, &j.AudioBitrate, &j.SubtitleLanguage, &j.SubtitleFormat, &j.SplitByChapter, &j.Status, &j.Title, &progress, &j.CurrentItem,
-			&j.CompletedCount, &totalCount, &j.Error, &j.CreatedAt, &j.Note, &j.Category, &j.StorageMode, &j.QueuePosition, &downloadLocation, &fileJSON, &outputPath); err != nil {
+			&j.CompletedCount, &totalCount, &j.Error, &j.CreatedAt, &j.Note, &j.Category, &j.StorageMode, &j.QueuePosition, &downloadLocation, &fileID, &fileJSON, &outputPath); err != nil {
 			_ = rows.Close()
 			return nil, err
 		}
@@ -2575,17 +2800,22 @@ func (s *jobStore) loadLibraryJobsForIDs(jobIDs []string) ([]Job, error) {
 		if j.StorageMode == "" {
 			j.StorageMode = settings.StorageMode
 		}
+		var file mediaFile
+		if err := json.Unmarshal([]byte(fileJSON), &file); err != nil {
+			corruptions = append(corruptions, corruptJSONIssue{
+				sourceTable: "library_items", sourceColumn: "file_json", recordKey: fileID,
+				rawValue: fileJSON, err: err,
+				action:    "Removed the malformed Library item from the active Library; its original JSON was preserved in diagnostics.",
+				updateSQL: `DELETE FROM library_items WHERE file_id=?`, updateArgs: []any{fileID},
+			})
+			continue
+		}
 		if index, exists := indexes[j.ID]; exists {
 			j = result[index]
 		} else {
 			j.Files = []mediaFile{}
 			indexes[j.ID] = len(result)
 			result = append(result, j)
-		}
-		var file mediaFile
-		if err := json.Unmarshal([]byte(fileJSON), &file); err != nil {
-			_ = rows.Close()
-			return nil, fmt.Errorf("decode saved Library file: %w", err)
 		}
 		file.OutputPath = outputPath
 		result[indexes[j.ID]].Files = append(result[indexes[j.ID]].Files, file)
@@ -2595,6 +2825,9 @@ func (s *jobStore) loadLibraryJobsForIDs(jobIDs []string) ([]Job, error) {
 		return nil, err
 	}
 	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := s.quarantineJSONIssues(corruptions); err != nil {
 		return nil, err
 	}
 	if result == nil {

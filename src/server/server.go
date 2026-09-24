@@ -624,6 +624,19 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		reply(w, http.StatusOK, status)
 		return
 	}
+	if r.URL.Path == "/api/diagnostics" {
+		if r.Method != http.MethodGet {
+			fail(w, http.StatusMethodNotAllowed, "Method not allowed")
+			return
+		}
+		diagnostics, err := s.store.loadCorruptionDiagnostics()
+		if err != nil {
+			fail(w, http.StatusInternalServerError, "Could not load diagnostics")
+			return
+		}
+		reply(w, http.StatusOK, diagnostics)
+		return
+	}
 	if r.URL.Path == "/api/settings" {
 		s.handleSettings(w, r)
 		return

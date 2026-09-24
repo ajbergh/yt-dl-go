@@ -165,6 +165,22 @@ export interface ServiceHealth {
     maxConcurrentDownloads?: number;
   };
 }
+
+export interface CorruptionDiagnostic {
+  id: number;
+  detectedAt: string;
+  sourceTable: string;
+  sourceColumn: string;
+  recordKey: string;
+  error: string;
+  action: string;
+}
+
+export interface CorruptionDiagnostics {
+  count: number;
+  issues: CorruptionDiagnostic[];
+}
+
 export interface ServiceConnection {
   base: string;
   token: string;

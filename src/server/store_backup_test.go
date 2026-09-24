@@ -116,10 +116,10 @@ func TestOpenJobStoreSnapshotsEachPendingMigration(t *testing.T) {
 	}
 
 	snapshots := migrationSnapshots(t, root)
-	if len(snapshots) != 3 { // initial v1 plus upgrades before v26 and v27.
-		t.Fatalf("migration snapshot count = %d, want 3: %v", len(snapshots), snapshots)
+	if len(snapshots) != 4 { // initial v1 plus upgrades before v26, v27, and v28.
+		t.Fatalf("migration snapshot count = %d, want 4: %v", len(snapshots), snapshots)
 	}
-	foundV26, foundV27 := false, false
+	foundV26, foundV27, foundV28 := false, false, false
 	for _, path := range snapshots {
 		name := filepath.Base(path)
 		switch {
@@ -133,10 +133,15 @@ func TestOpenJobStoreSnapshotsEachPendingMigration(t *testing.T) {
 			if version := snapshotMigrationVersion(t, path); version != 26 {
 				t.Errorf("v27 snapshot records schema version %d, want 26", version)
 			}
+		case strings.Contains(name, "v28-from-v27-"):
+			foundV28 = true
+			if version := snapshotMigrationVersion(t, path); version != 27 {
+				t.Errorf("v28 snapshot records schema version %d, want 27", version)
+			}
 		}
 	}
-	if !foundV26 || !foundV27 {
-		t.Fatalf("missing per-migration snapshots: v26=%v v27=%v; paths=%v", foundV26, foundV27, snapshots)
+	if !foundV26 || !foundV27 || !foundV28 {
+		t.Fatalf("missing per-migration snapshots: v26=%v v27=%v v28=%v; paths=%v", foundV26, foundV27, foundV28, snapshots)
 	}
 }
 
@@ -213,7 +218,7 @@ func TestOpenJobStoreSnapshotsV20RepairBeforeRecreatingLibraryTable(t *testing.T
 	}
 	foundRepairSnapshot := false
 	for _, path := range snapshots {
-		if !strings.Contains(filepath.Base(path), "v20-from-v27-") {
+		if !strings.Contains(filepath.Base(path), "v20-from-v28-") {
 			continue
 		}
 		foundRepairSnapshot = true
