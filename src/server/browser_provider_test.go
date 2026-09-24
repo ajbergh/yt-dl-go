@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 	"time"
 
@@ -121,5 +122,102 @@ func TestBrowserCaptureTimeoutAccountsFor4KTransferBytes(t *testing.T) {
 	}
 	if got := browserCaptureTimeout(24*60*60*1000, 0); got != 45*time.Minute {
 		t.Fatalf("capture timeout cap = %s, want 45m", got)
+	}
+}
+
+func TestBrowserPoolSharesProcessAndIsolatesLeases(t *testing.T) {
+	rootCtx, cancelRoot := context.WithCancel(context.Background())
+	defer cancelRoot()
+	var mu sync.Mutex
+	launches := 0
+	pool := &browserPool{
+		ctx: rootCtx, idleTimeout: 25 * time.Millisecond,
+		launch: func(parent context.Context) (context.Context, context.CancelFunc, context.CancelFunc, error) {
+			mu.Lock()
+			launches++
+			mu.Unlock()
+			root, cancel := context.WithCancel(parent)
+			return root, cancel, cancel, nil
+		},
+		newTab: func(parent context.Context) (context.Context, context.CancelFunc) {
+			return context.WithCancel(parent)
+		},
+	}
+
+	const concurrentLeases = 6
+	start := make(chan struct{})
+	providers := make(chan browserMediaProvider, concurrentLeases)
+	errorsCh := make(chan error, concurrentLeases)
+	var wg sync.WaitGroup
+	for range concurrentLeases {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			provider, err := pool.Acquire(context.Background())
+			if err != nil {
+				errorsCh <- err
+				return
+			}
+			providers <- provider
+		}()
+	}
+	close(start)
+	wg.Wait()
+	close(providers)
+	close(errorsCh)
+	for err := range errorsCh {
+		t.Fatal(err)
+	}
+	leases := make([]*chromeBrowserProvider, 0, concurrentLeases)
+	seenTabs := make(map[context.Context]bool)
+	for provider := range providers {
+		lease := provider.(*chromeBrowserProvider)
+		if seenTabs[lease.ctx] {
+			t.Fatal("concurrent leases share a tab context")
+		}
+		seenTabs[lease.ctx] = true
+		leases = append(leases, lease)
+	}
+	mu.Lock()
+	gotLaunches := launches
+	mu.Unlock()
+	if gotLaunches != 1 || len(leases) != concurrentLeases {
+		t.Fatalf("launches=%d leases=%d, want one browser and %d leases", gotLaunches, len(leases), concurrentLeases)
+	}
+	root := pool.root
+	if err := leases[0].Close(); err != nil {
+		t.Fatal(err)
+	}
+	if root.Err() != nil || leases[1].ctx.Err() != nil {
+		t.Fatal("closing one lease shut down the shared browser or a sibling tab")
+	}
+	for _, lease := range leases[1:] {
+		_ = lease.Close()
+	}
+	select {
+	case <-root.Done():
+	case <-time.After(time.Second):
+		t.Fatal("idle browser did not close")
+	}
+
+	restarted, err := pool.Acquire(context.Background())
+	if err != nil {
+		t.Fatalf("acquire after idle shutdown: %v", err)
+	}
+	mu.Lock()
+	gotLaunches = launches
+	mu.Unlock()
+	if gotLaunches != 2 {
+		t.Fatalf("launches after idle restart=%d, want 2", gotLaunches)
+	}
+	if err := pool.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if restarted.(*chromeBrowserProvider).ctx.Err() == nil {
+		t.Fatal("pool shutdown did not close active tabs")
+	}
+	if _, err := pool.Acquire(context.Background()); !errors.Is(err, errBrowserUnavailable) {
+		t.Fatalf("acquire after pool shutdown error=%v, want unavailable", err)
 	}
 }

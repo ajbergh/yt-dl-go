@@ -194,17 +194,16 @@ func newServer(c config) (*server, error) {
 		return nil, errors.New("cannot load application preferences")
 	}
 	ctx, cancel := context.WithCancel(context.Background())
+	browserPool := newChromeBrowserPool(ctx, c.browserPath)
 	s := &server{
 		cfg: c, settings: settings, jobs: map[string]*jobState{}, tickets: map[string]ticket{},
 		slots: make(chan struct{}, 4), scheduleChanged: make(chan struct{}),
 		ctx: ctx, stop: cancel,
-		store:     store,
-		bandwidth: newBandwidthLimiter(settings.BandwidthLimitBytesPerSec),
-		events:    newEventBroker(),
-		engine:    newNativeClient(0),
-		browserFactory: func(ctx context.Context) (browserMediaProvider, error) {
-			return newChromeBrowserProvider(ctx, c.browserPath)
-		},
+		store:          store,
+		bandwidth:      newBandwidthLimiter(settings.BandwidthLimitBytesPerSec),
+		events:         newEventBroker(),
+		engine:         newNativeClient(0),
+		browserFactory: browserPool.Acquire,
 	}
 	// Browser E2E fixtures are compiled only with the e2e build tag. The normal
 	// production executable links a no-op implementation and therefore cannot
@@ -213,6 +212,7 @@ func newServer(c config) (*server, error) {
 	s.stop = func() {
 		cancel()
 		s.wg.Wait()
+		_ = browserPool.Close()
 		_ = store.close()
 	}
 	loaded, err := store.loadJobs(root)

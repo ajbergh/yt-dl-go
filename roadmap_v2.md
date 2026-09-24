@@ -385,7 +385,7 @@ Out-of-order SABR segments accumulate in `capture.ready` with no aggregate limit
 
 ### M2.6 Higher-quality audio for adaptive MP4
 
-**Status:** [~] Implementation underway on `roadmap/m2-6-prefer-adaptive-aac` · **P1** · **Area:** engine / quality
+**Status:** [x] Merged by PR #40 · **P1** · **Area:** engine / quality
 
 Adaptive H.264 MP4 output takes its AAC track from the progressive itag-18 stream, about 96 kbps (`worker.go:1811-1814`). That is a documented workaround for mid-range rejection of adaptive AAC URLs. Meanwhile, the channel count is taken from `selection.audio` (`worker.go:2235`).
 
@@ -394,14 +394,14 @@ Adaptive H.264 MP4 output takes its AAC track from the progressive itag-18 strea
 - Try itag 140 (or the best AAC) through the browser/range path first, and fall back to itag 18 with a job note.
 - Take the audio metadata from the track actually muxed.
 - Add a test for channel-count consistency.
-**Progress (2026-09-23):** RepoTracer confirmed selection already chooses the highest-quality adaptive AAC format (commonly itag 140), but `transferAdaptiveMP4` downloaded progressive MP4 audio and passed adaptive AAC metadata to muxing. M2.6 now routes selected AAC through browser capture/native ranges first, downgrades to the verified H.264/AAC progressive source only after a retryable read failure (or when AAC length is unknown), and muxes with the format actually downloaded. Budget estimates reserve the larger known source. Selection, preferred/fallback acquisition, non-read error handling, mux metadata, budget, and browser AAC policy are covered. Go tests, Go vet, frontend typecheck/build/lint, and `git diff --check` pass locally; lint reports 20 existing warnings and no errors. PR and hosted CI pending.
+**Progress (2026-09-24):** Merged by [PR #40](https://github.com/ajbergh/yt-dl-go/pull/40) (`0d637bb`). The selected adaptive AAC is tried through browser capture/native ranges first; only retryable read failures (or unknown AAC length) select the verified H.264/AAC progressive fallback, with a job note. Mux metadata follows the source actually downloaded, and the budget reserves the larger known source. Selection, preferred/fallback acquisition, non-read error handling, mux metadata, budget, and browser AAC policy are covered. Go tests, race tests, vet (including E2E tag), frontend checks, CodeQL, browser E2E, and Linux/Windows/macOS package builds passed. One initial race run hit the existing 15-second cancellation-test timeout; the repeated full validation passed.
 
 ### M2.7 Browser session pooling and event-driven readiness
 
-**Status:** [ ] · **P1** · **Area:** engine / performance
+**Status:** [~] Implementation underway on `roadmap/m2-7-browser-pool-readiness` · **P1** · **Area:** engine / performance
 
-- `browserFactory` is called per adaptive item (`worker.go:1774, 1892`). Each item launches Chrome, probes identity, and waits at least 13s in fixed sleeps (`browser_provider.go:216-222`), so up to 6 items means up to 6 Chromes.
-- A failing browser path can take up to about 90 minutes (2 × 45 min, `worker.go:2028`, `browser_provider.go:551`) before falling back.
+- `browserFactory` is called per adaptive item (`worker.go:1971, 2106`). Each item owns a Chrome process. `Prepare` has 8 seconds of fixed sleeps plus nested JavaScript timers (`browser_provider.go:195-238`), so up to 6 items can each start a Chrome and wait serially.
+- A capture has a byte-aware deadline capped at 45 minutes and may be retried twice per track; serial MP4 video/audio can repeat that path for each track before native fallback.
 
 #### Scope
 
@@ -409,6 +409,8 @@ Adaptive H.264 MP4 output takes its AAC track from the progressive itag-18 strea
 - Replace sleeps with player-state/CDP events.
 - Cap browser-path time per item (e.g. a few minutes of no progress means fall back).
 - Deduplicate `CaptureTrack`/`CaptureTracks` (about 150 duplicated lines, `browser_provider.go:229-531`).
+
+**Progress (2026-09-24):** RepoTracer confirmed that providers own allocator/browser contexts and `Close` cancels the whole process, while capture state and CDP routing are target-specific. M2.7 now uses one process-owned browser pool with independent per-item tab leases; lease cleanup cannot terminate sibling captures. The pool shuts down after two idle minutes and at service shutdown. Preparation's fixed sleeps and nested timers have been replaced by bounded media-metadata and playing-state waits. Single- and dual-track capture now share setup, attachment, progress/stall monitoring, keep-alive, completion, and cleanup logic. The existing one-minute no-progress timeout is enforced per browser attempt (two attempts maximum per track); MP4's serial video/audio path therefore bounds consecutive stalled browser work before native fallback while retaining byte-aware completion time for active transfers. Six-way lease isolation, idle shutdown/restart, and pool shutdown tests pass with `go test ./...`; `go vet ./...` and `git diff --check` pass. Browser E2E and platform validation pending.
 
 ### M2.8 Extraction resilience against YouTube changes
 
