@@ -230,6 +230,10 @@ func openJobStore(root string) (*jobStore, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("migrate state database: %w", err)
 	}
+	if err := store.migrateV25(); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("migrate state database: %w", err)
+	}
 	store.queueItemsReady = true
 	return store, nil
 }
@@ -352,6 +356,68 @@ func (s *jobStore) migrateV24() error {
 		return err
 	}
 	if _, err := tx.Exec(`INSERT INTO schema_migrations(version) VALUES (24)`); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// migrateV25 adds trigram indexes as candidate filters while leaving the
+// existing substring predicate authoritative for Library search semantics.
+func (s *jobStore) migrateV25() error {
+	var version int
+	if err := s.db.QueryRow(`SELECT COALESCE(MAX(version), 0) FROM schema_migrations`).Scan(&version); err != nil {
+		return err
+	}
+	if version >= 25 {
+		return nil
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.Exec(`ALTER TABLE library_sources ADD COLUMN search_text TEXT NOT NULL DEFAULT ''`); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`UPDATE library_sources SET search_text=
+		COALESCE(title,'')||' '||COALESCE(url,'')||' '||COALESCE(category,'')||' '||COALESCE(audio_format,'')||' '||COALESCE(subtitle_language,'')`); err != nil {
+		return err
+	}
+	for _, statement := range []string{
+		`CREATE VIRTUAL TABLE library_search_jobs USING fts5(search_text,content='library_sources',content_rowid='rowid',tokenize='trigram')`,
+		`CREATE VIRTUAL TABLE library_search_files USING fts5(file_json,content='library_items',content_rowid='rowid',tokenize='trigram')`,
+		`CREATE TRIGGER library_sources_search_ai AFTER INSERT ON library_sources BEGIN
+			INSERT INTO library_search_jobs(rowid,search_text) VALUES(new.rowid,new.search_text);
+		END`,
+		`CREATE TRIGGER library_sources_search_ad AFTER DELETE ON library_sources BEGIN
+			INSERT INTO library_search_jobs(library_search_jobs,rowid,search_text) VALUES('delete',old.rowid,old.search_text);
+		END`,
+		`CREATE TRIGGER library_sources_search_au AFTER UPDATE OF search_text ON library_sources BEGIN
+			INSERT INTO library_search_jobs(library_search_jobs,rowid,search_text) VALUES('delete',old.rowid,old.search_text);
+			INSERT INTO library_search_jobs(rowid,search_text) VALUES(new.rowid,new.search_text);
+		END`,
+		`CREATE TRIGGER library_items_search_ai AFTER INSERT ON library_items BEGIN
+			INSERT INTO library_search_files(rowid,file_json) VALUES(new.rowid,new.file_json);
+		END`,
+		`CREATE TRIGGER library_items_search_ad AFTER DELETE ON library_items BEGIN
+			INSERT INTO library_search_files(library_search_files,rowid,file_json) VALUES('delete',old.rowid,old.file_json);
+		END`,
+		`CREATE TRIGGER library_items_search_au AFTER UPDATE OF file_json ON library_items BEGIN
+			INSERT INTO library_search_files(library_search_files,rowid,file_json) VALUES('delete',old.rowid,old.file_json);
+			INSERT INTO library_search_files(rowid,file_json) VALUES(new.rowid,new.file_json);
+		END`,
+	} {
+		if _, err := tx.Exec(statement); err != nil {
+			return err
+		}
+	}
+	if _, err := tx.Exec(`INSERT INTO library_search_jobs(library_search_jobs) VALUES('rebuild')`); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`INSERT INTO library_search_files(library_search_files) VALUES('rebuild')`); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`INSERT INTO schema_migrations(version) VALUES (25)`); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -1521,9 +1587,10 @@ func (s *jobStore) saveJob(j *jobState) error {
 	}
 	if j.Status == "completed" || j.Status == "partial" || j.Status == "failed" || j.Status == "cancelled" {
 		if _, err := tx.Exec(`INSERT OR REPLACE INTO library_sources (
-			source_job_id,url,kind,quality,video_strategy,allow_360p_fallback,media_type,audio_format,audio_bitrate,subtitle_language,subtitle_format,split_by_chapter,status,title,progress,current_item,completed_count,total_count,error,created_at,note,category,storage_mode,queue_position
+			source_job_id,url,kind,quality,video_strategy,allow_360p_fallback,media_type,audio_format,audio_bitrate,subtitle_language,subtitle_format,split_by_chapter,status,title,progress,current_item,completed_count,total_count,error,created_at,note,category,storage_mode,queue_position,search_text
 		)
-		SELECT id,url,kind,quality,video_strategy,allow_360p_fallback,media_type,audio_format,audio_bitrate,subtitle_language,subtitle_format,split_by_chapter,status,title,progress,current_item,completed_count,total_count,error,created_at,note,category,storage_mode,queue_position
+		SELECT id,url,kind,quality,video_strategy,allow_360p_fallback,media_type,audio_format,audio_bitrate,subtitle_language,subtitle_format,split_by_chapter,status,title,progress,current_item,completed_count,total_count,error,created_at,note,category,storage_mode,queue_position,
+			COALESCE(title,'')||' '||COALESCE(url,'')||' '||COALESCE(category,'')||' '||COALESCE(audio_format,'')||' '||COALESCE(subtitle_language,'')
 		FROM jobs WHERE id=? AND EXISTS (SELECT 1 FROM library_items li WHERE li.source_job_id=jobs.id)`, j.ID); err != nil {
 			return err
 		}
