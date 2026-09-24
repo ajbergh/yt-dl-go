@@ -458,7 +458,7 @@ The media transport sets `Proxy: nil` (`network.go:137`), so users behind a corp
 - [x] Resolve and validate all target addresses before CONNECT, send CONNECT to a checked public IP, and retain the original hostname for TLS SNI and certificate validation.
 - [ ] Decide whether browser-assisted Chrome downloads also need proxy support; Chrome currently follows its own direct networking path.
 
-**Progress (2026-09-23):** Implementation is in progress on `roadmap/m2-10-proxy-support`. `HTTPS_PROXY` and lowercase `https_proxy` now accept HTTP or HTTPS proxy URLs. Native requests resolve every target address and reject private, reserved, or mixed answers before contacting the proxy; CONNECT targets a checked public IP, then TLS validates the original hostname. Proxy credentials remain only in the environment and CONNECT header. The README documents coverage and the current Chrome limitation. The strict pre-CONNECT validation avoids letting the proxy resolve an unchecked target, while the explicit proxy endpoint itself is trusted configuration and may be private. Proxy/guard regression tests, the full Go suite, `go vet`, and `golangci-lint` pass locally; CI is pending.
+**Progress (2026-09-23):** Native `HTTPS_PROXY` support merged in [PR #45](https://github.com/ajbergh/yt-dl-go/pull/45) (`1c1afa8`). `HTTPS_PROXY` and lowercase `https_proxy` accept HTTP or HTTPS proxy URLs. Native requests resolve every target address and reject private, reserved, or mixed answers before contacting the proxy; CONNECT targets a checked public IP, then TLS validates the original hostname. Proxy credentials remain only in the environment and CONNECT header. The README documents coverage and the current Chrome limitation. The strict pre-CONNECT validation avoids letting the proxy resolve an unchecked target, while the explicit proxy endpoint itself is trusted configuration and may be private. Proxy/guard regression tests, the full Go suite, `go vet`, `golangci-lint`, race checks, CodeQL, and Linux/Windows/macOS builds passed. Chrome-assisted traffic still follows its direct networking path; decide whether to include it before marking M2.10 complete.
 
 ---
 
@@ -466,15 +466,17 @@ The media transport sets `Proxy: nil` (`network.go:137`), so users behind a corp
 
 ### M3.1 Metadata for MP4, M4A, and WebM
 
-**Status:** [ ] · **P1** · **Area:** engine / media
+**Status:** [~] · **P1** · **Area:** engine / media
 
 Only MP3 gets tags (`id3.go`). MP4/M4A carry no `ilst` metadata or cover art, and the WebM muxer writes no `Tags` or attachments (`webm_mux.go:218`).
 
 #### Scope
 
-- MP4/M4A `moov/udta/meta/ilst`: title, artist, album, date, comment/source URL, and `covr`.
-- WebM `Tags` plus a cover attachment.
-- Pure Go only.
+- [x] MP4/M4A `moov/udta/meta/ilst`: title, artist, album, date, comment/source URL, and JPEG/PNG `covr`.
+- [x] WebM `Tags` plus a cover attachment.
+- [x] Pure Go only.
+
+**Progress (2026-09-23):** Pure-Go container tagging is in progress on `roadmap/m3-1-container-metadata`. MP4/M4A output is rewritten through a synced sibling temporary file; `moov` is moved to the end so existing media data stays streaming-copyable, and `stco`/`co64` offsets after the old `moov` are corrected. Fragmented MP4 layouts with external segment indexes are left untouched. iTunes-style `ilst` items carry title, artist, playlist album, publish date, canonical source URL in `©cmt`, and bounded JPEG/PNG cover art; WebP is skipped for MP4/M4A. WebM receives `Tags` and an `AttachedFile` before the first Cluster; the reserved Cues region is rewritten with shifted cluster positions while its segment length and SeekHead offsets stay fixed. The metadata size is included in each item's reserved job budget when available. If the container structure is unsupported or remaining job budget cannot cover the tags, the original media is preserved and the omission is logged. Focused MP4/WebM fixtures, the full Go suite, `go vet`, and `golangci-lint` pass locally; race/platform CI is pending.
 
 ### M3.2 Chapters
 
