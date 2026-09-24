@@ -696,7 +696,8 @@ describe("Downloader UI and Go API integration", () => {
     expect(video.autoplay).toBe(false);
     expect(video.getAttribute("src")).toBe("http://127.0.0.1:8080/api/downloads/test-ticket");
     expect(dialog.textContent).toContain("Opening");
-    await click(button("Second chapter"));
+    const secondChapter = [...dialog.querySelectorAll("button")].find(item => item.textContent.includes("Second chapter"));
+    await click(secondChapter);
     expect(video.currentTime).toBe(75);
     await click(button("Close"));
     expect(container.querySelector('[role="dialog"]')).toBeFalsy();
