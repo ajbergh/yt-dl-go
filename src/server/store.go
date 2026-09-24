@@ -121,9 +121,54 @@ func checkDatabaseIntegrity(db *sql.DB) error {
 	return nil
 }
 
+func stateDatabaseIsNew(root string) (bool, error) {
+	info, err := os.Stat(filepath.Join(root, "state.db"))
+	if errors.Is(err, os.ErrNotExist) {
+		return true, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return info.Size() == 0, nil
+}
+
+func (s *jobStore) snapshotBeforeMigration(root string, fromVersion, targetVersion int) (string, error) {
+	backupDir := filepath.Join(root, "backups")
+	if err := os.MkdirAll(backupDir, 0700); err != nil {
+		return "", fmt.Errorf("create state backup directory: %w", err)
+	}
+	if err := os.Chmod(backupDir, 0700); err != nil {
+		return "", fmt.Errorf("restrict state backup directory: %w", err)
+	}
+	destination := filepath.Join(backupDir, fmt.Sprintf("state-before-migration-v%d-from-v%d-%s.sqlite", targetVersion, fromVersion, randomID(8)))
+	partialPath := destination + ".partial"
+	quotedPartialPath := strings.ReplaceAll(partialPath, "'", "''")
+	if _, err := s.db.Exec(`VACUUM INTO '` + quotedPartialPath + `'`); err != nil {
+		return "", removeFailedSnapshot(partialPath, fmt.Errorf("snapshot state before migration v%d: %w", targetVersion, err))
+	}
+	if err := os.Chmod(partialPath, 0600); err != nil {
+		return "", removeFailedSnapshot(partialPath, fmt.Errorf("restrict state backup file: %w", err))
+	}
+	if err := os.Rename(partialPath, destination); err != nil {
+		return "", removeFailedSnapshot(partialPath, fmt.Errorf("publish state backup: %w", err))
+	}
+	return destination, nil
+}
+
+func removeFailedSnapshot(path string, cause error) error {
+	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return errors.Join(cause, fmt.Errorf("remove incomplete state backup: %w", err))
+	}
+	return cause
+}
+
 // openJobStore opens DATA_DIR/state.db, applies SQLite runtime pragmas, creates
 // missing tables, and runs schema migrations before any jobs are loaded.
 func openJobStore(root string) (*jobStore, error) {
+	freshDatabase, err := stateDatabaseIsNew(root)
+	if err != nil {
+		return nil, fmt.Errorf("inspect state database before open: %w", err)
+	}
 	dsn, err := stateDatabaseDSN(root)
 	if err != nil {
 		return nil, fmt.Errorf("resolve state database path: %w", err)
@@ -201,107 +246,129 @@ func openJobStore(root string) (*jobStore, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("record state database migration: %w", err)
 	}
-	if err := store.migrateV2(); err != nil {
+	freshSnapshotMade := false
+	runMigration := func(target int, migration func() error) error {
+		var version int
+		if err := db.QueryRow(`SELECT COALESCE(MAX(version), 0) FROM schema_migrations`).Scan(&version); err != nil {
+			return err
+		}
+		pending := version < target
+		if target == 20 && !pending {
+			var libraryItemsTableCount int
+			if err := db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='library_items'`).Scan(&libraryItemsTableCount); err != nil {
+				return err
+			}
+			pending = libraryItemsTableCount == 0
+		}
+		if pending && (!freshDatabase || !freshSnapshotMade) {
+			if _, err := store.snapshotBeforeMigration(root, version, target); err != nil {
+				return err
+			}
+			freshSnapshotMade = freshSnapshotMade || freshDatabase
+		}
+		return migration()
+	}
+	if err := runMigration(2, store.migrateV2); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("migrate state database: %w", err)
 	}
-	if err := store.migrateV3(); err != nil {
+	if err := runMigration(3, store.migrateV3); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("migrate state database: %w", err)
 	}
-	if err := store.migrateV4(); err != nil {
+	if err := runMigration(4, store.migrateV4); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("migrate state database: %w", err)
 	}
-	if err := store.migrateV5(); err != nil {
+	if err := runMigration(5, store.migrateV5); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("migrate state database: %w", err)
 	}
-	if err := store.migrateV6(); err != nil {
+	if err := runMigration(6, store.migrateV6); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("migrate state database: %w", err)
 	}
-	if err := store.migrateV7(); err != nil {
+	if err := runMigration(7, store.migrateV7); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("migrate state database: %w", err)
 	}
-	if err := store.migrateV8(); err != nil {
+	if err := runMigration(8, store.migrateV8); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("migrate state database: %w", err)
 	}
-	if err := store.migrateV9(); err != nil {
+	if err := runMigration(9, store.migrateV9); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("migrate state database: %w", err)
 	}
-	if err := store.migrateV10(); err != nil {
+	if err := runMigration(10, store.migrateV10); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("migrate state database: %w", err)
 	}
-	if err := store.migrateV11(); err != nil {
+	if err := runMigration(11, store.migrateV11); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("migrate state database: %w", err)
 	}
-	if err := store.migrateV12(); err != nil {
+	if err := runMigration(12, store.migrateV12); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("migrate state database: %w", err)
 	}
-	if err := store.migrateV13(); err != nil {
+	if err := runMigration(13, store.migrateV13); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("migrate state database: %w", err)
 	}
-	if err := store.migrateV14(); err != nil {
+	if err := runMigration(14, store.migrateV14); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("migrate state database: %w", err)
 	}
-	if err := store.migrateV15(); err != nil {
+	if err := runMigration(15, store.migrateV15); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("migrate state database: %w", err)
 	}
-	if err := store.migrateV16(); err != nil {
+	if err := runMigration(16, store.migrateV16); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("migrate state database: %w", err)
 	}
-	if err := store.migrateV17(); err != nil {
+	if err := runMigration(17, store.migrateV17); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("migrate state database: %w", err)
 	}
-	if err := store.migrateV18(); err != nil {
+	if err := runMigration(18, store.migrateV18); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("migrate state database: %w", err)
 	}
-	if err := store.migrateV19(); err != nil {
+	if err := runMigration(19, store.migrateV19); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("migrate state database: %w", err)
 	}
-	if err := store.migrateV20(root); err != nil {
+	if err := runMigration(20, func() error { return store.migrateV20(root) }); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("migrate state database: %w", err)
 	}
-	if err := store.migrateV21(); err != nil {
+	if err := runMigration(21, store.migrateV21); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("migrate state database: %w", err)
 	}
-	if err := store.migrateV22(); err != nil {
+	if err := runMigration(22, store.migrateV22); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("migrate state database: %w", err)
 	}
-	if err := store.migrateV23(); err != nil {
+	if err := runMigration(23, store.migrateV23); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("migrate state database: %w", err)
 	}
-	if err := store.migrateV24(); err != nil {
+	if err := runMigration(24, store.migrateV24); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("migrate state database: %w", err)
 	}
-	if err := store.migrateV25(); err != nil {
+	if err := runMigration(25, store.migrateV25); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("migrate state database: %w", err)
 	}
-	if err := store.migrateV26(); err != nil {
+	if err := runMigration(26, store.migrateV26); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("migrate state database: %w", err)
 	}
-	if err := store.migrateV27(); err != nil {
+	if err := runMigration(27, store.migrateV27); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("migrate state database: %w", err)
 	}
@@ -823,6 +890,7 @@ func (s *jobStore) migrateV20(root string) error {
 	if err := s.db.QueryRow(`SELECT COALESCE(MAX(version), 0) FROM schema_migrations`).Scan(&version); err != nil {
 		return err
 	}
+	repairingExistingLibrary := false
 	if version >= 20 {
 		var exists int
 		if err := s.db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='library_items'`).Scan(&exists); err != nil {
@@ -831,6 +899,7 @@ func (s *jobStore) migrateV20(root string) error {
 		if exists != 0 {
 			return nil
 		}
+		repairingExistingLibrary = true
 	}
 	createTx, err := s.db.Begin()
 	if err != nil {
@@ -880,10 +949,62 @@ func (s *jobStore) migrateV20(root string) error {
 			}
 		}
 	}
+	if repairingExistingLibrary {
+		if err := restoreLibraryItemsSchema(backfillTx, version); err != nil {
+			return err
+		}
+	}
 	if _, err := backfillTx.Exec(`INSERT OR IGNORE INTO schema_migrations(version) VALUES (20)`); err != nil {
 		return err
 	}
 	return backfillTx.Commit()
+}
+
+func restoreLibraryItemsSchema(tx *sql.Tx, version int) error {
+	if version >= 22 {
+		for _, statement := range []string{
+			`CREATE INDEX IF NOT EXISTS library_items_category ON library_items(json_extract(file_json,'$.category'))`,
+			`CREATE INDEX IF NOT EXISTS library_items_channel ON library_items(json_extract(file_json,'$.author'))`,
+		} {
+			if _, err := tx.Exec(statement); err != nil {
+				return err
+			}
+		}
+	}
+	if version >= 23 {
+		for _, statement := range []string{
+			`CREATE INDEX IF NOT EXISTS library_items_effective_category ON library_items(COALESCE(NULLIF(json_extract(file_json,'$.category'),''),'Uncategorized'))`,
+			`CREATE INDEX IF NOT EXISTS library_items_effective_channel ON library_items(COALESCE(NULLIF(TRIM(json_extract(file_json,'$.author')),''),'Unknown channel'))`,
+		} {
+			if _, err := tx.Exec(statement); err != nil {
+				return err
+			}
+		}
+	}
+	if version < 25 {
+		return nil
+	}
+	if _, err := tx.Exec(`CREATE VIRTUAL TABLE IF NOT EXISTS library_search_files USING fts5(file_json,content='library_items',content_rowid='rowid',tokenize='trigram')`); err != nil {
+		return err
+	}
+	for _, statement := range []string{
+		`CREATE TRIGGER IF NOT EXISTS library_items_search_ai AFTER INSERT ON library_items BEGIN
+			INSERT INTO library_search_files(rowid,file_json) VALUES(new.rowid,new.file_json);
+		END`,
+		`CREATE TRIGGER IF NOT EXISTS library_items_search_ad AFTER DELETE ON library_items BEGIN
+			INSERT INTO library_search_files(library_search_files,rowid,file_json) VALUES('delete',old.rowid,old.file_json);
+		END`,
+		`CREATE TRIGGER IF NOT EXISTS library_items_search_au AFTER UPDATE OF file_json ON library_items BEGIN
+			INSERT INTO library_search_files(library_search_files,rowid,file_json) VALUES('delete',old.rowid,old.file_json);
+			INSERT INTO library_search_files(rowid,file_json) VALUES(new.rowid,new.file_json);
+		END`,
+		`INSERT INTO library_search_files(library_search_files) VALUES('rebuild')`,
+	} {
+		if _, err := tx.Exec(statement); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func upsertLibraryItem(tx *sql.Tx, sourceJobID string, sourceItemIndex int, file mediaFile, createdAt int64) error {
