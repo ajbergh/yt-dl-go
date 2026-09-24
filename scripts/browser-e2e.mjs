@@ -382,9 +382,9 @@ async function main() {
     await waitFor(cdp, bodyIncludes("Download library"), "Library page");
     await waitFor(cdp, bodyIncludes("E2E Fixture Video"), "completed Library item");
 
-    const beforeRestart = await getJSON(`${baseURL}/api/jobs`);
-    assert.equal(beforeRestart.jobs.length, 1, "completed job was not persisted");
-    assert.equal(beforeRestart.jobs[0].status, "completed", "fixture job did not complete");
+    const beforeRestart = await getJSON(`${baseURL}/api/library`);
+    assert.equal(beforeRestart.jobs.length, 1, "completed Library item was not persisted");
+    assert.equal(beforeRestart.jobs[0].status, "completed", "fixture Library item did not complete");
 
     // 7: save settings through the real UI/API.
     await clickButton(cdp, "Settings");
@@ -415,7 +415,7 @@ async function main() {
     settings = (await getJSON(`${baseURL}/api/settings`)).settings;
     assert.equal(settings.namingPattern, "E2E {title}");
     assert.equal(settings.defaultVideoStrategy, "av1");
-    const afterRestart = await getJSON(`${baseURL}/api/jobs`);
+    const afterRestart = await getJSON(`${baseURL}/api/library`);
     assert.equal(afterRestart.jobs.length, 1);
     assert.equal(afterRestart.jobs[0].status, "completed");
 
@@ -433,7 +433,7 @@ async function main() {
     await cdp.send("Page.handleJavaScriptDialog", { accept: true });
     assert.equal(await clickPromise, true);
     await waitFor(cdp, bodyIncludes("Your library is empty"), "destructive deletion completion", 20000);
-    const afterDelete = await getJSON(`${baseURL}/api/jobs`);
+    const afterDelete = await getJSON(`${baseURL}/api/library`);
     assert.equal(afterDelete.jobs.length, 0, "confirmed delete-everywhere did not remove Library history");
 
     console.log("Browser E2E passed: startup, inspect, queue, pause/resume, completion, Library, settings, restart persistence, confirmation.");
