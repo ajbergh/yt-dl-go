@@ -342,12 +342,13 @@ func TestAPIContractAndSecurity(t *testing.T) {
 	s := testServer(t, fake, nil)
 	w := request(s, "GET", "/api/health", "", map[string]string{"Authorization": ""})
 	var health struct {
-		Ready        bool            `json:"ready"`
-		Missing      json.RawMessage `json:"missing"`
-		Engine       string          `json:"engine"`
-		Capabilities map[string]bool `json:"capabilities"`
+		Ready        bool               `json:"ready"`
+		Missing      json.RawMessage    `json:"missing"`
+		Engine       string             `json:"engine"`
+		Extractor    profileProbeResult `json:"extractor"`
+		Capabilities map[string]bool    `json:"capabilities"`
 	}
-	if json.Unmarshal(w.Body.Bytes(), &health) != nil || !health.Ready || health.Engine != "native-go" || string(health.Missing) != "[]" || len(health.Capabilities) != 6 || health.Capabilities["combinedStreamsOnly"] || !health.Capabilities["adaptiveStreamsSupported"] || health.Capabilities["externalBinariesRequired"] || !health.Capabilities["mp3AudioSupported"] || !health.Capabilities["pureGoAudioConversion"] || !health.Capabilities["captionsSupported"] {
+	if json.Unmarshal(w.Body.Bytes(), &health) != nil || !health.Ready || health.Engine != "native-go" || string(health.Missing) != "[]" || !health.Extractor.Ready || len(health.Extractor.Profiles) != len(supportedYouTubeProfiles) || len(health.Capabilities) != 6 || health.Capabilities["combinedStreamsOnly"] || !health.Capabilities["adaptiveStreamsSupported"] || health.Capabilities["externalBinariesRequired"] || !health.Capabilities["mp3AudioSupported"] || !health.Capabilities["pureGoAudioConversion"] || !health.Capabilities["captionsSupported"] {
 		t.Fatalf("native health contract: %s", w.Body.String())
 	}
 	if body := request(s, "GET", "/api/jobs", "", nil).Body.String(); strings.TrimSpace(body) != `{"jobs":[]}` {

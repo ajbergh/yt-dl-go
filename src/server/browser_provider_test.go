@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"net/url"
 	"sync"
 	"testing"
 	"time"
@@ -45,6 +46,16 @@ func TestRangeURLReplacesOnlyRange(t *testing.T) {
 	want := "https://rr1---sn-example.googlevideo.com/videoplayback?expire=1&itag=299&range=100-199&spc=token"
 	if got != want {
 		t.Fatalf("rangeURL() = %q, want %q", got, want)
+	}
+}
+
+func TestBrowserWatchURLPinsEnglishLocale(t *testing.T) {
+	u, err := url.Parse(browserWatchURL("dQw4w9WgXcQ"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if u.Query().Get("v") != "dQw4w9WgXcQ" || u.Query().Get("hl") != "en" {
+		t.Fatalf("browser watch URL query = %v, want requested video and English locale", u.Query())
 	}
 }
 

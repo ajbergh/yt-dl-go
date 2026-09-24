@@ -34,6 +34,7 @@ const playlistSelectionNote = "Only the selected exposed playlist items are queu
 const unknownLengthNote = "An unknown-length stream is complete only at clean EOF; its original size cannot be independently verified."
 const adaptiveFallbackNote = "The requested adaptive stream could not be completed safely; the optional verified 360p progressive MP4 fallback was downloaded instead."
 const adaptiveMP4AudioFallbackNote = "The adaptive AAC audio track could not be captured safely; the progressive MP4 AAC track was used instead."
+const extractionFallbackNote = "The default YouTube extraction profile was unavailable; a fallback profile was used."
 const browserAdaptiveNote = "Adaptive media was streamed through a temporary browser session."
 const vp9PreferenceFallbackNote = "VP9 was preferred but unavailable under the selected quality ceiling; the best supported video format was used instead."
 const av1PreferenceFallbackNote = "AV1 was preferred but unavailable under the selected quality ceiling; the best supported video format was used instead."
@@ -64,12 +65,14 @@ const (
 	itemTimeoutOverhead = 10 * time.Minute
 )
 
-type nativeClient interface {
+type extractor interface {
 	GetVideoContext(context.Context, string) (*youtube.Video, error)
 	GetPlaylistContext(context.Context, string) (*youtube.Playlist, error)
 	VideoFromPlaylistEntryContext(context.Context, *youtube.PlaylistEntry) (*youtube.Video, error)
 	GetStreamContext(context.Context, *youtube.Video, *youtube.Format) (io.ReadCloser, int64, error)
 }
+
+type nativeClient = extractor
 
 type streamSelection struct {
 	video               *youtube.Format
@@ -137,7 +140,7 @@ func (c synchronizedNativeClient) GetStreamURLContext(ctx context.Context, video
 // injectable through server.engine.
 func (s *server) operationEngine() nativeClient {
 	if _, ok := s.engine.(*youtube.Client); ok {
-		return newNativeClient(0)
+		return newYouTubeExtractor(0)
 	}
 	return synchronizedNativeClient{client: s.engine, mu: &s.engineMu}
 }
@@ -1200,6 +1203,9 @@ func (s *server) processItem(ctx context.Context, j *jobState, entry *youtube.Pl
 		}
 		return errMetadata
 	}
+	if extractor, ok := engine.(interface{ FallbackUsed() bool }); ok && extractor.FallbackUsed() {
+		s.noteExtractionFallback(j)
+	}
 	s.setItemMetadata(j, current, video)
 	var selection streamSelection
 	var format *youtube.Format
@@ -1889,6 +1895,14 @@ func (s *server) noteAdaptiveMP4AudioFallback(j *jobState) {
 	s.mu.Unlock()
 }
 
+func (s *server) noteExtractionFallback(j *jobState) {
+	s.mu.Lock()
+	if !strings.Contains(j.Note, extractionFallbackNote) {
+		j.Note += " " + extractionFallbackNote
+	}
+	s.mu.Unlock()
+}
+
 func (s *server) noteBrowserAdaptive(j *jobState) {
 	s.mu.Lock()
 	if !strings.Contains(j.Note, browserAdaptiveNote) {
@@ -2139,10 +2153,10 @@ func (s *server) transferAdaptiveWebM(ctx context.Context, j *jobState, engine n
 		_, audioPartErr := os.Stat(audioPart)
 		if errors.Is(videoPartErr, os.ErrNotExist) && errors.Is(audioPartErr, os.ErrNotExist) {
 			dualAttempted = true
-			if err := s.saveDownloadPart(j, video.ID, queueIndex, "video", videoPart, "browser-sabr", selection.video, 0); err != nil {
+			if err := s.saveDownloadPart(j, video.ID, queueIndex, "video", videoPart, "browser-sabr", selection.video, 0, nativeProfileID(engine)); err != nil {
 				return result, errStorage
 			}
-			if err := s.saveDownloadPart(j, video.ID, queueIndex, "audio", audioPart, "browser-sabr", selection.audio, 0); err != nil {
+			if err := s.saveDownloadPart(j, video.ID, queueIndex, "audio", audioPart, "browser-sabr", selection.audio, 0, nativeProfileID(engine)); err != nil {
 				return result, errStorage
 			}
 			dualProgress := func(videoCurrent, audioCurrent int64) {
@@ -2288,7 +2302,10 @@ func adaptiveRangeRetryDelay(retry int) time.Duration {
 
 func validRangeResponse(response *http.Response, start, end, total int64) bool {
 	if response.StatusCode == http.StatusOK {
-		return true
+		// Some servers ignore Range and return the entire source. Accept that
+		// only for the initial request, where byte zero still matches the
+		// requested offset; never append a full response at a resume offset.
+		return start == 0
 	}
 	if response.StatusCode != http.StatusPartialContent {
 		return false
@@ -2315,22 +2332,33 @@ func waitAdaptiveRangeRetry(ctx context.Context, retry int) error {
 	}
 }
 
-func downloadSourceFingerprint(videoID string, format *youtube.Format) string {
-	identity := fmt.Sprintf("%s\x00%d\x00%s\x00%s\x00%d\x00%d\x00%d\x00%d\x00%s\x00%d\x00%s\x00%s\x00%d\x00%s",
+func nativeProfileID(engine nativeClient) string {
+	if provider, ok := engine.(interface{ RequestProfile() youtubeClientProfile }); ok {
+		return provider.RequestProfile().id
+	}
+	return ""
+}
+
+func downloadSourceFingerprint(videoID string, format *youtube.Format, profileIDs ...string) string {
+	profileID := ""
+	if len(profileIDs) > 0 {
+		profileID = profileIDs[0]
+	}
+	identity := fmt.Sprintf("%s\x00%d\x00%s\x00%s\x00%d\x00%d\x00%d\x00%d\x00%s\x00%d\x00%s\x00%s\x00%d\x00%s\x00%s",
 		videoID, format.ItagNo, format.MimeType, format.Quality, format.ContentLength,
 		format.Width, format.Height, format.FPS, format.LastModified, format.Bitrate, format.AudioQuality,
-		format.AudioSampleRate, format.AudioChannels, format.ProjectionType)
+		format.AudioSampleRate, format.AudioChannels, format.ProjectionType, profileID)
 	digest := sha256.Sum256([]byte(identity))
 	return hex.EncodeToString(digest[:])
 }
 
-func (s *server) saveDownloadPart(j *jobState, videoID string, itemIndex int, partKey, path, method string, format *youtube.Format, completed int64) error {
+func (s *server) saveDownloadPart(j *jobState, videoID string, itemIndex int, partKey, path, method string, format *youtube.Format, completed int64, profileIDs ...string) error {
 	if s.store == nil {
 		return nil
 	}
 	err := s.store.savePart(j.ID, itemIndex, partKey, downloadPart{
 		Path: path, CompletedBytes: completed, ExpectedBytes: format.ContentLength,
-		Itag: format.ItagNo, SourceFingerprint: downloadSourceFingerprint(videoID, format), Method: method,
+		Itag: format.ItagNo, SourceFingerprint: downloadSourceFingerprint(videoID, format, profileIDs...), Method: method,
 	})
 	if err == nil {
 		s.recordPersistenceSuccess()
@@ -2357,7 +2385,8 @@ func (s *server) downloadAdaptiveRanges(ctx context.Context, j *jobState, engine
 		progress = func(int64) {}
 	}
 	start := int64(0)
-	fingerprint := downloadSourceFingerprint(video.ID, format)
+	profileID := nativeProfileID(engine)
+	fingerprint := downloadSourceFingerprint(video.ID, format, profileID)
 	info, statErr := os.Lstat(path)
 	if statErr == nil {
 		valid := false
@@ -2397,7 +2426,7 @@ func (s *server) downloadAdaptiveRanges(ctx context.Context, j *jobState, engine
 	if browserProvider != nil && start == 0 {
 		const browserCaptureAttempts = 2
 		for attempt := 0; attempt < browserCaptureAttempts; attempt++ {
-			if err := s.saveDownloadPart(j, video.ID, itemIndex, partKey, path, "browser-sabr", format, 0); err != nil {
+			if err := s.saveDownloadPart(j, video.ID, itemIndex, partKey, path, "browser-sabr", format, 0, profileID); err != nil {
 				s.recordPersistenceFailure("save browser download checkpoint", j.ID, err)
 				return 0, false, errStorage
 			}
@@ -2455,7 +2484,7 @@ func (s *server) downloadAdaptiveRanges(ctx context.Context, j *jobState, engine
 	if start > 0 {
 		progress(start)
 	}
-	if err := s.saveDownloadPart(j, video.ID, itemIndex, partKey, path, "native-range", format, start); err != nil {
+	if err := s.saveDownloadPart(j, video.ID, itemIndex, partKey, path, "native-range", format, start, profileID); err != nil {
 		s.recordPersistenceFailure("save download checkpoint", j.ID, err)
 		return result, browserUsed, errStorage
 	}
@@ -2476,6 +2505,7 @@ func (s *server) downloadAdaptiveRanges(ctx context.Context, j *jobState, engine
 				if engine == nil {
 					continue
 				}
+				previousProfile := nativeProfileID(engine)
 				current, err = s.refreshFormat(ctx, engine, video.ID, format.ItagNo)
 				if err != nil {
 					if os.Getenv("YTDL_TRACE_PERFORMANCE") != "" {
@@ -2483,7 +2513,11 @@ func (s *server) downloadAdaptiveRanges(ctx context.Context, j *jobState, engine
 					}
 					continue
 				}
-				if downloadSourceFingerprint(video.ID, current) != fingerprint {
+				profileID = nativeProfileID(engine)
+				if profileID != previousProfile {
+					return result, browserUsed, errRead
+				}
+				if downloadSourceFingerprint(video.ID, current, profileID) != fingerprint {
 					return result, browserUsed, errLength
 				}
 			}
@@ -2498,8 +2532,14 @@ func (s *server) downloadAdaptiveRanges(ctx context.Context, j *jobState, engine
 			if err != nil {
 				continue
 			}
-			req.Header.Set("User-Agent", youtube.AndroidClient.UserAgent)
-			req.Header.Set("Origin", "https://youtube.com")
+			profile := youtubeClientProfile{id: "android", client: youtube.AndroidClient, origin: "https://youtube.com"}
+			if currentProfile, ok := engine.(interface{ RequestProfile() youtubeClientProfile }); ok {
+				profile = currentProfile.RequestProfile()
+			}
+			req.Header.Set("User-Agent", profile.client.UserAgent)
+			if profile.origin != "" {
+				req.Header.Set("Origin", profile.origin)
+			}
 			req.Header.Set("Sec-Fetch-Mode", "navigate")
 			req.Header.Set("Range", fmt.Sprintf("bytes=%d-%d", start, end))
 			resp, requestErr := client.Do(req)
@@ -2543,7 +2583,7 @@ func (s *server) downloadAdaptiveRanges(ctx context.Context, j *jobState, engine
 			s.recordPersistenceFailure("sync adaptive download checkpoint", j.ID, err)
 			return result, browserUsed, errStorage
 		}
-		if checkpointErr := s.saveDownloadPart(j, video.ID, itemIndex, partKey, path, "native-range", format, result); checkpointErr != nil {
+		if checkpointErr := s.saveDownloadPart(j, video.ID, itemIndex, partKey, path, "native-range", format, result, profileID); checkpointErr != nil {
 			s.recordPersistenceFailure("save download checkpoint", j.ID, checkpointErr)
 			return result, browserUsed, errStorage
 		}

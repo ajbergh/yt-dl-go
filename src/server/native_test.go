@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"runtime"
 	"strings"
 	"sync"
@@ -28,6 +29,139 @@ func TestNativeClientUsesAndroidProfile(t *testing.T) {
 	}
 }
 
+func TestExtractorProfileOrderAndLocalCapabilityProbe(t *testing.T) {
+	want := []string{"android", "ios", "embedded", "web"}
+	if got := extractorProfileOrder(0); !reflect.DeepEqual(profileIDs(got), want) {
+		t.Fatalf("profile order = %v, want %v", profileIDs(got), want)
+	}
+	if got := extractorProfileOrder(2); !reflect.DeepEqual(profileIDs(got), []string{"embedded", "web", "android", "ios"}) {
+		t.Fatalf("rotated profile order = %v", profileIDs(got))
+	}
+	probe := youtubeExtractorHealth()
+	if !probe.Ready || probe.Probe != "local-profile-config" || !reflect.DeepEqual(probe.Profiles, want) {
+		t.Fatalf("extractor health probe = %+v", probe)
+	}
+}
+
+func profileIDs(indices []int) []string {
+	ids := make([]string, 0, len(indices))
+	for _, index := range indices {
+		ids = append(ids, supportedYouTubeProfiles[index].id)
+	}
+	return ids
+}
+
+func TestExtractorRetriesTransientFailuresAndPreservesIdentity(t *testing.T) {
+	var attempted []string
+	video, selected, err := extractAcrossProfiles(context.Background(), supportedYouTubeProfiles, 0, func(profile youtubeClientProfile) (*youtube.Video, error) {
+		attempted = append(attempted, profile.id)
+		if profile.id == "android" {
+			return nil, youtube.ErrUnexpectedStatusCode(503)
+		}
+		return &youtube.Video{ID: "dQw4w9WgXcQ"}, nil
+	}, func(video *youtube.Video) bool { return video != nil && video.ID == "dQw4w9WgXcQ" })
+	if err != nil || video == nil || selected != 1 || !reflect.DeepEqual(attempted, []string{"android", "ios"}) {
+		t.Fatalf("profile fallback video=%+v selected=%d attempts=%v error=%v", video, selected, attempted, err)
+	}
+}
+
+func TestExtractorStopsOnAccessAndCancellationErrors(t *testing.T) {
+	for _, failure := range []error{youtube.ErrVideoPrivate, youtube.ErrLoginRequired, youtube.ErrUnexpectedStatusCode(403), context.Canceled, context.DeadlineExceeded} {
+		attempts := 0
+		_, _, err := extractAcrossProfiles(context.Background(), supportedYouTubeProfiles, 0, func(youtubeClientProfile) (*youtube.Video, error) {
+			attempts++
+			return nil, failure
+		}, func(*youtube.Video) bool { return false })
+		if !errors.Is(err, failure) || attempts != 1 {
+			t.Errorf("failure %v: attempts=%d error=%v, want stop after first profile", failure, attempts, err)
+		}
+	}
+}
+
+func TestExtractorRejectsEmptyProfileSetAndStopsOnPlaylistStatus(t *testing.T) {
+	if _, _, err := extractAcrossProfiles(context.Background(), nil, 0, func(youtubeClientProfile) (*youtube.Video, error) {
+		t.Fatal("extraction attempted with no configured profiles")
+		return nil, nil
+	}, func(*youtube.Video) bool { return false }); !errors.Is(err, errNoYouTubeProfiles) {
+		t.Fatalf("empty profile error = %v, want %v", err, errNoYouTubeProfiles)
+	}
+
+	attempts := 0
+	_, _, err := extractAcrossProfiles(context.Background(), supportedYouTubeProfiles, 0, func(youtubeClientProfile) (*youtube.Playlist, error) {
+		attempts++
+		return nil, youtube.ErrPlaylistStatus{Reason: "playlist unavailable"}
+	}, func(*youtube.Playlist) bool { return false })
+	var playlistStatus youtube.ErrPlaylistStatus
+	if !errors.As(err, &playlistStatus) || attempts != 1 {
+		t.Fatalf("playlist status attempts=%d error=%v, want one attempt and original status", attempts, err)
+	}
+}
+
+func TestExtractorOnlyRetriesTransientHTTPStatuses(t *testing.T) {
+	for _, test := range []struct {
+		status int
+		want   bool
+	}{{429, true}, {500, true}, {503, true}, {400, false}, {401, false}, {403, false}, {404, false}} {
+		if got := canRetryYouTubeProfile(youtube.ErrUnexpectedStatusCode(test.status)); got != test.want {
+			t.Errorf("status %d retry=%t, want %t", test.status, got, test.want)
+		}
+	}
+	if !canRetryYouTubeProfile(errors.New("player response JSON parser changed")) {
+		t.Fatal("parser drift should try the next extraction profile")
+	}
+	if canRetryYouTubeProfile(context.Canceled) || canRetryYouTubeProfile(context.DeadlineExceeded) {
+		t.Fatal("cancellation and deadlines must not be retried with another profile")
+	}
+}
+
+type youtubeFixtureTransport struct {
+	page []byte
+}
+
+func (transport youtubeFixtureTransport) RoundTrip(request *http.Request) (*http.Response, error) {
+	body := []byte("not found")
+	status := http.StatusNotFound
+	if request.Method == http.MethodGet && (request.URL.Path == "" || request.URL.Path == "/") {
+		body, status = []byte(`<!doctype html><script>ytcfg.set({"INNERTUBE_CONTEXT":{"client":{"visitorData":"fixture-visitor"}}});</script>`), http.StatusOK
+	} else if request.URL.Path == "/youtubei/v1/player" {
+		pattern := regexp.MustCompile(`var ytInitialPlayerResponse\s*=\s*(\{.+?\});`)
+		match := pattern.FindSubmatch(transport.page)
+		if len(match) < 2 {
+			return nil, errors.New("recorded player response fixture is malformed")
+		}
+		body, status = match[1], http.StatusOK
+	} else if request.URL.Path == "/watch" {
+		body, status = transport.page, http.StatusOK
+	} else {
+		return nil, fmt.Errorf("recorded YouTube fixture does not cover %s %s", request.Method, request.URL.Path)
+	}
+	return &http.Response{
+		StatusCode: status, Status: http.StatusText(status),
+		Header: http.Header{"Content-Type": []string{"application/json"}},
+		Body:   io.NopCloser(bytes.NewReader(body)), Request: request,
+	}, nil
+}
+
+func TestRecordedPlayerResponseFixtureParsesThroughYouTubeClient(t *testing.T) {
+	page, err := os.ReadFile(filepath.Join("testdata", "youtube", "player-response.html"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := &youtube.Client{HTTPClient: &http.Client{Transport: youtubeFixtureTransport{page: page}}}
+	video, err := withYouTubeProfileClient(supportedYouTubeProfiles[0], client, func(client *youtube.Client) (*youtube.Video, error) {
+		return client.GetVideoContext(context.Background(), testVideo)
+	})
+	if err != nil {
+		t.Fatalf("parse recorded player response: %v", err)
+	}
+	if video.ID != "dQw4w9WgXcQ" || video.Title != "Fixture video" || video.Author != "Fixture channel" || video.Duration != 5*time.Minute || video.PublishDate.Format("2006-01-02") != "2026-09-24" {
+		t.Fatalf("parsed player metadata = %+v", video)
+	}
+	if len(video.Formats) != 1 || video.Formats[0].ItagNo != 18 || video.Formats[0].Height != 360 || video.Formats[0].AudioChannels != 2 {
+		t.Fatalf("parsed player formats = %+v", video.Formats)
+	}
+}
+
 func TestAdaptiveFallbackRequiresExplicitOptIn(t *testing.T) {
 	selection := streamSelection{progressiveFallback: &youtube.Format{ItagNo: 18, Height: 360, AudioChannels: 2}}
 	if adaptiveFallbackAllowed(&jobState{}, selection) {
@@ -38,6 +172,23 @@ func TestAdaptiveFallbackRequiresExplicitOptIn(t *testing.T) {
 	}
 	if adaptiveFallbackAllowed(&jobState{Job: Job{Allow360pFallback: true}}, streamSelection{}) {
 		t.Fatal("fallback was allowed without a verified 360p progressive format")
+	}
+}
+
+func TestValidRangeResponseRejectsIgnoredRangeOnResume(t *testing.T) {
+	if !validRangeResponse(&http.Response{StatusCode: http.StatusOK}, 0, 99, 100) {
+		t.Fatal("initial 200 response should be accepted")
+	}
+	if validRangeResponse(&http.Response{StatusCode: http.StatusOK}, 100, 199, 200) {
+		t.Fatal("200 response was accepted for a nonzero resume offset")
+	}
+	for _, header := range []string{"bytes 100-199/200", "bytes 101-199/200", "bytes 100-198/200", "bytes 100-199/201", "invalid"} {
+		response := &http.Response{StatusCode: http.StatusPartialContent, Header: http.Header{"Content-Range": []string{header}}}
+		got := validRangeResponse(response, 100, 199, 200)
+		want := header == "bytes 100-199/200"
+		if got != want {
+			t.Fatalf("Content-Range %q accepted=%t, want %t", header, got, want)
+		}
 	}
 }
 
