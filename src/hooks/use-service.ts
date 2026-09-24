@@ -1,13 +1,28 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   api, streamServiceEvents,
-  type AppSettings, type BuildInfo, type DownloadJob, type ServiceConnection, type ServiceEvent, type ServiceHealth, type UpdateStatus,
+  type AppSettings, type BuildInfo, type DownloadJob, type LibraryPageResponse, type LibraryQuery, type ServiceConnection, type ServiceEvent, type ServiceHealth, type UpdateStatus,
 } from "../lib/downloader";
 import {
   builtInServiceConnection, errorMessage, notificationAPI, terminalNotification,
 } from "../components/downloader/view-model";
 
 const fallbackCategories = ["Tech", "Science", "Coding", "Music", "Education", "Gaming", "Podcasts", "Archival", "General"];
+
+function libraryPagePath(query: LibraryQuery, cursor?: string): string {
+  const params = new URLSearchParams({ limit: "50" });
+  if (query.q) params.set("q", query.q);
+  if (query.type) params.set("type", query.type);
+  if (query.category) params.set("category", query.category);
+  if (query.channel) params.set("channel", query.channel);
+  if (cursor) params.set("cursor", cursor);
+  return `/api/library?${params.toString()}`;
+}
+
+const emptyLibraryPage: LibraryPageResponse = {
+  jobs: [], totalJobs: 0, categories: [], channels: [],
+  stats: { files: 0, logicalBytes: 0, managedBytes: 0, publishedBytes: 0 },
+};
 
 const defaultSettings: AppSettings = {
   defaultQuality: "best",
@@ -50,6 +65,9 @@ export function useService() {
   const [serviceReady, setServiceReady] = useState(false);
   const [jobs, setJobs] = useState<DownloadJob[]>([]);
   const [libraryJobs, setLibraryJobs] = useState<DownloadJob[]>([]);
+  const [libraryPage, setLibraryPage] = useState<LibraryPageResponse>(emptyLibraryPage);
+  const [libraryQuery, setLibraryQueryState] = useState<LibraryQuery>({});
+  const [loadingLibraryMore, setLoadingLibraryMore] = useState(false);
   const [settings, setSettings] = useState<AppSettings>(defaultSettings);
   const [mp3Supported, setMp3Supported] = useState(false);
   const [buildInfo, setBuildInfo] = useState<BuildInfo>({ version: "dev", commit: "unknown", buildDate: "unknown" });
@@ -60,14 +78,48 @@ export function useService() {
   const [pollError, setPollError] = useState("");
   const knownJobStatuses = useRef<Map<string, DownloadJob["status"]>>(new Map());
   const notificationsEnabledRef = useRef(false);
+  const libraryQueryRef = useRef<LibraryQuery>({});
+  const libraryRequestSequence = useRef(0);
+
+  const setLibraryQuery = useCallback((query: LibraryQuery) => {
+    libraryQueryRef.current = query;
+    setLibraryQueryState(query);
+  }, []);
 
   const refreshLibrary = useCallback(async () => {
-    const result = await api<{ jobs: DownloadJob[] }>(connection, "/api/library", {
+    const requestID = ++libraryRequestSequence.current;
+    setLoadingLibraryMore(false);
+    const result = await api<LibraryPageResponse>(connection, libraryPagePath(libraryQueryRef.current), {
       signal: AbortSignal.timeout(10000),
     });
-    setLibraryJobs(result.jobs);
+    if (requestID === libraryRequestSequence.current) {
+      setLibraryJobs(result.jobs);
+      setLibraryPage(result);
+    }
     return result.jobs;
   }, [connection]);
+
+  const loadMoreLibrary = useCallback(async () => {
+    const cursor = libraryPage.nextCursor;
+    if (!cursor || loadingLibraryMore) return;
+    setLoadingLibraryMore(true);
+    const requestID = ++libraryRequestSequence.current;
+    try {
+      const query = libraryQueryRef.current;
+      const result = await api<LibraryPageResponse>(connection, libraryPagePath(query, cursor), {
+        signal: AbortSignal.timeout(10000),
+      });
+      if (requestID !== libraryRequestSequence.current || query !== libraryQueryRef.current) return;
+      setLibraryJobs(previous => [...previous, ...result.jobs.filter(job => !previous.some(item => item.id === job.id))]);
+      setLibraryPage(result);
+    } finally {
+      if (requestID === libraryRequestSequence.current) setLoadingLibraryMore(false);
+    }
+  }, [connection, libraryPage.nextCursor, loadingLibraryMore]);
+
+  useEffect(() => {
+    if (serviceReady) void refreshLibrary().catch(error => setPollError(errorMessage(error)));
+  }, [libraryQuery, refreshLibrary, serviceReady]);
 
   useEffect(() => {
     notificationsEnabledRef.current = settings.notificationsEnabled;
@@ -115,7 +167,7 @@ export function useService() {
           api<{ jobs: DownloadJob[] }>(connection, "/api/jobs", {
             signal: AbortSignal.any([controller.signal, AbortSignal.timeout(10000)]),
           }),
-          api<{ jobs: DownloadJob[] }>(connection, "/api/library", {
+          api<LibraryPageResponse>(connection, libraryPagePath(libraryQueryRef.current), {
             signal: AbortSignal.any([controller.signal, AbortSignal.timeout(10000)]),
           }),
           api<{ settings: AppSettings }>(connection, "/api/settings", {
@@ -125,6 +177,7 @@ export function useService() {
         if (controller.signal.aborted) return;
         setJobs(jobResult.jobs);
         setLibraryJobs(libraryResult.jobs);
+        setLibraryPage(libraryResult);
         knownJobStatuses.current = new Map(jobResult.jobs.map(job => [job.id, job.status]));
         setSettings(previous => hydratedSettings(settingResult.settings, previous));
         setServiceError("");
@@ -214,18 +267,15 @@ export function useService() {
 
     async function reconcile() {
       try {
-        const [result, libraryResult] = await Promise.all([
+        const [result] = await Promise.all([
           api<{ jobs: DownloadJob[] }>(connection, "/api/jobs", {
             signal: AbortSignal.any([controller.signal, AbortSignal.timeout(10000)]),
           }),
-          api<{ jobs: DownloadJob[] }>(connection, "/api/library", {
-            signal: AbortSignal.any([controller.signal, AbortSignal.timeout(10000)]),
-          }),
+          refreshLibrary(),
         ]);
         if (!controller.signal.aborted) {
           for (const job of result.jobs) maybeNotifyTerminal(job);
           setJobs(result.jobs);
-          setLibraryJobs(libraryResult.jobs);
         }
       } catch (error) {
         if (!controller.signal.aborted) setPollError(errorMessage(error));
@@ -259,7 +309,12 @@ export function useService() {
     setJobs,
     libraryJobs,
     setLibraryJobs,
+    libraryPage,
+    libraryQuery,
+    setLibraryQuery,
     refreshLibrary,
+    loadMoreLibrary,
+    loadingLibraryMore,
     settings,
     setSettings,
     mp3Supported,

@@ -103,6 +103,35 @@ export interface DownloadJob {
   etaSeconds: number;
   activeItemCount?: number;
 }
+
+export interface LibraryQuery {
+  q?: string;
+  type?: "video" | "audio";
+  category?: string;
+  channel?: string;
+}
+
+export interface LibraryFacet {
+  value: string;
+  count: number;
+}
+
+export interface LibraryStats {
+  files: number;
+  logicalBytes: number;
+  managedBytes: number;
+  publishedBytes: number;
+}
+
+export interface LibraryPageResponse {
+  jobs: DownloadJob[];
+  nextCursor?: string;
+  totalJobs: number;
+  categories: LibraryFacet[];
+  channels: LibraryFacet[];
+  stats: LibraryStats;
+}
+
 export interface BuildInfo {
   version: string;
   commit: string;
