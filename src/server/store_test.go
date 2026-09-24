@@ -107,10 +107,29 @@ func TestPersistentQueueOrderControlsSchedulerPriority(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer reloaded.stop()
-	if reloaded.jobs[first.ID].QueuePosition != 1 || reloaded.jobs[third.ID].QueuePosition != 2 || reloaded.jobs[second.ID].QueuePosition != 3 {
-		t.Fatalf("queue order did not persist: first=%d third=%d second=%d",
-			reloaded.jobs[first.ID].QueuePosition, reloaded.jobs[third.ID].QueuePosition, reloaded.jobs[second.ID].QueuePosition)
+	firstStored, err := reloaded.store.loadJob(reloaded.cfg.root, first.ID)
+	if err != nil {
+		t.Fatal(err)
 	}
+	thirdStored, err := reloaded.store.loadJob(reloaded.cfg.root, third.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondStored, err := reloaded.store.loadJob(reloaded.cfg.root, second.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if firstStored == nil || thirdStored == nil || secondStored == nil || firstStored.job.QueuePosition != 1 || thirdStored.job.QueuePosition != 2 || secondStored.job.QueuePosition != 3 {
+		t.Fatalf("queue order did not persist: first=%d third=%d second=%d",
+			storedPosition(firstStored), storedPosition(thirdStored), storedPosition(secondStored))
+	}
+}
+
+func storedPosition(stored *storedJob) int {
+	if stored == nil {
+		return 0
+	}
+	return stored.job.QueuePosition
 }
 
 func TestRetryItemIntentPersistsAcrossRestart(t *testing.T) {
@@ -217,16 +236,20 @@ func TestPersistentHistoryAndQueueResume(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer history.stop()
-	if got := len(history.jobs); got != 1 {
-		t.Fatalf("history count = %d, want 1", got)
+	if got := len(history.jobs); got != 0 {
+		t.Fatalf("active job count after restart = %d, want 0", got)
 	}
-	if history.jobs[queued.ID].Status != "completed" || history.jobs[queued.ID].VideoStrategy != "vp9" || !history.jobs[queued.ID].Allow360pFallback {
-		t.Fatalf("history state = %+v", history.jobs[queued.ID])
+	finished, err := history.store.loadJob(history.cfg.root, queued.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if finished == nil || finished.job.Status != "completed" || finished.job.VideoStrategy != "vp9" || !finished.job.Allow360pFallback {
+		t.Fatalf("durable history state = %+v", finished)
 	}
 	if history.settings.DefaultQuality != "720" || history.settings.DefaultVideoStrategy != "av1" || history.settings.Allow360pFallback || history.settings.BandwidthLimitBytesPerSec != 5*1024*1024 || !history.settings.NotificationsEnabled || history.settings.OutputFileMode != "0644" || history.settings.OutputFolderMode != "0755" {
 		t.Fatalf("application preferences did not persist: %+v", history.settings)
 	}
-	if sJob := history.jobs[queued.ID]; sJob.OutputFileMode != "0640" || sJob.OutputFolderMode != "0750" {
+	if sJob := finished.job; sJob.OutputFileMode != "0640" || sJob.OutputFolderMode != "0750" {
 		t.Fatalf("queued output permissions were not captured and persisted: %+v", sJob)
 	}
 	var configCount int
