@@ -196,6 +196,23 @@ func waitTerminal(t *testing.T, s *server, id string) Job {
 	return waitJob(t, s, id, func(j Job) bool { return terminal(j.Status) })
 }
 
+func waitPersistedTerminalJob(t *testing.T, s *server, jobID string) {
+	t.Helper()
+	until := time.Now().Add(15 * time.Second)
+	for time.Now().Before(until) {
+		var status string
+		var hasDoneAt int
+		if err := s.store.db.QueryRow(`SELECT status,done_at IS NOT NULL FROM jobs WHERE id=?`, jobID).Scan(&status, &hasDoneAt); err != nil {
+			t.Fatal(err)
+		}
+		if terminal(status) && hasDoneAt != 0 {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatalf("job %s did not reach durable terminal state", jobID)
+}
+
 func TestMaxJobsCountsOnlyLiveJobs(t *testing.T) {
 	fake := fixtureClient(0)
 	fake.videoFn = func(ctx context.Context, _ string) (*youtube.Video, error) {
@@ -769,6 +786,7 @@ func TestRetentionAcrossStoragePolicies(t *testing.T) {
 				if job.Status != "completed" || len(job.Files) != 1 {
 					t.Fatalf("fixture did not finalize media: %+v", job)
 				}
+				waitPersistedTerminalJob(t, s, job.ID)
 				managedPath := filepath.Join(s.cfg.root, job.ID, job.Files[0].Name)
 				publishedPath := trackedOutputPath(t, s, job.ID, job.Files[0].ID)
 				setPersistedJobDoneAt(t, s, job.ID, time.Now().Add(-time.Hour))
@@ -810,6 +828,7 @@ func TestRetentionKeepsManagedCopyWhenPublishedCopyDisappears(t *testing.T) {
 	if job.Status != "completed" || len(job.Files) != 1 {
 		t.Fatalf("fixture did not finalize media: %+v", job)
 	}
+	waitPersistedTerminalJob(t, s, job.ID)
 	publishedPath := trackedOutputPath(t, s, job.ID, job.Files[0].ID)
 	if err := os.Remove(publishedPath); err != nil {
 		t.Fatal(err)
@@ -848,10 +867,9 @@ func TestRetentionCleansEmptyFailedAndCancelledJobs(t *testing.T) {
 			if job.Status != status || len(job.Files) != 0 {
 				t.Fatalf("expected an empty %s job, got %+v", status, job)
 			}
-			s.mu.Lock()
+			waitPersistedTerminalJob(t, s, job.ID)
 			setPersistedJobDoneAt(t, s, job.ID, time.Now().Add(-25*time.Hour))
-			s.mu.Unlock()
-			s.prune(time.Now())
+			s.prune(time.Now().Add(failedScratchRetention + time.Second))
 			if request(s, "GET", "/api/jobs/"+job.ID, "", nil).Code != 404 {
 				t.Fatal("empty scratch job survived its default cleanup period")
 			}
@@ -1330,6 +1348,7 @@ func TestDownloadsAndRetention(t *testing.T) {
 	if j.Status != "completed" {
 		t.Fatalf("fixture failed: %+v", j)
 	}
+	waitPersistedTerminalJob(t, s, j.ID)
 	for _, invalid := range []string{"null", `{"fileId":null}`, `{"fileId":""}`} {
 		if request(s, "POST", "/api/jobs/"+j.ID+"/ticket", invalid, nil).Code != 400 {
 			t.Fatal("invalid ticket body accepted")
