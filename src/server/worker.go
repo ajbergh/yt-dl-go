@@ -663,9 +663,17 @@ func (s *server) run(ctx context.Context, j *jobState, requested []queueItem) {
 	}
 	s.setQueueItems(j, work, retryTargets)
 	s.mu.Lock()
-	for index, file := range j.fileItems {
-		if !s.validCompletedFile(j, file) {
+	for index, files := range groupedJobFiles(j) {
+		valid := len(files) > 0
+		for _, file := range files {
+			if !s.validCompletedFile(j, file) {
+				valid = false
+				break
+			}
+		}
+		if !valid {
 			delete(j.fileItems, index)
+			delete(j.fileGroups, index)
 		}
 	}
 	s.rebuildFilesLocked(j)
@@ -1001,6 +1009,7 @@ func (s *server) setQueueItems(j *jobState, work []playlistWorkItem, retryTarget
 			items[index].DownloadedBytes = previous[index].DownloadedBytes
 			items[index].TotalBytes = previous[index].TotalBytes
 			items[index].FileID = previous[index].FileID
+			items[index].FileIDs = append([]string(nil), previous[index].FileIDs...)
 		}
 	}
 	j.Items = items
@@ -1020,20 +1029,27 @@ func (s *server) refreshQueueItemLocked(j *jobState, index int) {
 		return
 	}
 	item := &j.Items[index-1]
-	if file, ok := j.fileItems[index]; ok {
+	if files := itemFiles(j, index); len(files) > 0 {
+		file := files[0]
 		item.Status = "completed"
 		item.Progress = floatPointer(100)
-		item.DownloadedBytes, item.TotalBytes = file.Size, file.Size
+		var totalSize int64
+		item.FileIDs = make([]string, 0, len(files))
+		for _, output := range files {
+			totalSize += output.Size
+			item.FileIDs = append(item.FileIDs, output.ID)
+		}
+		item.DownloadedBytes, item.TotalBytes = totalSize, totalSize
 		item.SpeedBytesPerSec, item.ETASeconds = 0, 0
 		item.FileID = file.ID
 		item.Error = ""
-		if file.Title != "" {
+		if file.Title != "" && file.ChapterIndex == 0 {
 			item.Title = file.Title
 		}
 		if file.Author != "" {
 			item.Author = file.Author
 		}
-		if file.DurationSeconds > 0 {
+		if file.DurationSeconds > 0 && file.ChapterIndex == 0 {
 			item.DurationSeconds = file.DurationSeconds
 		}
 		if file.ThumbnailURL != "" {
@@ -1045,7 +1061,7 @@ func (s *server) refreshQueueItemLocked(j *jobState, index int) {
 		if failure.Index == index {
 			item.Status, item.Error = "failed", failure.Error
 			item.SpeedBytesPerSec, item.ETASeconds = 0, 0
-			item.FileID = ""
+			item.FileID, item.FileIDs = "", nil
 			return
 		}
 	}
@@ -1065,7 +1081,7 @@ func (s *server) refreshQueueItemLocked(j *jobState, index int) {
 		if progress.total > progress.downloaded && progress.speed > 0 {
 			item.ETASeconds = (progress.total - progress.downloaded) / progress.speed
 		}
-		item.Error, item.FileID = "", ""
+		item.Error, item.FileID, item.FileIDs = "", "", nil
 		return
 	}
 	item.SpeedBytesPerSec, item.ETASeconds = 0, 0
@@ -1079,6 +1095,7 @@ func (s *server) refreshQueueItemLocked(j *jobState, index int) {
 	if retryMode && !item.RetryRequested && (item.Status == "failed" || item.Status == "cancelled") {
 		return
 	}
+	item.FileID, item.FileIDs = "", nil
 	switch {
 	case j.pauseRequested || j.Status == "paused":
 		item.Status = "paused"
@@ -1164,16 +1181,28 @@ func (s *server) updateProgress(j *jobState, index int, downloaded, total int64)
 
 func (s *server) processItem(ctx context.Context, j *jobState, entry *youtube.PlaylistEntry, current, outputIndex int, tracker *jobBudget) error {
 	s.mu.Lock()
-	if completed, ok := j.fileItems[current]; ok {
-		if s.validCompletedFile(j, completed) {
+	if completed := itemFiles(j, current); len(completed) > 0 {
+		valid := true
+		for _, file := range completed {
+			if !s.validCompletedFile(j, file) {
+				valid = false
+				break
+			}
+		}
+		if valid {
 			if progress := j.itemProgress[current]; progress != nil {
-				progress.downloaded, progress.total = completed.Size, completed.Size
+				var size int64
+				for _, file := range completed {
+					size += file.Size
+				}
+				progress.downloaded, progress.total = size, size
 			}
 			s.refreshProgressLocked(j)
 			s.mu.Unlock()
 			return nil
 		}
 		delete(j.fileItems, current)
+		delete(j.fileGroups, current)
 		s.rebuildFilesLocked(j)
 		s.persistJobLocked(j)
 	}
@@ -1241,97 +1270,126 @@ func (s *server) processItem(ctx context.Context, j *jobState, entry *youtube.Pl
 			_ = tracker.release(budget, 0)
 		}
 	}()
-	var file mediaFile
+	var files []mediaFile
 	if j.MediaType == "audio" {
-		if j.AudioFormat == "m4a" {
+		if j.SplitByChapter && j.AudioFormat == "mp3" && len(parseDescriptionChapters(video.Description, video.Duration)) > 1 {
+			files, err = s.transferChapterMP3(transferCtx, j, engine, video, format, extension, current, outputIndex, budget)
+		} else if j.AudioFormat == "m4a" {
+			var file mediaFile
 			file, err = s.transferOriginalAudio(transferCtx, j, engine, video, format, current, outputIndex, budget)
+			files = []mediaFile{file}
 		} else {
+			var file mediaFile
 			file, err = s.transferAudio(transferCtx, j, engine, video, format, extension, current, outputIndex, budget)
+			files = []mediaFile{file}
 		}
 	} else {
+		var file mediaFile
 		file, err = s.transfer(transferCtx, j, engine, video, selection, current, outputIndex, budget)
+		files = []mediaFile{file}
 	}
 	if err != nil {
 		return itemDeadlineError(ctx, transferCtx, err)
 	}
-	if j.MediaType != "audio" {
-		applyVideoMetadata(&file, video)
-		file.Category = j.Category
-		file.ManagedAvailable = true
-		s.captureThumbnail(ctx, j, &file)
-	} else {
-		if !video.PublishDate.IsZero() {
-			file.PublishDate = video.PublishDate.UTC().Format("2006-01-02")
-		}
+	if len(files) == 0 {
+		return errAudioConvert
 	}
-	if supportsContainerMetadata(file.MimeType) {
-		metadataExtra := tracker.reserveOptional(containerMetadataHeadroom)
-		if taggedSize, tagErr := rewriteContainerMetadata(transferCtx, j, file, video.ID, budget+metadataExtra); tagErr != nil {
-			if metadataExtra > 0 {
-				_ = tracker.release(metadataExtra, 0)
-			}
-			if errors.Is(tagErr, errStorage) || errors.Is(tagErr, context.Canceled) || errors.Is(tagErr, context.DeadlineExceeded) {
-				return tagErr
-			}
-			log.Printf("container metadata was not embedded for %s: %v", file.Name, tagErr)
-		} else if taggedSize > file.Size {
-			budget += metadataExtra
-			file.Size = taggedSize
-		} else if metadataExtra > 0 {
-			_ = tracker.release(metadataExtra, 0)
+	committed := false
+	defer func() {
+		if committed {
+			return
 		}
-	}
+		for _, file := range files {
+			if file.ManagedAvailable {
+				_ = os.Remove(filepath.Join(j.dir, file.Name))
+			}
+			if file.PublishedAvailable {
+				_ = os.Remove(file.OutputPath)
+			}
+			if file.Subtitle != nil {
+				_ = os.Remove(filepath.Join(j.dir, file.Subtitle.Name))
+				if file.Subtitle.OutputPath != "" {
+					_ = os.Remove(file.Subtitle.OutputPath)
+				}
+			}
+		}
+	}()
+	var outputSize int64
 	formatForName := format
 	if j.MediaType != "audio" {
 		formatForName = selection.video
 	}
-	file.naming.ID = video.ID
-	file.naming.UploadDate = file.PublishDate
-	file.naming.Index = strconv.Itoa(outputIndex)
-	if j.Kind == "playlist" {
-		file.naming.Playlist = j.Title
-	}
-	if file.naming.FPS == "" && formatForName != nil && formatForName.FPS > 0 {
-		file.naming.FPS = strconv.Itoa(formatForName.FPS)
-	}
-	if file.naming.Codec == "" && formatForName != nil {
-		file.naming.Codec = namingCodec(formatForName.MimeType)
-	}
-	if j.MediaType == "audio" && j.AudioFormat == "mp3" {
-		file.naming.Codec = "mp3"
-	}
-	if j.StorageMode != "managed-only" {
-		if err := s.publishOutput(j, &file); err != nil {
-			return errStorage
+	for index := range files {
+		file := &files[index]
+		if j.MediaType != "audio" {
+			applyVideoMetadata(file, video)
+			file.Category = j.Category
+			file.ManagedAvailable = true
+			s.captureThumbnail(ctx, j, file)
+		} else if !video.PublishDate.IsZero() && file.PublishDate == "" {
+			file.PublishDate = video.PublishDate.UTC().Format("2006-01-02")
 		}
-	}
-	if j.StorageMode == "published-only" {
-		if err := os.Remove(filepath.Join(j.dir, file.Name)); err != nil && !errors.Is(err, os.ErrNotExist) {
-			if file.PublishedAvailable {
-				_ = os.Remove(file.OutputPath)
+		if file.SourceItemIndex == 0 {
+			file.SourceItemIndex = current
+		}
+		if supportsContainerMetadata(file.MimeType) {
+			metadataExtra := tracker.reserveOptional(containerMetadataHeadroom)
+			if taggedSize, tagErr := rewriteContainerMetadata(transferCtx, j, *file, video.ID, budget+metadataExtra); tagErr != nil {
+				if metadataExtra > 0 {
+					_ = tracker.release(metadataExtra, 0)
+				}
+				if errors.Is(tagErr, errStorage) || errors.Is(tagErr, context.Canceled) || errors.Is(tagErr, context.DeadlineExceeded) {
+					return tagErr
+				}
+				log.Printf("container metadata was not embedded for %s: %v", file.Name, tagErr)
+			} else if taggedSize > file.Size {
+				budget += metadataExtra
+				file.Size = taggedSize
+			} else if metadataExtra > 0 {
+				_ = tracker.release(metadataExtra, 0)
 			}
-			return errStorage
 		}
-		file.ManagedAvailable = false
+		file.naming.ID = video.ID
+		file.naming.UploadDate = file.PublishDate
+		file.naming.Index = strconv.Itoa(outputIndex)
+		if j.Kind == "playlist" {
+			file.naming.Playlist = j.Title
+		}
+		if file.naming.FPS == "" && formatForName != nil && formatForName.FPS > 0 {
+			file.naming.FPS = strconv.Itoa(formatForName.FPS)
+		}
+		if file.naming.Codec == "" && formatForName != nil {
+			file.naming.Codec = namingCodec(formatForName.MimeType)
+		}
+		if j.MediaType == "audio" && j.AudioFormat == "mp3" {
+			file.naming.Codec = "mp3"
+		}
+		if j.StorageMode != "managed-only" {
+			if err := s.publishOutput(j, file); err != nil {
+				return errStorage
+			}
+		}
+		if j.StorageMode == "published-only" {
+			if err := os.Remove(filepath.Join(j.dir, file.Name)); err != nil && !errors.Is(err, os.ErrNotExist) {
+				return errStorage
+			}
+			file.ManagedAvailable = false
+		}
+		outputSize += file.Size
 	}
-	leaseOpen = false
-	if err := tracker.release(budget, file.Size); err != nil {
-		if file.ManagedAvailable {
-			_ = os.Remove(filepath.Join(j.dir, file.Name))
-		}
-		if file.PublishedAvailable {
-			_ = os.Remove(file.OutputPath)
-		}
+	if err := tracker.release(budget, outputSize); err != nil {
 		return err
 	}
-	if j.SubtitleLanguage != "" {
+	leaseOpen = false
+	if j.SubtitleLanguage != "" && len(files) == 1 {
+		file := &files[0]
 		captionBudget := tracker.reserveOptional(maxCaptionBytes)
 		if captionBudget == 0 {
 			file.SubtitleError = "Caption sidecar was skipped because the job storage limit is exhausted"
 		} else {
-			subtitleSize := s.captureSubtitle(ctx, j, &file, video, captionBudget)
+			subtitleSize := s.captureSubtitle(ctx, j, file, video, captionBudget)
 			if file.Subtitle != nil && file.Subtitle.ManagedAvailable && j.StorageMode != "managed-only" {
-				if err := publishSubtitleOutput(j, &file); err != nil {
+				if err := publishSubtitleOutput(j, file); err != nil {
 					file.SubtitleError = "Caption sidecar was saved in the Library but could not be published next to the media file"
 				}
 			}
@@ -1353,9 +1411,13 @@ func (s *server) processItem(ctx context.Context, j *jobState, entry *youtube.Pl
 				file.SubtitleError = "Caption sidecar was skipped because the job storage limit was exceeded"
 			}
 		}
+	} else if j.SubtitleLanguage != "" {
+		for index := range files {
+			files[index].SubtitleError = "Captions remain unsplit when audio is split by chapter"
+		}
 	}
 	s.mu.Lock()
-	j.fileItems[current] = file
+	setItemFiles(j, current, files)
 	s.rebuildFilesLocked(j)
 	s.refreshQueueItemLocked(j, current)
 	progress := 100.0
@@ -1363,6 +1425,7 @@ func (s *server) processItem(ctx context.Context, j *jobState, entry *youtube.Pl
 	s.persistJobLocked(j)
 	s.publishJobEventLocked("job-file-finalized", j)
 	s.mu.Unlock()
+	committed = true
 	return nil
 }
 
@@ -1393,16 +1456,61 @@ func (s *server) safeProcessItem(ctx context.Context, j *jobState, entry *youtub
 }
 
 func (s *server) rebuildFilesLocked(j *jobState) {
-	indices := make([]int, 0, len(j.fileItems))
-	for index := range j.fileItems {
+	groups := groupedJobFiles(j)
+	indices := make([]int, 0, len(groups))
+	for index := range groups {
 		indices = append(indices, index)
 	}
 	sort.Ints(indices)
 	j.Files = make([]mediaFile, 0, len(indices))
 	for _, index := range indices {
-		j.Files = append(j.Files, j.fileItems[index])
+		j.Files = append(j.Files, groups[index]...)
 	}
-	j.CompletedCount = len(j.Files)
+	j.CompletedCount = len(indices)
+}
+
+func itemFiles(j *jobState, index int) []mediaFile {
+	if j == nil {
+		return nil
+	}
+	if group := j.fileGroups[index]; len(group) > 0 {
+		return group
+	}
+	if file, ok := j.fileItems[index]; ok {
+		return []mediaFile{file}
+	}
+	return nil
+}
+
+func setItemFiles(j *jobState, index int, files []mediaFile) {
+	if j.fileItems == nil {
+		j.fileItems = make(map[int]mediaFile)
+	}
+	if j.fileGroups == nil {
+		j.fileGroups = make(map[int][]mediaFile)
+	}
+	if len(files) == 0 {
+		delete(j.fileItems, index)
+		delete(j.fileGroups, index)
+		return
+	}
+	j.fileItems[index] = files[0]
+	j.fileGroups[index] = append([]mediaFile(nil), files...)
+}
+
+func syncStoredFile(j *jobState, file mediaFile) {
+	for itemIndex, saved := range j.fileItems {
+		if saved.ID == file.ID {
+			j.fileItems[itemIndex] = file
+		}
+	}
+	for itemIndex := range j.fileGroups {
+		for groupIndex := range j.fileGroups[itemIndex] {
+			if j.fileGroups[itemIndex][groupIndex].ID == file.ID {
+				j.fileGroups[itemIndex][groupIndex] = file
+			}
+		}
+	}
 }
 
 func (s *server) transferAudio(ctx context.Context, j *jobState, engine nativeClient, video *youtube.Video, format *youtube.Format, extension string, queueIndex, outputIndex int, budget int64) (result mediaFile, err error) {
@@ -1721,7 +1829,7 @@ func (s *server) finish(ctx context.Context, j *jobState, fatal error) {
 		j.Error = fatal.Error()
 	case len(j.Failures) > 0:
 		j.Error = fmt.Sprintf("%d entry/entries failed; first failure at item %d: %s", len(j.Failures), j.Failures[0].Index, j.Failures[0].Error)
-	case j.TotalCount == nil || *j.TotalCount != len(j.Files) || len(j.Files) == 0:
+	case j.TotalCount == nil || *j.TotalCount != j.CompletedCount || j.CompletedCount == 0:
 		j.Error = "No complete output, or not every exposed entry was downloaded"
 	default:
 		j.Status, j.Error = "completed", ""

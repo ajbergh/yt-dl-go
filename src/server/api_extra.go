@@ -186,7 +186,7 @@ func (s *server) retry(w http.ResponseWriter, r *http.Request, id string) {
 		fail(w, 409, "Only failed, partial, or cancelled jobs can be retried")
 		return
 	}
-	jobURL, quality, videoStrategy, mediaType, audioFormat, audioBitrate, subtitleLanguage, subtitleFormat, category, storageMode, allow360pFallback := original.URL, original.Quality, original.VideoStrategy, original.MediaType, original.AudioFormat, original.AudioBitrate, original.SubtitleLanguage, original.SubtitleFormat, original.Category, original.StorageMode, original.Allow360pFallback
+	jobURL, quality, videoStrategy, mediaType, audioFormat, audioBitrate, subtitleLanguage, subtitleFormat, category, storageMode, allow360pFallback, splitByChapter := original.URL, original.Quality, original.VideoStrategy, original.MediaType, original.AudioFormat, original.AudioBitrate, original.SubtitleLanguage, original.SubtitleFormat, original.Category, original.StorageMode, original.Allow360pFallback, original.SplitByChapter
 	selectedItems := []inspectedItem{}
 	if original.Kind == "playlist" {
 		for _, item := range original.Items {
@@ -206,10 +206,10 @@ func (s *server) retry(w http.ResponseWriter, r *http.Request, id string) {
 		return
 	}
 	if kind == "playlist" && len(selectedItems) > 0 {
-		s.enqueueJobWithFallback(w, canonical, kind, quality, videoStrategy, mediaType, audioFormat, audioBitrate, subtitleLanguage, subtitleFormat, category, storageMode, &allow360pFallback, selectedItems)
+		s.enqueueJobWithFallback(w, canonical, kind, quality, videoStrategy, mediaType, audioFormat, audioBitrate, subtitleLanguage, subtitleFormat, category, storageMode, splitByChapter, &allow360pFallback, selectedItems)
 		return
 	}
-	s.enqueueJobWithFallback(w, canonical, kind, quality, videoStrategy, mediaType, audioFormat, audioBitrate, subtitleLanguage, subtitleFormat, category, storageMode, &allow360pFallback)
+	s.enqueueJobWithFallback(w, canonical, kind, quality, videoStrategy, mediaType, audioFormat, audioBitrate, subtitleLanguage, subtitleFormat, category, storageMode, splitByChapter, &allow360pFallback)
 }
 
 // safeThumbnailURL returns the last HTTPS thumbnail hosted on an approved

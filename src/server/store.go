@@ -42,9 +42,14 @@ type storedJob struct {
 	job       Job
 	dir       string
 	done      time.Time
-	items     map[int]mediaFile
+	items     map[int][]mediaFile
 	resuming  bool
 	cancelled bool
+}
+
+type additionalStoredFile struct {
+	File       mediaFile `json:"file"`
+	OutputPath string    `json:"outputPath,omitempty"`
 }
 
 // openJobStore opens DATA_DIR/state.db, applies SQLite runtime pragmas, creates
@@ -190,7 +195,36 @@ func openJobStore(root string) (*jobStore, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("migrate state database: %w", err)
 	}
+	if err := store.migrateV19(); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("migrate state database: %w", err)
+	}
 	return store, nil
+}
+
+func (s *jobStore) migrateV19() error {
+	var version int
+	if err := s.db.QueryRow(`SELECT COALESCE(MAX(version), 0) FROM schema_migrations`).Scan(&version); err != nil {
+		return err
+	}
+	if version >= 19 {
+		return nil
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	for _, statement := range []string{
+		`ALTER TABLE jobs ADD COLUMN split_by_chapter INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE job_files ADD COLUMN additional_files_json TEXT NOT NULL DEFAULT ''`,
+		`INSERT INTO schema_migrations(version) VALUES (19)`,
+	} {
+		if _, err := tx.Exec(statement); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 func (s *jobStore) migrateV18() error {
@@ -718,6 +752,28 @@ func (s *jobStore) saveAppSettings(settings AppSettings) error {
 	return err
 }
 
+func groupedJobFiles(j *jobState) map[int][]mediaFile {
+	groups := make(map[int][]mediaFile, len(j.fileGroups)+len(j.fileItems))
+	for index, files := range j.fileGroups {
+		groups[index] = append([]mediaFile(nil), files...)
+	}
+	for index, file := range j.fileItems {
+		if len(groups[index]) == 0 {
+			groups[index] = []mediaFile{file}
+		}
+	}
+	if len(groups) == 0 {
+		for index, file := range j.Files {
+			itemIndex := file.SourceItemIndex
+			if itemIndex < 1 {
+				itemIndex = index + 1
+			}
+			groups[itemIndex] = append(groups[itemIndex], file)
+		}
+	}
+	return groups
+}
+
 func (s *jobStore) saveJob(j *jobState) error {
 	if s == nil {
 		return nil
@@ -748,18 +804,18 @@ func (s *jobStore) saveJob(j *jobState) error {
 	}
 	defer func() { _ = tx.Rollback() }()
 	_, err = tx.Exec(`INSERT INTO jobs
-		(id,url,kind,quality,video_strategy,allow_360p_fallback,media_type,audio_format,audio_bitrate,subtitle_language,subtitle_format,status,title,progress,current_item,completed_count,total_count,error,created_at,note,dir,cancel_requested,done_at,updated_at,queue_items,output_location,naming_pattern,subfolder_sorting,category,storage_mode,queue_position,output_file_mode,output_folder_mode)
-		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+		(id,url,kind,quality,video_strategy,allow_360p_fallback,media_type,audio_format,audio_bitrate,subtitle_language,subtitle_format,split_by_chapter,status,title,progress,current_item,completed_count,total_count,error,created_at,note,dir,cancel_requested,done_at,updated_at,queue_items,output_location,naming_pattern,subfolder_sorting,category,storage_mode,queue_position,output_file_mode,output_folder_mode)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 		ON CONFLICT(id) DO UPDATE SET url=excluded.url,kind=excluded.kind,quality=excluded.quality,video_strategy=excluded.video_strategy,
 		allow_360p_fallback=excluded.allow_360p_fallback,
 		media_type=excluded.media_type,audio_format=excluded.audio_format,audio_bitrate=excluded.audio_bitrate,
-		subtitle_language=excluded.subtitle_language,subtitle_format=excluded.subtitle_format,
+		subtitle_language=excluded.subtitle_language,subtitle_format=excluded.subtitle_format,split_by_chapter=excluded.split_by_chapter,
 		status=excluded.status,title=excluded.title,progress=excluded.progress,current_item=excluded.current_item,
 		completed_count=excluded.completed_count,total_count=excluded.total_count,error=excluded.error,
 		created_at=excluded.created_at,note=excluded.note,dir=excluded.dir,cancel_requested=excluded.cancel_requested,
 		done_at=excluded.done_at,updated_at=excluded.updated_at,queue_items=excluded.queue_items,
 		output_location=excluded.output_location,naming_pattern=excluded.naming_pattern,subfolder_sorting=excluded.subfolder_sorting,category=excluded.category,storage_mode=excluded.storage_mode,queue_position=excluded.queue_position,output_file_mode=excluded.output_file_mode,output_folder_mode=excluded.output_folder_mode`,
-		j.ID, j.URL, j.Kind, j.Quality, j.VideoStrategy, j.Allow360pFallback, j.MediaType, j.AudioFormat, j.AudioBitrate, j.SubtitleLanguage, j.SubtitleFormat, j.Status, j.Title, progress, j.CurrentItem, j.CompletedCount, total,
+		j.ID, j.URL, j.Kind, j.Quality, j.VideoStrategy, j.Allow360pFallback, j.MediaType, j.AudioFormat, j.AudioBitrate, j.SubtitleLanguage, j.SubtitleFormat, j.SplitByChapter, j.Status, j.Title, progress, j.CurrentItem, j.CompletedCount, total,
 		j.Error, j.CreatedAt, j.Note, j.dir, cancelRequested, done, time.Now().UnixNano(), string(queueItems),
 		j.DownloadLocation, j.NamingPattern, j.SubfolderSorting, j.Category, j.StorageMode, j.QueuePosition, j.OutputFileMode, j.OutputFolderMode)
 	if err != nil {
@@ -768,14 +824,18 @@ func (s *jobStore) saveJob(j *jobState) error {
 	if _, err = tx.Exec(`DELETE FROM job_files WHERE job_id=?`, j.ID); err != nil {
 		return err
 	}
-	for index, file := range j.Files {
-		itemIndex := index + 1
-		for index, saved := range j.fileItems {
-			if saved.ID == file.ID {
-				itemIndex = index
-				break
-			}
+	groups := groupedJobFiles(j)
+	itemIndexes := make([]int, 0, len(groups))
+	for itemIndex := range groups {
+		itemIndexes = append(itemIndexes, itemIndex)
+	}
+	sort.Ints(itemIndexes)
+	for _, itemIndex := range itemIndexes {
+		group := groups[itemIndex]
+		if len(group) == 0 {
+			continue
 		}
+		file := group[0]
 		managedAvailable, publishedAvailable, thumbnailLocalAvailable := 0, 0, 0
 		if file.ManagedAvailable {
 			managedAvailable = 1
@@ -802,9 +862,21 @@ func (s *jobStore) saveJob(j *jobState) error {
 			}
 			chaptersJSON = string(encoded)
 		}
-		if _, err = tx.Exec(`INSERT INTO job_files(job_id,item_index,file_id,name,size,height,mime_type,title,author,duration_seconds,thumbnail_url,thumbnail_mime_type,thumbnail_local_available,publish_date,category,output_name,output_path,output_relative_path,managed_available,published_available,subtitle_json,subtitle_error,chapters_json) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		additionalFilesJSON := ""
+		if len(group) > 1 {
+			additional := make([]additionalStoredFile, 0, len(group)-1)
+			for _, extra := range group[1:] {
+				additional = append(additional, additionalStoredFile{File: extra, OutputPath: extra.OutputPath})
+			}
+			encoded, marshalErr := json.Marshal(additional)
+			if marshalErr != nil {
+				return marshalErr
+			}
+			additionalFilesJSON = string(encoded)
+		}
+		if _, err = tx.Exec(`INSERT INTO job_files(job_id,item_index,file_id,name,size,height,mime_type,title,author,duration_seconds,thumbnail_url,thumbnail_mime_type,thumbnail_local_available,publish_date,category,output_name,output_path,output_relative_path,managed_available,published_available,subtitle_json,subtitle_error,chapters_json,additional_files_json) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 			j.ID, itemIndex, file.ID, file.Name, file.Size, file.Height, file.MimeType, file.Title, file.Author,
-			file.DurationSeconds, file.ThumbnailURL, file.ThumbnailMimeType, thumbnailLocalAvailable, file.PublishDate, file.Category, file.OutputName, file.OutputPath, file.OutputRelativePath, managedAvailable, publishedAvailable, subtitleJSON, file.SubtitleError, chaptersJSON); err != nil {
+			file.DurationSeconds, file.ThumbnailURL, file.ThumbnailMimeType, thumbnailLocalAvailable, file.PublishDate, file.Category, file.OutputName, file.OutputPath, file.OutputRelativePath, managedAvailable, publishedAvailable, subtitleJSON, file.SubtitleError, chaptersJSON, additionalFilesJSON); err != nil {
 			return err
 		}
 	}
@@ -900,7 +972,7 @@ func (s *jobStore) loadJobs(root string) ([]*storedJob, error) {
 	if err != nil {
 		return nil, err
 	}
-	rows, err := s.db.Query(`SELECT id,url,kind,quality,video_strategy,allow_360p_fallback,media_type,audio_format,audio_bitrate,subtitle_language,subtitle_format,status,title,progress,current_item,completed_count,total_count,error,created_at,note,dir,cancel_requested,done_at,queue_items,output_location,naming_pattern,subfolder_sorting,category,storage_mode,queue_position,output_file_mode,output_folder_mode FROM jobs ORDER BY created_at ASC`)
+	rows, err := s.db.Query(`SELECT id,url,kind,quality,video_strategy,allow_360p_fallback,media_type,audio_format,audio_bitrate,subtitle_language,subtitle_format,split_by_chapter,status,title,progress,current_item,completed_count,total_count,error,created_at,note,dir,cancel_requested,done_at,queue_items,output_location,naming_pattern,subfolder_sorting,category,storage_mode,queue_position,output_file_mode,output_folder_mode FROM jobs ORDER BY created_at ASC`)
 	if err != nil {
 		return nil, err
 	}
@@ -919,7 +991,7 @@ func (s *jobStore) loadJobs(root string) ([]*storedJob, error) {
 		var cancelRequested int
 		var doneAt sql.NullInt64
 		var queueItems string
-		if err := rows.Scan(&j.ID, &j.URL, &j.Kind, &j.Quality, &j.VideoStrategy, &j.Allow360pFallback, &j.MediaType, &j.AudioFormat, &j.AudioBitrate, &j.SubtitleLanguage, &j.SubtitleFormat, &j.Status, &j.Title, &progress, &j.CurrentItem,
+		if err := rows.Scan(&j.ID, &j.URL, &j.Kind, &j.Quality, &j.VideoStrategy, &j.Allow360pFallback, &j.MediaType, &j.AudioFormat, &j.AudioBitrate, &j.SubtitleLanguage, &j.SubtitleFormat, &j.SplitByChapter, &j.Status, &j.Title, &progress, &j.CurrentItem,
 			&j.CompletedCount, &totalCount, &j.Error, &j.CreatedAt, &j.Note, &dir, &cancelRequested, &doneAt, &queueItems,
 			&j.DownloadLocation, &j.NamingPattern, &j.SubfolderSorting, &j.Category, &j.StorageMode, &j.QueuePosition, &j.OutputFileMode, &j.OutputFolderMode); err != nil {
 			return nil, err
@@ -980,7 +1052,7 @@ func (s *jobStore) loadJobs(root string) ([]*storedJob, error) {
 		if filepath.Base(j.ID) != j.ID || j.ID == "." || j.ID == ".." {
 			return nil, errors.New("state database contains an unsafe job id")
 		}
-		loaded := &storedJob{job: j, dir: filepath.Join(root, j.ID), items: map[int]mediaFile{}, cancelled: saved.cancelRequested != 0}
+		loaded := &storedJob{job: j, dir: filepath.Join(root, j.ID), items: map[int][]mediaFile{}, cancelled: saved.cancelRequested != 0}
 		loaded.job.Files = []mediaFile{}
 		loaded.job.Failures = []itemFailure{}
 		if saved.doneAt.Valid {
@@ -1000,7 +1072,7 @@ func (s *jobStore) loadJobs(root string) ([]*storedJob, error) {
 				return nil, err
 			}
 		}
-		files, err := s.db.Query(`SELECT item_index,file_id,name,size,height,mime_type,title,author,duration_seconds,thumbnail_url,thumbnail_mime_type,thumbnail_local_available,publish_date,category,output_name,output_path,output_relative_path,managed_available,published_available,subtitle_json,subtitle_error,chapters_json FROM job_files WHERE job_id=? ORDER BY item_index`, j.ID)
+		files, err := s.db.Query(`SELECT item_index,file_id,name,size,height,mime_type,title,author,duration_seconds,thumbnail_url,thumbnail_mime_type,thumbnail_local_available,publish_date,category,output_name,output_path,output_relative_path,managed_available,published_available,subtitle_json,subtitle_error,chapters_json,additional_files_json FROM job_files WHERE job_id=? ORDER BY item_index`, j.ID)
 		if err != nil {
 			return nil, err
 		}
@@ -1008,9 +1080,9 @@ func (s *jobStore) loadJobs(root string) ([]*storedJob, error) {
 			var index int
 			var file mediaFile
 			var managedAvailable, publishedAvailable, thumbnailLocalAvailable int
-			var subtitleJSON, chaptersJSON string
+			var subtitleJSON, chaptersJSON, additionalFilesJSON string
 			if err := files.Scan(&index, &file.ID, &file.Name, &file.Size, &file.Height, &file.MimeType, &file.Title, &file.Author,
-				&file.DurationSeconds, &file.ThumbnailURL, &file.ThumbnailMimeType, &thumbnailLocalAvailable, &file.PublishDate, &file.Category, &file.OutputName, &file.OutputPath, &file.OutputRelativePath, &managedAvailable, &publishedAvailable, &subtitleJSON, &file.SubtitleError, &chaptersJSON); err != nil {
+				&file.DurationSeconds, &file.ThumbnailURL, &file.ThumbnailMimeType, &thumbnailLocalAvailable, &file.PublishDate, &file.Category, &file.OutputName, &file.OutputPath, &file.OutputRelativePath, &managedAvailable, &publishedAvailable, &subtitleJSON, &file.SubtitleError, &chaptersJSON, &additionalFilesJSON); err != nil {
 				_ = files.Close()
 				return nil, err
 			}
@@ -1031,8 +1103,20 @@ func (s *jobStore) loadJobs(root string) ([]*storedJob, error) {
 					return nil, fmt.Errorf("decode saved chapters: %w", err)
 				}
 			}
-			loaded.items[index] = file
+			loaded.items[index] = []mediaFile{file}
 			loaded.job.Files = append(loaded.job.Files, file)
+			if additionalFilesJSON != "" {
+				var additional []additionalStoredFile
+				if err := json.Unmarshal([]byte(additionalFilesJSON), &additional); err != nil {
+					_ = files.Close()
+					return nil, fmt.Errorf("decode saved chapter files: %w", err)
+				}
+				for _, stored := range additional {
+					stored.File.OutputPath = stored.OutputPath
+					loaded.items[index] = append(loaded.items[index], stored.File)
+					loaded.job.Files = append(loaded.job.Files, stored.File)
+				}
+			}
 		}
 		if err := files.Err(); err != nil {
 			_ = files.Close()
@@ -1074,32 +1158,49 @@ func (s *jobStore) normalizeResumingJob(loaded *storedJob) error {
 	}
 	sort.Ints(indexes)
 	for _, index := range indexes {
-		file := loaded.items[index]
-		info, err := openFinal(loaded.dir, file.Name)
-		if err != nil {
+		group := loaded.items[index]
+		validGroup := len(group) > 0
+		for _, file := range group {
+			info, err := openFinal(loaded.dir, file.Name)
+			if err != nil {
+				validGroup = false
+				break
+			}
+			stat, statErr := info.Stat()
+			_ = info.Close()
+			if statErr != nil || stat.Size() != file.Size {
+				validGroup = false
+				break
+			}
+		}
+		if !validGroup {
 			delete(loaded.items, index)
 			continue
 		}
-		stat, statErr := info.Stat()
-		_ = info.Close()
-		if statErr != nil || stat.Size() != file.Size {
-			delete(loaded.items, index)
-			continue
-		}
-		validFiles = append(validFiles, file)
+		validFiles = append(validFiles, group...)
 	}
 	loaded.job.Files = validFiles
-	loaded.job.CompletedCount = len(validFiles)
-	if err := s.saveJob(&jobState{Job: loaded.job, dir: loaded.dir, fileItems: fileIndexes(loaded.items)}); err != nil {
+	loaded.job.CompletedCount = len(loaded.items)
+	if err := s.saveJob(&jobState{Job: loaded.job, dir: loaded.dir, fileItems: fileIndexes(loaded.items), fileGroups: fileGroupIndexes(loaded.items)}); err != nil {
 		return err
 	}
 	return nil
 }
 
-func fileIndexes(items map[int]mediaFile) map[int]mediaFile {
+func fileIndexes(items map[int][]mediaFile) map[int]mediaFile {
 	result := make(map[int]mediaFile, len(items))
-	for index, file := range items {
-		result[index] = file
+	for index, files := range items {
+		if len(files) > 0 {
+			result[index] = files[0]
+		}
+	}
+	return result
+}
+
+func fileGroupIndexes(items map[int][]mediaFile) map[int][]mediaFile {
+	result := make(map[int][]mediaFile, len(items))
+	for index, files := range items {
+		result[index] = append([]mediaFile(nil), files...)
 	}
 	return result
 }

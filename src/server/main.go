@@ -223,7 +223,7 @@ func newServer(c config) (*server, error) {
 	// The scheduler scans queued jobs when it starts; no per-job wake token
 	// or fixed-size channel is needed for resumed jobs.
 	for _, saved := range loaded {
-		j := &jobState{Job: saved.job, dir: saved.dir, done: saved.done, fileItems: fileIndexes(saved.items), cancelRequested: saved.cancelled}
+		j := &jobState{Job: saved.job, dir: saved.dir, done: saved.done, fileItems: fileIndexes(saved.items), fileGroups: fileGroupIndexes(saved.items), cancelRequested: saved.cancelled}
 		s.jobs[j.ID] = j
 		s.order = append(s.order, j.ID)
 	}

@@ -492,16 +492,7 @@ func removeOutputCopies(j *jobState) error {
 			}
 			file.PublishedAvailable = false
 		}
-		for itemIndex, saved := range j.fileItems {
-			if saved.ID == file.ID {
-				saved.PublishedAvailable = file.PublishedAvailable
-				if saved.Subtitle != nil && file.Subtitle != nil {
-					saved.Subtitle.PublishedAvailable = file.Subtitle.PublishedAvailable
-				}
-				j.fileItems[itemIndex] = saved
-				break
-			}
-		}
+		syncStoredFile(j, *file)
 	}
 	return nil
 }
@@ -524,6 +515,18 @@ func removeManagedCopies(j *jobState) error {
 			saved.Subtitle.ManagedAvailable = false
 		}
 		j.fileItems[itemIndex] = saved
+		if len(j.fileGroups[itemIndex]) == 0 {
+			j.fileGroups[itemIndex] = []mediaFile{saved}
+		} else {
+			for groupIndex := range j.fileGroups[itemIndex] {
+				groupFile := &j.fileGroups[itemIndex][groupIndex]
+				groupFile.ManagedAvailable = false
+				groupFile.ThumbnailLocalAvailable = false
+				if groupFile.Subtitle != nil {
+					groupFile.Subtitle.ManagedAvailable = false
+				}
+			}
+		}
 	}
 	return nil
 }

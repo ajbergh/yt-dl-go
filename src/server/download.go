@@ -16,7 +16,7 @@ import (
 	"time"
 )
 
-var outputName = regexp.MustCompile(`^[0-9]{6,}-[A-Za-z0-9_-]{11}\.(mp4|webm|mp3|m4a)$`)
+var outputName = regexp.MustCompile(`^[0-9]{6,}-[A-Za-z0-9_-]{11}(-c[0-9]{3})?\.(mp4|webm|mp3|m4a)$`)
 
 // openFinal opens a finalized filename only if it is a safe child of the job
 // directory and is a regular file rather than a symlink or other file type.
@@ -95,8 +95,13 @@ func (s *server) download(w http.ResponseWriter, r *http.Request) {
 	}
 	files := []mediaFile{}
 	unavailable := false
+	selectedIDs := make(map[string]struct{}, len(t.fileIDs))
+	for _, id := range t.fileIDs {
+		selectedIDs[id] = struct{}{}
+	}
 	for _, f := range j.Files {
-		if t.fileID == "" || t.fileID == f.ID {
+		_, selected := selectedIDs[f.ID]
+		if (t.fileID == "" && len(selectedIDs) == 0) || t.fileID == f.ID || selected {
 			if !f.ManagedAvailable {
 				unavailable = true
 				continue

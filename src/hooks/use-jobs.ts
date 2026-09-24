@@ -151,7 +151,7 @@ export function useJobs({
     }
   }
 
-  async function saveFile(job: DownloadJob, fileId?: string) {
+  async function saveFile(job: DownloadJob, fileId?: string | string[]) {
     if (!serviceReady) return;
     const key = `${job.id}:${fileId ?? "zip"}`;
     setBusyAction(key);
@@ -159,7 +159,7 @@ export function useJobs({
     try {
       const ticket = await api<{ path: string }>(connection, `/api/jobs/${encodeURIComponent(job.id)}/ticket`, {
         method: "POST",
-        body: JSON.stringify(fileId ? { fileId } : {}),
+        body: JSON.stringify(Array.isArray(fileId) ? { fileIds: fileId } : fileId ? { fileId } : {}),
         signal: AbortSignal.timeout(15000),
       });
       if (!/^\/api\/downloads\/[A-Za-z0-9_-]+$/.test(ticket.path)) throw new Error("The service returned an invalid download link.");

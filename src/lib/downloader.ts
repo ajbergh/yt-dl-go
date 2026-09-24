@@ -43,6 +43,9 @@ export interface DownloadFile {
   outputName?: string;
   outputRelativePath?: string;
   managedAvailable?: boolean;
+  sourceItemIndex?: number;
+  chapterIndex?: number;
+  chapterTitle?: string;
   publishedAvailable?: boolean;
   subtitle?: SubtitleFile;
   subtitleError?: string;
@@ -64,6 +67,7 @@ export interface QueueItem {
   etaSeconds: number;
   error?: string;
   fileId?: string;
+  fileIds?: string[];
   retryRequested?: boolean;
 }
 export interface DownloadJob {
@@ -74,6 +78,7 @@ export interface DownloadJob {
   videoStrategy?: VideoStrategy;
   mediaType: "video" | "audio";
   audioFormat?: "mp3" | "m4a";
+  splitByChapter?: boolean;
   audioBitrate?: string;
   subtitleLanguage?: string;
   subtitleFormat?: "vtt" | "srt";

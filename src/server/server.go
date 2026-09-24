@@ -52,6 +52,9 @@ type mediaFile struct {
 	Subtitle                *subtitleFile  `json:"subtitle,omitempty"`
 	SubtitleError           string         `json:"subtitleError,omitempty"`
 	Chapters                []mediaChapter `json:"chapters,omitempty"`
+	SourceItemIndex         int            `json:"sourceItemIndex,omitempty"`
+	ChapterIndex            int            `json:"chapterIndex,omitempty"`
+	ChapterTitle            string         `json:"chapterTitle,omitempty"`
 	naming                  namingValues
 }
 
@@ -76,6 +79,7 @@ type queueItem struct {
 	ETASeconds       int64    `json:"etaSeconds"`
 	Error            string   `json:"error,omitempty"`
 	FileID           string   `json:"fileId,omitempty"`
+	FileIDs          []string `json:"fileIds,omitempty"`
 	RetryRequested   bool     `json:"retryRequested,omitempty"`
 }
 
@@ -89,6 +93,7 @@ type Job struct {
 	MediaType         string        `json:"mediaType"`
 	AudioBitrate      string        `json:"audioBitrate,omitempty"`
 	AudioFormat       string        `json:"audioFormat,omitempty"`
+	SplitByChapter    bool          `json:"splitByChapter"`
 	SubtitleLanguage  string        `json:"subtitleLanguage,omitempty"`
 	SubtitleFormat    string        `json:"subtitleFormat,omitempty"`
 	Status            string        `json:"status"`
@@ -122,6 +127,7 @@ type jobState struct {
 	Job
 	dir               string
 	fileItems         map[int]mediaFile
+	fileGroups        map[int][]mediaFile
 	cancel            context.CancelFunc
 	cancelRequested   bool
 	pauseRequested    bool
@@ -135,6 +141,7 @@ type jobState struct {
 
 type ticket struct {
 	jobID, fileID string
+	fileIDs       []string
 	expires       time.Time
 	inline        bool
 }
@@ -523,8 +530,9 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var requested struct {
-		FileID json.RawMessage `json:"fileId"`
-		Inline bool            `json:"inline"`
+		FileID  json.RawMessage `json:"fileId"`
+		FileIDs []string        `json:"fileIds"`
+		Inline  bool            `json:"inline"`
 	}
 	if len(parts) == 2 && parts[1] == "ticket" && r.Method == http.MethodPost && !decode(w, r, &requested) {
 		return
@@ -533,6 +541,22 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if len(requested.FileID) > 0 && (json.Unmarshal(requested.FileID, &fileID) != nil || fileID == "") {
 		fail(w, 400, "fileId must be a nonempty string when provided")
 		return
+	}
+	if len(requested.FileIDs) > 10000 {
+		fail(w, 400, "fileIds may contain at most 10000 entries")
+		return
+	}
+	seenFileIDs := make(map[string]struct{}, len(requested.FileIDs))
+	for _, requestedID := range requested.FileIDs {
+		if requestedID == "" {
+			fail(w, 400, "fileIds must contain nonempty strings")
+			return
+		}
+		if _, exists := seenFileIDs[requestedID]; exists {
+			fail(w, 400, "fileIds must be unique")
+			return
+		}
+		seenFileIDs[requestedID] = struct{}{}
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -699,7 +723,7 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		reply(w, 200, snapshot(j))
 	case len(parts) == 2 && parts[1] == "ticket" && r.Method == http.MethodPost:
-		s.issueTicket(w, j, fileID, requested.Inline)
+		s.issueTicket(w, j, fileID, requested.FileIDs, requested.Inline)
 	default:
 		fail(w, 405, "Method not allowed")
 	}
@@ -836,6 +860,7 @@ func (s *server) create(w http.ResponseWriter, r *http.Request) {
 		MediaType        string          `json:"mediaType"`
 		AudioBitrate     string          `json:"audioBitrate"`
 		AudioFormat      string          `json:"audioFormat"`
+		SplitByChapter   bool            `json:"splitByChapter"`
 		SubtitleLanguage string          `json:"subtitleLanguage"`
 		SubtitleFormat   string          `json:"subtitleFormat"`
 		Category         string          `json:"category"`
@@ -932,16 +957,20 @@ func (s *server) create(w http.ResponseWriter, r *http.Request) {
 		fail(w, 400, err.Error())
 		return
 	}
-	s.enqueueJob(w, u, kind, request.Quality, request.VideoStrategy, request.MediaType, request.AudioFormat, request.AudioBitrate, request.SubtitleLanguage, request.SubtitleFormat, request.Category, "", request.Items)
+	if request.SplitByChapter && (request.MediaType != "audio" || request.AudioFormat != "mp3") {
+		fail(w, 400, "splitByChapter currently requires MP3 audio output")
+		return
+	}
+	s.enqueueJob(w, u, kind, request.Quality, request.VideoStrategy, request.MediaType, request.AudioFormat, request.AudioBitrate, request.SubtitleLanguage, request.SubtitleFormat, request.Category, "", request.SplitByChapter, request.Items)
 }
 
 // enqueueJob allocates private per-job storage, persists a queued job, and
 // returns 202 only after the job has entered the bounded worker backlog.
-func (s *server) enqueueJob(w http.ResponseWriter, u, kind, quality, requestedVideoStrategy, mediaType, audioFormat, audioBitrate, subtitleLanguage, subtitleFormat, requestedCategory, requestedStorageMode string, inspectedItems ...[]inspectedItem) {
-	s.enqueueJobWithFallback(w, u, kind, quality, requestedVideoStrategy, mediaType, audioFormat, audioBitrate, subtitleLanguage, subtitleFormat, requestedCategory, requestedStorageMode, nil, inspectedItems...)
+func (s *server) enqueueJob(w http.ResponseWriter, u, kind, quality, requestedVideoStrategy, mediaType, audioFormat, audioBitrate, subtitleLanguage, subtitleFormat, requestedCategory, requestedStorageMode string, splitByChapter bool, inspectedItems ...[]inspectedItem) {
+	s.enqueueJobWithFallback(w, u, kind, quality, requestedVideoStrategy, mediaType, audioFormat, audioBitrate, subtitleLanguage, subtitleFormat, requestedCategory, requestedStorageMode, splitByChapter, nil, inspectedItems...)
 }
 
-func (s *server) enqueueJobWithFallback(w http.ResponseWriter, u, kind, quality, requestedVideoStrategy, mediaType, audioFormat, audioBitrate, subtitleLanguage, subtitleFormat, requestedCategory, requestedStorageMode string, requestedAllow360pFallback *bool, inspectedItems ...[]inspectedItem) {
+func (s *server) enqueueJobWithFallback(w http.ResponseWriter, u, kind, quality, requestedVideoStrategy, mediaType, audioFormat, audioBitrate, subtitleLanguage, subtitleFormat, requestedCategory, requestedStorageMode string, splitByChapter bool, requestedAllow360pFallback *bool, inspectedItems ...[]inspectedItem) {
 	if s.engine == nil {
 		fail(w, 503, "Native download engine is not initialized")
 		return
@@ -1010,8 +1039,9 @@ func (s *server) enqueueJobWithFallback(w http.ResponseWriter, u, kind, quality,
 		NamingPattern: outputSettings.NamingPattern, SubfolderSorting: outputSettings.SubfolderSorting,
 		OutputFileMode: outputSettings.OutputFileMode, OutputFolderMode: outputSettings.OutputFolderMode,
 		Category: category, StorageMode: storageMode,
-		QueuePosition: s.nextQueuePositionLocked(),
-	}, fileItems: map[int]mediaFile{}}
+		QueuePosition:  s.nextQueuePositionLocked(),
+		SplitByChapter: splitByChapter,
+	}, fileItems: map[int]mediaFile{}, fileGroups: map[int][]mediaFile{}}
 	if kind == "playlist" {
 		j.Note += " " + playlistNote
 		if len(j.Items) > 0 {
@@ -1046,13 +1076,17 @@ func (s *server) enqueueJobWithFallback(w http.ResponseWriter, u, kind, quality,
 // issueTicket creates a short-lived random capability for a stopped job's ZIP
 // or one finalized file. The returned ticket URL, not a bearer token, grants
 // access to the corresponding download route.
-func (s *server) issueTicket(w http.ResponseWriter, j *jobState, fileID string, inline bool) {
+func (s *server) issueTicket(w http.ResponseWriter, j *jobState, fileID string, fileIDs []string, inline bool) {
 	if !terminal(j.Status) || len(j.Files) == 0 {
 		fail(w, 409, "Files are available only after the job has stopped and finalized output exists")
 		return
 	}
 	if inline && fileID == "" {
 		fail(w, 400, "inline preview tickets require one fileId")
+		return
+	}
+	if fileID != "" && len(fileIDs) > 0 {
+		fail(w, 400, "provide fileId or fileIds, not both")
 		return
 	}
 	if fileID != "" {
@@ -1071,6 +1105,24 @@ func (s *server) issueTicket(w http.ResponseWriter, j *jobState, fileID string, 
 		if !available {
 			fail(w, 409, "The app-managed copy for this file is no longer available")
 			return
+		}
+	} else if len(fileIDs) > 0 {
+		for _, requestedID := range fileIDs {
+			found := false
+			for _, file := range j.Files {
+				if file.ID == requestedID {
+					if !file.ManagedAvailable {
+						fail(w, 409, "The app-managed media copy is no longer available")
+						return
+					}
+					found = true
+					break
+				}
+			}
+			if !found {
+				fail(w, 404, "Finalized output not found")
+				return
+			}
 		}
 	} else {
 		for _, f := range j.Files {
@@ -1094,6 +1146,6 @@ func (s *server) issueTicket(w http.ResponseWriter, j *jobState, fileID string, 
 	if inline {
 		expiresIn = 30 * time.Minute
 	}
-	s.tickets[id] = ticket{jobID: j.ID, fileID: fileID, expires: time.Now().Add(expiresIn), inline: inline}
+	s.tickets[id] = ticket{jobID: j.ID, fileID: fileID, fileIDs: append([]string(nil), fileIDs...), expires: time.Now().Add(expiresIn), inline: inline}
 	reply(w, 200, map[string]string{"path": "/api/downloads/" + id})
 }

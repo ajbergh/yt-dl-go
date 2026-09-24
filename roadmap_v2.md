@@ -480,18 +480,18 @@ MP3, MP4/M4A, and WebM outputs now receive supported metadata and cover art.
 
 ### M3.2 Chapters
 
-**Status:** [~] Chapter metadata and container/preview work underway · **P1** · **Area:** engine / media
+**Status:** [~] MP3 chapter-splitting option and grouped outputs underway · **P1** · **Area:** engine / media
 
 The current metadata pipeline has no chapter model. YouTube chapter timestamps are available in the description, but parsing, Library persistence, container writing, and preview navigation need to be added.
 
 #### Scope
 
-- Parse chapters from video metadata and store them with the Library item.
-- Write MP4 chapter tracks / Nero `chpl` atoms and WebM `Chapters`.
-- Show chapters in the preview player.
+- [x] Parse chapters from video metadata and store them with the Library item.
+- [x] Write MP4 Nero `chpl` atoms and WebM `Chapters`.
+- [x] Show chapters in the preview player.
 - Offer an option to split audio downloads by chapter.
 
-**Progress (2026-09-24):** M3.1 is merged by [PR #46](https://github.com/ajbergh/yt-dl-go/pull/46). On `roadmap/m3-2-chapters`, the first increment parses and validates timestamp/title lines from YouTube descriptions; exposes chapters in inspection and Library records; persists them through SQLite migration 18; writes Nero `chpl` for MP4/M4A and Matroska `Chapters` for WebM; and adds preview controls that seek to each chapter. Go tests, `go vet`, `golangci-lint`, and `npm run check` pass locally. PR CI is pending; Bun is unavailable in this local environment, so the existing Bun UI suite will be verified in CI. Audio splitting remains outstanding: it needs the Library model to support multiple outputs per source item and will be implemented before M3.2 is complete.
+**Progress (2026-09-24):** Chapter parsing, Library/SQLite persistence, MP4/WebM chapter metadata, and preview navigation merged by [PR #47](https://github.com/ajbergh/yt-dl-go/pull/47) (`15f9369`). Full CI passed, including Go/race tests, Bun UI tests, browser E2E, lint, vet, CodeQL, and Linux/Windows/macOS builds. The opt-in MP3 split path is underway on `roadmap/m3-2-split-audio`: it decodes a source once, writes chapter-tagged MP3s, models outputs as a source-item group, and persists extra outputs alongside the existing source row. The one-file default and M4A path stay unchanged; chapter-clipped captions and M4A splitting remain open scope. Local Go build and `npm run check` pass; PR CI will validate the database migration, UI behavior, and Go test suites.
 
 ### M3.3 Embedded subtitles and thumbnails
 
@@ -939,7 +939,7 @@ No tests exist for:
 
 ### M8.1 Ship the first release
 
-**Status:** [T] Dry run validated; release version and tag pending · **P1** · **Area:** release
+**Status:** [T] Dry run validated; first release version and tag pending · **P1** · **Area:** release
 
 - No release tag exists yet and `package.json` remains `0.1.0`; the successful dry run validated `v0.1.0` without publishing a release.
 - Shared action versions now align between the release and CI workflows.
@@ -952,7 +952,7 @@ No tests exist for:
 - Cut `v0.2.0` (or `v1.0.0` after Milestone 0).
 - [x] Point the README at GitHub Releases.
 
-**Progress (2026-09-23):** Merged by [PR #15](https://github.com/ajbergh/yt-dl-go/pull/15); all six CI jobs passed. The authorized `v0.1.0` run (35921227203) exposed a source archive checksum path issue, fixed in [PR #31](https://github.com/ajbergh/yt-dl-go/pull/31). Its rerun (35924524457) passed all seven checksum checks but exposed CRLF handling in expected-archive validation, fixed in [PR #32](https://github.com/ajbergh/yt-dl-go/pull/32). Final dry run [35925902083](https://github.com/ajbergh/yt-dl-go/actions/runs/35925902083) passed source validation, all six platform builds, archive and manifest checksums, provenance attestations, and uploaded the 77.5 MB `release-dry-run-v0.1.0` artifact. The workflow skipped GitHub Release creation as intended. The release version/tag decision remains pending.
+**Progress (2026-09-24):** Merged by [PR #15](https://github.com/ajbergh/yt-dl-go/pull/15); all six CI jobs passed. The authorized `v0.1.0` run (35921227203) exposed a source archive checksum path issue, fixed in [PR #31](https://github.com/ajbergh/yt-dl-go/pull/31). Its rerun (35924524457) passed all seven checksum checks but exposed CRLF handling in expected-archive validation, fixed in [PR #32](https://github.com/ajbergh/yt-dl-go/pull/32). Final dry run [35925902083](https://github.com/ajbergh/yt-dl-go/actions/runs/35925902083) passed source validation, all six platform builds, archive and manifest checksums, provenance attestations, and uploaded the 77.5 MB `release-dry-run-v0.1.0` artifact. A fresh user-requested `v0.1.0` dry run [35955844770](https://github.com/ajbergh/yt-dl-go/actions/runs/35955844770) also passed on `main` (SHA `15f9369`). Source validation, browser E2E, all six platform packages, provenance attestations, source/relinking archive, checksum manifest and artifact upload passed; the 78.2 MB `release-dry-run-v0.1.0` artifact is available in the run, and the GitHub Release creation step was skipped. No `v0.1.0` tag or release was created. The first public release version/tag decision remains pending.
 
 ### M8.2 Harden the release workflow
 
