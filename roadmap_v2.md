@@ -208,9 +208,9 @@ Goal: make the "searchable local media library" durable over months and thousand
 
 ### M1.1 Separate Library records from download jobs
 
-**Status:** [~] Durable Library storage and direct read API/UI slice merged; independent lifecycle remains · **P1** · **Area:** backend / data model
+**Status:** [~] Durable Library storage and independent lifecycles implemented; 10,000-item acceptance active · **P1** · **Area:** backend / data model
 
-The durable Library read path is decoupled from live job state, but Library rows and files still follow job-history deletion and retention.
+The durable Library read path is decoupled from live job state. This milestone separates Library item lifecycle from job history and checks the 10,000-item boundary.
 
 #### Scope
 
@@ -232,7 +232,9 @@ The durable storage foundation merged in [PR #51](https://github.com/ajbergh/yt-
 
 `feat/library-items-outlive-jobs` merged as [PR #68](https://github.com/ajbergh/yt-dl-go/pull/68) (`d86a8a0`). Migration v26 retains the published-output root with durable Library source metadata; a history-only DELETE API and Queue action, Library-backed file actions and tickets, and retention that persists managed-copy state before deleting history make the lifecycles independent. The existing retention fixture now expects Library rows to survive. The original `DELETE /api/jobs/{id}` and managed/published/all scopes remain intact. All PR checks passed, including Go/race/source validation, frontend integration and browser E2E, lint/vet, CodeQL, and Linux, Windows, and macOS builds.
 
-`feat/library-item-removal` implements the next M1.1 slice: migration v27 and durable per-file exclusions, a source-qualified item DELETE route, and a Library file action that removes one app-managed file while preserving its job history, grouped siblings, and published output. CI and review are pending. Validation at 10,000 items remains open.
+`feat/library-item-removal` merged as [PR #69](https://github.com/ajbergh/yt-dl-go/pull/69) (`7e1b47a`). Migration v27 and durable per-file exclusions, a source-qualified item DELETE route, and a Library file action remove one app-managed file while preserving its job history, grouped siblings, and published output. The exclusion prevents later job saves from restoring the Library row. All PR checks passed, including Go/race/source validation, frontend integration and browser E2E, lint/vet, CodeQL, and Linux, Windows, and macOS builds.
+
+`feat/library-10k-validation` adds `TestLibraryPaginationHandlesMoreThanTenThousandFilesWithoutRetainingFinishedJobs`: it seeds 10,100 durable files across 101 source groups, restarts with a persisted terminal sentinel, and exercises the public paginated API for stable two-page grouping, global facets/stats, and a filtered full-group result. The focused test passed locally (4.3s); it verifies the functional scale boundary and zero restored terminal jobs, without claiming a latency or memory-use SLA. CI and review are pending.
 
 ### M1.2 Normalize queue items and write incrementally
 
