@@ -94,6 +94,7 @@ beforeEach(async () => {
     requests.push({ url: String(url), path, ...init });
     if (path === "/api/health") return Response.json({ ready: missing.length === 0, missing, engine: healthEngine, version: healthVersion, commit: healthVersion === "dev" ? "unknown" : "abc123def456", buildDate: healthVersion === "dev" ? "unknown" : "2026-09-21T12:00:00Z", capabilities: { combinedStreamsOnly: false, adaptiveStreamsSupported: true, externalBinariesRequired: false, mp3AudioSupported: true } });
     if (path === "/api/diagnostics") return Response.json(diagnosticsResponse);
+    if (path === "/api/library/export") return new Response("zip archive bytes", { headers: { "Content-Type": "application/zip" } });
     if (path === "/api/update") return Response.json(updateResponse);
     if (path === "/api/settings" && init.method === "PUT") {
       const settings = JSON.parse(init.body);
@@ -252,6 +253,28 @@ describe("Downloader UI and Go API integration", () => {
     expect(container.textContent).toContain("queue_items.file_ids_json");
     expect(container.textContent).toContain("Cleared malformed grouped-file IDs");
     expect(container.textContent).not.toContain("private-raw-payload");
+  });
+  test("downloads the Library export archive from Settings", async () => {
+    const originalCreate = URL.createObjectURL;
+    const originalRevoke = URL.revokeObjectURL;
+    const originalClick = testWindow.HTMLAnchorElement.prototype.click;
+    URL.createObjectURL = () => "blob:library-export";
+    URL.revokeObjectURL = () => {};
+    let target;
+    testWindow.HTMLAnchorElement.prototype.click = function () { target = this.href; };
+    try {
+      await remount();
+      await click(button("Settings"));
+      await click(button("Export Library"));
+      expect(requests.some(item => item.path === "/api/library/export" && item.method === undefined)).toBe(true);
+      expect(target).toBe("blob:library-export");
+      expect(container.textContent).toContain("Library export downloaded.");
+      expect(container.textContent).toContain("Media files are not included.");
+    } finally {
+      URL.createObjectURL = originalCreate;
+      URL.revokeObjectURL = originalRevoke;
+      testWindow.HTMLAnchorElement.prototype.click = originalClick;
+    }
   });
   test("rejects an incompatible backend without manual setup", async () => {
     healthEngine = undefined;
