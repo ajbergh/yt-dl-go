@@ -307,11 +307,13 @@ func prepareLibraryItem(sourceJobID string, sourceItemIndex int, file mediaFile)
 	if err != nil {
 		return "", nil, [32]byte{}, err
 	}
-	signatureData := make([]byte, 0, len(data)+1+len(file.OutputPath))
-	signatureData = append(signatureData, data...)
-	signatureData = append(signatureData, 0)
-	signatureData = append(signatureData, file.OutputPath...)
-	return file.ID, data, sha256.Sum256(signatureData), nil
+	hasher := sha256.New()
+	_, _ = hasher.Write(data)
+	_, _ = hasher.Write([]byte{0})
+	_, _ = io.WriteString(hasher, file.OutputPath)
+	var signature [32]byte
+	copy(signature[:], hasher.Sum(nil))
+	return file.ID, data, signature, nil
 }
 
 func libraryItemID(sourceJobID string, sourceItemIndex int, file mediaFile) string {
