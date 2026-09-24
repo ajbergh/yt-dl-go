@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 )
 
 const (
@@ -19,9 +20,31 @@ type libraryCursor struct {
 }
 
 type libraryPage struct {
-	Jobs       []Job  `json:"jobs"`
-	NextCursor string `json:"nextCursor,omitempty"`
-	TotalJobs  int    `json:"totalJobs"`
+	Jobs       []Job          `json:"jobs"`
+	NextCursor string         `json:"nextCursor,omitempty"`
+	TotalJobs  int            `json:"totalJobs"`
+	Categories []libraryFacet `json:"categories"`
+	Channels   []libraryFacet `json:"channels"`
+	Stats      libraryStats   `json:"stats"`
+}
+
+type libraryFacet struct {
+	Value string `json:"value"`
+	Count int    `json:"count"`
+}
+
+type libraryStats struct {
+	Files          int   `json:"files"`
+	LogicalBytes   int64 `json:"logicalBytes"`
+	ManagedBytes   int64 `json:"managedBytes"`
+	PublishedBytes int64 `json:"publishedBytes"`
+}
+
+type libraryFilter struct {
+	Query     string
+	MediaType string
+	Category  string
+	Channel   string
 }
 
 func decodeLibraryCursor(value string) (libraryCursor, error) {
@@ -44,17 +67,22 @@ func encodeLibraryCursor(cursor libraryCursor) string {
 	return base64.RawURLEncoding.EncodeToString(data)
 }
 
-func (s *jobStore) loadLibraryPage(limit int, cursor libraryCursor) (libraryPage, error) {
+func (s *jobStore) loadLibraryPage(limit int, cursor libraryCursor, filters ...libraryFilter) (libraryPage, error) {
+	filter := libraryFilter{}
+	if len(filters) > 0 {
+		filter = filters[0]
+	}
+	filterClause, filterArgs := libraryFilterClause(filter, "li")
 	var total int
-	if err := s.db.QueryRow(`SELECT COUNT(DISTINCT j.id)
-		FROM jobs j JOIN library_items li ON li.source_job_id=j.id
-		WHERE j.status IN ('completed','partial','failed','cancelled')`).Scan(&total); err != nil {
+	countQuery := `SELECT COUNT(DISTINCT j.id) FROM jobs j WHERE j.status IN ('completed','partial','failed','cancelled') AND EXISTS (
+		SELECT 1 FROM library_items li WHERE li.source_job_id=j.id` + filterClause + `)`
+	if err := s.db.QueryRow(countQuery, filterArgs...).Scan(&total); err != nil {
 		return libraryPage{}, err
 	}
 	query := `SELECT j.id,j.created_at FROM jobs j
 		WHERE j.status IN ('completed','partial','failed','cancelled')
-		AND EXISTS (SELECT 1 FROM library_items li WHERE li.source_job_id=j.id)`
-	args := []any{}
+		AND EXISTS (SELECT 1 FROM library_items li WHERE li.source_job_id=j.id` + filterClause + `)`
+	args := append([]any(nil), filterArgs...)
 	if cursor.JobID != "" {
 		query += ` AND (j.created_at < ? OR (j.created_at = ? AND j.id < ?))`
 		args = append(args, cursor.CreatedAt, cursor.CreatedAt, cursor.JobID)
@@ -94,12 +122,93 @@ func (s *jobStore) loadLibraryPage(limit int, cursor libraryCursor) (libraryPage
 	if err != nil {
 		return libraryPage{}, err
 	}
-	page := libraryPage{Jobs: jobs, TotalJobs: total}
+	page := libraryPage{Jobs: jobs, TotalJobs: total, Categories: []libraryFacet{}, Channels: []libraryFacet{}}
+	if err := s.loadLibraryMetadata(&page); err != nil {
+		return libraryPage{}, err
+	}
 	if hasMore && len(selected) > 0 {
 		last := selected[len(selected)-1]
 		page.NextCursor = encodeLibraryCursor(libraryCursor{CreatedAt: last.createdAt, JobID: last.id})
 	}
 	return page, nil
+}
+
+func libraryFilterClause(filter libraryFilter, itemAlias string) (string, []any) {
+	var clauses []string
+	var args []any
+	if filter.MediaType == "video" {
+		clauses = append(clauses, `(j.media_type='video' OR j.media_type='')`)
+	} else if filter.MediaType != "" {
+		clauses = append(clauses, `j.media_type=?`)
+		args = append(args, filter.MediaType)
+	}
+	if filter.Category != "" {
+		clauses = append(clauses, `((j.category<>'' AND j.category=?) OR (j.category='' AND COALESCE(NULLIF(json_extract(`+itemAlias+`.file_json,'$.category'),''),'Uncategorized')=?))`)
+		args = append(args, filter.Category, filter.Category)
+	}
+	if filter.Channel != "" {
+		clauses = append(clauses, `COALESCE(NULLIF(TRIM(json_extract(`+itemAlias+`.file_json,'$.author')),''),'Unknown channel')=?`)
+		args = append(args, filter.Channel)
+	}
+	if filter.Query != "" {
+		clauses = append(clauses, `instr(lower(COALESCE(j.title,'')||' '||COALESCE(j.url,'')||' '||COALESCE(j.category,'')||' '||COALESCE(j.audio_format,'')||' '||COALESCE(j.subtitle_language,'')||' '||`+itemAlias+`.file_json),?)>0`)
+		args = append(args, filter.Query)
+	}
+	if len(clauses) == 0 {
+		return "", args
+	}
+	return " AND " + strings.Join(clauses, " AND "), args
+}
+
+func (s *jobStore) loadLibraryMetadata(page *libraryPage) error {
+	rows, err := s.db.Query(`SELECT COALESCE(NULLIF(j.category,''),NULLIF(json_extract(li.file_json,'$.category'),''),'Uncategorized'),COUNT(*)
+		FROM library_items li JOIN jobs j ON j.id=li.source_job_id
+		WHERE j.status IN ('completed','partial','failed','cancelled') GROUP BY 1 ORDER BY 1 COLLATE NOCASE`)
+	if err != nil {
+		return err
+	}
+	for rows.Next() {
+		var facet libraryFacet
+		if err := rows.Scan(&facet.Value, &facet.Count); err != nil {
+			_ = rows.Close()
+			return err
+		}
+		page.Categories = append(page.Categories, facet)
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return err
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	rows, err = s.db.Query(`SELECT COALESCE(NULLIF(TRIM(json_extract(li.file_json,'$.author')),''),'Unknown channel'),COUNT(*)
+		FROM library_items li JOIN jobs j ON j.id=li.source_job_id
+		WHERE j.status IN ('completed','partial','failed','cancelled') GROUP BY 1 ORDER BY 1 COLLATE NOCASE`)
+	if err != nil {
+		return err
+	}
+	for rows.Next() {
+		var facet libraryFacet
+		if err := rows.Scan(&facet.Value, &facet.Count); err != nil {
+			_ = rows.Close()
+			return err
+		}
+		page.Channels = append(page.Channels, facet)
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return err
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	return s.db.QueryRow(`SELECT COUNT(*),
+		COALESCE(SUM(CAST(json_extract(file_json,'$.size') AS INTEGER)+COALESCE(CAST(json_extract(file_json,'$.subtitle.size') AS INTEGER),0)),0),
+		COALESCE(SUM(CASE WHEN json_extract(file_json,'$.managedAvailable')=1 THEN CAST(json_extract(file_json,'$.size') AS INTEGER) ELSE 0 END + CASE WHEN json_extract(file_json,'$.subtitle.managedAvailable')=1 THEN CAST(json_extract(file_json,'$.subtitle.size') AS INTEGER) ELSE 0 END),0),
+		COALESCE(SUM(CASE WHEN json_extract(file_json,'$.publishedAvailable')=1 AND COALESCE(json_extract(file_json,'$.outputRelativePath'),'')<>'' THEN CAST(json_extract(file_json,'$.size') AS INTEGER) ELSE 0 END + CASE WHEN json_extract(file_json,'$.subtitle.publishedAvailable')=1 AND COALESCE(json_extract(file_json,'$.subtitle.outputRelativePath'),'')<>'' THEN CAST(json_extract(file_json,'$.subtitle.size') AS INTEGER) ELSE 0 END),0)
+		FROM library_items li JOIN jobs j ON j.id=li.source_job_id
+		WHERE j.status IN ('completed','partial','failed','cancelled')`).Scan(&page.Stats.Files, &page.Stats.LogicalBytes, &page.Stats.ManagedBytes, &page.Stats.PublishedBytes)
 }
 
 func (s *server) handleLibraryPage(w http.ResponseWriter, r *http.Request) {
@@ -117,7 +226,27 @@ func (s *server) handleLibraryPage(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	page, err := s.store.loadLibraryPage(limit, cursor)
+	query := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("q")))
+	if len(query) > 200 {
+		fail(w, http.StatusBadRequest, "q must be 200 characters or fewer")
+		return
+	}
+	mediaType := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("type")))
+	if mediaType == "all" {
+		mediaType = ""
+	}
+	if mediaType != "" && mediaType != "video" && mediaType != "audio" {
+		fail(w, http.StatusBadRequest, "type must be video or audio")
+		return
+	}
+	category := strings.TrimSpace(r.URL.Query().Get("category"))
+	channel := strings.TrimSpace(r.URL.Query().Get("channel"))
+	if len(category) > 200 || len(channel) > 200 {
+		fail(w, http.StatusBadRequest, "category and channel must be 200 characters or fewer")
+		return
+	}
+	filter := libraryFilter{Query: query, MediaType: mediaType, Category: category, Channel: channel}
+	page, err := s.store.loadLibraryPage(limit, cursor, filter)
 	if err != nil {
 		fail(w, http.StatusInternalServerError, "Could not load the Library")
 		return
