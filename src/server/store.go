@@ -77,21 +77,28 @@ func stateDatabaseDSN(root string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	uriPath := filepath.ToSlash(databasePath)
-	if filepath.VolumeName(databasePath) != "" {
-		uriPath = "/" + uriPath
-	}
+	return sqliteDatabaseDSN(databasePath), nil
+}
+
+func sqliteDatabaseDSN(databasePath string) string {
 	query := url.Values{}
 	query.Add("_pragma", "busy_timeout(5000)")
 	query.Add("_pragma", "journal_mode(WAL)")
 	query.Add("_pragma", "foreign_keys(ON)")
-	return (&url.URL{Scheme: "file", Path: uriPath, RawQuery: query.Encode()}).String(), nil
+	if filepath.VolumeName(databasePath) != "" {
+		// Encoding a Windows path as a file URI keeps drive, UNC, and extended-
+		// length prefixes in the URI path instead of interpreting '?' in \\?\ as
+		// the start of the DSN query.
+		return "file:" + url.PathEscape(databasePath) + "?" + query.Encode()
+	}
+	uriPath := filepath.ToSlash(databasePath)
+	return (&url.URL{Scheme: "file", Path: uriPath, RawQuery: query.Encode()}).String()
 }
 
 func checkDatabaseIntegrity(db *sql.DB) error {
 	rows, err := db.Query(`PRAGMA quick_check`)
 	if err != nil {
-		return &databaseIntegrityError{detail: err.Error()}
+		return fmt.Errorf("run PRAGMA quick_check: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
 	checked := false
@@ -99,14 +106,14 @@ func checkDatabaseIntegrity(db *sql.DB) error {
 		checked = true
 		var result string
 		if err := rows.Scan(&result); err != nil {
-			return &databaseIntegrityError{detail: err.Error()}
+			return fmt.Errorf("read PRAGMA quick_check result: %w", err)
 		}
 		if result != "ok" {
 			return &databaseIntegrityError{detail: result}
 		}
 	}
 	if err := rows.Err(); err != nil {
-		return &databaseIntegrityError{detail: err.Error()}
+		return fmt.Errorf("read PRAGMA quick_check results: %w", err)
 	}
 	if !checked {
 		return &databaseIntegrityError{detail: "no result returned"}
