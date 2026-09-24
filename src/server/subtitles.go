@@ -360,6 +360,15 @@ func publishSubtitleOutput(j *jobState, file *mediaFile) error {
 		_ = os.Remove(temporaryPath)
 		return errors.Join(errors.New("could not write caption sidecar"), sourceCloseErr)
 	}
+	fileMode, modeErr := parseOutputMode(j.OutputFileMode)
+	if modeErr != nil {
+		_ = os.Remove(temporaryPath)
+		return fmt.Errorf("invalid captured output file mode: %w", modeErr)
+	}
+	if modeErr = os.Chmod(temporaryPath, fileMode); modeErr != nil {
+		_ = os.Remove(temporaryPath)
+		return fmt.Errorf("set caption permissions: %w", modeErr)
+	}
 	if err := publishTemporary(temporaryPath, destination); err != nil {
 		_ = os.Remove(temporaryPath)
 		return err

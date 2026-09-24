@@ -31,6 +31,8 @@ type AppSettings struct {
 	DownloadLocation          string   `json:"downloadLocation"`
 	NamingPattern             string   `json:"namingPattern"`
 	SubfolderSorting          string   `json:"subfolderSorting"`
+	OutputFileMode            string   `json:"outputFileMode"`
+	OutputFolderMode          string   `json:"outputFolderMode"`
 	DefaultCategory           string   `json:"defaultCategory"`
 	UserCategories            []string `json:"userCategories"`
 	StorageMode               string   `json:"storageMode"`
@@ -180,7 +182,38 @@ func openJobStore(root string) (*jobStore, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("migrate state database: %w", err)
 	}
+	if err := store.migrateV17(); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("migrate state database: %w", err)
+	}
 	return store, nil
+}
+
+func (s *jobStore) migrateV17() error {
+	var version int
+	if err := s.db.QueryRow(`SELECT COALESCE(MAX(version), 0) FROM schema_migrations`).Scan(&version); err != nil {
+		return err
+	}
+	if version >= 17 {
+		return nil
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	for _, statement := range []string{
+		`ALTER TABLE app_settings ADD COLUMN output_file_mode TEXT NOT NULL DEFAULT '0600'`,
+		`ALTER TABLE app_settings ADD COLUMN output_folder_mode TEXT NOT NULL DEFAULT '0700'`,
+		`ALTER TABLE jobs ADD COLUMN output_file_mode TEXT NOT NULL DEFAULT '0600'`,
+		`ALTER TABLE jobs ADD COLUMN output_folder_mode TEXT NOT NULL DEFAULT '0700'`,
+		`INSERT INTO schema_migrations(version) VALUES (17)`,
+	} {
+		if _, err := tx.Exec(statement); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 func (s *jobStore) migrateV16() error {
@@ -630,9 +663,9 @@ func (s *jobStore) saveConfig(c config) error {
 func (s *jobStore) loadAppSettings() (AppSettings, error) {
 	settings := defaultAppSettings()
 	var categories string
-	if err := s.db.QueryRow(`SELECT default_quality,default_video_strategy,allow_360p_fallback,max_concurrent_downloads,bandwidth_limit_bytes_per_sec,notifications_enabled,download_location,naming_pattern,subfolder_sorting,default_category,user_categories,storage_mode FROM app_settings WHERE id=1`).Scan(
+	if err := s.db.QueryRow(`SELECT default_quality,default_video_strategy,allow_360p_fallback,max_concurrent_downloads,bandwidth_limit_bytes_per_sec,notifications_enabled,download_location,naming_pattern,subfolder_sorting,default_category,user_categories,storage_mode,output_file_mode,output_folder_mode FROM app_settings WHERE id=1`).Scan(
 		&settings.DefaultQuality, &settings.DefaultVideoStrategy, &settings.Allow360pFallback, &settings.MaxConcurrentDownloads, &settings.BandwidthLimitBytesPerSec, &settings.NotificationsEnabled, &settings.DownloadLocation, &settings.NamingPattern,
-		&settings.SubfolderSorting, &settings.DefaultCategory, &categories, &settings.StorageMode); err != nil {
+		&settings.SubfolderSorting, &settings.DefaultCategory, &categories, &settings.StorageMode, &settings.OutputFileMode, &settings.OutputFolderMode); err != nil {
 		return settings, err
 	}
 	if err := json.Unmarshal([]byte(categories), &settings.UserCategories); err != nil {
@@ -651,9 +684,9 @@ func (s *jobStore) saveAppSettings(settings AppSettings) error {
 	if err != nil {
 		return err
 	}
-	_, err = s.db.Exec(`UPDATE app_settings SET default_quality=?,default_video_strategy=?,allow_360p_fallback=?,max_concurrent_downloads=?,bandwidth_limit_bytes_per_sec=?,notifications_enabled=?,download_location=?,naming_pattern=?,subfolder_sorting=?,default_category=?,user_categories=?,storage_mode=?,updated_at=? WHERE id=1`,
+	_, err = s.db.Exec(`UPDATE app_settings SET default_quality=?,default_video_strategy=?,allow_360p_fallback=?,max_concurrent_downloads=?,bandwidth_limit_bytes_per_sec=?,notifications_enabled=?,download_location=?,naming_pattern=?,subfolder_sorting=?,default_category=?,user_categories=?,storage_mode=?,output_file_mode=?,output_folder_mode=?,updated_at=? WHERE id=1`,
 		settings.DefaultQuality, settings.DefaultVideoStrategy, settings.Allow360pFallback, settings.MaxConcurrentDownloads, settings.BandwidthLimitBytesPerSec, settings.NotificationsEnabled, settings.DownloadLocation, settings.NamingPattern,
-		settings.SubfolderSorting, settings.DefaultCategory, string(categories), settings.StorageMode, time.Now().UnixNano())
+		settings.SubfolderSorting, settings.DefaultCategory, string(categories), settings.StorageMode, settings.OutputFileMode, settings.OutputFolderMode, time.Now().UnixNano())
 	return err
 }
 
@@ -687,8 +720,8 @@ func (s *jobStore) saveJob(j *jobState) error {
 	}
 	defer func() { _ = tx.Rollback() }()
 	_, err = tx.Exec(`INSERT INTO jobs
-		(id,url,kind,quality,video_strategy,allow_360p_fallback,media_type,audio_format,audio_bitrate,subtitle_language,subtitle_format,status,title,progress,current_item,completed_count,total_count,error,created_at,note,dir,cancel_requested,done_at,updated_at,queue_items,output_location,naming_pattern,subfolder_sorting,category,storage_mode,queue_position)
-		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+		(id,url,kind,quality,video_strategy,allow_360p_fallback,media_type,audio_format,audio_bitrate,subtitle_language,subtitle_format,status,title,progress,current_item,completed_count,total_count,error,created_at,note,dir,cancel_requested,done_at,updated_at,queue_items,output_location,naming_pattern,subfolder_sorting,category,storage_mode,queue_position,output_file_mode,output_folder_mode)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 		ON CONFLICT(id) DO UPDATE SET url=excluded.url,kind=excluded.kind,quality=excluded.quality,video_strategy=excluded.video_strategy,
 		allow_360p_fallback=excluded.allow_360p_fallback,
 		media_type=excluded.media_type,audio_format=excluded.audio_format,audio_bitrate=excluded.audio_bitrate,
@@ -697,10 +730,10 @@ func (s *jobStore) saveJob(j *jobState) error {
 		completed_count=excluded.completed_count,total_count=excluded.total_count,error=excluded.error,
 		created_at=excluded.created_at,note=excluded.note,dir=excluded.dir,cancel_requested=excluded.cancel_requested,
 		done_at=excluded.done_at,updated_at=excluded.updated_at,queue_items=excluded.queue_items,
-		output_location=excluded.output_location,naming_pattern=excluded.naming_pattern,subfolder_sorting=excluded.subfolder_sorting,category=excluded.category,storage_mode=excluded.storage_mode,queue_position=excluded.queue_position`,
+		output_location=excluded.output_location,naming_pattern=excluded.naming_pattern,subfolder_sorting=excluded.subfolder_sorting,category=excluded.category,storage_mode=excluded.storage_mode,queue_position=excluded.queue_position,output_file_mode=excluded.output_file_mode,output_folder_mode=excluded.output_folder_mode`,
 		j.ID, j.URL, j.Kind, j.Quality, j.VideoStrategy, j.Allow360pFallback, j.MediaType, j.AudioFormat, j.AudioBitrate, j.SubtitleLanguage, j.SubtitleFormat, j.Status, j.Title, progress, j.CurrentItem, j.CompletedCount, total,
 		j.Error, j.CreatedAt, j.Note, j.dir, cancelRequested, done, time.Now().UnixNano(), string(queueItems),
-		j.DownloadLocation, j.NamingPattern, j.SubfolderSorting, j.Category, j.StorageMode, j.QueuePosition)
+		j.DownloadLocation, j.NamingPattern, j.SubfolderSorting, j.Category, j.StorageMode, j.QueuePosition, j.OutputFileMode, j.OutputFolderMode)
 	if err != nil {
 		return err
 	}
@@ -831,7 +864,7 @@ func (s *jobStore) loadJobs(root string) ([]*storedJob, error) {
 	if err != nil {
 		return nil, err
 	}
-	rows, err := s.db.Query(`SELECT id,url,kind,quality,video_strategy,allow_360p_fallback,media_type,audio_format,audio_bitrate,subtitle_language,subtitle_format,status,title,progress,current_item,completed_count,total_count,error,created_at,note,dir,cancel_requested,done_at,queue_items,output_location,naming_pattern,subfolder_sorting,category,storage_mode,queue_position FROM jobs ORDER BY created_at ASC`)
+	rows, err := s.db.Query(`SELECT id,url,kind,quality,video_strategy,allow_360p_fallback,media_type,audio_format,audio_bitrate,subtitle_language,subtitle_format,status,title,progress,current_item,completed_count,total_count,error,created_at,note,dir,cancel_requested,done_at,queue_items,output_location,naming_pattern,subfolder_sorting,category,storage_mode,queue_position,output_file_mode,output_folder_mode FROM jobs ORDER BY created_at ASC`)
 	if err != nil {
 		return nil, err
 	}
@@ -852,7 +885,7 @@ func (s *jobStore) loadJobs(root string) ([]*storedJob, error) {
 		var queueItems string
 		if err := rows.Scan(&j.ID, &j.URL, &j.Kind, &j.Quality, &j.VideoStrategy, &j.Allow360pFallback, &j.MediaType, &j.AudioFormat, &j.AudioBitrate, &j.SubtitleLanguage, &j.SubtitleFormat, &j.Status, &j.Title, &progress, &j.CurrentItem,
 			&j.CompletedCount, &totalCount, &j.Error, &j.CreatedAt, &j.Note, &dir, &cancelRequested, &doneAt, &queueItems,
-			&j.DownloadLocation, &j.NamingPattern, &j.SubfolderSorting, &j.Category, &j.StorageMode, &j.QueuePosition); err != nil {
+			&j.DownloadLocation, &j.NamingPattern, &j.SubfolderSorting, &j.Category, &j.StorageMode, &j.QueuePosition, &j.OutputFileMode, &j.OutputFolderMode); err != nil {
 			return nil, err
 		}
 		if err := json.Unmarshal([]byte(queueItems), &j.Items); err != nil {
@@ -872,6 +905,12 @@ func (s *jobStore) loadJobs(root string) ([]*storedJob, error) {
 		}
 		if j.StorageMode == "" {
 			j.StorageMode = currentSettings.StorageMode
+		}
+		if j.OutputFileMode == "" {
+			j.OutputFileMode = currentSettings.OutputFileMode
+		}
+		if j.OutputFolderMode == "" {
+			j.OutputFolderMode = currentSettings.OutputFolderMode
 		}
 		if j.MediaType == "audio" {
 			j.VideoStrategy = ""

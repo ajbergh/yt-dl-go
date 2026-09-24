@@ -148,6 +148,8 @@ export interface AppSettings {
   downloadLocation: string;
   namingPattern: string;
   subfolderSorting: "channel" | "category" | "flat";
+  outputFileMode: string;
+  outputFolderMode: string;
   defaultCategory: string;
   userCategories: string[];
   storageMode: "managed-published" | "published-only" | "managed-only";

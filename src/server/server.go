@@ -51,6 +51,7 @@ type mediaFile struct {
 	PublishedAvailable      bool          `json:"publishedAvailable"`
 	Subtitle                *subtitleFile `json:"subtitle,omitempty"`
 	SubtitleError           string        `json:"subtitleError,omitempty"`
+	naming                  namingValues
 }
 
 type itemFailure struct {
@@ -109,6 +110,8 @@ type Job struct {
 	DownloadLocation  string        `json:"-"`
 	NamingPattern     string        `json:"-"`
 	SubfolderSorting  string        `json:"-"`
+	OutputFileMode    string        `json:"-"`
+	OutputFolderMode  string        `json:"-"`
 	Category          string        `json:"category,omitempty"`
 	StorageMode       string        `json:"storageMode"`
 	QueuePosition     int64         `json:"queuePosition,omitempty"`
@@ -711,6 +714,8 @@ func (s *server) handleSettings(w http.ResponseWriter, r *http.Request) {
 			DownloadLocation          *string   `json:"downloadLocation"`
 			NamingPattern             *string   `json:"namingPattern"`
 			SubfolderSorting          *string   `json:"subfolderSorting"`
+			OutputFileMode            *string   `json:"outputFileMode"`
+			OutputFolderMode          *string   `json:"outputFolderMode"`
 			DefaultCategory           *string   `json:"defaultCategory"`
 			UserCategories            *[]string `json:"userCategories"`
 			StorageMode               *string   `json:"storageMode"`
@@ -746,6 +751,12 @@ func (s *server) handleSettings(w http.ResponseWriter, r *http.Request) {
 		}
 		if patch.SubfolderSorting != nil {
 			settings.SubfolderSorting = *patch.SubfolderSorting
+		}
+		if patch.OutputFileMode != nil {
+			settings.OutputFileMode = strings.TrimSpace(*patch.OutputFileMode)
+		}
+		if patch.OutputFolderMode != nil {
+			settings.OutputFolderMode = strings.TrimSpace(*patch.OutputFolderMode)
 		}
 		if patch.DefaultCategory != nil {
 			settings.DefaultCategory = *patch.DefaultCategory
@@ -986,7 +997,9 @@ func (s *server) enqueueJobWithFallback(w http.ResponseWriter, u, kind, quality,
 		SubtitleLanguage: subtitleLanguage, SubtitleFormat: subtitleFormat,
 		Status: "queued", Title: "YouTube " + kind, Files: []mediaFile{}, Items: items, Failures: []itemFailure{},
 		Note: formatNote, CreatedAt: time.Now().UTC().Format(time.RFC3339Nano), DownloadLocation: outputSettings.DownloadLocation,
-		NamingPattern: outputSettings.NamingPattern, SubfolderSorting: outputSettings.SubfolderSorting, Category: category, StorageMode: storageMode,
+		NamingPattern: outputSettings.NamingPattern, SubfolderSorting: outputSettings.SubfolderSorting,
+		OutputFileMode: outputSettings.OutputFileMode, OutputFolderMode: outputSettings.OutputFolderMode,
+		Category: category, StorageMode: storageMode,
 		QueuePosition: s.nextQueuePositionLocked(),
 	}, fileItems: map[int]mediaFile{}}
 	if kind == "playlist" {

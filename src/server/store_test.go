@@ -178,6 +178,8 @@ func TestPersistentHistoryAndQueueResume(t *testing.T) {
 	s.settings.DownloadLocation = filepath.Join(root, "published")
 	s.settings.DefaultVideoStrategy = "vp9"
 	s.settings.Allow360pFallback = true
+	s.settings.OutputFileMode = "0640"
+	s.settings.OutputFolderMode = "0750"
 	if err := s.store.saveAppSettings(s.settings); err != nil {
 		s.stop()
 		t.Fatal(err)
@@ -190,6 +192,8 @@ func TestPersistentHistoryAndQueueResume(t *testing.T) {
 	settings.Allow360pFallback = false
 	settings.BandwidthLimitBytesPerSec = 5 * 1024 * 1024
 	settings.NotificationsEnabled = true
+	settings.OutputFileMode = "0644"
+	settings.OutputFolderMode = "0755"
 	if err := s.store.saveAppSettings(settings); err != nil {
 		t.Fatal(err)
 	}
@@ -219,8 +223,11 @@ func TestPersistentHistoryAndQueueResume(t *testing.T) {
 	if history.jobs[queued.ID].Status != "completed" || history.jobs[queued.ID].VideoStrategy != "vp9" || !history.jobs[queued.ID].Allow360pFallback {
 		t.Fatalf("history state = %+v", history.jobs[queued.ID])
 	}
-	if history.settings.DefaultQuality != "720" || history.settings.DefaultVideoStrategy != "av1" || history.settings.Allow360pFallback || history.settings.BandwidthLimitBytesPerSec != 5*1024*1024 || !history.settings.NotificationsEnabled {
+	if history.settings.DefaultQuality != "720" || history.settings.DefaultVideoStrategy != "av1" || history.settings.Allow360pFallback || history.settings.BandwidthLimitBytesPerSec != 5*1024*1024 || !history.settings.NotificationsEnabled || history.settings.OutputFileMode != "0644" || history.settings.OutputFolderMode != "0755" {
 		t.Fatalf("application preferences did not persist: %+v", history.settings)
+	}
+	if sJob := history.jobs[queued.ID]; sJob.OutputFileMode != "0640" || sJob.OutputFolderMode != "0750" {
+		t.Fatalf("queued output permissions were not captured and persisted: %+v", sJob)
 	}
 	var configCount int
 	if err := history.store.db.QueryRow(`SELECT count(*) FROM config`).Scan(&configCount); err != nil {

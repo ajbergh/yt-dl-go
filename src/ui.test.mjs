@@ -4,6 +4,22 @@ import { act, createElement } from "react";
 import { HomePage } from "./pages/home";
 import { mergeJobActionResult } from "./hooks/use-jobs";
 import { terminalNotification } from "./components/downloader/view-model";
+import { namingTokenNames, previewFilename } from "./lib/naming";
+
+describe("filename naming preview", () => {
+  test("shows each token and sanitizes the single-pass preview like the publisher", () => {
+    const values = Object.fromEntries(namingTokenNames.map(token => [token, token]));
+    values["{channel}"] = "{title}";
+    values["{title}"] = "CON: sample";
+    values["{id}"] = "abc123";
+    values["{fps}"] = "60";
+    values["{codec}"] = "h264";
+    values["{ext}"] = "mp4";
+    expect(previewFilename("{channel} - {title} [{id}] [{fps}] [{codec}] {ext}", values, "mp4"))
+      .toBe("{title} - _CON- sample [abc123] [60] [h264] mp4.mp4");
+    expect(previewFilename("sample.{ext}", values, "mp4")).toBe("sample.mp4");
+  });
+});
 
 const testWindow = new Window({ url: "http://localhost:5173/" });
 for (const key of ["window", "document", "HTMLElement", "HTMLInputElement", "Node", "Event", "MouseEvent"]) {
@@ -81,9 +97,9 @@ beforeEach(async () => {
       return Response.json({ settings });
     }
     if (path === "/api/folders/select" && init.method === "POST") return Response.json({ path: "C:\\Media\\YouTube" });
-    if (path === "/api/settings") return Response.json({ settings: { defaultQuality: "best", defaultVideoStrategy: "best", allow360pFallback: false, maxConcurrentDownloads: 3, bandwidthLimitBytesPerSec: 0, notificationsEnabled, downloadLocation: "C:\\Downloads\\YouTube_Vault", namingPattern: "{channel} - {title} [{resolution}]", subfolderSorting: "channel", defaultCategory: "General", userCategories: ["General", "Music"], storageMode: "managed-published" } });
+    if (path === "/api/settings") return Response.json({ settings: { defaultQuality: "best", defaultVideoStrategy: "best", allow360pFallback: false, maxConcurrentDownloads: 3, bandwidthLimitBytesPerSec: 0, notificationsEnabled, downloadLocation: "C:\\Downloads\\YouTube_Vault", namingPattern: "{channel} - {title} [{resolution}]", subfolderSorting: "channel", defaultCategory: "General", userCategories: ["General", "Music"], storageMode: "managed-published", outputFileMode: "0600", outputFolderMode: "0700" } });
     if (path === "/api/events") {
-      const settings = { defaultQuality: "best", defaultVideoStrategy: "best", allow360pFallback: false, maxConcurrentDownloads: 3, bandwidthLimitBytesPerSec: 0, notificationsEnabled, downloadLocation: "C:\\Downloads\\YouTube_Vault", namingPattern: "{channel} - {title} [{resolution}]", subfolderSorting: "channel", defaultCategory: "General", userCategories: ["General", "Music"], storageMode: "managed-published" };
+      const settings = { defaultQuality: "best", defaultVideoStrategy: "best", allow360pFallback: false, maxConcurrentDownloads: 3, bandwidthLimitBytesPerSec: 0, notificationsEnabled, downloadLocation: "C:\\Downloads\\YouTube_Vault", namingPattern: "{channel} - {title} [{resolution}]", subfolderSorting: "channel", defaultCategory: "General", userCategories: ["General", "Music"], storageMode: "managed-published", outputFileMode: "0600", outputFolderMode: "0700" };
       const events = [{ type: "snapshot", jobs: rows, settings }, ...(liveEvent ? [liveEvent] : [])];
       const body = events.map((event, index) => `id: ${index + 1}\nevent: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`).join("");
       return new Response(body, { headers: { "Content-Type": "text/event-stream" } });
@@ -364,7 +380,7 @@ describe("Downloader UI and Go API integration", () => {
     await setSelect(videoFormat, "av1");
     await click(button("Save preferences"));
     const save = requests.find(item => item.path === "/api/settings" && item.method === "PUT");
-    expect(JSON.parse(save.body)).toEqual({ defaultQuality: "720", defaultVideoStrategy: "av1", allow360pFallback: false, maxConcurrentDownloads: 3, bandwidthLimitBytesPerSec: 0, notificationsEnabled: false, downloadLocation: "C:\\Downloads\\YouTube_Vault", namingPattern: "{channel} - {title} [{resolution}]", subfolderSorting: "channel", defaultCategory: "General", userCategories: ["General", "Music"], storageMode: "managed-published" });
+    expect(JSON.parse(save.body)).toEqual({ defaultQuality: "720", defaultVideoStrategy: "av1", allow360pFallback: false, maxConcurrentDownloads: 3, bandwidthLimitBytesPerSec: 0, notificationsEnabled: false, downloadLocation: "C:\\Downloads\\YouTube_Vault", namingPattern: "{channel} - {title} [{resolution}]", subfolderSorting: "channel", defaultCategory: "General", userCategories: ["General", "Music"], storageMode: "managed-published", outputFileMode: "0600", outputFolderMode: "0700" });
     expect(container.textContent).toContain("Saved to SQLite");
   });
   test("keeps 360p recovery disabled unless the user opts in", async () => {

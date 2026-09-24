@@ -3,6 +3,7 @@ import {
   Check, ExternalLink, FileText, Folder, FolderTree, Gauge, HardDrive, LoaderCircle, Plus, RefreshCw, ShieldCheck, Sparkles, X,
 } from "lucide-react";
 import type { AppSettings, BuildInfo, Quality, ServiceConnection, UpdateStatus, VideoStrategy } from "../lib/downloader";
+import { namingTokenNames, previewFilename, sanitizeFilenameComponent, type NamingValues } from "../lib/naming";
 import {
   button, field, notificationAPI, panel, primaryButton, qualityLabels, videoStrategyLabels,
 } from "../components/downloader/view-model";
@@ -108,16 +109,30 @@ export function SettingsPage({
                 <div className="mb-3 flex items-center gap-3"><span className="grid size-9 place-items-center rounded-lg border border-blue-700/40 bg-blue-950/30 text-blue-300"><FileText className="size-4" aria-hidden="true" /></span><div><h4 className="text-xs font-bold">File naming format preferences</h4><p className="mt-0.5 text-[11px] text-neutral-400">Use tokens to build the saved filename.</p></div></div>
                 <label className="block text-[11px] font-medium text-neutral-300" htmlFor="naming-pattern">Naming pattern template</label>
                 <input id="naming-pattern" type="text" className={`${field} mt-1 font-mono text-xs`} value={settings.namingPattern} onChange={event => changeSetting("namingPattern", event.target.value)} />
-                <div className="mt-2 flex flex-wrap items-center gap-1.5 text-[10px]"><span className="mr-1 text-neutral-500">Insert token:</span>{["{channel}", "{title}", "{resolution}", "{category}"].map(token => <button key={token} type="button" onClick={() => changeSetting("namingPattern", `${settings.namingPattern}${settings.namingPattern ? " " : ""}${token}`)} className="rounded-md border border-neutral-800 bg-neutral-900 px-2.5 py-1 font-mono text-neutral-300 hover:border-neutral-600"><Plus className="mr-1 inline size-3 text-rose-400" aria-hidden="true" />{token}</button>)}</div>
+                <div className="mt-2 flex flex-wrap items-center gap-1.5 text-[10px]"><span className="mr-1 text-neutral-500">Insert token:</span>{namingTokenNames.map(token => <button key={token} type="button" onClick={() => changeSetting("namingPattern", `${settings.namingPattern}${settings.namingPattern ? " " : ""}${token}`)} className="rounded-md border border-neutral-800 bg-neutral-900 px-2.5 py-1 font-mono text-neutral-300 hover:border-neutral-600"><Plus className="mr-1 inline size-3 text-rose-400" aria-hidden="true" />{token}</button>)}</div>
                 <div className="mt-3 rounded-lg border border-neutral-800 bg-neutral-900/70 p-3"><div className="flex items-center gap-1.5 text-[10px] font-semibold text-neutral-300"><Sparkles className="size-3.5 text-amber-300" aria-hidden="true" />Live file generation preview</div>
                   {(() => {
-                    const sample = settings.namingPattern.replaceAll("{channel}", "Marques Brownlee").replaceAll("{title}", "M3 Max MacBook Pro Deep Dive").replaceAll("{resolution}", "1080p").replaceAll("{category}", settings.defaultCategory || "General");
-                    const safePreview = sample || "Untitled";
+                    const values: NamingValues = { "{channel}": "Marques Brownlee", "{title}": "M3 Max MacBook Pro Deep Dive", "{resolution}": "1080p", "{category}": settings.defaultCategory || "General", "{id}": "dQw4w9WgXcQ", "{upload_date}": "2026-09-23", "{playlist}": "Example playlist", "{index}": "3", "{ext}": "mp4", "{fps}": "60", "{codec}": "h264" };
+                    const safePreview = previewFilename(settings.namingPattern, values, "mp4");
                     const separator = settings.downloadLocation.includes("\\") ? "\\" : "/";
-                    const subfolder = settings.subfolderSorting === "channel" ? "Marques Brownlee" : settings.subfolderSorting === "category" ? settings.defaultCategory : "";
-                    return <><p className="mt-1 break-all font-mono text-xs text-emerald-300">{safePreview}.mp4</p><p className="mt-1 break-all font-mono text-[10px] text-neutral-400">{settings.downloadLocation}{subfolder ? `${separator}${subfolder}` : ""}{separator}{safePreview}.mp4</p></>;
+                    const subfolderName = settings.subfolderSorting === "channel" ? "Marques Brownlee" : settings.subfolderSorting === "category" ? settings.defaultCategory : "";
+                    const subfolder = subfolderName ? sanitizeFilenameComponent(subfolderName) : "";
+                    return <><p className="mt-1 break-all font-mono text-xs text-emerald-300">{safePreview}</p><p className="mt-1 break-all font-mono text-[10px] text-neutral-400">{settings.downloadLocation}{subfolder ? `${separator}${subfolder}` : ""}{separator}{safePreview}</p><p className="mt-1 text-[10px] text-neutral-500">Sample values are shown for upload date, playlist, index, FPS, and codec when those details are available.</p></>;
                   })()}
                 </div>
+              </div>
+
+              <div className="rounded-xl border border-neutral-800 bg-neutral-950/60 p-4">
+                <div className="mb-3 flex items-center gap-3"><span className="grid size-9 place-items-center rounded-lg border border-cyan-700/40 bg-cyan-950/30 text-cyan-300"><HardDrive className="size-4" aria-hidden="true" /></span><div><h4 className="text-xs font-bold">Published output permissions</h4><p className="mt-0.5 text-[11px] text-neutral-400">Set POSIX permissions for published files and directories on Linux and macOS.</p></div></div>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <label className="block text-[11px] font-medium text-neutral-300">File mode (octal)
+                    <input aria-label="Published output file mode" inputMode="numeric" maxLength={4} className={`${field} mt-1.5 font-mono`} value={settings.outputFileMode} onChange={event => changeSetting("outputFileMode", event.target.value)} />
+                  </label>
+                  <label className="block text-[11px] font-medium text-neutral-300">Folder mode (octal)
+                    <input aria-label="Published output folder mode" inputMode="numeric" maxLength={4} className={`${field} mt-1.5 font-mono`} value={settings.outputFolderMode} onChange={event => changeSetting("outputFolderMode", event.target.value)} />
+                  </label>
+                </div>
+                <p className="mt-2 text-[10px] leading-relaxed text-neutral-500">Use four octal digits from 0000 to 0777. Defaults 0600 and 0700 keep published media private to this account. Windows does not apply POSIX permission bits.</p>
               </div>
 
               <div className="rounded-xl border border-neutral-800 bg-neutral-950/60 p-4">

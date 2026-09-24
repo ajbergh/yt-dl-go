@@ -498,12 +498,19 @@ func TestInspectionPreferencesRetryAndRemoval(t *testing.T) {
 	}
 
 	settings := request(s, "GET", "/api/settings", "", nil)
-	if settings.Code != 200 || !strings.Contains(settings.Body.String(), `"defaultQuality":"best"`) || !strings.Contains(settings.Body.String(), `"defaultVideoStrategy":"best"`) || !strings.Contains(settings.Body.String(), `"allow360pFallback":false`) {
+	if settings.Code != 200 || !strings.Contains(settings.Body.String(), `"defaultQuality":"best"`) || !strings.Contains(settings.Body.String(), `"defaultVideoStrategy":"best"`) || !strings.Contains(settings.Body.String(), `"allow360pFallback":false`) || !strings.Contains(settings.Body.String(), `"outputFileMode":"0600"`) || !strings.Contains(settings.Body.String(), `"outputFolderMode":"0700"`) {
 		t.Fatalf("default settings: %d %s", settings.Code, settings.Body.String())
 	}
 	settings = request(s, "PUT", "/api/settings", `{"defaultQuality":"720"}`, nil)
 	if settings.Code != 200 || !strings.Contains(settings.Body.String(), `"defaultQuality":"720"`) {
 		t.Fatalf("save settings: %d %s", settings.Code, settings.Body.String())
+	}
+	settings = request(s, "PUT", "/api/settings", `{"outputFileMode":"0644","outputFolderMode":"0755","namingPattern":"{id}-{upload_date}-{playlist}-{index}-{ext}-{fps}-{codec}"}`, nil)
+	if settings.Code != 200 || !strings.Contains(settings.Body.String(), `"outputFileMode":"0644"`) || !strings.Contains(settings.Body.String(), `"outputFolderMode":"0755"`) {
+		t.Fatalf("save output permissions and extended naming template: %d %s", settings.Code, settings.Body.String())
+	}
+	if request(s, "PUT", "/api/settings", `{"outputFileMode":"1777"}`, nil).Code != 400 || request(s, "PUT", "/api/settings", `{"namingPattern":"{unknown}"}`, nil).Code != 400 {
+		t.Fatal("invalid output permissions or naming token were accepted")
 	}
 	settings = request(s, "PUT", "/api/settings", `{"bandwidthLimitBytesPerSec":5242880}`, nil)
 	if settings.Code != 200 || !strings.Contains(settings.Body.String(), `"bandwidthLimitBytesPerSec":5242880`) || s.bandwidth.Limit() != 5242880 {
