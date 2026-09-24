@@ -230,9 +230,9 @@ The durable storage foundation merged in [PR #51](https://github.com/ajbergh/yt-
 
 [PR #67](https://github.com/ajbergh/yt-dl-go/pull/67) merged as `0760f83`. Startup loads active jobs only; finished jobs leave memory after their final event and hydrate on demand for existing actions. Retention looks up candidate IDs and loads each record individually. The final check set passed Go and race validation, frontend integration and browser E2E, lint/vet, CodeQL, and Linux, Windows, and macOS builds. CI found and fixed compatibility assumptions in old history assertions, missing M4A media-type restoration during hydration, and an unused queue-loader wrapper.
 
-  The active `feat/library-items-outlive-jobs` branch adds migration v26 to retain the published-output root with durable Library source metadata, a history-only DELETE API and Queue action, Library-backed hydration for saved file actions and existing tickets, and retention that saves managed-copy state before deleting job history. The existing retention fixture now expects Library rows to survive. The original `DELETE /api/jobs/{id}` and managed/published/all scopes remain intact. CI and review are pending.
+`feat/library-items-outlive-jobs` adds migration v26 to retain the published-output root with durable Library source metadata, a history-only DELETE API and Queue action, Library-backed hydration for saved file actions and existing tickets, and retention that saves managed-copy state before deleting job history. The existing retention fixture now expects Library rows to survive. The original `DELETE /api/jobs/{id}` and managed/published/all scopes remain intact. RepoTracer review caught and corrected the schema mapping to `jobs.output_location` before push. [PR #68](https://github.com/ajbergh/yt-dl-go/pull/68) is open; CI checks are pending.
 
-  Remaining after this slice: independent removal of an individual Library item and validation at 10,000 items.
+Remaining after this slice: independent removal of an individual Library item and validation at 10,000 items.
 
 ### M1.2 Normalize queue items and write incrementally
 
