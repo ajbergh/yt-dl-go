@@ -138,7 +138,7 @@ func migrationTargetIsEmpty(path string) bool {
 	}
 	defer func() { _ = db.Close() }()
 	db.SetMaxOpenConns(1)
-	for _, table := range []string{"jobs", "queue_items", "job_files", "job_failures", "library_items", "library_sources", "download_parts", "config"} {
+	for _, table := range []string{"jobs", "queue_items", "job_files", "job_failures", "library_items", "library_sources", "download_parts"} {
 		var count int
 		if err := db.QueryRow(`SELECT COUNT(*) FROM ` + table).Scan(&count); err != nil || count != 0 {
 			return false

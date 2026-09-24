@@ -227,10 +227,6 @@ func newServer(c config) (*server, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := store.saveConfig(c); err != nil {
-		_ = store.close()
-		return nil, errors.New("cannot persist service configuration")
-	}
 	settings, err := store.loadAppSettings()
 	if err != nil {
 		_ = store.close()

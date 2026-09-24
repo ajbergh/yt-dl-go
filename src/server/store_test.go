@@ -257,19 +257,12 @@ func TestPersistentHistoryAndQueueResume(t *testing.T) {
 	if sJob := finished.job; sJob.OutputFileMode != "0640" || sJob.OutputFolderMode != "0750" {
 		t.Fatalf("queued output permissions were not captured and persisted: %+v", sJob)
 	}
-	var configCount int
-	if err := history.store.db.QueryRow(`SELECT count(*) FROM config`).Scan(&configCount); err != nil {
+	var configTableCount int
+	if err := history.store.db.QueryRow(`SELECT count(*) FROM sqlite_master WHERE type='table' AND name='config'`).Scan(&configTableCount); err != nil {
 		t.Fatal(err)
 	}
-	if configCount == 0 {
-		t.Fatal("effective configuration was not stored")
-	}
-	var secretCount int
-	if err := history.store.db.QueryRow(`SELECT count(*) FROM config WHERE key='api_token'`).Scan(&secretCount); err != nil {
-		t.Fatal(err)
-	}
-	if secretCount != 0 {
-		t.Fatal("API token must not be stored in the database")
+	if configTableCount != 0 {
+		t.Fatal("write-only effective configuration table still exists")
 	}
 	if _, err := os.Stat(root + string(os.PathSeparator) + "state.db"); err != nil {
 		t.Fatalf("state database missing: %v", err)
