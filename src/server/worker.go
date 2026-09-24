@@ -1264,6 +1264,23 @@ func (s *server) processItem(ctx context.Context, j *jobState, entry *youtube.Pl
 			file.PublishDate = video.PublishDate.UTC().Format("2006-01-02")
 		}
 	}
+	if supportsContainerMetadata(file.MimeType) {
+		metadataExtra := tracker.reserveOptional(containerMetadataHeadroom)
+		if taggedSize, tagErr := rewriteContainerMetadata(transferCtx, j, file, video.ID, budget+metadataExtra); tagErr != nil {
+			if metadataExtra > 0 {
+				_ = tracker.release(metadataExtra, 0)
+			}
+			if errors.Is(tagErr, errStorage) || errors.Is(tagErr, context.Canceled) || errors.Is(tagErr, context.DeadlineExceeded) {
+				return tagErr
+			}
+			log.Printf("container metadata was not embedded for %s: %v", file.Name, tagErr)
+		} else if taggedSize > file.Size {
+			budget += metadataExtra
+			file.Size = taggedSize
+		} else if metadataExtra > 0 {
+			_ = tracker.release(metadataExtra, 0)
+		}
+	}
 	formatForName := format
 	if j.MediaType != "audio" {
 		formatForName = selection.video

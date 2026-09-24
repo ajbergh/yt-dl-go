@@ -22,6 +22,12 @@ func durableRename(source, destination string) error {
 	return nil
 }
 
+// durableReplace atomically replaces a private managed file and persists the
+// new directory entry. Callers write and sync source before invoking it.
+func durableReplace(source, destination string) error {
+	return durableRename(source, destination)
+}
+
 // durableLink publishes a fully synced temporary file without replacing an
 // existing user file. Both paths are in the same destination directory.
 func durableLink(source, destination string) error {
