@@ -480,7 +480,7 @@ MP3, MP4/M4A, and WebM outputs now receive supported metadata and cover art.
 
 ### M3.2 Chapters
 
-**Status:** [~] MP3 chapter-splitting option and grouped outputs underway · **P1** · **Area:** engine / media
+**Status:** [~] MP3 chapter splitting merged; M4A/caption handling remains · **P1** · **Area:** engine / media
 
 The current metadata pipeline has no chapter model. YouTube chapter timestamps are available in the description, but parsing, Library persistence, container writing, and preview navigation need to be added.
 
@@ -489,9 +489,9 @@ The current metadata pipeline has no chapter model. YouTube chapter timestamps a
 - [x] Parse chapters from video metadata and store them with the Library item.
 - [x] Write MP4 Nero `chpl` atoms and WebM `Chapters`.
 - [x] Show chapters in the preview player.
-- Offer an option to split audio downloads by chapter.
+- [~] Offer opt-in MP3 chapter splitting; M4A splitting and chapter-clipped caption sidecars remain open.
 
-**Progress (2026-09-24):** Chapter parsing, Library/SQLite persistence, MP4/WebM chapter metadata, and preview navigation merged by [PR #47](https://github.com/ajbergh/yt-dl-go/pull/47) (`15f9369`). Full CI passed, including Go/race tests, Bun UI tests, browser E2E, lint, vet, CodeQL, and Linux/Windows/macOS builds. The opt-in MP3 split path is underway on `roadmap/m3-2-split-audio`: it decodes a source once, writes chapter-tagged MP3s, models outputs as a source-item group, and persists extra outputs alongside the existing source row. The one-file default and M4A path stay unchanged; chapter-clipped captions and M4A splitting remain open scope. Local Go build and `npm run check` pass; PR CI will validate the database migration, UI behavior, and Go test suites.
+**Progress (2026-09-24):** Chapter parsing, Library/SQLite persistence, MP4/WebM chapter metadata, and preview navigation merged by [PR #47](https://github.com/ajbergh/yt-dl-go/pull/47) (`15f9369`). Opt-in MP3 chapter splitting merged by [PR #48](https://github.com/ajbergh/yt-dl-go/pull/48) (`8ae44e0`): one AAC decode pass writes individually tagged chapter MP3s, queue items expose the grouped file IDs for ZIP save, and grouped outputs persist through SQLite and restart normalization. The one-file default and original M4A path remain unchanged; M4A splitting and chapter-clipped captions remain open scope. Full CI passed on the merged PR, including Go/race tests, Bun UI tests, browser E2E, lint, vulnerability scanning, vet, CodeQL, and Linux/Windows/macOS builds.
 
 ### M3.3 Embedded subtitles and thumbnails
 
