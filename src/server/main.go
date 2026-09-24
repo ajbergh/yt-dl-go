@@ -258,10 +258,10 @@ func newServer(c config) (*server, error) {
 		}
 		_ = store.close()
 	}
-	loaded, err := store.loadJobs(root)
+	loaded, err := store.loadActiveJobs(root)
 	if err != nil {
 		_ = store.close()
-		return nil, errors.New("cannot load download history")
+		return nil, errors.New("cannot load active downloads")
 	}
 	// The scheduler scans queued jobs when it starts; no per-job wake token
 	// or fixed-size channel is needed for resumed jobs.

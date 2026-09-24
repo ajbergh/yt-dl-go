@@ -132,19 +132,24 @@ func request(s *server, method, path, body string, headers map[string]string) *h
 
 func trackedOutputPath(t *testing.T, s *server, jobID, fileID string) string {
 	t.Helper()
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	j := s.jobs[jobID]
-	if j == nil {
+	loaded, err := s.store.loadJob(s.cfg.root, jobID)
+	if err != nil || loaded == nil {
 		t.Fatalf("tracked job %s not found", jobID)
 	}
-	for _, file := range j.Files {
+	for _, file := range loaded.job.Files {
 		if file.ID == fileID {
 			return file.OutputPath
 		}
 	}
 	t.Fatalf("tracked file %s not found for job %s", fileID, jobID)
 	return ""
+}
+
+func setPersistedJobDoneAt(t *testing.T, s *server, jobID string, done time.Time) {
+	t.Helper()
+	if _, err := s.store.db.Exec(`UPDATE jobs SET done_at=? WHERE id=?`, done.UnixNano(), jobID); err != nil {
+		t.Fatalf("set persisted completion time: %v", err)
+	}
 }
 
 func createJob(t *testing.T, s *server, raw string) Job {
@@ -202,8 +207,6 @@ func TestMaxJobsCountsOnlyLiveJobs(t *testing.T) {
 			s.mu.Unlock()
 			t.Fatal(err)
 		}
-		s.jobs[id] = job
-		s.order = append(s.order, id)
 	}
 	s.mu.Unlock()
 
@@ -238,10 +241,12 @@ func TestMaxJobsCountsPausedJobsAndItemRetries(t *testing.T) {
 		t.Fatalf("paused job did not count against MAX_JOBS: %d %s", response.Code, response.Body.String())
 	}
 
-	stopped := &jobState{Job: Job{ID: "retry-capacity", Kind: "playlist", Status: "partial", Items: []queueItem{{Index: 1, Status: "failed"}}}}
+	stopped := &jobState{Job: Job{ID: "retry-capacity", Kind: "playlist", Status: "partial", Items: []queueItem{{Index: 1, Status: "failed"}}}, dir: filepath.Join(s.cfg.root, "retry-capacity")}
 	s.mu.Lock()
-	s.jobs[stopped.ID] = stopped
-	s.order = append(s.order, stopped.ID)
+	if err := s.store.saveJob(stopped); err != nil {
+		s.mu.Unlock()
+		t.Fatal(err)
+	}
 	s.mu.Unlock()
 	response := request(s, "POST", "/api/jobs/"+stopped.ID+"/retry-item", `{"index":1}`, nil)
 	if response.Code != 429 || stopped.Status != "partial" {
@@ -602,9 +607,9 @@ func TestDownloadedLibraryFileCarriesDescriptionChapters(t *testing.T) {
 	if len(chapters) != 2 || chapters[0].EndMs != 75_000 || chapters[1].StartMs != 75_000 || chapters[1].EndMs != 300_000 {
 		t.Fatalf("Library file chapters = %+v", chapters)
 	}
-	response := request(s, "GET", "/api/jobs", "", nil)
+	response := request(s, "GET", "/api/library", "", nil)
 	if response.Code != 200 || !strings.Contains(response.Body.String(), `"chapters":[{"startMs":0,"endMs":75000,"title":"Opening"}`) {
-		t.Fatalf("job API omitted saved Library chapters: %d %s", response.Code, response.Body.String())
+		t.Fatalf("Library API omitted saved chapters: %d %s", response.Code, response.Body.String())
 	}
 }
 
@@ -762,9 +767,7 @@ func TestRetentionAcrossStoragePolicies(t *testing.T) {
 				}
 				managedPath := filepath.Join(s.cfg.root, job.ID, job.Files[0].Name)
 				publishedPath := trackedOutputPath(t, s, job.ID, job.Files[0].ID)
-				s.mu.Lock()
-				s.jobs[job.ID].done = time.Now().Add(-time.Hour)
-				s.mu.Unlock()
+				setPersistedJobDoneAt(t, s, job.ID, time.Now().Add(-time.Hour))
 				for cycle := 0; cycle < 3; cycle++ {
 					s.prune(time.Now().Add(time.Duration(cycle) * 24 * time.Hour))
 				}
@@ -808,7 +811,7 @@ func TestRetentionKeepsManagedCopyWhenPublishedCopyDisappears(t *testing.T) {
 		t.Fatal(err)
 	}
 	s.mu.Lock()
-	s.jobs[job.ID].done = time.Now().Add(-time.Hour)
+	setPersistedJobDoneAt(t, s, job.ID, time.Now().Add(-time.Hour))
 	s.mu.Unlock()
 	s.prune(time.Now())
 	if request(s, "GET", "/api/jobs/"+job.ID, "", nil).Code != 200 {
@@ -842,7 +845,7 @@ func TestRetentionCleansEmptyFailedAndCancelledJobs(t *testing.T) {
 				t.Fatalf("expected an empty %s job, got %+v", status, job)
 			}
 			s.mu.Lock()
-			s.jobs[job.ID].done = time.Now().Add(-25 * time.Hour)
+			setPersistedJobDoneAt(t, s, job.ID, time.Now().Add(-25*time.Hour))
 			s.mu.Unlock()
 			s.prune(time.Now())
 			if request(s, "GET", "/api/jobs/"+job.ID, "", nil).Code != 404 {
@@ -1273,7 +1276,7 @@ func TestCancelPausedJobRemovesTemporaryFiles(t *testing.T) {
 		t.Fatalf("pause: %d %s", response.Code, response.Body.String())
 	}
 	waitJob(t, s, job.ID, func(value Job) bool { return value.Status == "paused" })
-	partialPath := filepath.Join(s.jobs[job.ID].dir, "test-output.part")
+	partialPath := filepath.Join(s.cfg.root, job.ID, "test-output.part")
 	if err := os.WriteFile(partialPath, []byte("partial"), 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -1366,7 +1369,7 @@ func TestDownloadsAndRetention(t *testing.T) {
 		publishedPaths = append(publishedPaths, trackedOutputPath(t, s, j.ID, file.ID))
 	}
 	s.mu.Lock()
-	s.jobs[j.ID].done = time.Now().Add(-time.Hour)
+	setPersistedJobDoneAt(t, s, j.ID, time.Now().Add(-time.Hour))
 	s.mu.Unlock()
 	s.prune(time.Now())
 	if request(s, "GET", "/api/jobs/"+j.ID, "", nil).Code != 200 {
