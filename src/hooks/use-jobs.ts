@@ -38,12 +38,13 @@ type UseJobsOptions = {
   serviceReady: boolean;
   jobs: DownloadJob[];
   setJobs: Dispatch<SetStateAction<DownloadJob[]>>;
+  refreshLibrary: () => Promise<DownloadJob[]>;
   queuedJobsOrdered: DownloadJob[];
   setNotice: Dispatch<SetStateAction<string>>;
 };
 
 export function useJobs({
-  connection, serviceReady, jobs, setJobs, queuedJobsOrdered, setNotice,
+  connection, serviceReady, jobs, setJobs, queuedJobsOrdered, setNotice, refreshLibrary,
 }: UseJobsOptions) {
   const [busyAction, setBusyAction] = useState("");
   const [actionError, setActionError] = useState("");
@@ -99,6 +100,7 @@ export function useJobs({
           ? [result, ...previous]
           : previous.map(item => item.id === job.id ? mergeJobActionResult(item, result, action) : item));
       }
+      void refreshLibrary().catch(error => setActionError(errorMessage(error)));
     } catch (error) {
       setActionError(errorMessage(error));
     } finally {
@@ -118,6 +120,7 @@ export function useJobs({
         signal: AbortSignal.timeout(15000),
       });
       setJobs(previous => previous.map(value => value.id === job.id ? updated : value));
+      void refreshLibrary().catch(error => setActionError(errorMessage(error)));
       setNotice(`Retrying only "${item.title}". Successful playlist files are being preserved.`);
     } catch (error) {
       setActionError(errorMessage(error));

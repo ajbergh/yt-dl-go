@@ -82,6 +82,7 @@ Control-plane API responses and errors return JSON. `GET /api/downloads/{ticket}
 | `POST /api/folders/select` | Opens the local OS folder picker and returns the selected absolute folder; `{}` body |
 | `POST /api/jobs` | Creates a download job; returns `202` and the job |
 | `GET /api/jobs` | Lists jobs, newest first |
+| `GET /api/library` | Lists finalized Library records from durable per-file storage, newest first |
 | `GET /api/events` | Authenticated Server-Sent Events stream with an initial snapshot and live job/settings updates |
 | `GET /api/jobs/{id}` | Returns one job |
 | `POST /api/jobs/{id}/pause` | Pauses a queued or active job |

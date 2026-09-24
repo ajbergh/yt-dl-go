@@ -27,7 +27,7 @@ export function HomePage() {
   const previewMedia = useRef<HTMLMediaElement | null>(null);
   const [tab, setTab] = useState<Tab>("queue");
   const {
-    connection, serviceReady, jobs, setJobs, settings, setSettings, mp3Supported,
+    connection, serviceReady, jobs, setJobs, libraryJobs, refreshLibrary, settings, setSettings, mp3Supported,
     buildInfo, updateStatus, updateError, checkingUpdates, checkForUpdates,
     serviceError, setServiceError, pollError,
   } = useService();
@@ -69,7 +69,7 @@ export function HomePage() {
     retryPlaylistItem, previewFile, saveFile, filesystemAction, reorderQueuedJobs,
     downloadNext, reorderPlaylistItems, batchAction, clearCompleted,
   } = useJobs({
-    connection, serviceReady, jobs, setJobs, queuedJobsOrdered, setNotice,
+    connection, serviceReady, jobs, setJobs, queuedJobsOrdered, setNotice, refreshLibrary,
   });
 
   const queueDisplayJobs = useMemo(() => {
@@ -95,10 +95,6 @@ export function HomePage() {
   const queuedCount = visibleQueueRows.filter(({ item }) => item.status === "queued").length;
   const completedQueueCount = visibleQueueRows.filter(({ item }) => item.status === "completed").length;
   const totalCurrentSpeed = queueRows.reduce((sum, { item }) => sum + ((item.status === "downloading" || item.status === "processing") ? item.speedBytesPerSec : 0), 0);
-  const libraryJobs = useMemo(
-    () => jobs.filter(job => ["completed", "partial", "failed", "cancelled"].includes(job.status) && job.files.length > 0),
-    [jobs],
-  );
   const libraryCategories = useMemo(() => {
     const counts = new Map<string, number>();
     for (const job of libraryJobs) {

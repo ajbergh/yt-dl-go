@@ -108,6 +108,7 @@ beforeEach(async () => {
     if (path === "/api/inspect") return Response.json(inspection);
     if (path === "/api/jobs" && init.method === "POST") return Response.json(job, { status: 202 });
     if (path === "/api/jobs") return Response.json({ jobs: rows });
+    if (path === "/api/library") return Response.json({ jobs: rows.filter(item => ["completed", "partial", "failed", "cancelled"].includes(item.status) && item.files?.length > 0) });
     if (path === "/api/queue/order" && init.method === "PUT") {
       const { jobIds } = JSON.parse(init.body);
       const ordered = jobIds.map((id, index) => ({ ...rows.find(item => item.id === id), queuePosition: index + 1 }));

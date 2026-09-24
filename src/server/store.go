@@ -1211,6 +1211,9 @@ func (s *jobStore) loadJobs(root string) ([]*storedJob, error) {
 		if err := json.Unmarshal([]byte(queueItems), &j.Items); err != nil {
 			return nil, fmt.Errorf("decode saved queue entries: %w", err)
 		}
+		if j.Items == nil {
+			j.Items = []queueItem{}
+		}
 		if j.DownloadLocation == "" {
 			j.DownloadLocation = currentSettings.DownloadLocation
 		}
@@ -1358,6 +1361,91 @@ func (s *jobStore) loadJobs(root string) ([]*storedJob, error) {
 			}
 		}
 		result = append(result, loaded)
+	}
+	return result, nil
+}
+
+// loadLibraryJobs builds the Library read model from durable finalized-file
+// rows. It deliberately does not read job_files or require an in-memory job.
+func (s *jobStore) loadLibraryJobs() ([]Job, error) {
+	settings, err := s.loadAppSettings()
+	if err != nil {
+		return nil, err
+	}
+	rows, err := s.db.Query(`SELECT j.id,j.url,j.kind,j.quality,j.video_strategy,j.allow_360p_fallback,j.media_type,j.audio_format,j.audio_bitrate,j.subtitle_language,j.subtitle_format,j.split_by_chapter,j.status,j.title,j.progress,j.current_item,j.completed_count,j.total_count,j.error,j.created_at,j.note,j.queue_items,j.category,j.storage_mode,j.queue_position,li.file_json,li.output_path
+		FROM library_items li JOIN jobs j ON j.id=li.source_job_id
+		WHERE j.status IN ('completed','partial','failed','cancelled')
+		ORDER BY j.created_at DESC,li.source_item_index ASC,li.file_id ASC`)
+	if err != nil {
+		return nil, err
+	}
+	var result []Job
+	indexes := make(map[string]int)
+	for rows.Next() {
+		var j Job
+		var progress sql.NullFloat64
+		var totalCount sql.NullInt64
+		var queueItems, fileJSON, outputPath string
+		if err := rows.Scan(&j.ID, &j.URL, &j.Kind, &j.Quality, &j.VideoStrategy, &j.Allow360pFallback, &j.MediaType, &j.AudioFormat, &j.AudioBitrate, &j.SubtitleLanguage, &j.SubtitleFormat, &j.SplitByChapter, &j.Status, &j.Title, &progress, &j.CurrentItem,
+			&j.CompletedCount, &totalCount, &j.Error, &j.CreatedAt, &j.Note, &queueItems, &j.Category, &j.StorageMode, &j.QueuePosition, &fileJSON, &outputPath); err != nil {
+			_ = rows.Close()
+			return nil, err
+		}
+		if progress.Valid {
+			value := progress.Float64
+			j.Progress = &value
+		}
+		if totalCount.Valid {
+			value := int(totalCount.Int64)
+			j.TotalCount = &value
+		}
+		if err := json.Unmarshal([]byte(queueItems), &j.Items); err != nil {
+			_ = rows.Close()
+			return nil, fmt.Errorf("decode saved Library queue entries: %w", err)
+		}
+		if j.Items == nil {
+			j.Items = []queueItem{}
+		}
+		if j.MediaType == "" {
+			j.MediaType = "video"
+		}
+		if j.MediaType == "audio" {
+			if j.AudioFormat == "" {
+				j.AudioFormat = "mp3"
+			}
+		} else if j.VideoStrategy == "" {
+			j.VideoStrategy = "best"
+		}
+		if j.Category == "" {
+			j.Category = settings.DefaultCategory
+		}
+		if j.StorageMode == "" {
+			j.StorageMode = settings.StorageMode
+		}
+		if index, exists := indexes[j.ID]; exists {
+			j = result[index]
+		} else {
+			j.Files = []mediaFile{}
+			indexes[j.ID] = len(result)
+			result = append(result, j)
+		}
+		var file mediaFile
+		if err := json.Unmarshal([]byte(fileJSON), &file); err != nil {
+			_ = rows.Close()
+			return nil, fmt.Errorf("decode saved Library file: %w", err)
+		}
+		file.OutputPath = outputPath
+		result[indexes[j.ID]].Files = append(result[indexes[j.ID]].Files, file)
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return nil, err
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if result == nil {
+		result = []Job{}
 	}
 	return result, nil
 }
