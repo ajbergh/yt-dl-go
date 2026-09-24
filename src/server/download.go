@@ -93,6 +93,9 @@ func (s *server) download(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	j, hydrated, loadErr := s.hydrateTerminalJobLocked(t.jobID)
+	if loadErr == nil && j == nil {
+		j, hydrated, loadErr = s.hydrateLibraryJobLocked(t.jobID)
+	}
 	if loadErr != nil {
 		s.mu.Unlock()
 		fail(w, http.StatusInternalServerError, "Could not load the saved download")

@@ -142,6 +142,7 @@ type jobState struct {
 	persistedRevision   uint64
 	persistencePending  int
 	deleting            bool
+	libraryOnly         bool
 }
 
 type ticket struct {
@@ -245,6 +246,23 @@ func (s *server) forgetJobLocked(j *jobState) {
 	s.publishDeletedEventLocked(j.ID)
 }
 
+func (s *server) forgetJobHistoryLocked(j *jobState) {
+	if j == nil {
+		return
+	}
+	delete(s.jobs, j.ID)
+	for index, id := range s.order {
+		if id == j.ID {
+			s.order = append(s.order[:index], s.order[index+1:]...)
+			break
+		}
+	}
+	if s.store != nil {
+		s.store.releaseJobCaches(j.ID)
+	}
+	s.publishDeletedEventLocked(j.ID)
+}
+
 func (s *server) hydrateTerminalJobLocked(jobID string) (*jobState, bool, error) {
 	if job := s.jobs[jobID]; job != nil {
 		return job, false, nil
@@ -257,6 +275,27 @@ func (s *server) hydrateTerminalJobLocked(jobID string) (*jobState, bool, error)
 		return nil, false, err
 	}
 	job := &jobState{Job: loaded.job, dir: loaded.dir, done: loaded.done, fileItems: fileIndexes(loaded.items), fileGroups: fileGroupIndexes(loaded.items), cancelRequested: loaded.cancelled}
+	s.jobs[job.ID] = job
+	s.order = append(s.order, job.ID)
+	return job, true, nil
+}
+
+func (s *server) hydrateLibraryJobLocked(jobID string) (*jobState, bool, error) {
+	if job := s.jobs[jobID]; job != nil {
+		return job, false, nil
+	}
+	if s.store == nil {
+		return nil, false, nil
+	}
+	loaded, err := s.store.loadLibraryJob(s.cfg.root, jobID)
+	if err != nil || loaded == nil {
+		return nil, false, err
+	}
+	job := &jobState{
+		Job: loaded.job, dir: loaded.dir, done: loaded.done,
+		fileItems: fileIndexes(loaded.items), fileGroups: fileGroupIndexes(loaded.items),
+		libraryOnly: true,
+	}
 	s.jobs[job.ID] = job
 	s.order = append(s.order, job.ID)
 	return job, true, nil
@@ -306,6 +345,12 @@ func (s *server) persistenceDegraded() (bool, uint64) {
 }
 
 func (s *server) persistJobLocked(j *jobState) error {
+	if j.libraryOnly {
+		if s.store == nil {
+			return nil
+		}
+		return s.persistJobSnapshotLocked(j, "save Library file state")
+	}
 	if s.store != nil {
 		revision := j.persistenceRevision + 1
 		if err := s.persistJobSnapshotLocked(j, "save job"); err != nil {
@@ -336,6 +381,9 @@ func (s *server) persistJobSnapshotLocked(j *jobState, operation string) error {
 	revision := j.persistenceRevision
 	snapshot := cloneJobStateForPersistence(j)
 	err := s.persistOperationLocked(operation, j.ID, func(store *jobStore) error {
+		if snapshot.libraryOnly {
+			return store.saveLibraryJob(snapshot)
+		}
 		return store.saveJob(snapshot)
 	})
 	j.persistencePending--
@@ -537,6 +585,9 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if len(parts) > 0 && parts[0] != "" {
 			s.mu.Lock()
 			job, hydrated, err := s.hydrateTerminalJobLocked(parts[0])
+			if err == nil && job == nil && libraryJobRoute(parts, r.Method) {
+				job, hydrated, err = s.hydrateLibraryJobLocked(parts[0])
+			}
 			s.mu.Unlock()
 			if err != nil {
 				fail(w, http.StatusInternalServerError, "Could not load the saved job")
@@ -638,6 +689,36 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if len(parts) == 2 && parts[1] == "retry-item" && r.Method == http.MethodPost {
 		s.handleRetryItem(w, r, parts[0])
+		return
+	}
+	if len(parts) == 2 && parts[1] == "history" && r.Method == http.MethodDelete {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		j := s.jobs[parts[0]]
+		if j == nil {
+			fail(w, http.StatusNotFound, "Job not found")
+			return
+		}
+		if !terminal(j.Status) {
+			fail(w, http.StatusConflict, "Only stopped job history can be removed")
+			return
+		}
+		if j.readers > 0 {
+			fail(w, http.StatusConflict, "This job has an active file transfer")
+			return
+		}
+		j.deleting = true
+		if err := s.persistOperationLocked("delete job history", j.ID, func(store *jobStore) error {
+			return store.deleteJobHistory(j.ID)
+		}); err != nil {
+			j.deleting = false
+			s.recordPersistenceFailure("delete job history", j.ID, err)
+			fail(w, http.StatusInternalServerError, "Could not remove job history")
+			return
+		}
+		s.recordPersistenceSuccess()
+		s.forgetJobHistoryLocked(j)
+		w.WriteHeader(http.StatusNoContent)
 		return
 	}
 	if len(parts) == 2 && parts[1] == "next" && r.Method == http.MethodPost {
@@ -868,6 +949,29 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.issueTicket(w, j, fileID, requested.FileIDs, requested.Inline)
 	default:
 		fail(w, 405, "Method not allowed")
+	}
+}
+
+func libraryJobRoute(parts []string, method string) bool {
+	if len(parts) == 1 {
+		return method == http.MethodDelete
+	}
+	if len(parts) != 2 {
+		return false
+	}
+	switch parts[1] {
+	case "managed", "published", "all":
+		return method == http.MethodDelete
+	case "history":
+		return method == http.MethodDelete
+	case "filesystem":
+		return method == http.MethodPost
+	case "thumbnail":
+		return method == http.MethodGet || method == http.MethodHead
+	case "ticket":
+		return method == http.MethodPost
+	default:
+		return false
 	}
 }
 

@@ -3126,13 +3126,20 @@ func (s *server) prune(now time.Time) {
 		j.deleting = true
 		s.mu.Unlock()
 
+		librarySnapshot := cloneJobStateForPersistence(j)
 		done := s.persistenceWriter.enqueue(func(store *jobStore) error {
-			return store.deleteJob(id)
+			return store.saveLibraryJob(librarySnapshot)
 		})
 		err = <-done
+		if err == nil {
+			done = s.persistenceWriter.enqueue(func(store *jobStore) error {
+				return store.deleteJobHistory(id)
+			})
+			err = <-done
+		}
 		s.mu.Lock()
 		if err != nil {
-			s.recordPersistenceFailure("retention delete job", id, err)
+			s.recordPersistenceFailure("retention preserve Library item", id, err)
 			j.deleting = false
 			if saveErr := s.persistJobLocked(j); saveErr != nil {
 				log.Printf("retention failure operation=save job job=%s: %v", id, saveErr)
