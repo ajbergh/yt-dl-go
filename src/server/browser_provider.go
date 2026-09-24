@@ -121,14 +121,6 @@ func (metrics *browserCaptureMetrics) log(mode string, videoBytes, audioBytes in
 		mode, time.Since(metrics.started).Round(time.Millisecond), metrics.fetchSetup.Round(time.Millisecond), metrics.identity.Round(time.Millisecond), metrics.codec.Round(time.Millisecond), metrics.prepare.Round(time.Millisecond), metrics.wait.Round(time.Millisecond), metrics.body.Round(time.Millisecond), metrics.parse.Round(time.Millisecond), metrics.resume.Round(time.Millisecond), metrics.finish.Round(time.Millisecond), metrics.responses, metrics.responseBytes, videoBytes, audioBytes, err)
 }
 
-// newChromeBrowserProvider prepares a browser context, optionally using the
-// executable selected by CHROME_PATH. The browser process starts on capture.
-func newChromeBrowserProvider(parent context.Context, executable string) (browserMediaProvider, error) {
-	allocCtx, allocCancel := chromedp.NewExecAllocator(parent, chromeBrowserOptions(executable)...)
-	browserCtx, cancel := chromedp.NewContext(allocCtx)
-	return &chromeBrowserProvider{ctx: browserCtx, cancel: cancel, allocCancel: allocCancel}, nil
-}
-
 func chromeBrowserOptions(executable string) []chromedp.ExecAllocatorOption {
 	options := append([]chromedp.ExecAllocatorOption{}, chromedp.DefaultExecAllocatorOptions[:]...)
 	if executable != "" {
