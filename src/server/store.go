@@ -1995,7 +1995,7 @@ func (s *jobStore) loadJobsFiltered(root, jobID, selection string) ([]*storedJob
 				_ = files.Close()
 				return nil, err
 			}
-		restoreStoredFileMediaType(&file, j.MediaType)
+			restoreStoredFileMediaType(&file, j.MediaType)
 			file.ManagedAvailable = managedAvailable != 0
 			file.PublishedAvailable = publishedAvailable != 0
 			file.ThumbnailLocalAvailable = thumbnailLocalAvailable != 0
