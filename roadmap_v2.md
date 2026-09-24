@@ -247,7 +247,7 @@ Today a Library entry is a retained job (`src/pages/library.tsx:51`), so Library
 
 ### M1.3 Pagination, filtering, and indexes
 
-**Status:** [ ] · **P1** · **Area:** API / persistence
+**Status:** [~] · **P1** · **Area:** API / persistence
 
 `GET /api/jobs` returns every job with full `Items` arrays (`server.go:400-407`), and the SSE snapshot does the same (`events.go:134-143`). Existing secondary indexes cover queue positions and Library provenance, but the Library has no search/facet indexes and loads every matching file row.
 
@@ -258,6 +258,8 @@ Today a Library entry is a retained job (`src/pages/library.tsx:51`), so Library
 - Move the search index from the frontend (`home.tsx:147`) to SQLite, e.g. FTS5 (supported by `modernc.org/sqlite`).
 
 **Implementation note (2026-09-24):** Repository review confirmed that `/api/jobs` and SSE payloads feed the complete active queue and should remain unchanged in this slice. `/api/library` currently loads the full durable result set; Library facets and search are computed in the browser. Its result rows are grouped by source job, so pagination must select job groups first and then load every file for each selected job. Preserve newest-source-job ordering with a stable cursor and define global totals/facets separately from page contents. Existing indexes are `queue_items(job_id, position)` and `library_items(source_job_id, source_item_index)`; category/channel search fields currently live inside JSON and need indexed columns or a search table. Free-text substring matching is not equivalent to FTS token search, so keep that behavior explicit when designing the migration/API.
+
+**Progress (2026-09-24):** M1.3 implementation started on `feat/library-pagination`. The first backend slice adds opt-in `limit`/opaque cursor pagination to `GET /api/library`, with a stable `(created_at, job_id)` order and page selection at the job-group level so chapter/multi-file downloads stay whole. The response includes `totalJobs` and `nextCursor`; the existing no-parameter `{jobs:[...]}` response remains unchanged. Migration v22 adds indexes for Library page order, category, and channel. Contract coverage has been added for equal-timestamp cursor progression, complete multi-file groups, and invalid pagination input. Remaining: server-side search and facets, global facet/stat metadata, frontend load-more and filter integration, and full-text search indexing/10,000-item validation.
 
 ### M1.4 Stable default data directory
 

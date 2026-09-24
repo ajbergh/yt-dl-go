@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -217,8 +218,40 @@ func openJobStore(root string) (*jobStore, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("migrate state database: %w", err)
 	}
+	if err := store.migrateV22(); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("migrate state database: %w", err)
+	}
 	store.queueItemsReady = true
 	return store, nil
+}
+
+func (s *jobStore) migrateV22() error {
+	var version int
+	if err := s.db.QueryRow(`SELECT COALESCE(MAX(version), 0) FROM schema_migrations`).Scan(&version); err != nil {
+		return err
+	}
+	if version >= 22 {
+		return nil
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.Exec(`CREATE INDEX IF NOT EXISTS jobs_library_page ON jobs(status,created_at DESC,id DESC)`); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`CREATE INDEX IF NOT EXISTS library_items_category ON library_items(json_extract(file_json,'$.category'))`); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`CREATE INDEX IF NOT EXISTS library_items_channel ON library_items(json_extract(file_json,'$.author'))`); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`INSERT INTO schema_migrations(version) VALUES (22)`); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (s *jobStore) migrateV21() error {
@@ -1787,14 +1820,32 @@ func (s *jobStore) loadJobs(root string) ([]*storedJob, error) {
 // loadLibraryJobs builds the Library read model from durable finalized-file
 // rows. It deliberately does not read job_files or require an in-memory job.
 func (s *jobStore) loadLibraryJobs() ([]Job, error) {
+	return s.loadLibraryJobsForIDs(nil)
+}
+
+func (s *jobStore) loadLibraryJobsForIDs(jobIDs []string) ([]Job, error) {
 	settings, err := s.loadAppSettings()
 	if err != nil {
 		return nil, err
 	}
-	rows, err := s.db.Query(`SELECT j.id,j.url,j.kind,j.quality,j.video_strategy,j.allow_360p_fallback,j.media_type,j.audio_format,j.audio_bitrate,j.subtitle_language,j.subtitle_format,j.split_by_chapter,j.status,j.title,j.progress,j.current_item,j.completed_count,j.total_count,j.error,j.created_at,j.note,j.category,j.storage_mode,j.queue_position,li.file_json,li.output_path
+	query := `SELECT j.id,j.url,j.kind,j.quality,j.video_strategy,j.allow_360p_fallback,j.media_type,j.audio_format,j.audio_bitrate,j.subtitle_language,j.subtitle_format,j.split_by_chapter,j.status,j.title,j.progress,j.current_item,j.completed_count,j.total_count,j.error,j.created_at,j.note,j.category,j.storage_mode,j.queue_position,li.file_json,li.output_path
 		FROM library_items li JOIN jobs j ON j.id=li.source_job_id
 		WHERE j.status IN ('completed','partial','failed','cancelled')
-		ORDER BY j.created_at DESC,li.source_item_index ASC,li.file_id ASC`)
+		`
+	args := []any{}
+	if jobIDs != nil {
+		if len(jobIDs) == 0 {
+			return []Job{}, nil
+		}
+		placeholders := make([]string, len(jobIDs))
+		for i, id := range jobIDs {
+			placeholders[i] = "?"
+			args = append(args, id)
+		}
+		query += " AND j.id IN (" + strings.Join(placeholders, ",") + ")"
+	}
+	query += " ORDER BY j.created_at DESC,j.id DESC,li.source_item_index ASC,li.file_id ASC"
+	rows, err := s.db.Query(query, args...)
 	if err != nil {
 		return nil, err
 	}
