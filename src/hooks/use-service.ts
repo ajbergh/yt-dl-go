@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   api, streamServiceEvents,
   type AppSettings, type BuildInfo, type DownloadJob, type ServiceConnection, type ServiceEvent, type ServiceHealth, type UpdateStatus,
@@ -49,6 +49,7 @@ export function useService() {
   const [connection] = useState<ServiceConnection>(builtInServiceConnection);
   const [serviceReady, setServiceReady] = useState(false);
   const [jobs, setJobs] = useState<DownloadJob[]>([]);
+  const [libraryJobs, setLibraryJobs] = useState<DownloadJob[]>([]);
   const [settings, setSettings] = useState<AppSettings>(defaultSettings);
   const [mp3Supported, setMp3Supported] = useState(false);
   const [buildInfo, setBuildInfo] = useState<BuildInfo>({ version: "dev", commit: "unknown", buildDate: "unknown" });
@@ -59,6 +60,14 @@ export function useService() {
   const [pollError, setPollError] = useState("");
   const knownJobStatuses = useRef<Map<string, DownloadJob["status"]>>(new Map());
   const notificationsEnabledRef = useRef(false);
+
+  const refreshLibrary = useCallback(async () => {
+    const result = await api<{ jobs: DownloadJob[] }>(connection, "/api/library", {
+      signal: AbortSignal.timeout(10000),
+    });
+    setLibraryJobs(result.jobs);
+    return result.jobs;
+  }, [connection]);
 
   useEffect(() => {
     notificationsEnabledRef.current = settings.notificationsEnabled;
@@ -102,8 +111,11 @@ export function useService() {
           commit: health.commit || "unknown",
           buildDate: health.buildDate || "unknown",
         });
-        const [jobResult, settingResult] = await Promise.all([
+        const [jobResult, libraryResult, settingResult] = await Promise.all([
           api<{ jobs: DownloadJob[] }>(connection, "/api/jobs", {
+            signal: AbortSignal.any([controller.signal, AbortSignal.timeout(10000)]),
+          }),
+          api<{ jobs: DownloadJob[] }>(connection, "/api/library", {
             signal: AbortSignal.any([controller.signal, AbortSignal.timeout(10000)]),
           }),
           api<{ settings: AppSettings }>(connection, "/api/settings", {
@@ -112,6 +124,7 @@ export function useService() {
         ]);
         if (controller.signal.aborted) return;
         setJobs(jobResult.jobs);
+        setLibraryJobs(libraryResult.jobs);
         knownJobStatuses.current = new Map(jobResult.jobs.map(job => [job.id, job.status]));
         setSettings(previous => hydratedSettings(settingResult.settings, previous));
         setServiceError("");
@@ -173,6 +186,7 @@ export function useService() {
         if (event.jobs) {
           for (const job of event.jobs) maybeNotifyTerminal(job);
           setJobs(event.jobs);
+          void refreshLibrary().catch(error => setPollError(errorMessage(error)));
         }
         if (event.settings) {
           setSettings(previous => hydratedSettings(event.settings!, previous));
@@ -180,6 +194,7 @@ export function useService() {
       } else if (event.type === "job-deleted" && event.jobId) {
         knownJobStatuses.current.delete(event.jobId);
         setJobs(previous => previous.filter(job => job.id !== event.jobId));
+        void refreshLibrary().catch(error => setPollError(errorMessage(error)));
       } else if (event.type === "settings-changed" && event.settings) {
         setSettings(previous => ({
           ...previous,
@@ -190,18 +205,27 @@ export function useService() {
       } else if (event.job) {
         maybeNotifyTerminal(event.job);
         mergeLiveJob(event.job);
+        if (["completed", "partial", "failed", "cancelled"].includes(event.job.status)) {
+          void refreshLibrary().catch(error => setPollError(errorMessage(error)));
+        }
       }
       setPollError("");
     };
 
     async function reconcile() {
       try {
-        const result = await api<{ jobs: DownloadJob[] }>(connection, "/api/jobs", {
-          signal: AbortSignal.any([controller.signal, AbortSignal.timeout(10000)]),
-        });
+        const [result, libraryResult] = await Promise.all([
+          api<{ jobs: DownloadJob[] }>(connection, "/api/jobs", {
+            signal: AbortSignal.any([controller.signal, AbortSignal.timeout(10000)]),
+          }),
+          api<{ jobs: DownloadJob[] }>(connection, "/api/library", {
+            signal: AbortSignal.any([controller.signal, AbortSignal.timeout(10000)]),
+          }),
+        ]);
         if (!controller.signal.aborted) {
           for (const job of result.jobs) maybeNotifyTerminal(job);
           setJobs(result.jobs);
+          setLibraryJobs(libraryResult.jobs);
         }
       } catch (error) {
         if (!controller.signal.aborted) setPollError(errorMessage(error));
@@ -226,13 +250,16 @@ export function useService() {
       clearTimeout(reconnectTimer);
       clearInterval(reconcileTimer);
     };
-  }, [connection, serviceReady]);
+  }, [connection, refreshLibrary, serviceReady]);
 
   return {
     connection,
     serviceReady,
     jobs,
     setJobs,
+    libraryJobs,
+    setLibraryJobs,
+    refreshLibrary,
     settings,
     setSettings,
     mp3Supported,

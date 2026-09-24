@@ -468,6 +468,19 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.serveEvents(w, r)
 		return
 	}
+	if r.URL.Path == "/api/library" {
+		if r.Method != http.MethodGet {
+			fail(w, http.StatusMethodNotAllowed, "Method not allowed")
+			return
+		}
+		jobs, err := s.store.loadLibraryJobs()
+		if err != nil {
+			fail(w, http.StatusInternalServerError, "Could not load the Library")
+			return
+		}
+		reply(w, http.StatusOK, map[string]any{"jobs": jobs})
+		return
+	}
 	if r.URL.Path == "/api/folders/select" {
 		if r.Method != http.MethodPost {
 			fail(w, 405, "Method not allowed")
