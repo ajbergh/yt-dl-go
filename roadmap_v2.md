@@ -257,7 +257,7 @@ The durable storage foundation merged in [PR #51](https://github.com/ajbergh/yt-
 
 ### M1.3 Pagination, filtering, and indexes
 
-**Status:** [~] Search, facets, and whole-group pagination implemented; 10,000-item API characterization in review · **P1** · **Area:** API / persistence
+**Status:** [x] Search, facets, whole-group pagination, and 10,000-item API characterization complete · **P1** · **Area:** API / persistence
 
 The original unpaged `GET /api/jobs` and SSE snapshot return full active-job state and remain unchanged. The Library now has an opt-in cursor-paginated API with server-side search and facets; this milestone also records representative search and page costs at 10,000+ files.
 
@@ -271,7 +271,7 @@ The original unpaged `GET /api/jobs` and SSE snapshot return full active-job sta
 
 **Progress (2026-09-24):** The first backend pagination slice merged in [PR #57](https://github.com/ajbergh/yt-dl-go/pull/57) as `53212c4`. It adds opt-in `limit`/opaque cursor pagination to `GET /api/library`, with stable `(created_at, job_id)` ordering and page selection at the job-group level so chapter/multi-file downloads stay whole. The response includes `totalJobs` and `nextCursor`; the existing no-parameter `{jobs:[...]}` response remains unchanged. Migration v22 adds indexes for Library page order, category, and channel. Equal-timestamp cursor progression, complete multi-file groups, and invalid pagination input are covered. [PR #58](https://github.com/ajbergh/yt-dl-go/pull/58) merged the server-side substring search, type/category/channel filters, global facet and storage-stat metadata, and migration v23 predicate indexes. Frontend integration merged in [PR #59](https://github.com/ajbergh/yt-dl-go/pull/59) as `21ce328`: the Library requests filtered cursor pages, uses server-provided global facets and statistics, and offers a load-more control. Search/category/channel/type changes reset to the first server page; local filtering responds immediately while the server query loads and supports legacy `{jobs}` responses. Search-index evaluation: SQLite FTS5's trigram tokenizer supports substring candidates instead of token-only matching, but full-text queries shorter than three Unicode characters produce no matches. A compatible index can use trigram matches only to narrow candidates for queries of at least three Unicode characters, retain the current `instr(lower(...), ?)>0` predicate as the final compatibility check, and keep that exact predicate as a fallback for shorter queries. Do not enable diacritic removal or use tokenizer matches as the result semantics. The pinned `modernc.org/sqlite` v1.59.0 source includes the FTS5 trigram tokenizer. [PR #63](https://github.com/ajbergh/yt-dl-go/pull/63) merged as `1300464`: migration v25 adds trigger-maintained FTS5 trigram indexes for source metadata and file JSON; matches narrow candidates only, while the existing substring predicate remains authoritative and searches shorter than three Unicode characters use the scan path.
 
-`perf/library-10k-measurement` adds `BenchmarkLibraryAPIAt10100Files` in `src/server/library_scale_test.go`, which characterizes the public API over 10,100 durable files (101 source groups × 100 files) with no finished jobs loaded in memory. Command: `go test -run '^$' -bench '^BenchmarkLibraryAPIAt10100Files$' -benchmem -benchtime=20x`. On Windows/amd64, Go 1.26.8, AMD Ryzen 5 3600 6-Core Processor, the run reported first page of 100 groups (10,000 files): 626,683,115 ns/op, 52,657,444 B/op, 512,885 allocs/op; substring search returning one full group (100 files): 240,416,005 ns/op, 830,235 B/op, 12,384 allocs/op. This is a single local characterization, not an SLA; CI and review are pending.
+`perf/library-10k-measurement` merged in [PR #71](https://github.com/ajbergh/yt-dl-go/pull/71) as `6239dc2`. `BenchmarkLibraryAPIAt10100Files` in `src/server/library_scale_test.go` characterizes the public API over 10,100 durable files (101 source groups × 100 files) with no finished jobs loaded in memory. Command: `go test -run '^$' -bench '^BenchmarkLibraryAPIAt10100Files$' -benchmem -benchtime=20x`. On Windows/amd64, Go 1.26.8, AMD Ryzen 5 3600 6-Core Processor, the run reported first page of 100 groups (10,000 files): 626,683,115 ns/op, 52,657,444 B/op, 512,885 allocs/op; substring search returning one full group (100 files): 240,416,005 ns/op, 830,235 B/op, 12,384 allocs/op. This is a single local characterization, not an SLA. All PR checks passed, including Go/race/source validation, frontend integration and browser E2E, lint/vet, CodeQL, and Linux, Windows, and macOS builds.
 
 ### M1.4 Stable default data directory
 
@@ -289,7 +289,7 @@ The original unpaged `GET /api/jobs` and SSE snapshot return full active-job sta
 
 ### M1.5 Startup resilience, integrity, and backup
 
-**Status:** [ ] · **P1** · **Area:** persistence
+**Status:** [~] Startup integrity preflight active; quarantine, migration backups, export/import, and Windows ACL validation remain · **P1** · **Area:** persistence
 
 One malformed JSON row in `queue_items` or `subtitle_json` makes startup fail fatally with "cannot load download history" (`store.go:798-800, 887-890`; `main.go:208-211`). There is no integrity check or backup.
 
@@ -301,6 +301,8 @@ One malformed JSON row in `queue_items` or `subtitle_json` makes startup fail fa
 - Add a user-triggered **Export library** (DB plus a metadata JSON/CSV) and an **Import**.
 - Set the pragmas through DSN `_pragma=` parameters so they survive connection recycling (`store.go:55-61`).
 - Check `DATA_DIR` ACLs on Windows; today it is skipped (`main.go:169`).
+
+**Progress (2026-09-24):** M1.1 and M1.3 are complete, so startup integrity work is next. Repository review found that `openJobStore` applies connection-local PRAGMAs before its sequential migrations; legacy migration v21 and current queue/file loaders abort on malformed JSON, while silently skipping rows could allow later saves to erase evidence. The first bounded slice on `feat/store-integrity-preflight` moves the pragmas into the SQLite DSN and runs `PRAGMA quick_check` before schema initialization and migrations. Quarantine/diagnostics, per-migration `VACUUM INTO` backups, export/import, and Windows ACL policy remain follow-up slices. CI and review are pending.
 
 ### M1.6 Table-driven migrations with fixture tests
 
