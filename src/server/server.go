@@ -588,6 +588,7 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			if err == nil && job == nil && libraryJobRoute(parts, r.Method) {
 				job, hydrated, err = s.hydrateLibraryJobLocked(parts[0])
 			}
+			deleting := job != nil && job.deleting
 			s.mu.Unlock()
 			if err != nil {
 				fail(w, http.StatusInternalServerError, "Could not load the saved job")
@@ -595,6 +596,10 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			}
 			if job == nil {
 				fail(w, http.StatusNotFound, "Job not found")
+				return
+			}
+			if deleting {
+				fail(w, http.StatusConflict, "This job is being removed or updated")
 				return
 			}
 			if hydrated {
@@ -679,7 +684,8 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/api/jobs/"), "/")
-	if !strings.HasPrefix(r.URL.Path, "/api/jobs/") || len(parts) > 2 || parts[0] == "" {
+	validLibraryItemRoute := len(parts) == 3 && parts[1] == "library-items" && r.Method == http.MethodDelete
+	if !strings.HasPrefix(r.URL.Path, "/api/jobs/") || (len(parts) > 2 && !validLibraryItemRoute) || parts[0] == "" {
 		fail(w, 404, "Endpoint not found")
 		return
 	}
@@ -689,6 +695,10 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if len(parts) == 2 && parts[1] == "retry-item" && r.Method == http.MethodPost {
 		s.handleRetryItem(w, r, parts[0])
+		return
+	}
+	if len(parts) == 3 && parts[1] == "library-items" && r.Method == http.MethodDelete {
+		s.handleLibraryItemDelete(w, parts[0], parts[2])
 		return
 	}
 	if len(parts) == 2 && parts[1] == "history" && r.Method == http.MethodDelete {
@@ -705,6 +715,10 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		if j.readers > 0 {
 			fail(w, http.StatusConflict, "This job has an active file transfer")
+			return
+		}
+		if j.deleting {
+			fail(w, http.StatusConflict, "This job is being removed or updated")
 			return
 		}
 		j.deleting = true
@@ -953,6 +967,9 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func libraryJobRoute(parts []string, method string) bool {
+	if len(parts) == 3 {
+		return parts[1] == "library-items" && method == http.MethodDelete
+	}
 	if len(parts) == 1 {
 		return method == http.MethodDelete
 	}
@@ -973,6 +990,79 @@ func libraryJobRoute(parts []string, method string) bool {
 	default:
 		return false
 	}
+}
+
+func (s *server) handleLibraryItemDelete(w http.ResponseWriter, jobID, fileID string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	j := s.jobs[jobID]
+	if j == nil {
+		fail(w, http.StatusNotFound, "Library item not found")
+		return
+	}
+	if !terminal(j.Status) {
+		fail(w, http.StatusConflict, "Only finalized Library items can be removed")
+		return
+	}
+	if j.deleting || j.readers > 0 {
+		fail(w, http.StatusConflict, "This file has an active transfer or removal")
+		return
+	}
+	fileIndex := -1
+	for index := range j.Files {
+		if j.Files[index].ID == fileID {
+			fileIndex = index
+			break
+		}
+	}
+	if fileIndex < 0 {
+		fail(w, http.StatusNotFound, "Library item not found")
+		return
+	}
+	exists, err := s.store.hasLibraryItem(jobID, fileID)
+	if err != nil {
+		fail(w, http.StatusInternalServerError, "Could not verify the Library item")
+		return
+	}
+	if !exists {
+		fail(w, http.StatusNotFound, "Library item not found")
+		return
+	}
+	j.deleting = true
+	file := &j.Files[fileIndex]
+	if err := removeManagedCopyForFile(j, file); err != nil {
+		syncStoredFile(j, *file)
+		s.invalidateJobTicketsLocked(j.ID)
+		if saveErr := s.persistJobLocked(j); saveErr != nil {
+			log.Printf("Library item removal recovery failure job=%s: %v", j.ID, saveErr)
+		}
+		j.deleting = false
+		fail(w, http.StatusConflict, "Could not safely remove the app-managed copy")
+		return
+	}
+	syncStoredFile(j, *file)
+	s.invalidateJobTicketsLocked(j.ID)
+	snapshot := cloneJobStateForPersistence(j)
+	if err := s.persistOperationLocked("remove Library item", j.ID, func(store *jobStore) error {
+		return store.deleteLibraryItem(snapshot, fileID)
+	}); err != nil {
+		s.recordPersistenceFailure("remove Library item", j.ID, err)
+		if saveErr := s.persistJobLocked(j); saveErr != nil {
+			log.Printf("Library item removal recovery failure job=%s: %v", j.ID, saveErr)
+		}
+		j.deleting = false
+		fail(w, http.StatusInternalServerError, "Could not remove the Library item")
+		return
+	}
+	s.recordPersistenceSuccess()
+	if j.libraryOnly {
+		j.Files = append(j.Files[:fileIndex], j.Files[fileIndex+1:]...)
+		s.evictTerminalJobLocked(j)
+	} else {
+		j.deleting = false
+		s.publishJobEventLocked("job-status", j)
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // handleSettings reads preferences or validates and persists output settings.

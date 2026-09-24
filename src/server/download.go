@@ -101,7 +101,7 @@ func (s *server) download(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusInternalServerError, "Could not load the saved download")
 		return
 	}
-	if j == nil || !terminal(j.Status) {
+	if j == nil || !terminal(j.Status) || j.deleting {
 		s.mu.Unlock()
 		fail(w, 404, "Download ticket is invalid or expired")
 		return

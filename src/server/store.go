@@ -238,6 +238,10 @@ func openJobStore(root string) (*jobStore, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("migrate state database: %w", err)
 	}
+	if err := store.migrateV27(); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("migrate state database: %w", err)
+	}
 	store.queueItemsReady = true
 	return store, nil
 }
@@ -450,6 +454,38 @@ func (s *jobStore) migrateV26() error {
 	}
 	if _, err := tx.Exec(`INSERT INTO schema_migrations(version) VALUES (26)`); err != nil {
 		return err
+	}
+	return tx.Commit()
+}
+
+// migrateV27 records Library files intentionally removed while their source
+// job remains available for history and retry inspection.
+func (s *jobStore) migrateV27() error {
+	var version int
+	if err := s.db.QueryRow(`SELECT COALESCE(MAX(version), 0) FROM schema_migrations`).Scan(&version); err != nil {
+		return err
+	}
+	if version >= 27 {
+		return nil
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	for _, statement := range []string{
+		`CREATE TABLE library_item_exclusions (
+			source_job_id TEXT NOT NULL,
+			file_id TEXT NOT NULL,
+			removed_at INTEGER NOT NULL,
+			PRIMARY KEY(source_job_id,file_id)
+		)`,
+		`CREATE INDEX library_item_exclusions_source ON library_item_exclusions(source_job_id)`,
+		`INSERT INTO schema_migrations(version) VALUES (27)`,
+	} {
+		if _, err := tx.Exec(statement); err != nil {
+			return err
+		}
 	}
 	return tx.Commit()
 }
@@ -1670,11 +1706,34 @@ func (s *jobStore) saveJob(j *jobState) error {
 
 func syncLibraryItems(tx *sql.Tx, j *jobState, groups map[int][]mediaFile, createdAt int64) (map[string][32]byte, error) {
 	current := make(map[string][32]byte, len(j.Files))
+	excludedRows, err := tx.Query(`SELECT file_id FROM library_item_exclusions WHERE source_job_id=?`, j.ID)
+	if err != nil {
+		return nil, err
+	}
+	excluded := make(map[string]struct{})
+	for excludedRows.Next() {
+		var fileID string
+		if err := excludedRows.Scan(&fileID); err != nil {
+			_ = excludedRows.Close()
+			return nil, err
+		}
+		excluded[fileID] = struct{}{}
+	}
+	if err := excludedRows.Err(); err != nil {
+		_ = excludedRows.Close()
+		return nil, err
+	}
+	if err := excludedRows.Close(); err != nil {
+		return nil, err
+	}
 	for itemIndex, group := range groups {
 		for _, file := range group {
 			fileID, data, signature, err := prepareLibraryItem(j.ID, itemIndex, file)
 			if err != nil {
 				return nil, err
+			}
+			if _, isExcluded := excluded[fileID]; isExcluded {
+				continue
 			}
 			current[fileID] = signature
 			if prior, exists := j.librarySignatures[fileID]; exists && prior == signature {
@@ -1813,6 +1872,9 @@ func (s *jobStore) deleteJob(jobID string) error {
 	if _, err := tx.Exec(`DELETE FROM library_items WHERE source_job_id=?`, jobID); err != nil {
 		return err
 	}
+	if _, err := tx.Exec(`DELETE FROM library_item_exclusions WHERE source_job_id=?`, jobID); err != nil {
+		return err
+	}
 	if _, err := tx.Exec(`DELETE FROM jobs WHERE id=?`, jobID); err != nil {
 		return err
 	}
@@ -1838,11 +1900,111 @@ func (s *jobStore) deleteJobHistory(jobID string) error {
 	if _, err := tx.Exec(`DELETE FROM jobs WHERE id=?`, jobID); err != nil {
 		return err
 	}
+	if _, err := tx.Exec(`DELETE FROM library_item_exclusions WHERE source_job_id=?`, jobID); err != nil {
+		return err
+	}
 	if err := tx.Commit(); err != nil {
 		return err
 	}
 	s.releaseJobCaches(jobID)
 	return nil
+}
+
+func (s *jobStore) deleteLibraryItem(j *jobState, fileID string) error {
+	if s == nil || j == nil || fileID == "" {
+		return sql.ErrNoRows
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	var itemIndex int
+	if err := tx.QueryRow(`SELECT source_item_index FROM library_items WHERE source_job_id=? AND file_id=?`, j.ID, fileID).Scan(&itemIndex); err != nil {
+		return err
+	}
+	groups := groupedJobFiles(j)
+	group, ok := groups[itemIndex]
+	if !ok || len(group) == 0 {
+		return sql.ErrNoRows
+	}
+	found := false
+	for _, file := range group {
+		if file.ID == fileID {
+			found = true
+			break
+		}
+	}
+	if !found {
+		return sql.ErrNoRows
+	}
+	var historyExists int
+	if err := tx.QueryRow(`SELECT EXISTS(SELECT 1 FROM jobs WHERE id=?)`, j.ID).Scan(&historyExists); err != nil {
+		return err
+	}
+	if historyExists != 0 {
+		if _, err := tx.Exec(`INSERT INTO library_item_exclusions(source_job_id,file_id,removed_at) VALUES(?,?,?)
+			ON CONFLICT(source_job_id,file_id) DO UPDATE SET removed_at=excluded.removed_at`, j.ID, fileID, time.Now().UnixNano()); err != nil {
+			return err
+		}
+		primary := group[0]
+		var subtitleJSON string
+		if primary.Subtitle != nil {
+			encoded, err := json.Marshal(primary.Subtitle)
+			if err != nil {
+				return err
+			}
+			subtitleJSON = string(encoded)
+		}
+		additional := make([]additionalStoredFile, 0, len(group)-1)
+		for _, extra := range group[1:] {
+			additional = append(additional, additionalStoredFile{File: extra, OutputPath: extra.OutputPath})
+		}
+		additionalJSON := ""
+		if len(additional) > 0 {
+			encoded, err := json.Marshal(additional)
+			if err != nil {
+				return err
+			}
+			additionalJSON = string(encoded)
+		}
+		result, err := tx.Exec(`UPDATE job_files SET managed_available=?,thumbnail_local_available=?,subtitle_json=?,additional_files_json=? WHERE job_id=? AND item_index=?`,
+			primary.ManagedAvailable, primary.ThumbnailLocalAvailable, subtitleJSON, additionalJSON, j.ID, itemIndex)
+		if err != nil {
+			return err
+		}
+		updated, err := result.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if updated != 1 {
+			return sql.ErrNoRows
+		}
+	}
+	result, err := tx.Exec(`DELETE FROM library_items WHERE source_job_id=? AND file_id=?`, j.ID, fileID)
+	if err != nil {
+		return err
+	}
+	deleted, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if deleted != 1 {
+		return sql.ErrNoRows
+	}
+	if _, err := tx.Exec(`DELETE FROM library_sources WHERE source_job_id=? AND NOT EXISTS (SELECT 1 FROM library_items WHERE source_job_id=?)`, j.ID, j.ID); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func (s *jobStore) hasLibraryItem(jobID, fileID string) (bool, error) {
+	if s == nil {
+		return false, nil
+	}
+	var exists int
+	err := s.db.QueryRow(`SELECT EXISTS(SELECT 1 FROM library_items WHERE source_job_id=? AND file_id=?)`, jobID, fileID).Scan(&exists)
+	return exists != 0, err
 }
 
 func (s *jobStore) saveLibraryJob(j *jobState) error {
@@ -1868,6 +2030,13 @@ func (s *jobStore) saveLibraryJob(j *jobState) error {
 			return err
 		}
 		if updated != 1 {
+			var excluded int
+			if err := tx.QueryRow(`SELECT EXISTS(SELECT 1 FROM library_item_exclusions WHERE source_job_id=? AND file_id=?)`, j.ID, fileID).Scan(&excluded); err != nil {
+				return err
+			}
+			if excluded != 0 {
+				continue
+			}
 			return sql.ErrNoRows
 		}
 	}
