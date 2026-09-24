@@ -226,6 +226,10 @@ func openJobStore(root string) (*jobStore, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("migrate state database: %w", err)
 	}
+	if err := store.migrateV24(); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("migrate state database: %w", err)
+	}
 	store.queueItemsReady = true
 	return store, nil
 }
@@ -282,6 +286,72 @@ func (s *jobStore) migrateV23() error {
 		}
 	}
 	if _, err := tx.Exec(`INSERT INTO schema_migrations(version) VALUES (23)`); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// migrateV24 gives durable Library rows their own compact source metadata so
+// Library reads no longer depend on the transient jobs table.
+func (s *jobStore) migrateV24() error {
+	var version int
+	if err := s.db.QueryRow(`SELECT COALESCE(MAX(version), 0) FROM schema_migrations`).Scan(&version); err != nil {
+		return err
+	}
+	if version >= 24 {
+		return nil
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.Exec(`CREATE TABLE IF NOT EXISTS library_sources (
+		source_job_id TEXT PRIMARY KEY,
+		url TEXT NOT NULL,
+		kind TEXT NOT NULL,
+		quality TEXT NOT NULL,
+		video_strategy TEXT NOT NULL,
+		allow_360p_fallback INTEGER NOT NULL,
+		media_type TEXT NOT NULL,
+		audio_format TEXT NOT NULL,
+		audio_bitrate INTEGER NOT NULL,
+		subtitle_language TEXT NOT NULL,
+		subtitle_format TEXT NOT NULL,
+		split_by_chapter INTEGER NOT NULL,
+		status TEXT NOT NULL,
+		title TEXT NOT NULL,
+		progress REAL,
+		current_item TEXT NOT NULL,
+		completed_count INTEGER NOT NULL,
+		total_count INTEGER,
+		error TEXT NOT NULL,
+		created_at TEXT NOT NULL,
+		note TEXT NOT NULL,
+		category TEXT NOT NULL,
+		storage_mode TEXT NOT NULL,
+		queue_position INTEGER NOT NULL
+	)`); err != nil {
+		return err
+	}
+	for _, statement := range []string{
+		`CREATE INDEX IF NOT EXISTS library_sources_page ON library_sources(status,created_at DESC,source_job_id DESC)`,
+		`CREATE INDEX IF NOT EXISTS library_sources_category ON library_sources(category)`,
+		`CREATE INDEX IF NOT EXISTS library_sources_type ON library_sources(media_type)`,
+	} {
+		if _, err := tx.Exec(statement); err != nil {
+			return err
+		}
+	}
+	if _, err := tx.Exec(`INSERT INTO library_sources (
+		source_job_id,url,kind,quality,video_strategy,allow_360p_fallback,media_type,audio_format,audio_bitrate,subtitle_language,subtitle_format,split_by_chapter,status,title,progress,current_item,completed_count,total_count,error,created_at,note,category,storage_mode,queue_position
+	)
+	SELECT j.id,j.url,j.kind,j.quality,j.video_strategy,j.allow_360p_fallback,j.media_type,j.audio_format,j.audio_bitrate,j.subtitle_language,j.subtitle_format,j.split_by_chapter,j.status,j.title,j.progress,j.current_item,j.completed_count,j.total_count,j.error,j.created_at,j.note,j.category,j.storage_mode,j.queue_position
+	FROM jobs j WHERE j.status IN ('completed','partial','failed','cancelled') AND EXISTS (SELECT 1 FROM library_items li WHERE li.source_job_id=j.id)
+	ON CONFLICT(source_job_id) DO NOTHING`); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`INSERT INTO schema_migrations(version) VALUES (24)`); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -1446,6 +1516,18 @@ func (s *jobStore) saveJob(j *jobState) error {
 	if err != nil {
 		return err
 	}
+	if _, err := tx.Exec(`DELETE FROM library_sources WHERE source_job_id=?`, j.ID); err != nil {
+		return err
+	}
+	if j.Status == "completed" || j.Status == "partial" || j.Status == "failed" || j.Status == "cancelled" {
+		if _, err := tx.Exec(`INSERT OR REPLACE INTO library_sources (
+			source_job_id,url,kind,quality,video_strategy,allow_360p_fallback,media_type,audio_format,audio_bitrate,subtitle_language,subtitle_format,split_by_chapter,status,title,progress,current_item,completed_count,total_count,error,created_at,note,category,storage_mode,queue_position
+		)
+		SELECT id,url,kind,quality,video_strategy,allow_360p_fallback,media_type,audio_format,audio_bitrate,subtitle_language,subtitle_format,split_by_chapter,status,title,progress,current_item,completed_count,total_count,error,created_at,note,category,storage_mode,queue_position
+		FROM jobs WHERE id=? AND EXISTS (SELECT 1 FROM library_items li WHERE li.source_job_id=jobs.id)`, j.ID); err != nil {
+			return err
+		}
+	}
 	failureCache := s.jobFailuresCache[j.ID]
 	existingFailureIndexes := make(map[int]struct{}, len(failureCache))
 	for index := range failureCache {
@@ -1640,6 +1722,9 @@ func (s *jobStore) deleteJob(jobID string) error {
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.Exec(`DELETE FROM library_sources WHERE source_job_id=?`, jobID); err != nil {
+		return err
+	}
 	if _, err := tx.Exec(`DELETE FROM library_items WHERE source_job_id=?`, jobID); err != nil {
 		return err
 	}
@@ -1861,8 +1946,8 @@ func (s *jobStore) loadLibraryJobsForIDs(jobIDs []string) ([]Job, error) {
 	if err != nil {
 		return nil, err
 	}
-	query := `SELECT j.id,j.url,j.kind,j.quality,j.video_strategy,j.allow_360p_fallback,j.media_type,j.audio_format,j.audio_bitrate,j.subtitle_language,j.subtitle_format,j.split_by_chapter,j.status,j.title,j.progress,j.current_item,j.completed_count,j.total_count,j.error,j.created_at,j.note,j.category,j.storage_mode,j.queue_position,li.file_json,li.output_path
-		FROM library_items li JOIN jobs j ON j.id=li.source_job_id
+	query := `SELECT j.source_job_id,j.url,j.kind,j.quality,j.video_strategy,j.allow_360p_fallback,j.media_type,j.audio_format,j.audio_bitrate,j.subtitle_language,j.subtitle_format,j.split_by_chapter,j.status,j.title,j.progress,j.current_item,j.completed_count,j.total_count,j.error,j.created_at,j.note,j.category,j.storage_mode,j.queue_position,li.file_json,li.output_path
+		FROM library_items li JOIN library_sources j ON j.source_job_id=li.source_job_id
 		WHERE j.status IN ('completed','partial','failed','cancelled')
 		`
 	args := []any{}
@@ -1875,9 +1960,9 @@ func (s *jobStore) loadLibraryJobsForIDs(jobIDs []string) ([]Job, error) {
 			placeholders[i] = "?"
 			args = append(args, id)
 		}
-		query += " AND j.id IN (" + strings.Join(placeholders, ",") + ")"
+		query += " AND j.source_job_id IN (" + strings.Join(placeholders, ",") + ")"
 	}
-	query += " ORDER BY j.created_at DESC,j.id DESC,li.source_item_index ASC,li.file_id ASC"
+	query += " ORDER BY j.created_at DESC,j.source_job_id DESC,li.source_item_index ASC,li.file_id ASC"
 	rows, err := s.db.Query(query, args...)
 	if err != nil {
 		return nil, err
