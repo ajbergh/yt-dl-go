@@ -1818,7 +1818,9 @@ func (s *server) finish(ctx context.Context, j *jobState, fatal error) {
 		j.Status, j.Error, j.done = "queued", "Download paused; it will resume when the service restarts", time.Time{}
 	case j.cancelRequested:
 		j.Status, j.Error = "cancelled", "Download cancelled; only finalized files are available"
-		if err := s.store.deletePartsForJob(j.ID); err != nil {
+		if err := s.persistOperationLocked("delete resumable download state", j.ID, func(store *jobStore) error {
+			return store.deletePartsForJob(j.ID)
+		}); err != nil {
 			s.recordPersistenceFailure("delete resumable download state", j.ID, err)
 		} else {
 			s.recordPersistenceSuccess()
@@ -3066,7 +3068,6 @@ func publishedCopiesIntact(j *jobState) bool {
 
 func (s *server) prune(now time.Time) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	held := map[string]bool{}
 	for id, t := range s.tickets {
 		if !now.Before(t.expires) {
@@ -3075,25 +3076,44 @@ func (s *server) prune(now time.Time) {
 			held[t.jobID] = true
 		}
 	}
-	keep := s.order[:0]
+	var deleting []string
 	for _, id := range s.order {
 		j := s.jobs[id]
+		if j == nil || j.deleting {
+			continue
+		}
 		age, eligible := s.retentionAge(j)
 		if eligible && !j.done.IsZero() && j.readers == 0 && !held[id] && now.Sub(j.done) >= age {
 			// Retention expires app-managed history and private media only.
 			// Published output belongs to the user and must survive pruning.
 			if err := removeManagedCopies(j); err != nil {
 				log.Printf("retention failure operation=remove managed copies job=%s: %v", id, err)
-			} else if err := s.store.deleteJob(id); err != nil {
-				s.recordPersistenceFailure("retention delete job", id, err)
 			} else {
-				s.recordPersistenceSuccess()
-				delete(s.jobs, id)
-				s.publishDeletedEventLocked(id)
+				j.deleting = true
+				deleting = append(deleting, id)
 				continue
 			}
 		}
-		keep = append(keep, id)
 	}
-	s.order = keep
+	s.mu.Unlock()
+	for _, id := range deleting {
+		done := s.persistenceWriter.enqueue(func(store *jobStore) error {
+			return store.deleteJob(id)
+		})
+		err := <-done
+		s.mu.Lock()
+		j := s.jobs[id]
+		if err != nil {
+			s.recordPersistenceFailure("retention delete job", id, err)
+			if j != nil {
+				j.deleting = false
+			}
+		} else {
+			s.recordPersistenceSuccess()
+			if j != nil {
+				s.forgetJobLocked(j)
+			}
+		}
+		s.mu.Unlock()
+	}
 }
