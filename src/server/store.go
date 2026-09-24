@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -63,20 +64,75 @@ type additionalStoredFile struct {
 	OutputPath string    `json:"outputPath,omitempty"`
 }
 
+type databaseIntegrityError struct {
+	detail string
+}
+
+func (e *databaseIntegrityError) Error() string {
+	return "state database failed PRAGMA quick_check: " + e.detail
+}
+
+func stateDatabaseDSN(root string) (string, error) {
+	databasePath, err := filepath.Abs(filepath.Join(root, "state.db"))
+	if err != nil {
+		return "", err
+	}
+	uriPath := filepath.ToSlash(databasePath)
+	if filepath.VolumeName(databasePath) != "" {
+		uriPath = "/" + uriPath
+	}
+	query := url.Values{}
+	query.Add("_pragma", "busy_timeout(5000)")
+	query.Add("_pragma", "journal_mode(WAL)")
+	query.Add("_pragma", "foreign_keys(ON)")
+	return (&url.URL{Scheme: "file", Path: uriPath, RawQuery: query.Encode()}).String(), nil
+}
+
+func checkDatabaseIntegrity(db *sql.DB) error {
+	rows, err := db.Query(`PRAGMA quick_check`)
+	if err != nil {
+		return &databaseIntegrityError{detail: err.Error()}
+	}
+	defer func() { _ = rows.Close() }()
+	checked := false
+	for rows.Next() {
+		checked = true
+		var result string
+		if err := rows.Scan(&result); err != nil {
+			return &databaseIntegrityError{detail: err.Error()}
+		}
+		if result != "ok" {
+			return &databaseIntegrityError{detail: result}
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return &databaseIntegrityError{detail: err.Error()}
+	}
+	if !checked {
+		return &databaseIntegrityError{detail: "no result returned"}
+	}
+	return nil
+}
+
 // openJobStore opens DATA_DIR/state.db, applies SQLite runtime pragmas, creates
 // missing tables, and runs schema migrations before any jobs are loaded.
 func openJobStore(root string) (*jobStore, error) {
-	db, err := sql.Open("sqlite", filepath.Join(root, "state.db"))
+	dsn, err := stateDatabaseDSN(root)
+	if err != nil {
+		return nil, fmt.Errorf("resolve state database path: %w", err)
+	}
+	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("open state database: %w", err)
 	}
 	db.SetMaxOpenConns(1)
 	db.SetMaxIdleConns(1)
 	store := &jobStore{db: db}
+	if err := checkDatabaseIntegrity(db); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
 	for _, statement := range []string{
-		`PRAGMA busy_timeout = 5000`,
-		`PRAGMA journal_mode = WAL`,
-		`PRAGMA foreign_keys = ON`,
 		`CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY)`,
 		`CREATE TABLE IF NOT EXISTS config (
 			key TEXT PRIMARY KEY,
