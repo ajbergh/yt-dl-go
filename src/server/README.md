@@ -82,9 +82,10 @@ Control-plane API responses and errors return JSON. `GET /api/downloads/{ticket}
 | `POST /api/folders/select` | Opens the local OS folder picker and returns the selected absolute folder; `{}` body |
 | `POST /api/jobs` | Creates a download job; returns `202` and the job |
 | `GET /api/jobs` | Lists jobs, newest first |
-| `GET /api/library` | Lists finalized Library records from durable per-file storage, newest first |
+| `GET /api/library` | Lists finalized Library records from durable per-file storage, newest first; optional pagination and search/filter parameters are described below |
 | `GET /api/events` | Authenticated Server-Sent Events stream with an initial snapshot and live job/settings updates |
 | `GET /api/jobs/{id}` | Returns one job |
+
 | `POST /api/jobs/{id}/pause` | Pauses a queued or active job |
 | `POST /api/jobs/{id}/resume` | Resumes a paused job |
 | `POST /api/jobs/{id}/cancel` | Cancels a queued or active job |
@@ -101,6 +102,8 @@ Control-plane API responses and errors return JSON. `GET /api/downloads/{ticket}
 | `POST /api/jobs/{id}/ticket` | Creates a five-minute link for a job ZIP or one file |
 | `GET /api/jobs/{id}/thumbnail?fileId=FILE_ID` | Serves captured local thumbnail artwork for one finalized file through authenticated API access |
 | `GET /api/downloads/{ticket}` | Streams the ticket's archive or file |
+
+`GET /api/library` without query parameters preserves the `{ "jobs": [...] }` response. Add `limit` (1–100, default 50) to opt into cursor pagination. The paged response contains `jobs`, `totalJobs`, optional `nextCursor`, global `categories` and `channels` facets, and global Library storage `stats`. Pass the returned cursor as `cursor` to fetch the next page. Optional `q`, `type` (`video` or `audio`), `category`, and `channel` parameters filter results on the server; reset the cursor when changing filters. Pages contain whole source-job groups, including every finalized file for selected jobs.
 
 Create a video job with:
 

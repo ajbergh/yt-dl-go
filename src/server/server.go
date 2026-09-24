@@ -520,7 +520,8 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			fail(w, http.StatusMethodNotAllowed, "Method not allowed")
 			return
 		}
-		if r.URL.Query().Has("limit") || r.URL.Query().Has("cursor") {
+		query := r.URL.Query()
+		if query.Has("limit") || query.Has("cursor") || query.Has("q") || query.Has("type") || query.Has("category") || query.Has("channel") {
 			s.handleLibraryPage(w, r)
 			return
 		}

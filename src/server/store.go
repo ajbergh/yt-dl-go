@@ -222,6 +222,10 @@ func openJobStore(root string) (*jobStore, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("migrate state database: %w", err)
 	}
+	if err := store.migrateV23(); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("migrate state database: %w", err)
+	}
 	store.queueItemsReady = true
 	return store, nil
 }
@@ -249,6 +253,35 @@ func (s *jobStore) migrateV22() error {
 		return err
 	}
 	if _, err := tx.Exec(`INSERT INTO schema_migrations(version) VALUES (22)`); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func (s *jobStore) migrateV23() error {
+	var version int
+	if err := s.db.QueryRow(`SELECT COALESCE(MAX(version), 0) FROM schema_migrations`).Scan(&version); err != nil {
+		return err
+	}
+	if version >= 23 {
+		return nil
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	for _, statement := range []string{
+		`CREATE INDEX IF NOT EXISTS jobs_library_category ON jobs(category)`,
+		`CREATE INDEX IF NOT EXISTS jobs_library_type ON jobs(media_type)`,
+		`CREATE INDEX IF NOT EXISTS library_items_effective_category ON library_items(COALESCE(NULLIF(json_extract(file_json,'$.category'),''),'Uncategorized'))`,
+		`CREATE INDEX IF NOT EXISTS library_items_effective_channel ON library_items(COALESCE(NULLIF(TRIM(json_extract(file_json,'$.author')),''),'Unknown channel'))`,
+	} {
+		if _, err := tx.Exec(statement); err != nil {
+			return err
+		}
+	}
+	if _, err := tx.Exec(`INSERT INTO schema_migrations(version) VALUES (23)`); err != nil {
 		return err
 	}
 	return tx.Commit()
