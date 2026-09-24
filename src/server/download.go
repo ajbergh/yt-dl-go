@@ -87,8 +87,18 @@ func (s *server) download(w http.ResponseWriter, r *http.Request) {
 	}
 	s.mu.Lock()
 	t, ok := s.tickets[strings.TrimPrefix(r.URL.Path, "/api/downloads/")]
-	j := s.jobs[t.jobID]
-	if !ok || !time.Now().Before(t.expires) || j == nil || !terminal(j.Status) {
+	if !ok || !time.Now().Before(t.expires) {
+		s.mu.Unlock()
+		fail(w, 404, "Download ticket is invalid or expired")
+		return
+	}
+	j, hydrated, loadErr := s.hydrateTerminalJobLocked(t.jobID)
+	if loadErr != nil {
+		s.mu.Unlock()
+		fail(w, http.StatusInternalServerError, "Could not load the saved download")
+		return
+	}
+	if j == nil || !terminal(j.Status) {
 		s.mu.Unlock()
 		fail(w, 404, "Download ticket is invalid or expired")
 		return
@@ -110,13 +120,23 @@ func (s *server) download(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if unavailable {
+		if hydrated {
+			s.evictTerminalJobLocked(j)
+		}
 		s.mu.Unlock()
 		fail(w, 409, "The app-managed media copy is no longer available")
 		return
 	}
 	j.readers++
 	s.mu.Unlock()
-	defer func() { s.mu.Lock(); j.readers--; s.mu.Unlock() }()
+	defer func() {
+		s.mu.Lock()
+		j.readers--
+		if hydrated {
+			s.evictTerminalJobLocked(j)
+		}
+		s.mu.Unlock()
+	}()
 	if len(files) == 0 {
 		fail(w, 404, "Finalized output is unavailable")
 		return

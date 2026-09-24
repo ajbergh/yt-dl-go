@@ -1846,6 +1846,7 @@ func (s *server) finish(ctx context.Context, j *jobState, fatal error) {
 	if j.Error != "" {
 		s.publishJobEventLocked("job-error", j)
 	}
+	s.evictTerminalJobLocked(j)
 }
 
 func (s *server) transfer(ctx context.Context, j *jobState, engine nativeClient, video *youtube.Video, selection streamSelection, queueIndex, outputIndex int, budget int64) (mediaFile, error) {
@@ -3067,52 +3068,79 @@ func publishedCopiesIntact(j *jobState) bool {
 }
 
 func (s *server) prune(now time.Time) {
+	ids, err := s.store.loadRetentionCandidateIDs(now, s.cfg.retain)
+	if err != nil {
+		log.Printf("retention failure operation=load candidates: %v", err)
+		return
+	}
 	s.mu.Lock()
-	held := map[string]bool{}
 	for id, t := range s.tickets {
 		if !now.Before(t.expires) {
 			delete(s.tickets, id)
-		} else {
-			held[t.jobID] = true
-		}
-	}
-	var deleting []string
-	for _, id := range s.order {
-		j := s.jobs[id]
-		if j == nil || j.deleting {
-			continue
-		}
-		age, eligible := s.retentionAge(j)
-		if eligible && !j.done.IsZero() && j.readers == 0 && !held[id] && now.Sub(j.done) >= age {
-			// Retention expires app-managed history and private media only.
-			// Published output belongs to the user and must survive pruning.
-			if err := removeManagedCopies(j); err != nil {
-				log.Printf("retention failure operation=remove managed copies job=%s: %v", id, err)
-			} else {
-				j.deleting = true
-				deleting = append(deleting, id)
-				continue
-			}
 		}
 	}
 	s.mu.Unlock()
-	for _, id := range deleting {
+
+	for _, id := range ids {
+		s.mu.Lock()
+		if s.jobs[id] != nil {
+			s.mu.Unlock()
+			continue
+		}
+		j, hydrated, err := s.hydrateTerminalJobLocked(id)
+		if err != nil {
+			s.mu.Unlock()
+			log.Printf("retention failure operation=load job job=%s: %v", id, err)
+			continue
+		}
+		if j == nil || !hydrated {
+			s.mu.Unlock()
+			continue
+		}
+		age, eligible := s.retentionAge(j)
+		if !eligible || j.done.IsZero() || now.Sub(j.done) < age || j.readers > 0 || j.deleting {
+			s.evictTerminalJobLocked(j)
+			s.mu.Unlock()
+			continue
+		}
+		held := false
+		for _, ticket := range s.tickets {
+			if ticket.jobID == id && now.Before(ticket.expires) {
+				held = true
+				break
+			}
+		}
+		if held {
+			s.evictTerminalJobLocked(j)
+			s.mu.Unlock()
+			continue
+		}
+		// Retention expires app-managed history and private media only.
+		// Published output belongs to the user and must survive pruning.
+		if err := removeManagedCopies(j); err != nil {
+			s.evictTerminalJobLocked(j)
+			s.mu.Unlock()
+			log.Printf("retention failure operation=remove managed copies job=%s: %v", id, err)
+			continue
+		}
+		j.deleting = true
+		s.mu.Unlock()
+
 		done := s.persistenceWriter.enqueue(func(store *jobStore) error {
 			return store.deleteJob(id)
 		})
 		err := <-done
 		s.mu.Lock()
-		j := s.jobs[id]
 		if err != nil {
 			s.recordPersistenceFailure("retention delete job", id, err)
-			if j != nil {
-				j.deleting = false
+			j.deleting = false
+			if saveErr := s.persistJobLocked(j); saveErr != nil {
+				log.Printf("retention failure operation=save job job=%s: %v", id, saveErr)
 			}
+			s.evictTerminalJobLocked(j)
 		} else {
 			s.recordPersistenceSuccess()
-			if j != nil {
-				s.forgetJobLocked(j)
-			}
+			s.forgetJobLocked(j)
 		}
 		s.mu.Unlock()
 	}

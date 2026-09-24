@@ -546,8 +546,31 @@ func replaceQueueItems(tx *sql.Tx, jobID string, items []queueItem) error {
 }
 
 func (s *jobStore) loadQueueItems() (map[string][]queueItem, error) {
-	rows, err := s.db.Query(`SELECT job_id,position,playlist_index,video_id,title,author,duration_seconds,thumbnail_url,status,progress,downloaded_bytes,total_bytes,speed_bytes_per_sec,eta_seconds,error,file_id,file_ids_json,retry_requested
-		FROM queue_items ORDER BY job_id,position`)
+	result, err := s.loadQueueItemsQuery("", nil)
+	if err != nil {
+		return nil, err
+	}
+	cache := make(map[string]map[string][]byte, len(result))
+	for jobID, items := range result {
+		cache[jobID] = make(map[string][]byte, len(items))
+		for _, item := range items {
+			encoded, err := json.Marshal(item)
+			if err != nil {
+				return nil, err
+			}
+			cache[jobID][queueItemKey(item)] = encoded
+		}
+	}
+	s.queueItemsCacheMu.Lock()
+	s.queueItemsCache = cache
+	s.queueItemsCacheMu.Unlock()
+	return result, nil
+}
+
+func (s *jobStore) loadQueueItemsQuery(where string, args []any) (map[string][]queueItem, error) {
+	query := `SELECT job_id,position,playlist_index,video_id,title,author,duration_seconds,thumbnail_url,status,progress,downloaded_bytes,total_bytes,speed_bytes_per_sec,eta_seconds,error,file_id,file_ids_json,retry_requested
+		FROM queue_items ` + where + ` ORDER BY job_id,position`
+	rows, err := s.db.Query(query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -581,20 +604,6 @@ func (s *jobStore) loadQueueItems() (map[string][]queueItem, error) {
 	if err := rows.Close(); err != nil {
 		return nil, err
 	}
-	cache := make(map[string]map[string][]byte, len(result))
-	for jobID, items := range result {
-		cache[jobID] = make(map[string][]byte, len(items))
-		for _, item := range items {
-			encoded, err := json.Marshal(item)
-			if err != nil {
-				return nil, err
-			}
-			cache[jobID][queueItemKey(item)] = encoded
-		}
-	}
-	s.queueItemsCacheMu.Lock()
-	s.queueItemsCache = cache
-	s.queueItemsCacheMu.Unlock()
 	return result, nil
 }
 
@@ -1801,30 +1810,100 @@ func (s *jobStore) deleteJob(jobID string) error {
 	if err := tx.Commit(); err != nil {
 		return err
 	}
+	s.releaseJobCaches(jobID)
+	return nil
+}
+
+func (s *jobStore) releaseJobCaches(jobID string) {
 	s.queueItemsCacheMu.Lock()
 	delete(s.queueItemsCache, jobID)
 	delete(s.jobFilesCache, jobID)
 	delete(s.jobFailuresCache, jobID)
 	delete(s.libraryItemsCache, jobID)
 	s.queueItemsCacheMu.Unlock()
-	return nil
 }
 
 func (s *jobStore) loadJobs(root string) ([]*storedJob, error) {
+	return s.loadJobsFiltered(root, "", "all")
+}
+
+func (s *jobStore) loadActiveJobs(root string) ([]*storedJob, error) {
+	return s.loadJobsFiltered(root, "", "active")
+}
+
+func (s *jobStore) loadJob(root, jobID string) (*storedJob, error) {
+	jobs, err := s.loadJobsFiltered(root, jobID, "one")
+	if err != nil || len(jobs) == 0 {
+		return nil, err
+	}
+	return jobs[0], nil
+}
+
+func (s *jobStore) loadRetentionCandidateIDs(now time.Time, retention time.Duration) ([]string, error) {
+	query := `SELECT j.id FROM jobs j WHERE j.status IN ('completed','partial','failed','cancelled') AND j.done_at IS NOT NULL`
+	var cutoff time.Time
+	if retention > 0 {
+		cutoff = now.Add(-retention)
+		query += ` AND (EXISTS (SELECT 1 FROM job_files f WHERE f.job_id=j.id) OR j.status IN ('failed','cancelled'))`
+	} else {
+		cutoff = now.Add(-failedScratchRetention)
+		query += ` AND j.status IN ('failed','cancelled') AND NOT EXISTS (SELECT 1 FROM job_files f WHERE f.job_id=j.id)`
+	}
+	query += ` AND j.done_at<=? ORDER BY j.done_at`
+	rows, err := s.db.Query(query, cutoff.UnixNano())
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	return ids, nil
+}
+
+func (s *jobStore) loadJobsFiltered(root, jobID, selection string) ([]*storedJob, error) {
 	currentSettings, err := s.loadAppSettings()
 	if err != nil {
 		return nil, err
 	}
 	var queueItemsByJob map[string][]queueItem
 	if s.queueItemsReady {
-		queueItemsByJob, err = s.loadQueueItems()
+		switch selection {
+		case "active":
+			queueItemsByJob, err = s.loadQueueItemsQuery(`WHERE job_id IN (SELECT id FROM jobs WHERE status IN ('queued','downloading','processing','paused'))`, nil)
+		case "one":
+			queueItemsByJob, err = s.loadQueueItemsQuery(`WHERE job_id=?`, []any{jobID})
+		default:
+			queueItemsByJob, err = s.loadQueueItemsQuery("", nil)
+		}
 	} else {
 		queueItemsByJob, err = s.loadLegacyQueueItems()
 	}
 	if err != nil {
 		return nil, err
 	}
-	rows, err := s.db.Query(`SELECT id,url,kind,quality,video_strategy,allow_360p_fallback,media_type,audio_format,audio_bitrate,subtitle_language,subtitle_format,split_by_chapter,status,title,progress,current_item,completed_count,total_count,error,created_at,note,dir,cancel_requested,done_at,output_location,naming_pattern,subfolder_sorting,category,storage_mode,queue_position,output_file_mode,output_folder_mode FROM jobs ORDER BY created_at ASC`)
+	query := `SELECT id,url,kind,quality,video_strategy,allow_360p_fallback,media_type,audio_format,audio_bitrate,subtitle_language,subtitle_format,split_by_chapter,status,title,progress,current_item,completed_count,total_count,error,created_at,note,dir,cancel_requested,done_at,output_location,naming_pattern,subfolder_sorting,category,storage_mode,queue_position,output_file_mode,output_folder_mode FROM jobs`
+	args := []any{}
+	switch selection {
+	case "active":
+		query += ` WHERE status IN ('queued','downloading','processing','paused')`
+	case "one":
+		query += ` WHERE id=?`
+		args = append(args, jobID)
+	}
+	query += ` ORDER BY created_at ASC`
+	rows, err := s.db.Query(query, args...)
 	if err != nil {
 		return nil, err
 	}

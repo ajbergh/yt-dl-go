@@ -239,7 +239,45 @@ func (s *server) forgetJobLocked(j *jobState) {
 		}
 	}
 	s.invalidateJobTicketsLocked(j.ID)
+	if s.store != nil {
+		s.store.releaseJobCaches(j.ID)
+	}
 	s.publishDeletedEventLocked(j.ID)
+}
+
+func (s *server) hydrateTerminalJobLocked(jobID string) (*jobState, bool, error) {
+	if job := s.jobs[jobID]; job != nil {
+		return job, false, nil
+	}
+	if s.store == nil {
+		return nil, false, nil
+	}
+	loaded, err := s.store.loadJob(s.cfg.root, jobID)
+	if err != nil || loaded == nil || !terminal(loaded.job.Status) {
+		return nil, false, err
+	}
+	job := &jobState{Job: loaded.job, dir: loaded.dir, done: loaded.done, fileItems: fileIndexes(loaded.items), fileGroups: fileGroupIndexes(loaded.items), cancelRequested: loaded.cancelled}
+	s.jobs[job.ID] = job
+	s.order = append(s.order, job.ID)
+	return job, true, nil
+}
+
+// evictTerminalJobLocked drops a finished job's working state without sending
+// job-deleted: the durable Library record and history still exist.
+func (s *server) evictTerminalJobLocked(job *jobState) {
+	if job == nil || !terminal(job.Status) || job.persistenceFailed || s.jobs[job.ID] != job {
+		return
+	}
+	delete(s.jobs, job.ID)
+	for index, id := range s.order {
+		if id == job.ID {
+			s.order = append(s.order[:index], s.order[index+1:]...)
+			break
+		}
+	}
+	if s.store != nil {
+		s.store.releaseJobCaches(job.ID)
+	}
 }
 
 const persistenceDegradedThreshold uint64 = 3
@@ -493,6 +531,29 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if s.cfg.token != "" && subtle.ConstantTimeCompare([]byte(r.Header.Get("Authorization")), []byte("Bearer "+s.cfg.token)) != 1 {
 		fail(w, 401, "Bearer authorization required")
 		return
+	}
+	if strings.HasPrefix(r.URL.Path, "/api/jobs/") {
+		parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/api/jobs/"), "/")
+		if len(parts) > 0 && parts[0] != "" {
+			s.mu.Lock()
+			job, hydrated, err := s.hydrateTerminalJobLocked(parts[0])
+			s.mu.Unlock()
+			if err != nil {
+				fail(w, http.StatusInternalServerError, "Could not load the saved job")
+				return
+			}
+			if job == nil {
+				fail(w, http.StatusNotFound, "Job not found")
+				return
+			}
+			if hydrated {
+				defer func() {
+					s.mu.Lock()
+					s.evictTerminalJobLocked(job)
+					s.mu.Unlock()
+				}()
+			}
+		}
 	}
 	if r.URL.Path == "/api/update" {
 		if r.Method != http.MethodGet {
@@ -802,6 +863,7 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		reply(w, 200, snapshot(j))
+		s.evictTerminalJobLocked(j)
 	case len(parts) == 2 && parts[1] == "ticket" && r.Method == http.MethodPost:
 		s.issueTicket(w, j, fileID, requested.FileIDs, requested.Inline)
 	default:
