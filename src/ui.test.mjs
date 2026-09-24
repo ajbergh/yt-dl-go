@@ -36,6 +36,7 @@ let rows;
 let missing;
 let healthEngine;
 let healthVersion;
+let diagnosticsResponse;
 let updateResponse;
 let liveEvent;
 let notificationsEnabled;
@@ -71,6 +72,7 @@ beforeEach(async () => {
   missing = [];
   healthEngine = "native-go";
   healthVersion = "dev";
+  diagnosticsResponse = { count: 0, issues: [] };
   updateResponse = { currentVersion: "dev", updateAvailable: false, developmentBuild: true, automaticUpdate: false, note: "Development build: external update checks are skipped." };
   liveEvent = null;
   notificationsEnabled = false;
@@ -91,6 +93,7 @@ beforeEach(async () => {
     const path = new URL(url).pathname;
     requests.push({ url: String(url), path, ...init });
     if (path === "/api/health") return Response.json({ ready: missing.length === 0, missing, engine: healthEngine, version: healthVersion, commit: healthVersion === "dev" ? "unknown" : "abc123def456", buildDate: healthVersion === "dev" ? "unknown" : "2026-09-21T12:00:00Z", capabilities: { combinedStreamsOnly: false, adaptiveStreamsSupported: true, externalBinariesRequired: false, mp3AudioSupported: true } });
+    if (path === "/api/diagnostics") return Response.json(diagnosticsResponse);
     if (path === "/api/update") return Response.json(updateResponse);
     if (path === "/api/settings" && init.method === "PUT") {
       const settings = JSON.parse(init.body);
@@ -235,6 +238,20 @@ describe("Downloader UI and Go API integration", () => {
     expect(container.querySelector('[role="alert"]').textContent).toContain("writable storage");
     expect(container.querySelector("#service-heading")).toBeTruthy();
     expect(requests.some(item => item.path === "/api/jobs")).toBe(false);
+  });
+  test("shows saved corruption diagnostics without exposing quarantined payloads", async () => {
+    diagnosticsResponse = {
+      count: 1,
+      issues: [{ id: 1, detectedAt: "2026-09-24T12:00:00Z", sourceTable: "queue_items", sourceColumn: "file_ids_json", recordKey: "job/item:1", error: "malformed JSON", action: "Cleared malformed grouped-file IDs; preserved the primary file." }],
+    };
+    await remount();
+    await click(button("Settings"));
+    await act(async () => new Promise(resolve => setTimeout(resolve, 0)));
+    expect(requests.some(item => item.path === "/api/diagnostics")).toBe(true);
+    expect(container.textContent).toContain("Saved data diagnostics");
+    expect(container.textContent).toContain("queue_items.file_ids_json");
+    expect(container.textContent).toContain("Cleared malformed grouped-file IDs");
+    expect(container.textContent).not.toContain("private-raw-payload");
   });
   test("rejects an incompatible backend without manual setup", async () => {
     healthEngine = undefined;

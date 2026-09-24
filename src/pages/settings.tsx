@@ -1,8 +1,8 @@
-import type { Dispatch, FormEvent, SetStateAction } from "react";
+import { useEffect, useState, type Dispatch, type FormEvent, type SetStateAction } from "react";
 import {
   Check, ExternalLink, FileText, Folder, FolderTree, Gauge, HardDrive, LoaderCircle, Plus, RefreshCw, ShieldCheck, Sparkles, X,
 } from "lucide-react";
-import type { AppSettings, BuildInfo, Quality, ServiceConnection, UpdateStatus, VideoStrategy } from "../lib/downloader";
+import { api, type AppSettings, type BuildInfo, type CorruptionDiagnostics, type Quality, type ServiceConnection, type UpdateStatus, type VideoStrategy } from "../lib/downloader";
 import { namingTokenNames, previewFilename, sanitizeFilenameComponent, type NamingValues } from "../lib/naming";
 import {
   button, field, notificationAPI, panel, primaryButton, qualityLabels, videoStrategyLabels,
@@ -46,6 +46,8 @@ export function SettingsPage({
             {serviceError && <p role="alert" className="mt-3 text-xs text-red-300">{serviceError}</p>}
             {!serviceReady && <p className="mt-2 text-[10px] text-neutral-500">The app retries the local service automatically while it starts.</p>}
           </section>
+
+          <CorruptionDiagnosticsPanel connection={connection} serviceReady={serviceReady} />
 
           <section className={`${panel} p-5 sm:p-6`} aria-labelledby="updates-heading">
             <div className="flex flex-wrap items-start justify-between gap-3">
@@ -214,4 +216,56 @@ export function SettingsPage({
             <section className={`${panel} p-5`}><div className="flex items-start gap-3"><div className="grid size-9 shrink-0 place-items-center rounded-xl border border-blue-800/50 bg-blue-950/30 text-blue-300"><Gauge className="size-4" aria-hidden="true" /></div><div><h3 className="text-xs font-bold">What this backend supports</h3><ul className="mt-2 space-y-1.5 text-[11px] leading-relaxed text-neutral-400"><li>Video and playlist downloads, including adaptive H.264/AAC MP4, high-resolution VP9/AV1 + Opus WebM remuxing, and pure-Go MP3 conversion for AAC audio.</li><li>Up to six concurrent jobs, multi-routine stream transfers, fair global bandwidth limiting, pause/resume, retries, live speed/ETA, and optional system notifications.</li><li>Quality ceilings: best, 2160p (4K), 1440p, 1080p, 720p, or 480p, plus Best/Compatibility MP4/VP9/AV1 video strategies. Actual output quality and container are reported after completion.</li><li>Files are copied to the selected destination and remain available in the private SQLite-backed library.</li></ul>{!mp3Supported && <p className="mt-3 flex items-start gap-1.5 text-[10px] leading-relaxed text-amber-300"><ShieldCheck className="mt-0.5 size-3 shrink-0" aria-hidden="true" />This backend does not support MP3 conversion.</p>}</div></div></section>
         </div>
   );
+}
+
+function CorruptionDiagnosticsPanel({ connection, serviceReady }: Pick<SettingsPageProps, "connection" | "serviceReady">) {
+  const [diagnostics, setDiagnostics] = useState<CorruptionDiagnostics | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [refreshKey, setRefreshKey] = useState(0);
+
+  useEffect(() => {
+    if (!serviceReady) return;
+    const controller = new AbortController();
+    setLoading(true);
+    setError("");
+    void api<CorruptionDiagnostics>(connection, "/api/diagnostics", { signal: controller.signal })
+      .then(setDiagnostics)
+      .catch(reason => {
+        if (!controller.signal.aborted) setError(reason instanceof Error ? reason.message : "Could not load diagnostics.");
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setLoading(false);
+      });
+    return () => controller.abort();
+  }, [connection, refreshKey, serviceReady]);
+
+  return <section className={`${panel} p-5 sm:p-6`} aria-labelledby="diagnostics-heading">
+    <div className="flex flex-wrap items-start justify-between gap-3">
+      <div>
+        <h3 id="diagnostics-heading" className="text-sm font-bold">Saved data diagnostics</h3>
+        <p className="mt-1 text-xs text-neutral-400">Malformed saved fields are copied to a private quarantine record before the affected field or Library row is repaired.</p>
+      </div>
+      <button type="button" className={button} onClick={() => setRefreshKey(value => value + 1)} disabled={!serviceReady || loading}>
+        <RefreshCw className={`size-3.5 ${loading ? "animate-spin" : ""}`} aria-hidden="true" />
+        {loading ? "Refreshing…" : "Refresh diagnostics"}
+      </button>
+    </div>
+    {error && <p role="alert" className="mt-3 text-xs text-amber-300">{error}</p>}
+    {!error && diagnostics && diagnostics.count === 0 && <p className="mt-3 text-xs text-emerald-300">No saved data issues have been recorded.</p>}
+    {diagnostics && diagnostics.count > 0 && <>
+      <p className="mt-3 text-xs text-amber-200">{diagnostics.count} saved data issue{diagnostics.count === 1 ? "" : "s"} recorded{diagnostics.count > diagnostics.issues.length ? `; showing the latest ${diagnostics.issues.length}` : ""}.</p>
+      <ul className="mt-3 space-y-2">
+        {diagnostics.issues.map(issue => <li key={issue.id} className="rounded-lg border border-neutral-800 bg-neutral-950/60 p-3">
+          <div className="flex flex-wrap items-center justify-between gap-2 text-[11px]">
+            <span className="font-mono text-neutral-200">{issue.sourceTable}.{issue.sourceColumn}</span>
+            <time className="text-neutral-500" dateTime={issue.detectedAt}>{new Date(issue.detectedAt).toLocaleString()}</time>
+          </div>
+          <p className="mt-1 break-all font-mono text-[10px] text-neutral-400">{issue.recordKey}</p>
+          <p className="mt-2 text-[11px] leading-relaxed text-neutral-300">{issue.action}</p>
+        </li>)}
+      </ul>
+    </>}
+    {!serviceReady && <p className="mt-3 text-[10px] text-neutral-500">Diagnostics will load when the local service is connected.</p>}
+  </section>;
 }
