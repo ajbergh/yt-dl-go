@@ -3,6 +3,7 @@
 package main
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"database/sql"
 	"encoding/json"
@@ -12,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"sync"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -20,8 +22,10 @@ import (
 // jobStore is the durable source of truth for job history, completed items,
 // preferences, and resume state; live queue and cancellation handles stay in RAM.
 type jobStore struct {
-	db              *sql.DB
-	queueItemsReady bool
+	db                *sql.DB
+	queueItemsReady   bool
+	queueItemsCacheMu sync.Mutex
+	queueItemsCache   map[string]map[string][]byte
 }
 
 type AppSettings struct {
@@ -322,24 +326,8 @@ func replaceQueueItems(tx *sql.Tx, jobID string, items []queueItem) error {
 		return err
 	}
 	for position, item := range items {
-		fileIDs, err := json.Marshal(item.FileIDs)
-		if err != nil {
-			return err
-		}
-		progress := any(nil)
-		if item.Progress != nil {
-			progress = *item.Progress
-		}
-		retryRequested := 0
-		if item.RetryRequested {
-			retryRequested = 1
-		}
 		key := queueItemKey(item)
-		if _, err := tx.Exec(`INSERT INTO queue_items(job_id,item_key,position,playlist_index,video_id,title,author,duration_seconds,thumbnail_url,status,progress,downloaded_bytes,total_bytes,speed_bytes_per_sec,eta_seconds,error,file_id,file_ids_json,retry_requested)
-			VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-			ON CONFLICT(job_id,item_key) DO UPDATE SET position=excluded.position,playlist_index=excluded.playlist_index,video_id=excluded.video_id,title=excluded.title,author=excluded.author,duration_seconds=excluded.duration_seconds,thumbnail_url=excluded.thumbnail_url,status=excluded.status,progress=excluded.progress,downloaded_bytes=excluded.downloaded_bytes,total_bytes=excluded.total_bytes,speed_bytes_per_sec=excluded.speed_bytes_per_sec,eta_seconds=excluded.eta_seconds,error=excluded.error,file_id=excluded.file_id,file_ids_json=excluded.file_ids_json,retry_requested=excluded.retry_requested
-			WHERE queue_items.position IS NOT excluded.position OR queue_items.playlist_index IS NOT excluded.playlist_index OR queue_items.video_id IS NOT excluded.video_id OR queue_items.title IS NOT excluded.title OR queue_items.author IS NOT excluded.author OR queue_items.duration_seconds IS NOT excluded.duration_seconds OR queue_items.thumbnail_url IS NOT excluded.thumbnail_url OR queue_items.status IS NOT excluded.status OR queue_items.progress IS NOT excluded.progress OR queue_items.downloaded_bytes IS NOT excluded.downloaded_bytes OR queue_items.total_bytes IS NOT excluded.total_bytes OR queue_items.speed_bytes_per_sec IS NOT excluded.speed_bytes_per_sec OR queue_items.eta_seconds IS NOT excluded.eta_seconds OR queue_items.error IS NOT excluded.error OR queue_items.file_id IS NOT excluded.file_id OR queue_items.file_ids_json IS NOT excluded.file_ids_json OR queue_items.retry_requested IS NOT excluded.retry_requested`,
-			jobID, key, position+1, item.PlaylistIndex, item.VideoID, item.Title, item.Author, item.DurationSeconds, item.ThumbnailURL, item.Status, progress, item.DownloadedBytes, item.TotalBytes, item.SpeedBytesPerSec, item.ETASeconds, item.Error, item.FileID, string(fileIDs), retryRequested); err != nil {
+		if err := upsertQueueItem(tx, jobID, key, position+1, item); err != nil {
 			return err
 		}
 		delete(existing, key)
@@ -388,7 +376,92 @@ func (s *jobStore) loadQueueItems() (map[string][]queueItem, error) {
 	if err := rows.Close(); err != nil {
 		return nil, err
 	}
+	cache := make(map[string]map[string][]byte, len(result))
+	for jobID, items := range result {
+		cache[jobID] = make(map[string][]byte, len(items))
+		for _, item := range items {
+			encoded, err := json.Marshal(item)
+			if err != nil {
+				return nil, err
+			}
+			cache[jobID][queueItemKey(item)] = encoded
+		}
+	}
+	s.queueItemsCacheMu.Lock()
+	s.queueItemsCache = cache
+	s.queueItemsCacheMu.Unlock()
 	return result, nil
+}
+
+func saveChangedQueueItems(tx *sql.Tx, jobID string, items []queueItem, cached map[string][]byte) (map[string][]byte, error) {
+	existing := make(map[string]struct{}, len(cached))
+	for key := range cached {
+		existing[key] = struct{}{}
+	}
+	if cached == nil {
+		rows, err := tx.Query(`SELECT item_key FROM queue_items WHERE job_id=?`, jobID)
+		if err != nil {
+			return nil, err
+		}
+		for rows.Next() {
+			var key string
+			if err := rows.Scan(&key); err != nil {
+				_ = rows.Close()
+				return nil, err
+			}
+			existing[key] = struct{}{}
+		}
+		if err := rows.Err(); err != nil {
+			_ = rows.Close()
+			return nil, err
+		}
+		if err := rows.Close(); err != nil {
+			return nil, err
+		}
+	}
+	updated := make(map[string][]byte, len(items))
+	for position, item := range items {
+		key := queueItemKey(item)
+		encoded, err := json.Marshal(item)
+		if err != nil {
+			return nil, err
+		}
+		updated[key] = encoded
+		delete(existing, key)
+		if previous, ok := cached[key]; ok && bytes.Equal(previous, encoded) {
+			continue
+		}
+		if err := upsertQueueItem(tx, jobID, key, position+1, item); err != nil {
+			return nil, err
+		}
+	}
+	for key := range existing {
+		if _, err := tx.Exec(`DELETE FROM queue_items WHERE job_id=? AND item_key=?`, jobID, key); err != nil {
+			return nil, err
+		}
+	}
+	return updated, nil
+}
+
+func upsertQueueItem(tx *sql.Tx, jobID, key string, position int, item queueItem) error {
+	fileIDs, err := json.Marshal(item.FileIDs)
+	if err != nil {
+		return err
+	}
+	progress := any(nil)
+	if item.Progress != nil {
+		progress = *item.Progress
+	}
+	retryRequested := 0
+	if item.RetryRequested {
+		retryRequested = 1
+	}
+	_, err = tx.Exec(`INSERT INTO queue_items(job_id,item_key,position,playlist_index,video_id,title,author,duration_seconds,thumbnail_url,status,progress,downloaded_bytes,total_bytes,speed_bytes_per_sec,eta_seconds,error,file_id,file_ids_json,retry_requested)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+		ON CONFLICT(job_id,item_key) DO UPDATE SET position=excluded.position,playlist_index=excluded.playlist_index,video_id=excluded.video_id,title=excluded.title,author=excluded.author,duration_seconds=excluded.duration_seconds,thumbnail_url=excluded.thumbnail_url,status=excluded.status,progress=excluded.progress,downloaded_bytes=excluded.downloaded_bytes,total_bytes=excluded.total_bytes,speed_bytes_per_sec=excluded.speed_bytes_per_sec,eta_seconds=excluded.eta_seconds,error=excluded.error,file_id=excluded.file_id,file_ids_json=excluded.file_ids_json,retry_requested=excluded.retry_requested
+		WHERE queue_items.position IS NOT excluded.position OR queue_items.playlist_index IS NOT excluded.playlist_index OR queue_items.video_id IS NOT excluded.video_id OR queue_items.title IS NOT excluded.title OR queue_items.author IS NOT excluded.author OR queue_items.duration_seconds IS NOT excluded.duration_seconds OR queue_items.thumbnail_url IS NOT excluded.thumbnail_url OR queue_items.status IS NOT excluded.status OR queue_items.progress IS NOT excluded.progress OR queue_items.downloaded_bytes IS NOT excluded.downloaded_bytes OR queue_items.total_bytes IS NOT excluded.total_bytes OR queue_items.speed_bytes_per_sec IS NOT excluded.speed_bytes_per_sec OR queue_items.eta_seconds IS NOT excluded.eta_seconds OR queue_items.error IS NOT excluded.error OR queue_items.file_id IS NOT excluded.file_id OR queue_items.file_ids_json IS NOT excluded.file_ids_json OR queue_items.retry_requested IS NOT excluded.retry_requested`,
+		jobID, key, position, item.PlaylistIndex, item.VideoID, item.Title, item.Author, item.DurationSeconds, item.ThumbnailURL, item.Status, progress, item.DownloadedBytes, item.TotalBytes, item.SpeedBytesPerSec, item.ETASeconds, item.Error, item.FileID, string(fileIDs), retryRequested)
+	return err
 }
 
 func (s *jobStore) loadLegacyQueueItems() (map[string][]queueItem, error) {
@@ -1124,6 +1197,13 @@ func (s *jobStore) saveJob(j *jobState) error {
 	if s == nil {
 		return nil
 	}
+	if s.queueItemsReady {
+		s.queueItemsCacheMu.Lock()
+		defer s.queueItemsCacheMu.Unlock()
+		if s.queueItemsCache == nil {
+			s.queueItemsCache = make(map[string]map[string][]byte)
+		}
+	}
 	var progress any
 	if j.Progress != nil {
 		progress = *j.Progress
@@ -1148,6 +1228,7 @@ func (s *jobStore) saveJob(j *jobState) error {
 		}
 		legacyQueueItems = string(encoded)
 	}
+	var updatedQueueCache map[string][]byte
 	tx, err := s.db.Begin()
 	if err != nil {
 		return err
@@ -1172,7 +1253,8 @@ func (s *jobStore) saveJob(j *jobState) error {
 		return err
 	}
 	if s.queueItemsReady {
-		if err := replaceQueueItems(tx, j.ID, j.Items); err != nil {
+		updatedQueueCache, err = saveChangedQueueItems(tx, j.ID, j.Items, s.queueItemsCache[j.ID])
+		if err != nil {
 			return err
 		}
 	}
@@ -1301,6 +1383,9 @@ func (s *jobStore) saveJob(j *jobState) error {
 	}
 	if err := tx.Commit(); err != nil {
 		return err
+	}
+	if s.queueItemsReady {
+		s.queueItemsCache[j.ID] = updatedQueueCache
 	}
 	j.librarySignatures = newLibrarySignatures
 	return nil
@@ -1451,7 +1536,13 @@ func (s *jobStore) deleteJob(jobID string) error {
 	if _, err := tx.Exec(`DELETE FROM jobs WHERE id=?`, jobID); err != nil {
 		return err
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	s.queueItemsCacheMu.Lock()
+	delete(s.queueItemsCache, jobID)
+	s.queueItemsCacheMu.Unlock()
+	return nil
 }
 
 func (s *jobStore) loadJobs(root string) ([]*storedJob, error) {
