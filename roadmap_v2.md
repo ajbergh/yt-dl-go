@@ -273,7 +273,7 @@ Today a Library entry is a retained job (`src/pages/library.tsx:51`), so Library
 - Keep `DATA_DIR` as an override.
 - Detect a legacy `./downloads/state.db` and offer a one-time migration.
 
-**Progress (2026-09-24):** The per-user default, DATA_DIR override, and explicit copy-based migration are under review in [PR #65](https://github.com/ajbergh/yt-dl-go/pull/65). The command snapshots SQLite, copies managed data to staging, rebases job and resume paths, preserves the original legacy tree, and refuses to overwrite a destination containing user data.
+**Progress (2026-09-24):** The per-user default, DATA_DIR override, and explicit copy-based migration are under review in [PR #65](https://github.com/ajbergh/yt-dl-go/pull/65). The command snapshots SQLite, copies managed data to staging, rebases job and resume paths, preserves the original legacy tree, and refuses to overwrite a destination containing user data. Review corrections support rebasing the original pre-v16 resume schema and resolve existing parent symlinks before checking source/destination overlap. The repository README now documents the OS-specific default and copy-migration command.
 
 ### M1.5 Startup resilience, integrity, and backup
 
