@@ -3129,7 +3129,7 @@ func (s *server) prune(now time.Time) {
 		done := s.persistenceWriter.enqueue(func(store *jobStore) error {
 			return store.deleteJob(id)
 		})
-		err := <-done
+		err = <-done
 		s.mu.Lock()
 		if err != nil {
 			s.recordPersistenceFailure("retention delete job", id, err)
