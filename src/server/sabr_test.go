@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 )
 
@@ -323,6 +324,66 @@ func TestParseUMPPartCountSupportsLongMediaAndKeepsHardLimit(t *testing.T) {
 	}
 	if err := parseUMPReader(bytes.NewReader(tooMany), consume); !errors.Is(err, errSABR) {
 		t.Fatalf("stream-parse over part limit error = %v, want %v", err, errSABR)
+	}
+}
+
+func TestParseUMPBufferedAndStreamingAgreeOnProtocolShapes(t *testing.T) {
+	longPayload := bytes.Repeat([]byte("x"), 130)
+	body := testUMPPart(nil, umpPartFormatInitializationMetadata, []byte{0x08, 0xfb, 0x01})
+	body = testUMPPart(body, 99, longPayload) // Unknown part types remain forward-compatible.
+	wantTypes := []uint64{umpPartFormatInitializationMetadata, 99}
+	wantPayloads := [][]byte{{0x08, 0xfb, 0x01}, longPayload}
+
+	collect := func(parse func(func(uint64, []byte) error) error) ([]uint64, [][]byte, error) {
+		var types []uint64
+		var payloads [][]byte
+		err := parse(func(partType uint64, payload []byte) error {
+			types = append(types, partType)
+			payloads = append(payloads, append([]byte(nil), payload...))
+			return nil
+		})
+		return types, payloads, err
+	}
+	bufferedTypes, bufferedPayloads, err := collect(func(consume func(uint64, []byte) error) error {
+		return parseUMP(body, consume)
+	})
+	if err != nil {
+		t.Fatalf("parse buffered UMP: %v", err)
+	}
+	streamedTypes, streamedPayloads, err := collect(func(consume func(uint64, []byte) error) error {
+		return parseUMPReader(bytes.NewReader(body), consume)
+	})
+	if err != nil {
+		t.Fatalf("parse streamed UMP: %v", err)
+	}
+	if !reflect.DeepEqual(bufferedTypes, wantTypes) || !reflect.DeepEqual(streamedTypes, wantTypes) {
+		t.Fatalf("part types buffered=%v streamed=%v, want %v", bufferedTypes, streamedTypes, wantTypes)
+	}
+	if !reflect.DeepEqual(bufferedPayloads, wantPayloads) || !reflect.DeepEqual(streamedPayloads, wantPayloads) {
+		t.Fatal("buffered and streamed UMP payloads did not preserve the synthetic protocol shapes")
+	}
+}
+
+func TestSABRMediaHeaderSkipsUnknownFieldsAndReadsTimeRange(t *testing.T) {
+	format := testProtoVarintField(nil, 1, 251)
+	headerBytes := testMediaHeader(7, 251, false, 1, 0, 4, format)
+	// Include all protobuf wire types supported by the decoder after its known fields.
+	headerBytes = testProtoVarintField(headerBytes, 20, 9)
+	headerBytes = testProtoVarint(headerBytes, 21<<3|1)
+	headerBytes = append(headerBytes, make([]byte, 8)...)
+	headerBytes = testProtoBytesField(headerBytes, 22, []byte("future field"))
+	headerBytes = testProtoVarint(headerBytes, 23<<3|5)
+	headerBytes = append(headerBytes, make([]byte, 4)...)
+	timeRange := testProtoVarintField(nil, 2, 2500)
+	timeRange = testProtoVarintField(timeRange, 3, 1000)
+	headerBytes = testProtoBytesField(headerBytes, 15, timeRange)
+
+	header, err := decodeSABRMediaHeader(headerBytes)
+	if err != nil {
+		t.Fatalf("decode media header with unknown fields: %v", err)
+	}
+	if header.itag != 251 || header.headerID != 7 || header.sequence != 1 || header.durationMs != 0 || header.timeDuration != 2500 || header.timeScale != 1000 {
+		t.Fatalf("decoded media header = %+v", header)
 	}
 }
 
