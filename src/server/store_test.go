@@ -125,7 +125,7 @@ func TestPersistentQueueOrderControlsSchedulerPriority(t *testing.T) {
 	}
 }
 
-func storedPosition(stored *storedJob) int {
+func storedPosition(stored *storedJob) int64 {
 	if stored == nil {
 		return 0
 	}
