@@ -3,6 +3,7 @@
 package main
 
 import (
+	"crypto/sha256"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -278,9 +279,8 @@ func upsertLibraryItem(tx *sql.Tx, sourceJobID string, sourceItemIndex int, file
 	if sourceItemIndex < 1 {
 		sourceItemIndex = 1
 	}
-	file.ID = libraryItemID(sourceJobID, sourceItemIndex, file)
 	file.SourceItemIndex = sourceItemIndex
-	data, err := json.Marshal(file)
+	fileID, data, _, err := prepareLibraryItem(sourceJobID, sourceItemIndex, file)
 	if err != nil {
 		return err
 	}
@@ -290,8 +290,28 @@ func upsertLibraryItem(tx *sql.Tx, sourceJobID string, sourceItemIndex int, file
 	_, err = tx.Exec(`INSERT INTO library_items(file_id,source_job_id,source_item_index,file_json,output_path,created_at)
 		VALUES(?,?,?,?,?,?)
 		ON CONFLICT(file_id) DO UPDATE SET source_job_id=excluded.source_job_id,source_item_index=excluded.source_item_index,file_json=excluded.file_json,output_path=excluded.output_path`,
-		file.ID, sourceJobID, sourceItemIndex, string(data), file.OutputPath, createdAt)
+		fileID, sourceJobID, sourceItemIndex, string(data), file.OutputPath, createdAt)
 	return err
+}
+
+func prepareLibraryItem(sourceJobID string, sourceItemIndex int, file mediaFile) (string, []byte, [32]byte, error) {
+	if sourceItemIndex < 1 {
+		sourceItemIndex = file.SourceItemIndex
+	}
+	if sourceItemIndex < 1 {
+		sourceItemIndex = 1
+	}
+	file.ID = libraryItemID(sourceJobID, sourceItemIndex, file)
+	file.SourceItemIndex = sourceItemIndex
+	data, err := json.Marshal(file)
+	if err != nil {
+		return "", nil, [32]byte{}, err
+	}
+	signatureData := make([]byte, 0, len(data)+1+len(file.OutputPath))
+	signatureData = append(signatureData, data...)
+	signatureData = append(signatureData, 0)
+	signatureData = append(signatureData, file.OutputPath...)
+	return file.ID, data, sha256.Sum256(signatureData), nil
 }
 
 func libraryItemID(sourceJobID string, sourceItemIndex int, file mediaFile) string {
@@ -930,7 +950,6 @@ func (s *jobStore) saveJob(j *jobState) error {
 		return err
 	}
 	groups := groupedJobFiles(j)
-	libraryFileIDs := make(map[string]bool, len(j.Files))
 	libraryCreatedAt := time.Now().UnixNano()
 	if !j.done.IsZero() {
 		libraryCreatedAt = j.done.UnixNano()
@@ -989,14 +1008,9 @@ func (s *jobStore) saveJob(j *jobState) error {
 			file.DurationSeconds, file.ThumbnailURL, file.ThumbnailMimeType, thumbnailLocalAvailable, file.PublishDate, file.Category, file.OutputName, file.OutputPath, file.OutputRelativePath, managedAvailable, publishedAvailable, subtitleJSON, file.SubtitleError, chaptersJSON, additionalFilesJSON); err != nil {
 			return err
 		}
-		for _, groupedFile := range group {
-			if err := upsertLibraryItem(tx, j.ID, itemIndex, groupedFile, libraryCreatedAt); err != nil {
-				return err
-			}
-			libraryFileIDs[libraryItemID(j.ID, itemIndex, groupedFile)] = true
-		}
 	}
-	if err := removeStaleLibraryItems(tx, j.ID, libraryFileIDs); err != nil {
+	newLibrarySignatures, err := syncLibraryItems(tx, j, groups, libraryCreatedAt)
+	if err != nil {
 		return err
 	}
 	if _, err = tx.Exec(`DELETE FROM job_failures WHERE job_id=?`, j.ID); err != nil {
@@ -1007,38 +1021,73 @@ func (s *jobStore) saveJob(j *jobState) error {
 			return err
 		}
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	j.librarySignatures = newLibrarySignatures
+	return nil
 }
 
-func removeStaleLibraryItems(tx *sql.Tx, sourceJobID string, activeFileIDs map[string]bool) error {
-	rows, err := tx.Query(`SELECT file_id FROM library_items WHERE source_job_id=?`, sourceJobID)
-	if err != nil {
-		return err
+func syncLibraryItems(tx *sql.Tx, j *jobState, groups map[int][]mediaFile, createdAt int64) (map[string][32]byte, error) {
+	current := make(map[string][32]byte, len(j.Files))
+	for itemIndex, group := range groups {
+		for _, file := range group {
+			fileID, data, signature, err := prepareLibraryItem(j.ID, itemIndex, file)
+			if err != nil {
+				return nil, err
+			}
+			current[fileID] = signature
+			if prior, exists := j.librarySignatures[fileID]; exists && prior == signature {
+				continue
+			}
+			if createdAt == 0 {
+				createdAt = time.Now().UnixNano()
+			}
+			if _, err := tx.Exec(`INSERT INTO library_items(file_id,source_job_id,source_item_index,file_json,output_path,created_at)
+				VALUES(?,?,?,?,?,?)
+				ON CONFLICT(file_id) DO UPDATE SET source_job_id=excluded.source_job_id,source_item_index=excluded.source_item_index,file_json=excluded.file_json,output_path=excluded.output_path`,
+				fileID, j.ID, itemIndex, string(data), file.OutputPath, createdAt); err != nil {
+				return nil, err
+			}
+		}
 	}
+
 	var stale []string
-	for rows.Next() {
-		var fileID string
-		if err := rows.Scan(&fileID); err != nil {
+	if j.librarySignatures == nil {
+		rows, err := tx.Query(`SELECT file_id FROM library_items WHERE source_job_id=?`, j.ID)
+		if err != nil {
+			return nil, err
+		}
+		for rows.Next() {
+			var fileID string
+			if err := rows.Scan(&fileID); err != nil {
+				_ = rows.Close()
+				return nil, err
+			}
+			if _, exists := current[fileID]; !exists {
+				stale = append(stale, fileID)
+			}
+		}
+		if err := rows.Err(); err != nil {
 			_ = rows.Close()
-			return err
+			return nil, err
 		}
-		if !activeFileIDs[fileID] {
-			stale = append(stale, fileID)
+		if err := rows.Close(); err != nil {
+			return nil, err
 		}
-	}
-	if err := rows.Err(); err != nil {
-		_ = rows.Close()
-		return err
-	}
-	if err := rows.Close(); err != nil {
-		return err
+	} else {
+		for fileID := range j.librarySignatures {
+			if _, exists := current[fileID]; !exists {
+				stale = append(stale, fileID)
+			}
+		}
 	}
 	for _, fileID := range stale {
-		if _, err := tx.Exec(`DELETE FROM library_items WHERE file_id=? AND source_job_id=?`, fileID, sourceJobID); err != nil {
-			return err
+		if _, err := tx.Exec(`DELETE FROM library_items WHERE file_id=? AND source_job_id=?`, fileID, j.ID); err != nil {
+			return nil, err
 		}
 	}
-	return nil
+	return current, nil
 }
 
 func (s *jobStore) saveQueueOrder(jobIDs []string) error {
