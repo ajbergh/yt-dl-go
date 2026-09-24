@@ -139,6 +139,7 @@ type jobState struct {
 	playlistItemCount   int
 	persistenceFailed   bool
 	persistenceRevision uint64
+	persistencePending  int
 	deleting            bool
 }
 
@@ -292,11 +293,13 @@ func (s *server) persistJobLocked(j *jobState) error {
 
 func (s *server) persistJobSnapshotLocked(j *jobState, operation string) error {
 	j.persistenceRevision++
+	j.persistencePending++
 	revision := j.persistenceRevision
 	snapshot := cloneJobStateForPersistence(j)
 	err := s.persistOperationLocked(operation, j.ID, func(store *jobStore) error {
 		return store.saveJob(snapshot)
 	})
+	j.persistencePending--
 	if err != nil {
 		s.recordPersistenceFailure(operation, j.ID, err)
 		return err

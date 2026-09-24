@@ -35,10 +35,12 @@ func (s *server) orderedQueuedJobsLocked() []*jobState {
 
 func (s *server) nextQueuedJobLocked() *jobState {
 	queued := s.orderedQueuedJobsLocked()
-	if len(queued) == 0 {
-		return nil
+	for _, job := range queued {
+		if job.persistencePending == 0 {
+			return job
+		}
 	}
-	return queued[0]
+	return nil
 }
 
 func (s *server) nextQueuePositionLocked() int64 {

@@ -429,7 +429,13 @@ func (s *jobStore) migrateV20(root string) error {
 		return err
 	}
 	if version >= 20 {
-		return nil
+		var exists int
+		if err := s.db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='library_items'`).Scan(&exists); err != nil {
+			return err
+		}
+		if exists != 0 {
+			return nil
+		}
 	}
 	createTx, err := s.db.Begin()
 	if err != nil {
@@ -479,7 +485,7 @@ func (s *jobStore) migrateV20(root string) error {
 			}
 		}
 	}
-	if _, err := backfillTx.Exec(`INSERT INTO schema_migrations(version) VALUES (20)`); err != nil {
+	if _, err := backfillTx.Exec(`INSERT OR IGNORE INTO schema_migrations(version) VALUES (20)`); err != nil {
 		return err
 	}
 	return backfillTx.Commit()
