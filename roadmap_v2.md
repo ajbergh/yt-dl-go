@@ -228,7 +228,7 @@ Today a Library entry is a retained job (`src/pages/library.tsx:51`), so Library
 
 ### M1.2 Normalize queue items and write incrementally
 
-**Status:** [~] · **P1** · **Area:** persistence / performance
+**Status:** [x] · **P1** · **Area:** persistence / performance
 
 `queue_items` is a JSON blob of up to 10,000 items (`store.go:485, 639, 798`). Every `saveJob`:
 
@@ -243,19 +243,21 @@ Today a Library entry is a retained job (`src/pages/library.tsx:51`), so Library
 - Update only the changed item rows.
 - Move persistence out of the global lock via a single writer goroutine or a per-job lock.
 
-**Progress (2026-09-24):** M1.2 implementation is underway on `feat/incremental-queue-persistence` ([PR #55](https://github.com/ajbergh/yt-dl-go/pull/55)). The branch adds a transactional migration from the legacy queue JSON to normalized `queue_items`, updates queue/file/failure rows only when their stored fields change, and routes job snapshots, settings, queue order, and deletion writes through a FIFO persistence writer that releases the global job mutex while SQLite runs. Shutdown now drains the writer after HTTP handlers and workers stop. CI exposed a retry becoming schedulable before its save finished and a Library migration repair case after the schema advanced; both were corrected. Repeated race runs showed that no-op SQL calls remained for child rows, so the latest follow-up adds persisted-state caches for queue, file, failure, and Library rows; only changed or removed records now issue SQL. M1.2 remains in progress pending passing CI and merge.
+**Progress (2026-09-24):** Merged by [PR #55](https://github.com/ajbergh/yt-dl-go/pull/55) as `3a8e4b0`. Adds a transactional migration from the legacy queue JSON to normalized `queue_items`, updates queue/file/failure rows only when stored fields change, and routes job snapshots, settings, queue order, and deletion writes through a FIFO persistence writer that releases the global job mutex while SQLite runs. Shutdown drains the writer after HTTP handlers and workers stop. Follow-up fixes ensure retries are not schedulable before their save completes, repair a missing Library table even when the schema version advanced, and cache persisted queue/file/failure/Library signatures so no-op child-row writes are skipped. All nine final CI checks passed, including Go tests and race tests, golangci-lint, Go and JavaScript analysis, CodeQL, and Linux, Windows, and macOS builds.
 
 ### M1.3 Pagination, filtering, and indexes
 
 **Status:** [ ] · **P1** · **Area:** API / persistence
 
-`GET /api/jobs` returns every job with full `Items` arrays (`server.go:400-407`), and the SSE snapshot does the same (`events.go:134-143`). There are no indexes beyond primary keys.
+`GET /api/jobs` returns every job with full `Items` arrays (`server.go:400-407`), and the SSE snapshot does the same (`events.go:134-143`). Existing secondary indexes cover queue positions and Library provenance, but the Library has no search/facet indexes and loads every matching file row.
 
 #### Scope
 
 - Cursor-paginated `GET /api/library` with server-side search, sort, and category/channel/type facets.
 - Indexes on `created_at`, `status`, category, and channel.
 - Move the search index from the frontend (`home.tsx:147`) to SQLite, e.g. FTS5 (supported by `modernc.org/sqlite`).
+
+**Implementation note (2026-09-24):** Repository review confirmed that `/api/jobs` and SSE payloads feed the complete active queue and should remain unchanged in this slice. `/api/library` currently loads the full durable result set; Library facets and search are computed in the browser. Its result rows are grouped by source job, so pagination must select job groups first and then load every file for each selected job. Preserve newest-source-job ordering with a stable cursor and define global totals/facets separately from page contents. Existing indexes are `queue_items(job_id, position)` and `library_items(source_job_id, source_item_index)`; category/channel search fields currently live inside JSON and need indexed columns or a search table. Free-text substring matching is not equivalent to FTS token search, so keep that behavior explicit when designing the migration/API.
 
 ### M1.4 Stable default data directory
 
