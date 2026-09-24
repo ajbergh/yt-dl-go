@@ -91,6 +91,7 @@ func TestPlaybackPolicyTargetsRequestedCodecFamily(t *testing.T) {
 		{name: "VP9 WebM", mime: `video/webm; codecs="vp09.00.51.08"`, pattern: "(?:av01|av1)", preference: "480", ok: true},
 		{name: "AV1 WebM", mime: `video/webm; codecs="av01.0.12M.08"`, pattern: "(?:vp09|vp9|vp8)", ok: true},
 		{name: "Opus WebM", mime: `audio/webm; codecs="opus"`, pattern: "(?:mp4a|audio\\/mp4)", ok: true},
+		{name: "AAC MP4", mime: `audio/mp4; codecs="mp4a.40.2"`, pattern: "(?:opus|audio\\/webm)", ok: true},
 		{name: "unsupported VP8", mime: `video/webm; codecs="vp8"`, ok: false},
 	}
 	for _, test := range tests {

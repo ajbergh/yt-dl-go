@@ -372,7 +372,7 @@ Naming tokens are replaced by iterating a Go map (`output.go:165-169`), and map 
 
 ### M2.5 Bound SABR capture memory
 
-**Status:** [~] Implementation underway on `roadmap/m2-5-bound-sabr-ready-memory` · **P1** · **Area:** engine
+**Status:** [x] Merged by PR #39 · **P1** · **Area:** engine
 
 Out-of-order SABR segments accumulate in `capture.ready` with no aggregate limit (`sabr.go:385`). The budget is checked per segment (`sabr.go:298`) and at write time (`sabr.go:450`), not across the buffer, so a missing first sequence can hold a whole track in RAM.
 
@@ -381,11 +381,11 @@ Out-of-order SABR segments accumulate in `capture.ready` with no aggregate limit
 - Cap the ready-buffer size in bytes, spilling to disk or failing over to the range path.
 - Re-evaluate `maxSABRParts = 10000` (`sabr.go:25`) for multi-hour 4K responses.
 
-**Progress (2026-09-23):** RepoTracer confirmed out-of-order `capture.ready` data had no aggregate accounting and reproduced it exceeding the track budget when the init/earlier sequence was missing. The implementation now caps queued out-of-order fragment data at 64 MiB and returns a SABR limit error so existing browser cleanup can fall through to native HTTP ranges. Byte accounting is released on ordered flush and reset with short-candidate state. The UMP part-count guard is raised to 100,000 while retaining the 32 MiB per-part and 128 MiB browser response limits. Focused tests pass for cap rejection, flush/reset accounting, native-range fallback, and the raised parser boundary. Full validation and PR pending. This limit covers `capture.ready`; it does not claim to cap all process memory used by the existing bounded browser response buffer or a fragment currently being assembled.
+**Progress (2026-09-23):** Merged by [PR #39](https://github.com/ajbergh/yt-dl-go/pull/39) (`ee6f120`) after two complete source-validation runs, Go/frontend analysis, CodeQL, and Linux, Windows, and macOS package builds passed. Out-of-order `capture.ready` bytes are capped at 64 MiB; overflow fails browser capture so existing cleanup can fall through to native HTTP ranges. Byte accounting is released on ordered flush and reset with short-candidate state. The UMP part-count guard is 100,000; the 32 MiB per-part and 128 MiB browser response limits remain. Tests cover cap rejection, flush/reset accounting, range fallback, and parser boundaries. This limit covers `capture.ready`, not all process memory used by the browser response buffer or a fragment currently being assembled.
 
 ### M2.6 Higher-quality audio for adaptive MP4
 
-**Status:** [ ] · **P1** · **Area:** engine / quality
+**Status:** [~] Implementation underway on `roadmap/m2-6-prefer-adaptive-aac` · **P1** · **Area:** engine / quality
 
 Adaptive H.264 MP4 output takes its AAC track from the progressive itag-18 stream, about 96 kbps (`worker.go:1811-1814`). That is a documented workaround for mid-range rejection of adaptive AAC URLs. Meanwhile, the channel count is taken from `selection.audio` (`worker.go:2235`).
 
@@ -394,6 +394,7 @@ Adaptive H.264 MP4 output takes its AAC track from the progressive itag-18 strea
 - Try itag 140 (or the best AAC) through the browser/range path first, and fall back to itag 18 with a job note.
 - Take the audio metadata from the track actually muxed.
 - Add a test for channel-count consistency.
+**Progress (2026-09-23):** RepoTracer confirmed selection already chooses the highest-quality adaptive AAC format (commonly itag 140), but `transferAdaptiveMP4` downloaded progressive MP4 audio and passed adaptive AAC metadata to muxing. M2.6 now routes selected AAC through browser capture/native ranges first, downgrades to the verified H.264/AAC progressive source only after a retryable read failure (or when AAC length is unknown), and muxes with the format actually downloaded. Budget estimates reserve the larger known source. Selection, preferred/fallback acquisition, non-read error handling, mux metadata, budget, and browser AAC policy are covered. Go tests, Go vet, frontend typecheck/build/lint, and `git diff --check` pass locally; lint reports 20 existing warnings and no errors. PR and hosted CI pending.
 
 ### M2.7 Browser session pooling and event-driven readiness
 

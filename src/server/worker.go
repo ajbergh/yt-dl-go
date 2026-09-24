@@ -33,6 +33,7 @@ const playlistNote = "Playlist totals cover all entries exposed by YouTube, not 
 const playlistSelectionNote = "Only the selected exposed playlist items are queued; original playlist positions are preserved."
 const unknownLengthNote = "An unknown-length stream is complete only at clean EOF; its original size cannot be independently verified."
 const adaptiveFallbackNote = "The requested adaptive stream could not be completed safely; the optional verified 360p progressive MP4 fallback was downloaded instead."
+const adaptiveMP4AudioFallbackNote = "The adaptive AAC audio track could not be captured safely; the progressive MP4 AAC track was used instead."
 const browserAdaptiveNote = "Adaptive media was streamed through a temporary browser session."
 const vp9PreferenceFallbackNote = "VP9 was preferred but unavailable under the selected quality ceiling; the best supported video format was used instead."
 const av1PreferenceFallbackNote = "AV1 was preferred but unavailable under the selected quality ceiling; the best supported video format was used instead."
@@ -300,7 +301,6 @@ func selectFormatForStrategy(video *youtube.Video, quality, strategy string) (st
 
 	var progressive streamSelection
 	var progressiveFallback *youtube.Format
-	var progressiveMP4Selection streamSelection
 	var compatibilityProgressive streamSelection
 	var progressiveVP9 streamSelection
 	var progressiveAV1 streamSelection
@@ -317,9 +317,6 @@ func selectFormatForStrategy(video *youtube.Video, quality, strategy string) (st
 			progressiveFallback = f
 		}
 		if kind == "video/mp4" {
-			if betterVideoFormat(f, progressiveMP4Selection.video) {
-				progressiveMP4Selection = streamSelection{video: f, kind: kind}
-			}
 			if codecFamily(codecs) == "h264" && strings.Contains(codecs, "mp4a") && betterVideoFormat(f, compatibilityProgressive.video) {
 				compatibilityProgressive = streamSelection{video: f, kind: kind}
 			}
@@ -359,7 +356,9 @@ func selectFormatForStrategy(video *youtube.Video, quality, strategy string) (st
 	}
 
 	var adaptiveMP4 streamSelection
-	progressiveMP4 := progressiveMP4Selection.video
+	// Adaptive MP4 audio fallback must be the verified H.264/AAC progressive
+	// format so the muxer always receives AAC metadata for an AAC track.
+	progressiveMP4 := compatibilityProgressive.video
 	if aacAudio != nil {
 		for i := range video.Formats {
 			f := &video.Formats[i]
@@ -854,10 +853,14 @@ func estimatedItemBudget(j *jobState, video *youtube.Video, format *youtube.Form
 			// Reserve bounded headroom instead of rejecting a valid final mux.
 			estimated += max(int64(1024*1024), estimated/20)
 		} else {
-			if selection.progressive == nil || selection.progressive.ContentLength <= 0 {
+			audioBytes := selection.audio.ContentLength
+			if selection.progressive != nil && selection.progressive.ContentLength > audioBytes {
+				audioBytes = selection.progressive.ContentLength
+			}
+			if audioBytes <= 0 {
 				return 0
 			}
-			estimated = selection.video.ContentLength + selection.progressive.ContentLength
+			estimated = selection.video.ContentLength + audioBytes
 		}
 	} else {
 		if format == nil || format.ContentLength <= 0 {
@@ -1878,6 +1881,14 @@ func (s *server) noteAdaptiveFallback(j *jobState) {
 	s.mu.Unlock()
 }
 
+func (s *server) noteAdaptiveMP4AudioFallback(j *jobState) {
+	s.mu.Lock()
+	if !strings.Contains(j.Note, adaptiveMP4AudioFallbackNote) {
+		j.Note += " " + adaptiveMP4AudioFallbackNote
+	}
+	s.mu.Unlock()
+}
+
 func (s *server) noteBrowserAdaptive(j *jobState) {
 	s.mu.Lock()
 	if !strings.Contains(j.Note, browserAdaptiveNote) {
@@ -1901,6 +1912,30 @@ func (s *server) noteCodecPreferenceFallback(j *jobState, strategy string) {
 		j.Note += " " + note
 	}
 	s.mu.Unlock()
+}
+
+func downloadAdaptiveMP4Audio(preferred, progressive *youtube.Format, download func(*youtube.Format) error) (used *youtube.Format, usedFallback bool, err error) {
+	if preferred == nil || download == nil {
+		return nil, false, errNoAudio
+	}
+	if preferred.ContentLength <= 0 {
+		if progressive == nil {
+			return nil, false, errLimit
+		}
+		if err := download(progressive); err != nil {
+			return nil, false, err
+		}
+		return progressive, true, nil
+	}
+	if err := download(preferred); err == nil {
+		return preferred, false, nil
+	} else if !errors.Is(err, errRead) || progressive == nil || progressive.ItagNo == preferred.ItagNo {
+		return nil, false, err
+	}
+	if err := download(progressive); err != nil {
+		return nil, false, err
+	}
+	return progressive, true, nil
 }
 
 func (s *server) transferAdaptiveMP4(ctx context.Context, j *jobState, engine nativeClient, video *youtube.Video, selection streamSelection, queueIndex, outputIndex int, budget int64) (result mediaFile, err error) {
@@ -1940,7 +1975,11 @@ func (s *server) transferAdaptiveMP4(ctx context.Context, j *jobState, engine na
 		}
 	}
 
-	totalExpected := selection.video.ContentLength + selection.audio.ContentLength
+	audioExpected := selection.audio.ContentLength
+	if selection.progressive != nil && selection.progressive.ContentLength > audioExpected {
+		audioExpected = selection.progressive.ContentLength
+	}
+	totalExpected := selection.video.ContentLength + audioExpected
 	progressTotal := int64(float64(totalExpected) * 100 / 90)
 	var downloaded int64
 	progress := func(current int64) {
@@ -1968,18 +2007,29 @@ func (s *server) transferAdaptiveMP4(ctx context.Context, j *jobState, engine na
 	if budget-videoSize <= 0 {
 		return result, errLimit
 	}
-	if selection.progressive == nil {
-		return result, errCombined
-	}
-	// Adaptive AAC URLs for some videos are rejected after the first range.
-	// The progressive MP4 is a reliable audio source; mux only its AAC track
-	// with the higher-resolution adaptive video.
-	audioSize, err := s.downloadSource(ctx, j, engine, video, selection.progressive, audioPart, "audio", queueIndex, budget-videoSize, progress)
+	// Prefer the selected highest-quality adaptive AAC track. The downloader
+	// tries browser capture then native ranges and validates per-track identity.
+	// Only a retryable read failure downgrades to the progressive AAC source.
+	var audioSize int64
+	var audioBrowserUsed bool
+	actualAudio, usedFallback, err := downloadAdaptiveMP4Audio(selection.audio, selection.progressive, func(format *youtube.Format) error {
+		size, usedBrowser, downloadErr := s.downloadAdaptiveRanges(ctx, j, engine, video, format, audioPart, "audio", queueIndex, budget-videoSize, progress, browserProvider)
+		if downloadErr == nil {
+			audioSize, audioBrowserUsed = size, usedBrowser
+		}
+		return downloadErr
+	})
 	if err != nil {
 		return result, err
 	}
+	if usedFallback {
+		s.noteAdaptiveMP4AudioFallback(j)
+	}
+	if audioBrowserUsed {
+		s.noteBrowserAdaptive(j)
+	}
 	downloaded += audioSize
-	if err := muxMP4(ctx, videoPart, audioPart, outputPart, selection.video, selection.audio); err != nil {
+	if err := muxMP4(ctx, videoPart, audioPart, outputPart, selection.video, actualAudio); err != nil {
 		if errors.Is(err, errStorage) {
 			s.recordPersistenceFailure("finalize MP4 output", j.ID, err)
 		}

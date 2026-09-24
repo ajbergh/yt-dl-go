@@ -736,6 +736,8 @@ func playbackPolicy(format *youtube.Format) (playbackCodecPolicy, bool) {
 		return playbackCodecPolicy{unsupportedPattern: "(?:vp09|vp9|vp8)"}, true
 	case kind == "audio/webm" && family == "opus":
 		return playbackCodecPolicy{unsupportedPattern: "(?:mp4a|audio\\/mp4)"}, true
+	case kind == "audio/mp4" && family == "aac":
+		return playbackCodecPolicy{unsupportedPattern: "(?:opus|audio\\/webm)"}, true
 	default:
 		return playbackCodecPolicy{}, false
 	}

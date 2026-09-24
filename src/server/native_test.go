@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strings"
 	"sync"
@@ -125,6 +126,12 @@ func TestFormatSelection(t *testing.T) {
 	if compatKind != "video/mp4" || codecFamily(compatCodecs) != "h264" || compatibility.audio == nil {
 		t.Fatalf("compatibility strategy emitted non-H.264/AAC MP4: %+v", compatibility)
 	}
+	if compatibility.audio.ItagNo != 140 {
+		t.Fatalf("adaptive MP4 selected AAC itag %d, want highest-quality AAC itag 140", compatibility.audio.ItagNo)
+	}
+	if compatibility.progressive == nil || compatibility.progressive.ItagNo != 18 {
+		t.Fatalf("adaptive MP4 fallback = %+v, want verified progressive H.264/AAC itag 18", compatibility.progressive)
+	}
 
 	vp9Preferred, err := selectFormatForStrategy(high, "2160", "vp9")
 	if err != nil || vp9Preferred.video == nil || vp9Preferred.video.Height != 1440 || vp9Preferred.preferenceFallback != "" {
@@ -225,6 +232,86 @@ func TestFormatSelection(t *testing.T) {
 	video.HLSManifestURL, video.DASHManifestURL = "", "https://public.invalid/manifest"
 	if _, err := selectFormat(video, "best"); !errors.Is(err, errManifest) {
 		t.Fatal("DASH manifest source was accepted")
+	}
+}
+
+func TestAdaptiveMP4AudioFallbackUsesActualMuxMetadata(t *testing.T) {
+	preferred := &youtube.Format{ItagNo: 140, AudioChannels: 6, ContentLength: 1000}
+	progressive := &youtube.Format{ItagNo: 18, AudioChannels: 2, ContentLength: 1200}
+	var attempted []int
+	used, fallback, err := downloadAdaptiveMP4Audio(preferred, progressive, func(format *youtube.Format) error {
+		attempted = append(attempted, format.ItagNo)
+		if format.ItagNo == preferred.ItagNo {
+			return errRead
+		}
+		return nil
+	})
+	if err != nil || !fallback || used != progressive || used.AudioChannels != 2 {
+		t.Fatalf("audio fallback format=%+v fallback=%t error=%v; mux metadata must follow the two-channel progressive track", used, fallback, err)
+	}
+	if !reflect.DeepEqual(attempted, []int{140, 18}) {
+		t.Fatalf("audio acquisition attempted itags %v, want adaptive AAC then progressive AAC", attempted)
+	}
+}
+
+func TestAdaptiveMP4AudioPrefersAACWhenLengthIsKnown(t *testing.T) {
+	preferred := &youtube.Format{ItagNo: 140, AudioChannels: 2, ContentLength: 1000}
+	progressive := &youtube.Format{ItagNo: 18, AudioChannels: 2, ContentLength: 1200}
+	var attempted []int
+	used, fallback, err := downloadAdaptiveMP4Audio(preferred, progressive, func(format *youtube.Format) error {
+		attempted = append(attempted, format.ItagNo)
+		return nil
+	})
+	if err != nil || fallback || used != preferred {
+		t.Fatalf("preferred AAC format=%+v fallback=%t error=%v", used, fallback, err)
+	}
+	if !reflect.DeepEqual(attempted, []int{140}) {
+		t.Fatalf("audio acquisition attempted itags %v, want adaptive AAC only", attempted)
+	}
+}
+
+func TestAdaptiveMP4AudioUsesProgressiveWhenAACLengthIsUnknown(t *testing.T) {
+	preferred := &youtube.Format{ItagNo: 140, AudioChannels: 2}
+	progressive := &youtube.Format{ItagNo: 18, AudioChannels: 2, ContentLength: 1200}
+	var attempted []int
+	used, fallback, err := downloadAdaptiveMP4Audio(preferred, progressive, func(format *youtube.Format) error {
+		attempted = append(attempted, format.ItagNo)
+		return nil
+	})
+	if err != nil || !fallback || used != progressive {
+		t.Fatalf("unknown-length AAC fallback format=%+v fallback=%t error=%v", used, fallback, err)
+	}
+	if !reflect.DeepEqual(attempted, []int{18}) {
+		t.Fatalf("audio acquisition attempted itags %v, want progressive AAC only", attempted)
+	}
+}
+
+func TestAdaptiveMP4AudioDoesNotDowngradeNonReadFailures(t *testing.T) {
+	preferred := &youtube.Format{ItagNo: 140, AudioChannels: 2, ContentLength: 1000}
+	progressive := &youtube.Format{ItagNo: 18, AudioChannels: 2, ContentLength: 1200}
+	calls := 0
+	used, fallback, err := downloadAdaptiveMP4Audio(preferred, progressive, func(*youtube.Format) error {
+		calls++
+		return errStorage
+	})
+	if !errors.Is(err, errStorage) || used != nil || fallback || calls != 1 {
+		t.Fatalf("non-read failure downgraded: format=%+v fallback=%t calls=%d error=%v", used, fallback, calls, err)
+	}
+}
+
+func TestAdaptiveMP4BudgetReservesLargerAACOrProgressiveSource(t *testing.T) {
+	job := &jobState{Job: Job{MediaType: "video"}}
+	selection := streamSelection{
+		video:       &youtube.Format{ContentLength: 1000},
+		audio:       &youtube.Format{ContentLength: 2000},
+		progressive: &youtube.Format{ContentLength: 3000},
+	}
+	if got := estimatedItemBudget(job, nil, nil, selection); got != 4000 {
+		t.Fatalf("adaptive MP4 budget = %d, want video plus the larger progressive audio source (4000)", got)
+	}
+	selection.audio.ContentLength = 5000
+	if got := estimatedItemBudget(job, nil, nil, selection); got != 6000 {
+		t.Fatalf("adaptive MP4 budget = %d, want video plus the larger AAC source (6000)", got)
 	}
 }
 
