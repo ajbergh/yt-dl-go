@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"testing"
 	"time"
@@ -89,6 +90,65 @@ func TestBandwidthLimiterLiveUnlimitedRelease(t *testing.T) {
 	}
 	if limiter.Limit() != 0 {
 		t.Fatalf("limit = %d, want unlimited", limiter.Limit())
+	}
+}
+
+func TestBandwidthLimiterSubNanosecondWaitMakesProgress(t *testing.T) {
+	limiter := newBandwidthLimiter(maxBandwidthLimitBytesPerSec)
+	limiter.mu.Lock()
+	limiter.tokens = 0
+	limiter.last = time.Now()
+	waiter := &bandwidthWaiter{}
+	limiter.queue = append(limiter.queue, waiter)
+	wait := limiter.waitDurationLocked(waiter, 1, limiter.last)
+	limiter.queue = nil
+	limiter.mu.Unlock()
+	if wait != time.Nanosecond {
+		t.Fatalf("sub-nanosecond token wait = %s, want 1ns minimum", wait)
+	}
+
+	done := make(chan int, 1)
+	go func() {
+		grant, err := limiter.acquire(context.Background(), 1)
+		if err != nil {
+			done <- -1
+			return
+		}
+		done <- grant
+	}()
+
+	select {
+	case grant := <-done:
+		if grant != 1 {
+			t.Fatalf("grant = %d, want 1", grant)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("sub-nanosecond token delay did not make progress")
+	}
+}
+
+func TestBandwidthReaderAppliesLimitChangedAfterConstruction(t *testing.T) {
+	limiter := newBandwidthLimiter(0)
+	reader := (&server{bandwidth: limiter}).bandwidthReader(context.Background(), bytes.NewReader([]byte("data")))
+	limiter.SetLimit(1024)
+	freezeBandwidthRefill(limiter)
+
+	readDone := make(chan error, 1)
+	go func() {
+		buffer := make([]byte, 4)
+		_, err := reader.Read(buffer)
+		readDone <- err
+	}()
+	waitBandwidthQueue(t, limiter, 1)
+
+	limiter.SetLimit(0)
+	select {
+	case err := <-readDone:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("reader created while unlimited did not observe the live limit change")
 	}
 }
 

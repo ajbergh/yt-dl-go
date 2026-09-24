@@ -432,7 +432,7 @@ Adaptive H.264 MP4 output takes its AAC track from the progressive itag-18 strea
 
 ### M2.9 Bandwidth limiter improvements
 
-**Status:** [ ] · **P2** · **Area:** engine
+**Status:** [~] · **P2** · **Area:** engine
 
 - Any bandwidth limit turns off browser HD capture entirely (`worker.go:1773, 1891`).
 - The limiter polls every 5 ms (`bandwidth.go:281`).
@@ -440,9 +440,11 @@ Adaptive H.264 MP4 output takes its AAC track from the progressive itag-18 strea
 
 #### Scope
 
-- Always wrap readers so limit changes apply live.
-- Replace polling with timer-based waits.
-- Investigate CDP `Network.emulateNetworkConditions` so browser capture can stay on under a limit.
+- [x] Always wrap readers so limit changes apply live.
+- [x] Replace polling with timer-based waits.
+- [x] Investigate CDP `Network.emulateNetworkConditions` so browser capture can stay on under a limit.
+
+**Progress (2026-09-23):** Live native reader wrapping and timer-based FIFO waits are implemented on `roadmap/m2-9-live-bandwidth`. Limit changes wake queued transfers immediately; wait timers target a useful chunk rather than polling, and context cancellation still removes waiters. Regression coverage exercises a reader created while unlimited, immediate release when switched back to unlimited, and sub-nanosecond delay progress. CDP network emulation is available through the leased target's scoped CDP context, but its download limit is per target. Applying the configured server-wide cap independently to multiple browser targets would permit aggregate throughput above the setting, and native transfers would remain outside that CDP accounting. Browser capture therefore remains disabled while a cap is active until a shared arbiter can account for browser and native traffic together. Targeted bandwidth tests, the full Go suite, and `go vet` pass locally; the race suite requires cgo, which is disabled in this Windows environment.
 
 ### M2.10 Outbound proxy support
 
