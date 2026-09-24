@@ -4,7 +4,7 @@ import { act, createElement } from "react";
 import { HomePage } from "./pages/home";
 import { mergeJobActionResult } from "./hooks/use-jobs";
 import { terminalNotification } from "./components/downloader/view-model";
-import { namingTokenNames, previewFilename } from "./lib/naming";
+import { namingTokenNames, previewFilename, sanitizeFilenameComponent } from "./lib/naming";
 
 describe("filename naming preview", () => {
   test("shows each token and sanitizes the single-pass preview like the publisher", () => {
@@ -16,8 +16,9 @@ describe("filename naming preview", () => {
     values["{codec}"] = "h264";
     values["{ext}"] = "mp4";
     expect(previewFilename("{channel} - {title} [{id}] [{fps}] [{codec}] {ext}", values, "mp4"))
-      .toBe("{title} - _CON- sample [abc123] [60] [h264] mp4.mp4");
+      .toBe("{title} - CON- sample [abc123] [60] [h264] mp4.mp4");
     expect(previewFilename("sample.{ext}", values, "mp4")).toBe("sample.mp4");
+    expect(sanitizeFilenameComponent("CON")).toBe("_CON");
   });
 });
 
