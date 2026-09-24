@@ -177,7 +177,12 @@ func (s *server) serveThumbnail(w http.ResponseWriter, r *http.Request, jobID st
 	fileID := values[0]
 
 	s.mu.Lock()
-	j := s.jobs[jobID]
+	j, hydrated, err := s.hydrateTerminalJobLocked(jobID)
+	if err != nil {
+		s.mu.Unlock()
+		fail(w, http.StatusInternalServerError, "Could not load the saved job")
+		return
+	}
 	if j == nil {
 		s.mu.Unlock()
 		fail(w, http.StatusNotFound, "Job not found")
@@ -209,6 +214,13 @@ func (s *server) serveThumbnail(w http.ResponseWriter, r *http.Request, jobID st
 	}
 	j.readers++
 	s.mu.Unlock()
+	if hydrated {
+		defer func() {
+			s.mu.Lock()
+			s.evictTerminalJobLocked(j)
+			s.mu.Unlock()
+		}()
+	}
 	defer func() {
 		s.mu.Lock()
 		j.readers--

@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"os"
@@ -1084,7 +1085,15 @@ func TestLocalThumbnailCapturePersistenceAndServing(t *testing.T) {
 		t.Fatalf("local thumbnail metadata missing: %+v", file)
 	}
 
-	response := request(s, "GET", "/api/jobs/"+j.ID+"/thumbnail?fileId="+file.ID, "", nil)
+	// Simulate the ordinary terminal-job eviction before serving the local
+	// thumbnail. The handler must hydrate the persisted record under its lock.
+	s.mu.Lock()
+	delete(s.jobs, j.ID)
+	s.mu.Unlock()
+	thumbnailRequest := httptest.NewRequest(http.MethodGet, "/api/jobs/"+j.ID+"/thumbnail?fileId="+file.ID, nil)
+	thumbnailResponse := httptest.NewRecorder()
+	s.serveThumbnail(thumbnailResponse, thumbnailRequest, j.ID)
+	response := thumbnailResponse
 	if response.Code != 200 || response.Body.String() != thumbnailData || response.Header().Get("Content-Type") != "image/jpeg" {
 		t.Fatalf("serve local thumbnail: %d %q %q", response.Code, response.Body.String(), response.Header().Get("Content-Type"))
 	}
