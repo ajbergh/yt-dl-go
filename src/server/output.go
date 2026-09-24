@@ -530,3 +530,64 @@ func removeManagedCopies(j *jobState) error {
 	}
 	return nil
 }
+
+// removeManagedCopyForFile removes one private media item and its managed
+// sidecars while preserving every sibling and all published output.
+func removeManagedCopyForFile(j *jobState, file *mediaFile) error {
+	if j == nil || file == nil {
+		return errors.New("Library file is unavailable")
+	}
+	if file.ManagedAvailable {
+		path := filepath.Join(j.dir, file.Name)
+		managed, err := openFinal(j.dir, file.Name)
+		if err != nil {
+			if _, statErr := os.Lstat(path); !errors.Is(statErr, os.ErrNotExist) {
+				return errors.New("the managed media path is invalid")
+			}
+		} else {
+			info, statErr := managed.Stat()
+			_ = managed.Close()
+			if statErr != nil || info.Size() != file.Size {
+				return errors.New("the managed media file has changed")
+			}
+			if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+				return err
+			}
+		}
+		file.ManagedAvailable = false
+	}
+	if file.Subtitle != nil && file.Subtitle.ManagedAvailable {
+		managed, err := openSubtitleManaged(j.dir, *file.Subtitle)
+		if err != nil {
+			path := filepath.Join(j.dir, file.Subtitle.Name)
+			if _, statErr := os.Lstat(path); !errors.Is(statErr, os.ErrNotExist) {
+				return errors.New("the managed caption path is invalid")
+			}
+		} else {
+			_ = managed.Close()
+			if err := os.Remove(filepath.Join(j.dir, file.Subtitle.Name)); err != nil && !errors.Is(err, os.ErrNotExist) {
+				return err
+			}
+		}
+		file.Subtitle.ManagedAvailable = false
+	}
+	if file.ThumbnailLocalAvailable {
+		path, err := thumbnailPath(j, *file)
+		if err != nil {
+			return err
+		}
+		info, statErr := os.Lstat(path)
+		if statErr == nil {
+			if !info.Mode().IsRegular() {
+				return errors.New("the local thumbnail path is invalid")
+			}
+			if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+				return err
+			}
+		} else if !errors.Is(statErr, os.ErrNotExist) {
+			return statErr
+		}
+		file.ThumbnailLocalAvailable = false
+	}
+	return nil
+}

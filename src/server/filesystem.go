@@ -127,6 +127,11 @@ func (s *server) handleFilesystem(w http.ResponseWriter, r *http.Request, jobID 
 		fail(w, 404, "Job not found")
 		return
 	}
+	if j.deleting {
+		s.mu.Unlock()
+		fail(w, http.StatusConflict, "This job is being removed or updated")
+		return
+	}
 	if !terminal(j.Status) {
 		s.mu.Unlock()
 		fail(w, 409, "Filesystem actions are available only for stopped jobs")

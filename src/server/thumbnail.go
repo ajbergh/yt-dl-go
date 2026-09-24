@@ -183,6 +183,11 @@ func (s *server) serveThumbnail(w http.ResponseWriter, r *http.Request, jobID st
 		fail(w, http.StatusNotFound, "Job not found")
 		return
 	}
+	if j.deleting {
+		s.mu.Unlock()
+		fail(w, http.StatusConflict, "This job is being removed or updated")
+		return
+	}
 	var selected mediaFile
 	found := false
 	for _, file := range j.Files {

@@ -14,7 +14,7 @@ type LibraryStats = {
   publishedBytes: number;
 };
 
-type LibraryJobAction = "retry" | "remove" | "delete-managed" | "delete-published" | "delete-all";
+type LibraryJobAction = "retry" | "remove" | "remove-library-item" | "delete-managed" | "delete-published" | "delete-all";
 
 type LibraryPageProps = {
   libraryJobs: DownloadJob[];
@@ -41,7 +41,7 @@ type LibraryPageProps = {
   previewFile: (job: DownloadJob, file: DownloadFile) => void | Promise<void>;
   saveFile: (job: DownloadJob, fileId?: string) => void | Promise<void>;
   filesystemAction: (job: DownloadJob, fileId: string, action: "copy-path" | "reveal" | "open-folder") => void | Promise<void>;
-  jobAction: (job: DownloadJob, action: LibraryJobAction) => void | Promise<void>;
+  jobAction: (job: DownloadJob, action: LibraryJobAction, fileId?: string) => void | Promise<void>;
 };
 
 export function LibraryPage({
@@ -91,6 +91,7 @@ export function LibraryPage({
                       {file.publishedAvailable !== false && file.outputRelativePath && <><button type="button" className={button} disabled={busyAction === `${job.id}:${file.id}:reveal`} onClick={() => void filesystemAction(job, file.id, "reveal")} aria-label={`Reveal ${file.title || file.name} in folder`} title="Reveal published file in its folder"><FolderTree className="size-3.5" aria-hidden="true" /><span className="hidden xl:inline">Reveal</span></button><button type="button" className={button} disabled={busyAction === `${job.id}:${file.id}:open-folder`} onClick={() => void filesystemAction(job, file.id, "open-folder")} aria-label={`Open folder for ${file.title || file.name}`} title="Open published output folder"><Folder className="size-3.5" aria-hidden="true" /><span className="hidden xl:inline">Folder</span></button><button type="button" className={button} disabled={busyAction === `${job.id}:${file.id}:copy-path`} onClick={() => void filesystemAction(job, file.id, "copy-path")} aria-label={`Copy path for ${file.title || file.name}`} title="Copy absolute published path"><FileText className="size-3.5" aria-hidden="true" /><span className="hidden xl:inline">Path</span></button></>}
                       <button type="button" className={button} disabled={busyAction === `${job.id}:${file.id}:preview` || file.managedAvailable === false} onClick={() => void previewFile(job, file)} aria-label={`Preview ${file.title || file.name}`} title={file.managedAvailable === false ? "Preview requires an app-managed copy" : "Preview local media"}><Play className="size-3.5" aria-hidden="true" /><span className="hidden sm:inline">Preview</span></button>
                       <button type="button" className={button} disabled={busyAction === `${job.id}:${file.id}` || file.managedAvailable === false} onClick={() => void saveFile(job, file.id)} aria-label={`Save ${file.title || file.name}`} title={file.managedAvailable === false ? "The app-managed copy has been removed" : "Save a copy through the browser"}><ArrowDownToLine className="size-3.5" aria-hidden="true" /><span className="hidden sm:inline">Save</span></button>
+                      <button type="button" className={button} disabled={busyAction === job.id} onClick={() => void jobAction(job, "remove-library-item", file.id)} aria-label={`Remove ${file.title || file.name} from Library`} title="Remove this file from the Library while preserving published output and history"><Trash2 className="size-3.5" aria-hidden="true" /><span className="hidden sm:inline">Remove file</span></button>
                     </div>
                   </div>)}
                 </div>
