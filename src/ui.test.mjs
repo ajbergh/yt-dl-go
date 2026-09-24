@@ -679,7 +679,8 @@ describe("Downloader UI and Go API integration", () => {
 
   test("previews managed media through an inline scoped ticket without autoplay", async () => {
     rows = [{ ...job, status: "completed", completedCount: 1, totalCount: 1, files: [
-      { id: "preview-file", name: "001-preview.mp4", title: "Preview clip", size: 1024, mimeType: "video/mp4", managedAvailable: true, publishedAvailable: false },
+      { id: "preview-file", name: "001-preview.mp4", title: "Preview clip", size: 1024, mimeType: "video/mp4", managedAvailable: true, publishedAvailable: false,
+        chapters: [{ startMs: 0, endMs: 75000, title: "Opening" }, { startMs: 75000, endMs: 120000, title: "Second chapter" }] },
     ] }];
     await remount();
     await connect();
@@ -694,6 +695,9 @@ describe("Downloader UI and Go API integration", () => {
     expect(video).toBeTruthy();
     expect(video.autoplay).toBe(false);
     expect(video.getAttribute("src")).toBe("http://127.0.0.1:8080/api/downloads/test-ticket");
+    expect(dialog.textContent).toContain("Opening");
+    await click(button("Second chapter"));
+    expect(video.currentTime).toBe(75);
     await click(button("Close"));
     expect(container.querySelector('[role="dialog"]')).toBeFalsy();
   });

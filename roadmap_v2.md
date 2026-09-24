@@ -466,9 +466,9 @@ The media transport sets `Proxy: nil` (`network.go:137`), so users behind a corp
 
 ### M3.1 Metadata for MP4, M4A, and WebM
 
-**Status:** [~] · **P1** · **Area:** engine / media
+**Status:** [x] Merged by PR #46 (`17f0bb0`) · **P1** · **Area:** engine / media
 
-Only MP3 gets tags (`id3.go`). MP4/M4A carry no `ilst` metadata or cover art, and the WebM muxer writes no `Tags` or attachments (`webm_mux.go:218`).
+MP3, MP4/M4A, and WebM outputs now receive supported metadata and cover art.
 
 #### Scope
 
@@ -476,13 +476,13 @@ Only MP3 gets tags (`id3.go`). MP4/M4A carry no `ilst` metadata or cover art, an
 - [x] WebM `Tags` plus a cover attachment.
 - [x] Pure Go only.
 
-**Progress (2026-09-23):** Pure-Go container tagging is in progress on `roadmap/m3-1-container-metadata`. MP4/M4A output is rewritten through a synced sibling temporary file; `moov` is moved to the end so existing media data stays streaming-copyable, and `stco`/`co64` offsets after the old `moov` are corrected. Fragmented MP4 layouts with external segment indexes are left untouched. iTunes-style `ilst` items carry title, artist, playlist album, publish date, canonical source URL in `©cmt`, and bounded JPEG/PNG cover art; WebP is skipped for MP4/M4A. WebM receives `Tags` and an `AttachedFile` before the first Cluster; the reserved Cues region is rewritten with shifted cluster positions while its segment length and SeekHead offsets stay fixed. The metadata size is included in each item's reserved job budget when available. If the container structure is unsupported or remaining job budget cannot cover the tags, the original media is preserved and the omission is logged. Focused MP4/WebM fixtures, the full Go suite, `go vet`, and `golangci-lint` pass locally; race/platform CI is pending.
+**Progress (2026-09-24):** Merged by [PR #46](https://github.com/ajbergh/yt-dl-go/pull/46) (`17f0bb0`). CI passed on Linux, Windows, and macOS, including race tests, CodeQL, and production builds. MP4/M4A metadata and WebM tags/attachments are rewritten atomically with pure Go; unsupported fragmented MP4 and over-budget rewrites preserve the original media.
 
 ### M3.2 Chapters
 
-**Status:** [ ] · **P1** · **Area:** engine / media
+**Status:** [~] Chapter metadata and container/preview work underway · **P1** · **Area:** engine / media
 
-Chapters appear nowhere in the codebase.
+The current metadata pipeline has no chapter model. YouTube chapter timestamps are available in the description, but parsing, Library persistence, container writing, and preview navigation need to be added.
 
 #### Scope
 
@@ -490,6 +490,8 @@ Chapters appear nowhere in the codebase.
 - Write MP4 chapter tracks / Nero `chpl` atoms and WebM `Chapters`.
 - Show chapters in the preview player.
 - Offer an option to split audio downloads by chapter.
+
+**Progress (2026-09-24):** M3.1 is merged by [PR #46](https://github.com/ajbergh/yt-dl-go/pull/46). On `roadmap/m3-2-chapters`, the first increment parses and validates timestamp/title lines from YouTube descriptions; exposes chapters in inspection and Library records; persists them through SQLite migration 18; writes Nero `chpl` for MP4/M4A and Matroska `Chapters` for WebM; and adds preview controls that seek to each chapter. Go tests, `go vet`, `golangci-lint`, and `npm run check` pass locally. PR CI is pending; Bun is unavailable in this local environment, so the existing Bun UI suite will be verified in CI. Audio splitting remains outstanding: it needs the Library model to support multiple outputs per source item and will be implemented before M3.2 is complete.
 
 ### M3.3 Embedded subtitles and thumbnails
 

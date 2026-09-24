@@ -30,27 +30,28 @@ const contentSecurityPolicy = "default-src 'self'; " +
 	"frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
 
 type mediaFile struct {
-	ID                      string        `json:"id"`
-	Name                    string        `json:"name"`
-	Size                    int64         `json:"size"`
-	Height                  int           `json:"height"`
-	MimeType                string        `json:"mimeType"`
-	Title                   string        `json:"title,omitempty"`
-	Author                  string        `json:"author,omitempty"`
-	DurationSeconds         int64         `json:"durationSeconds,omitempty"`
-	ThumbnailURL            string        `json:"thumbnailUrl,omitempty"`
-	ThumbnailLocalAvailable bool          `json:"thumbnailLocalAvailable,omitempty"`
-	ThumbnailMimeType       string        `json:"thumbnailMimeType,omitempty"`
-	PublishDate             string        `json:"publishDate,omitempty"`
-	Category                string        `json:"category,omitempty"`
-	MediaType               string        `json:"mediaType,omitempty"`
-	OutputName              string        `json:"outputName,omitempty"`
-	OutputPath              string        `json:"-"`
-	OutputRelativePath      string        `json:"outputRelativePath,omitempty"`
-	ManagedAvailable        bool          `json:"managedAvailable"`
-	PublishedAvailable      bool          `json:"publishedAvailable"`
-	Subtitle                *subtitleFile `json:"subtitle,omitempty"`
-	SubtitleError           string        `json:"subtitleError,omitempty"`
+	ID                      string         `json:"id"`
+	Name                    string         `json:"name"`
+	Size                    int64          `json:"size"`
+	Height                  int            `json:"height"`
+	MimeType                string         `json:"mimeType"`
+	Title                   string         `json:"title,omitempty"`
+	Author                  string         `json:"author,omitempty"`
+	DurationSeconds         int64          `json:"durationSeconds,omitempty"`
+	ThumbnailURL            string         `json:"thumbnailUrl,omitempty"`
+	ThumbnailLocalAvailable bool           `json:"thumbnailLocalAvailable,omitempty"`
+	ThumbnailMimeType       string         `json:"thumbnailMimeType,omitempty"`
+	PublishDate             string         `json:"publishDate,omitempty"`
+	Category                string         `json:"category,omitempty"`
+	MediaType               string         `json:"mediaType,omitempty"`
+	OutputName              string         `json:"outputName,omitempty"`
+	OutputPath              string         `json:"-"`
+	OutputRelativePath      string         `json:"outputRelativePath,omitempty"`
+	ManagedAvailable        bool           `json:"managedAvailable"`
+	PublishedAvailable      bool           `json:"publishedAvailable"`
+	Subtitle                *subtitleFile  `json:"subtitle,omitempty"`
+	SubtitleError           string         `json:"subtitleError,omitempty"`
+	Chapters                []mediaChapter `json:"chapters,omitempty"`
 	naming                  namingValues
 }
 

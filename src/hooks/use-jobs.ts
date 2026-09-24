@@ -47,7 +47,7 @@ export function useJobs({
 }: UseJobsOptions) {
   const [busyAction, setBusyAction] = useState("");
   const [actionError, setActionError] = useState("");
-  const [preview, setPreview] = useState<{ title: string; url: string; mimeType: string } | null>(null);
+  const [preview, setPreview] = useState<{ title: string; url: string; mimeType: string; chapters: NonNullable<DownloadFile["chapters"]> } | null>(null);
   const [clearedQueueItems, setClearedQueueItems] = useState<string[]>(() => {
     try {
       const stored = window.localStorage.getItem(clearedQueueItemsKey);
@@ -142,6 +142,7 @@ export function useJobs({
         title: file.title || file.outputName || file.name,
         url: `${connection.base}${ticket.path}`,
         mimeType: file.mimeType || (job.mediaType === "audio" ? "audio/mpeg" : "video/mp4"),
+        chapters: file.chapters ?? [],
       });
     } catch (error) {
       setActionError(errorMessage(error));

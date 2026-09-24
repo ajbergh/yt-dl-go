@@ -482,6 +482,11 @@ func TestSubtitleSidecarDownloadAndPublishing(t *testing.T) {
 
 func TestInspectionPreferencesRetryAndRemoval(t *testing.T) {
 	fake := fixtureClient(3)
+	fake.videoFn = func(_ context.Context, id string) (*youtube.Video, error) {
+		video := fixtureVideo(id)
+		video.Description = "0:00 Opening\n1:00 Main section\n"
+		return video, nil
+	}
 	s := testServer(t, fake, nil)
 
 	inspectionResponse := request(s, "POST", "/api/inspect", `{"url":"`+testVideo+`"}`, nil)
@@ -491,6 +496,9 @@ func TestInspectionPreferencesRetryAndRemoval(t *testing.T) {
 	}
 	if inspected.Title != "Fixture video" || inspected.Author != "Fixture channel" || inspected.DurationSeconds != 300 || inspected.ThumbnailURL == "" || len(inspected.AvailableQuality) == 0 || len(inspected.CaptionTracks) != 2 {
 		t.Fatalf("inspection omitted native metadata, captions, or supported quality: %+v", inspected)
+	}
+	if len(inspected.Chapters) != 2 || inspected.Chapters[1].StartMs != 60_000 || inspected.Chapters[1].EndMs != 300_000 {
+		t.Fatalf("inspection omitted chapter metadata: %+v", inspected.Chapters)
 	}
 	playlistResponse := request(s, "POST", "/api/inspect", `{"url":"`+testPlaylist+`"}`, nil)
 	var playlistInspection inspection
@@ -575,6 +583,28 @@ func TestInspectionPreferencesRetryAndRemoval(t *testing.T) {
 	}
 	if code := request(s, "GET", "/api/jobs/"+failed.ID, "", nil).Code; code != 404 {
 		t.Fatalf("deleted job still available: %d", code)
+	}
+}
+
+func TestDownloadedLibraryFileCarriesDescriptionChapters(t *testing.T) {
+	fake := fixtureClient(1)
+	fake.videoFn = func(_ context.Context, id string) (*youtube.Video, error) {
+		video := fixtureVideo(id)
+		video.Description = "0:00 Opening\n1:15 Main section\n"
+		return video, nil
+	}
+	s := testServer(t, fake, nil)
+	completed := waitTerminal(t, s, createJob(t, s, testVideo).ID)
+	if completed.Status != "completed" || len(completed.Files) != 1 {
+		t.Fatalf("download job = %s, files=%d, error=%q", completed.Status, len(completed.Files), completed.Error)
+	}
+	chapters := completed.Files[0].Chapters
+	if len(chapters) != 2 || chapters[0].EndMs != 75_000 || chapters[1].StartMs != 75_000 || chapters[1].EndMs != 300_000 {
+		t.Fatalf("Library file chapters = %+v", chapters)
+	}
+	response := request(s, "GET", "/api/jobs", "", nil)
+	if response.Code != 200 || !strings.Contains(response.Body.String(), `"chapters":[{"startMs":0,"endMs":75000,"title":"Opening"}`) {
+		t.Fatalf("job API omitted saved Library chapters: %d %s", response.Code, response.Body.String())
 	}
 }
 
