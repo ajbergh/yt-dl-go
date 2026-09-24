@@ -289,7 +289,7 @@ The original unpaged `GET /api/jobs` and SSE snapshot return full active-job sta
 
 ### M1.5 Startup resilience, integrity, and backup
 
-**Status:** [~] Startup integrity preflight active; quarantine, migration backups, export/import, and Windows ACL validation remain · **P1** · **Area:** persistence
+**Status:** [~] Startup integrity preflight merged; automatic migration backups in review; quarantine, export/import, and Windows ACL validation remain · **P1** · **Area:** persistence
 
 One malformed JSON row in `queue_items` or `subtitle_json` makes startup fail fatally with "cannot load download history" (`store.go:798-800, 887-890`; `main.go:208-211`). There is no integrity check or backup.
 
@@ -302,7 +302,9 @@ One malformed JSON row in `queue_items` or `subtitle_json` makes startup fail fa
 - Set the pragmas through DSN `_pragma=` parameters so they survive connection recycling (`store.go:55-61`).
 - Check `DATA_DIR` ACLs on Windows; today it is skipped (`main.go:169`).
 
-**Progress (2026-09-24):** M1.1 and M1.3 are complete, so startup integrity work is next. Repository review found that `openJobStore` applies connection-local PRAGMAs before its sequential migrations; legacy migration v21 and current queue/file loaders abort on malformed JSON, while silently skipping rows could allow later saves to erase evidence. The first bounded slice on `feat/store-integrity-preflight` moves the pragmas into the SQLite DSN and runs `PRAGMA quick_check` before schema initialization and migrations. Quarantine/diagnostics, per-migration `VACUUM INTO` backups, export/import, and Windows ACL policy remain follow-up slices. CI and review are pending.
+**Progress (2026-09-24):** M1.1 and M1.3 are complete. Repository review found that legacy migration v21 and current queue/file loaders abort on malformed JSON, while silently skipping rows could let later saves erase evidence. The startup integrity preflight merged in [PR #72](https://github.com/ajbergh/yt-dl-go/pull/72) as `f0e79fc`: SQLite pragmas now live in the encoded DSN and run on recycled connections; `PRAGMA quick_check` runs before schema initialization/migrations and returns a typed error for detected integrity failures. Regression coverage checks connection recycling, a damaged table constraint, and Windows extended-length database paths. All PR checks passed, including Go/race/source validation, frontend integration and browser E2E, lint/vet, CodeQL, and Linux, Windows, and macOS builds.
+
+`feat/migration-snapshots` implements one v1 snapshot for a fresh database and a `VACUUM INTO` snapshot immediately before each pending migration on an existing database. Failed snapshots abort migration and incomplete `.partial` files are cleaned up; v20 repair also restores the version-appropriate Library indexes and FTS triggers. The change is under review in [PR #73](https://github.com/ajbergh/yt-dl-go/pull/73). Focused snapshot/integrity tests and `go test ./... -count=1` pass locally. The first CI run exposed the existing 15-second wait in `TestCancellationQueueAndTimeout` under race instrumentation; that scenario now allows 45 seconds and passes in the focused local run, with CI rerunning. Quarantine/diagnostics, export/import, and Windows ACL validation remain open.
 
 ### M1.6 Table-driven migrations with fixture tests
 
