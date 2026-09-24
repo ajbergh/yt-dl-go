@@ -26,6 +26,9 @@ type jobStore struct {
 	queueItemsReady   bool
 	queueItemsCacheMu sync.Mutex
 	queueItemsCache   map[string]map[string][]byte
+	jobFilesCache     map[string]map[int][]byte
+	jobFailuresCache  map[string]map[int]string
+	libraryItemsCache map[string]map[string][32]byte
 }
 
 type AppSettings struct {
@@ -1197,12 +1200,19 @@ func (s *jobStore) saveJob(j *jobState) error {
 	if s == nil {
 		return nil
 	}
-	if s.queueItemsReady {
-		s.queueItemsCacheMu.Lock()
-		defer s.queueItemsCacheMu.Unlock()
-		if s.queueItemsCache == nil {
-			s.queueItemsCache = make(map[string]map[string][]byte)
-		}
+	s.queueItemsCacheMu.Lock()
+	defer s.queueItemsCacheMu.Unlock()
+	if s.queueItemsCache == nil {
+		s.queueItemsCache = make(map[string]map[string][]byte)
+	}
+	if s.jobFilesCache == nil {
+		s.jobFilesCache = make(map[string]map[int][]byte)
+	}
+	if s.jobFailuresCache == nil {
+		s.jobFailuresCache = make(map[string]map[int]string)
+	}
+	if s.libraryItemsCache == nil {
+		s.libraryItemsCache = make(map[string]map[string][32]byte)
 	}
 	var progress any
 	if j.Progress != nil {
@@ -1258,27 +1268,34 @@ func (s *jobStore) saveJob(j *jobState) error {
 			return err
 		}
 	}
-	existingFileIndexes := make(map[int]struct{})
-	fileRows, err := tx.Query(`SELECT item_index FROM job_files WHERE job_id=?`, j.ID)
-	if err != nil {
-		return err
+	groups := groupedJobFiles(j)
+	fileCache := s.jobFilesCache[j.ID]
+	existingFileIndexes := make(map[int]struct{}, len(fileCache))
+	for index := range fileCache {
+		existingFileIndexes[index] = struct{}{}
 	}
-	for fileRows.Next() {
-		var index int
-		if err := fileRows.Scan(&index); err != nil {
+	if fileCache == nil {
+		fileRows, err := tx.Query(`SELECT item_index FROM job_files WHERE job_id=?`, j.ID)
+		if err != nil {
+			return err
+		}
+		for fileRows.Next() {
+			var index int
+			if err := fileRows.Scan(&index); err != nil {
+				_ = fileRows.Close()
+				return err
+			}
+			existingFileIndexes[index] = struct{}{}
+		}
+		if err := fileRows.Err(); err != nil {
 			_ = fileRows.Close()
 			return err
 		}
-		existingFileIndexes[index] = struct{}{}
+		if err := fileRows.Close(); err != nil {
+			return err
+		}
 	}
-	if err := fileRows.Err(); err != nil {
-		_ = fileRows.Close()
-		return err
-	}
-	if err := fileRows.Close(); err != nil {
-		return err
-	}
-	groups := groupedJobFiles(j)
+	updatedFileCache := make(map[int][]byte, len(groups))
 	libraryCreatedAt := time.Now().UnixNano()
 	if !j.done.IsZero() {
 		libraryCreatedAt = j.done.UnixNano()
@@ -1294,6 +1311,14 @@ func (s *jobStore) saveJob(j *jobState) error {
 			continue
 		}
 		delete(existingFileIndexes, itemIndex)
+		rowSignature, err := json.Marshal(group)
+		if err != nil {
+			return err
+		}
+		updatedFileCache[itemIndex] = rowSignature
+		if previous, exists := fileCache[itemIndex]; exists && bytes.Equal(previous, rowSignature) {
+			continue
+		}
 		file := group[0]
 		managedAvailable, publishedAvailable, thumbnailLocalAvailable := 0, 0, 0
 		if file.ManagedAvailable {
@@ -1346,32 +1371,48 @@ func (s *jobStore) saveJob(j *jobState) error {
 			return err
 		}
 	}
-	newLibrarySignatures, err := syncLibraryItems(tx, j, groups, libraryCreatedAt)
+	libraryState := *j
+	libraryState.librarySignatures = s.libraryItemsCache[j.ID]
+	if libraryState.librarySignatures == nil {
+		libraryState.librarySignatures = j.librarySignatures
+	}
+	newLibrarySignatures, err := syncLibraryItems(tx, &libraryState, groups, libraryCreatedAt)
 	if err != nil {
 		return err
 	}
-	existingFailureIndexes := make(map[int]struct{})
-	failureRows, err := tx.Query(`SELECT item_index FROM job_failures WHERE job_id=?`, j.ID)
-	if err != nil {
-		return err
+	failureCache := s.jobFailuresCache[j.ID]
+	existingFailureIndexes := make(map[int]struct{}, len(failureCache))
+	for index := range failureCache {
+		existingFailureIndexes[index] = struct{}{}
 	}
-	for failureRows.Next() {
-		var index int
-		if err := failureRows.Scan(&index); err != nil {
+	if failureCache == nil {
+		failureRows, err := tx.Query(`SELECT item_index FROM job_failures WHERE job_id=?`, j.ID)
+		if err != nil {
+			return err
+		}
+		for failureRows.Next() {
+			var index int
+			if err := failureRows.Scan(&index); err != nil {
+				_ = failureRows.Close()
+				return err
+			}
+			existingFailureIndexes[index] = struct{}{}
+		}
+		if err := failureRows.Err(); err != nil {
 			_ = failureRows.Close()
 			return err
 		}
-		existingFailureIndexes[index] = struct{}{}
+		if err := failureRows.Close(); err != nil {
+			return err
+		}
 	}
-	if err := failureRows.Err(); err != nil {
-		_ = failureRows.Close()
-		return err
-	}
-	if err := failureRows.Close(); err != nil {
-		return err
-	}
+	updatedFailureCache := make(map[int]string, len(j.Failures))
 	for _, failure := range j.Failures {
 		delete(existingFailureIndexes, failure.Index)
+		updatedFailureCache[failure.Index] = failure.Error
+		if previous, exists := failureCache[failure.Index]; exists && previous == failure.Error {
+			continue
+		}
 		if _, err = tx.Exec(`INSERT INTO job_failures(job_id,item_index,error) VALUES(?,?,?) ON CONFLICT(job_id,item_index) DO UPDATE SET error=excluded.error WHERE job_failures.error IS NOT excluded.error`, j.ID, failure.Index, failure.Error); err != nil {
 			return err
 		}
@@ -1387,6 +1428,9 @@ func (s *jobStore) saveJob(j *jobState) error {
 	if s.queueItemsReady {
 		s.queueItemsCache[j.ID] = updatedQueueCache
 	}
+	s.jobFilesCache[j.ID] = updatedFileCache
+	s.jobFailuresCache[j.ID] = updatedFailureCache
+	s.libraryItemsCache[j.ID] = newLibrarySignatures
 	j.librarySignatures = newLibrarySignatures
 	return nil
 }
@@ -1541,6 +1585,9 @@ func (s *jobStore) deleteJob(jobID string) error {
 	}
 	s.queueItemsCacheMu.Lock()
 	delete(s.queueItemsCache, jobID)
+	delete(s.jobFilesCache, jobID)
+	delete(s.jobFailuresCache, jobID)
+	delete(s.libraryItemsCache, jobID)
 	s.queueItemsCacheMu.Unlock()
 	return nil
 }

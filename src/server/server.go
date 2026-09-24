@@ -139,6 +139,7 @@ type jobState struct {
 	playlistItemCount   int
 	persistenceFailed   bool
 	persistenceRevision uint64
+	persistedRevision   uint64
 	persistencePending  int
 	deleting            bool
 }
@@ -304,7 +305,8 @@ func (s *server) persistJobSnapshotLocked(j *jobState, operation string) error {
 		s.recordPersistenceFailure(operation, j.ID, err)
 		return err
 	}
-	if j.persistenceRevision == revision {
+	if revision > j.persistedRevision {
+		j.persistedRevision = revision
 		j.librarySignatures = snapshot.librarySignatures
 	}
 	s.recordPersistenceSuccess()
