@@ -263,7 +263,7 @@ Today a Library entry is a retained job (`src/pages/library.tsx:51`), so Library
 
 ### M1.4 Stable default data directory
 
-**Status:** [ ] · **P1** · **Area:** backend / UX
+**Status:** [~] Implementation in review · **P1** · **Area:** backend / UX
 
 `DATA_DIR` defaults to `./downloads` relative to the current working directory (`main.go:80`). Launching from a different folder, a shortcut, or a terminal gives an empty library.
 
@@ -272,6 +272,8 @@ Today a Library entry is a retained job (`src/pages/library.tsx:51`), so Library
 - Default to a per-user application directory: `%LOCALAPPDATA%\yt-dl-go`, `~/Library/Application Support/yt-dl-go`, or `$XDG_DATA_HOME/yt-dl-go`.
 - Keep `DATA_DIR` as an override.
 - Detect a legacy `./downloads/state.db` and offer a one-time migration.
+
+**Progress (2026-09-24):** The per-user default, DATA_DIR override, and explicit copy-based migration are under review in [PR #65](https://github.com/ajbergh/yt-dl-go/pull/65). The command snapshots SQLite, copies managed data to staging, rebases job and resume paths, preserves the original legacy tree, and refuses to overwrite a destination containing user data. Review corrections support rebasing the original pre-v16 resume schema and resolve existing parent symlinks before checking source/destination overlap. The repository README now documents the OS-specific default and copy-migration command.
 
 ### M1.5 Startup resilience, integrity, and backup
 
@@ -527,7 +529,7 @@ Subtitles are sidecar-only, and thumbnails are embedded only in MP3.
 
 ### M3.5 Bulk retry and queue editing
 
-**Status:** [ ] · **P1** · **Area:** backend / UX
+**Status:** [~] Implementation in review · **P1** · **Area:** backend / UX
 
 - Retry works one item at a time (`retry_item.go:47-49`), and the UI's batch actions send N sequential requests (`use-jobs.ts:283-288`).
 - `dev_mock_new_ui` shows changing quality or format while an item is queued or paused.

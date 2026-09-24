@@ -24,6 +24,8 @@ import (
 
 type config struct {
 	addr, root, token string
+	legacyRoot        string
+	dataDirOverridden bool
 	browserPath       string
 	origins, hosts    map[string]bool
 	maxJobs           int
@@ -32,16 +34,18 @@ type config struct {
 }
 
 type runtimeOptions struct {
-	noBrowser bool
-	help      bool
-	version   bool
+	noBrowser         bool
+	help              bool
+	version           bool
+	migrateLegacyData bool
 }
 
 func runtimeUsage() string {
-	return "Usage: youtube-downloader [--background|--no-browser|--version]\n\n" +
+	return "Usage: youtube-downloader [--background|--no-browser|--version|--migrate-legacy-data]\n\n" +
 		"  --background  Run the local service without opening the UI automatically.\n" +
 		"  --no-browser  Alias for --background; useful for scripts and CI.\n" +
 		"  --version     Print embedded version/build metadata and exit.\n" +
+		"  --migrate-legacy-data  Copy legacy ./downloads data into the per-user data directory.\n" +
 		"  -h, --help    Show this help text.\n"
 }
 
@@ -55,6 +59,8 @@ func parseRuntimeOptions(args []string) (runtimeOptions, error) {
 			options.help = true
 		case "--version":
 			options.version = true
+		case "--migrate-legacy-data":
+			options.migrateLegacyData = true
 		default:
 			return runtimeOptions{}, fmt.Errorf("unknown argument %q", arg)
 		}
@@ -73,11 +79,45 @@ func env(key, fallback string) string {
 	return fallback
 }
 
+func defaultDataDir() (string, error) {
+	if runtime.GOOS == "windows" {
+		localAppData := strings.TrimSpace(os.Getenv("LOCALAPPDATA"))
+		if localAppData == "" || !filepath.IsAbs(localAppData) {
+			return "", errors.New("LOCALAPPDATA must be set to an absolute path")
+		}
+		return filepath.Join(localAppData, "yt-dl-go"), nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" || !filepath.IsAbs(home) {
+		return "", errors.New("cannot determine the per-user data directory")
+	}
+	if runtime.GOOS == "darwin" {
+		return filepath.Join(home, "Library", "Application Support", "yt-dl-go"), nil
+	}
+	if xdg := strings.TrimSpace(os.Getenv("XDG_DATA_HOME")); xdg != "" && filepath.IsAbs(xdg) {
+		return filepath.Join(xdg, "yt-dl-go"), nil
+	}
+	return filepath.Join(home, ".local", "share", "yt-dl-go"), nil
+}
+
 // loadConfig reads environment overrides, applies local defaults, and validates
 // listener, authentication, origin/host, queue, timeout, and retention limits.
 func loadConfig() (config, error) {
+	root := strings.TrimSpace(os.Getenv("DATA_DIR"))
+	dataDirOverridden := root != ""
+	if !dataDirOverridden {
+		var err error
+		root, err = defaultDataDir()
+		if err != nil {
+			return config{}, err
+		}
+	}
+	legacyRoot, err := filepath.Abs("./downloads")
+	if err != nil {
+		return config{}, errors.New("cannot resolve legacy DATA_DIR")
+	}
 	c := config{
-		addr: env("ADDR", "127.0.0.1:8080"), root: env("DATA_DIR", "./downloads"),
+		addr: env("ADDR", "127.0.0.1:8080"), root: root, legacyRoot: legacyRoot, dataDirOverridden: dataDirOverridden,
 		browserPath: os.Getenv("CHROME_PATH"),
 		token:       os.Getenv("API_TOKEN"), origins: map[string]bool{}, hosts: map[string]bool{},
 	}
@@ -255,6 +295,16 @@ func main() {
 	c, err := loadConfig()
 	if err != nil {
 		log.Fatal(err)
+	}
+	if options.migrateLegacyData {
+		if err := migrateLegacyData(c.legacyRoot, c.root); err != nil {
+			log.Fatal(err)
+		}
+		log.Printf("Legacy data copied to %s; the original directory was left in place.", c.root)
+		return
+	}
+	if !c.dataDirOverridden && legacyDataAvailable(c.legacyRoot, c.root) {
+		log.Printf("Legacy download data was found at %s. Close any running downloader and run --migrate-legacy-data to copy it into %s; the original data will be kept.", c.legacyRoot, c.root)
 	}
 	s, err := newServer(c)
 	if err != nil {
