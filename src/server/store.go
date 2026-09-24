@@ -321,59 +321,7 @@ func openJobStore(root string) (*jobStore, error) {
 		_ = db.Close()
 		return nil, err
 	}
-	for _, statement := range []string{
-		`CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY)`,
-		`CREATE TABLE IF NOT EXISTS config (
-			key TEXT PRIMARY KEY,
-			value TEXT NOT NULL,
-			updated_at INTEGER NOT NULL
-		)`,
-		`CREATE TABLE IF NOT EXISTS jobs (
-			id TEXT PRIMARY KEY,
-			url TEXT NOT NULL,
-			kind TEXT NOT NULL,
-			quality TEXT NOT NULL,
-			status TEXT NOT NULL,
-			title TEXT NOT NULL,
-			progress REAL,
-			current_item TEXT NOT NULL,
-			completed_count INTEGER NOT NULL,
-			total_count INTEGER,
-			error TEXT NOT NULL,
-			created_at TEXT NOT NULL,
-			note TEXT NOT NULL,
-			dir TEXT NOT NULL,
-			cancel_requested INTEGER NOT NULL DEFAULT 0,
-			done_at INTEGER,
-			updated_at INTEGER NOT NULL
-		)`,
-		`CREATE TABLE IF NOT EXISTS job_files (
-			job_id TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
-			item_index INTEGER NOT NULL,
-			file_id TEXT NOT NULL,
-			name TEXT NOT NULL,
-			size INTEGER NOT NULL,
-			height INTEGER NOT NULL,
-			mime_type TEXT NOT NULL,
-			PRIMARY KEY (job_id, item_index),
-			UNIQUE (job_id, file_id)
-		)`,
-		`CREATE TABLE IF NOT EXISTS download_parts (
-			job_id TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
-			item_index INTEGER NOT NULL,
-			path TEXT NOT NULL,
-			completed_bytes INTEGER NOT NULL,
-			expected_bytes INTEGER NOT NULL,
-			updated_at INTEGER NOT NULL,
-			PRIMARY KEY (job_id, item_index)
-		)`,
-		`CREATE TABLE IF NOT EXISTS job_failures (
-			job_id TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
-			item_index INTEGER NOT NULL,
-			error TEXT NOT NULL,
-			PRIMARY KEY (job_id, item_index)
-		)`,
-	} {
+	for _, statement := range versionOneSchema {
 		if _, err := db.Exec(statement); err != nil {
 			_ = db.Close()
 			return nil, fmt.Errorf("initialize state database: %w", err)
@@ -410,61 +358,12 @@ func openJobStore(root string) (*jobStore, error) {
 		store.migrationBackup = false
 		return err
 	}
-	if err := runMigration(2, store.migrateV2); err != nil {
-		_ = db.Close()
-		return nil, fmt.Errorf("migrate state database: %w", err)
-	}
-	if err := runMigration(3, store.migrateV3); err != nil {
-		_ = db.Close()
-		return nil, fmt.Errorf("migrate state database: %w", err)
-	}
-	if err := runMigration(4, store.migrateV4); err != nil {
-		_ = db.Close()
-		return nil, fmt.Errorf("migrate state database: %w", err)
-	}
-	if err := runMigration(5, store.migrateV5); err != nil {
-		_ = db.Close()
-		return nil, fmt.Errorf("migrate state database: %w", err)
-	}
-	if err := runMigration(6, store.migrateV6); err != nil {
-		_ = db.Close()
-		return nil, fmt.Errorf("migrate state database: %w", err)
-	}
-	if err := runMigration(7, store.migrateV7); err != nil {
-		_ = db.Close()
-		return nil, fmt.Errorf("migrate state database: %w", err)
-	}
-	if err := runMigration(8, store.migrateV8); err != nil {
-		_ = db.Close()
-		return nil, fmt.Errorf("migrate state database: %w", err)
-	}
-	if err := runMigration(9, store.migrateV9); err != nil {
-		_ = db.Close()
-		return nil, fmt.Errorf("migrate state database: %w", err)
-	}
-	if err := runMigration(10, store.migrateV10); err != nil {
-		_ = db.Close()
-		return nil, fmt.Errorf("migrate state database: %w", err)
-	}
-	if err := runMigration(11, store.migrateV11); err != nil {
-		_ = db.Close()
-		return nil, fmt.Errorf("migrate state database: %w", err)
-	}
-	if err := runMigration(12, store.migrateV12); err != nil {
-		_ = db.Close()
-		return nil, fmt.Errorf("migrate state database: %w", err)
-	}
-	if err := runMigration(13, store.migrateV13); err != nil {
-		_ = db.Close()
-		return nil, fmt.Errorf("migrate state database: %w", err)
-	}
-	if err := runMigration(14, store.migrateV14); err != nil {
-		_ = db.Close()
-		return nil, fmt.Errorf("migrate state database: %w", err)
-	}
-	if err := runMigration(15, store.migrateV15); err != nil {
-		_ = db.Close()
-		return nil, fmt.Errorf("migrate state database: %w", err)
+	for _, migration := range transactionalMigrations {
+		migration := migration
+		if err := runMigration(migration.version, func() error { return store.applyMigration(migration) }); err != nil {
+			_ = db.Close()
+			return nil, fmt.Errorf("migrate state database: %w", err)
+		}
 	}
 	if err := runMigration(16, store.migrateV16); err != nil {
 		_ = db.Close()
@@ -518,6 +417,10 @@ func openJobStore(root string) (*jobStore, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("migrate state database: %w", err)
 	}
+	if err := runMigration(29, store.migrateV29); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("migrate state database: %w", err)
+	}
 	store.queueItemsReady = true
 	return store, nil
 }
@@ -545,6 +448,28 @@ func (s *jobStore) migrateV22() error {
 		return err
 	}
 	if _, err := tx.Exec(`INSERT INTO schema_migrations(version) VALUES (22)`); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func (s *jobStore) migrateV29() error {
+	var version int
+	if err := s.db.QueryRow(`SELECT COALESCE(MAX(version), 0) FROM schema_migrations`).Scan(&version); err != nil {
+		return err
+	}
+	if version >= 29 {
+		return nil
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.Exec(`DROP TABLE IF EXISTS config`); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`INSERT INTO schema_migrations(version) VALUES (29)`); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -1375,411 +1300,11 @@ func (s *jobStore) migrateV16() error {
 	return tx.Commit()
 }
 
-func (s *jobStore) migrateV15() error {
-	var version int
-	if err := s.db.QueryRow(`SELECT COALESCE(MAX(version), 0) FROM schema_migrations`).Scan(&version); err != nil {
-		return err
-	}
-	if version >= 15 {
-		return nil
-	}
-	tx, err := s.db.Begin()
-	if err != nil {
-		return err
-	}
-	defer func() { _ = tx.Rollback() }()
-	for _, statement := range []string{
-		`ALTER TABLE jobs ADD COLUMN allow_360p_fallback INTEGER NOT NULL DEFAULT 0`,
-		`ALTER TABLE app_settings ADD COLUMN allow_360p_fallback INTEGER NOT NULL DEFAULT 0`,
-		`INSERT INTO schema_migrations(version) VALUES (15)`,
-	} {
-		if _, err := tx.Exec(statement); err != nil {
-			return err
-		}
-	}
-	return tx.Commit()
-}
-
-func (s *jobStore) migrateV14() error {
-	var version int
-	if err := s.db.QueryRow(`SELECT COALESCE(MAX(version), 0) FROM schema_migrations`).Scan(&version); err != nil {
-		return err
-	}
-	if version >= 14 {
-		return nil
-	}
-	tx, err := s.db.Begin()
-	if err != nil {
-		return err
-	}
-	defer func() { _ = tx.Rollback() }()
-	for _, statement := range []string{
-		`ALTER TABLE jobs ADD COLUMN video_strategy TEXT NOT NULL DEFAULT 'best'`,
-		`ALTER TABLE app_settings ADD COLUMN default_video_strategy TEXT NOT NULL DEFAULT 'best'`,
-		`INSERT INTO schema_migrations(version) VALUES (14)`,
-	} {
-		if _, err := tx.Exec(statement); err != nil {
-			return err
-		}
-	}
-	return tx.Commit()
-}
-
-func (s *jobStore) migrateV13() error {
-	var version int
-	if err := s.db.QueryRow(`SELECT COALESCE(MAX(version), 0) FROM schema_migrations`).Scan(&version); err != nil {
-		return err
-	}
-	if version >= 13 {
-		return nil
-	}
-	tx, err := s.db.Begin()
-	if err != nil {
-		return err
-	}
-	defer func() { _ = tx.Rollback() }()
-	for _, statement := range []string{
-		`ALTER TABLE jobs ADD COLUMN subtitle_language TEXT NOT NULL DEFAULT ''`,
-		`ALTER TABLE jobs ADD COLUMN subtitle_format TEXT NOT NULL DEFAULT ''`,
-		`ALTER TABLE job_files ADD COLUMN subtitle_json TEXT NOT NULL DEFAULT ''`,
-		`ALTER TABLE job_files ADD COLUMN subtitle_error TEXT NOT NULL DEFAULT ''`,
-		`INSERT INTO schema_migrations(version) VALUES (13)`,
-	} {
-		if _, err := tx.Exec(statement); err != nil {
-			return err
-		}
-	}
-	return tx.Commit()
-}
-
-func (s *jobStore) migrateV12() error {
-	var version int
-	if err := s.db.QueryRow(`SELECT COALESCE(MAX(version), 0) FROM schema_migrations`).Scan(&version); err != nil {
-		return err
-	}
-	if version >= 12 {
-		return nil
-	}
-	tx, err := s.db.Begin()
-	if err != nil {
-		return err
-	}
-	defer func() { _ = tx.Rollback() }()
-	for _, statement := range []string{
-		`ALTER TABLE app_settings ADD COLUMN notifications_enabled INTEGER NOT NULL DEFAULT 0`,
-		`INSERT INTO schema_migrations(version) VALUES (12)`,
-	} {
-		if _, err := tx.Exec(statement); err != nil {
-			return err
-		}
-	}
-	return tx.Commit()
-}
-
-func (s *jobStore) migrateV11() error {
-	var version int
-	if err := s.db.QueryRow(`SELECT COALESCE(MAX(version), 0) FROM schema_migrations`).Scan(&version); err != nil {
-		return err
-	}
-	if version >= 11 {
-		return nil
-	}
-	tx, err := s.db.Begin()
-	if err != nil {
-		return err
-	}
-	defer func() { _ = tx.Rollback() }()
-	for _, statement := range []string{
-		`ALTER TABLE app_settings ADD COLUMN bandwidth_limit_bytes_per_sec INTEGER NOT NULL DEFAULT 0`,
-		`INSERT INTO schema_migrations(version) VALUES (11)`,
-	} {
-		if _, err := tx.Exec(statement); err != nil {
-			return err
-		}
-	}
-	return tx.Commit()
-}
-
-func (s *jobStore) migrateV10() error {
-	var version int
-	if err := s.db.QueryRow(`SELECT COALESCE(MAX(version), 0) FROM schema_migrations`).Scan(&version); err != nil {
-		return err
-	}
-	if version >= 10 {
-		return nil
-	}
-	tx, err := s.db.Begin()
-	if err != nil {
-		return err
-	}
-	defer func() { _ = tx.Rollback() }()
-	for _, statement := range []string{
-		`ALTER TABLE jobs ADD COLUMN queue_position INTEGER NOT NULL DEFAULT 0`,
-		`UPDATE jobs SET queue_position=rowid WHERE queue_position=0`,
-		`INSERT INTO schema_migrations(version) VALUES (10)`,
-	} {
-		if _, err := tx.Exec(statement); err != nil {
-			return err
-		}
-	}
-	return tx.Commit()
-}
-
-func (s *jobStore) migrateV9() error {
-	var version int
-	if err := s.db.QueryRow(`SELECT COALESCE(MAX(version), 0) FROM schema_migrations`).Scan(&version); err != nil {
-		return err
-	}
-	if version >= 9 {
-		return nil
-	}
-	tx, err := s.db.Begin()
-	if err != nil {
-		return err
-	}
-	defer func() { _ = tx.Rollback() }()
-	for _, statement := range []string{
-		`ALTER TABLE jobs ADD COLUMN audio_format TEXT NOT NULL DEFAULT ''`,
-		`UPDATE jobs SET audio_format='mp3' WHERE media_type='audio' AND audio_format=''`,
-		`INSERT INTO schema_migrations(version) VALUES (9)`,
-	} {
-		if _, err := tx.Exec(statement); err != nil {
-			return err
-		}
-	}
-	return tx.Commit()
-}
-
-func (s *jobStore) migrateV8() error {
-	var version int
-	if err := s.db.QueryRow(`SELECT COALESCE(MAX(version), 0) FROM schema_migrations`).Scan(&version); err != nil {
-		return err
-	}
-	if version >= 8 {
-		return nil
-	}
-	tx, err := s.db.Begin()
-	if err != nil {
-		return err
-	}
-	defer func() { _ = tx.Rollback() }()
-	for _, statement := range []string{
-		`ALTER TABLE job_files ADD COLUMN thumbnail_mime_type TEXT NOT NULL DEFAULT ''`,
-		`ALTER TABLE job_files ADD COLUMN thumbnail_local_available INTEGER NOT NULL DEFAULT 0`,
-		`INSERT INTO schema_migrations(version) VALUES (8)`,
-	} {
-		if _, err := tx.Exec(statement); err != nil {
-			return err
-		}
-	}
-	return tx.Commit()
-}
-
-func (s *jobStore) migrateV7() error {
-	var version int
-	if err := s.db.QueryRow(`SELECT COALESCE(MAX(version), 0) FROM schema_migrations`).Scan(&version); err != nil {
-		return err
-	}
-	if version >= 7 {
-		return nil
-	}
-	tx, err := s.db.Begin()
-	if err != nil {
-		return err
-	}
-	defer func() { _ = tx.Rollback() }()
-	for _, statement := range []string{
-		`ALTER TABLE app_settings ADD COLUMN storage_mode TEXT NOT NULL DEFAULT 'managed-published'`,
-		`ALTER TABLE jobs ADD COLUMN storage_mode TEXT NOT NULL DEFAULT 'managed-published'`,
-		`INSERT INTO schema_migrations(version) VALUES (7)`,
-	} {
-		if _, err := tx.Exec(statement); err != nil {
-			return err
-		}
-	}
-	return tx.Commit()
-}
-
-func (s *jobStore) migrateV6() error {
-	var version int
-	if err := s.db.QueryRow(`SELECT COALESCE(MAX(version), 0) FROM schema_migrations`).Scan(&version); err != nil {
-		return err
-	}
-	if version >= 6 {
-		return nil
-	}
-	tx, err := s.db.Begin()
-	if err != nil {
-		return err
-	}
-	defer func() { _ = tx.Rollback() }()
-	for _, statement := range []string{
-		`ALTER TABLE job_files ADD COLUMN managed_available INTEGER NOT NULL DEFAULT 1`,
-		`ALTER TABLE job_files ADD COLUMN published_available INTEGER NOT NULL DEFAULT 0`,
-		`UPDATE job_files SET published_available = CASE WHEN output_path <> '' THEN 1 ELSE 0 END`,
-		`INSERT INTO schema_migrations(version) VALUES (6)`,
-	} {
-		if _, err := tx.Exec(statement); err != nil {
-			return err
-		}
-	}
-	return tx.Commit()
-}
-
-// migrateV5 persists output preferences, each job's captured preferences, and
-// the user-visible destination for every finalized media file.
-func (s *jobStore) migrateV5() error {
-	var version int
-	if err := s.db.QueryRow(`SELECT COALESCE(MAX(version), 0) FROM schema_migrations`).Scan(&version); err != nil {
-		return err
-	}
-	if version >= 5 {
-		return nil
-	}
-	tx, err := s.db.Begin()
-	if err != nil {
-		return err
-	}
-	defer func() { _ = tx.Rollback() }()
-	for _, statement := range []string{
-		`ALTER TABLE jobs ADD COLUMN output_location TEXT NOT NULL DEFAULT ''`,
-		`ALTER TABLE jobs ADD COLUMN naming_pattern TEXT NOT NULL DEFAULT ''`,
-		`ALTER TABLE jobs ADD COLUMN subfolder_sorting TEXT NOT NULL DEFAULT ''`,
-		`ALTER TABLE jobs ADD COLUMN category TEXT NOT NULL DEFAULT ''`,
-		`ALTER TABLE job_files ADD COLUMN output_name TEXT NOT NULL DEFAULT ''`,
-		`ALTER TABLE job_files ADD COLUMN output_path TEXT NOT NULL DEFAULT ''`,
-		`ALTER TABLE job_files ADD COLUMN output_relative_path TEXT NOT NULL DEFAULT ''`,
-		`ALTER TABLE app_settings ADD COLUMN download_location TEXT NOT NULL DEFAULT ''`,
-		`ALTER TABLE app_settings ADD COLUMN naming_pattern TEXT NOT NULL DEFAULT ''`,
-		`ALTER TABLE app_settings ADD COLUMN subfolder_sorting TEXT NOT NULL DEFAULT 'channel'`,
-		`ALTER TABLE app_settings ADD COLUMN default_category TEXT NOT NULL DEFAULT 'General'`,
-		`ALTER TABLE app_settings ADD COLUMN user_categories TEXT NOT NULL DEFAULT '["Tech","Science","Coding","Music","Education","Gaming","Podcasts","Archival","General"]'`,
-		`INSERT INTO schema_migrations(version) VALUES (5)`,
-	} {
-		if _, err := tx.Exec(statement); err != nil {
-			return err
-		}
-	}
-	return tx.Commit()
-}
-
-// migrateV4 persists the playlist entries shown as individual queue rows.
-func (s *jobStore) migrateV4() error {
-	var version int
-	if err := s.db.QueryRow(`SELECT COALESCE(MAX(version), 0) FROM schema_migrations`).Scan(&version); err != nil {
-		return err
-	}
-	if version >= 4 {
-		return nil
-	}
-	tx, err := s.db.Begin()
-	if err != nil {
-		return err
-	}
-	defer func() { _ = tx.Rollback() }()
-	for _, statement := range []string{
-		`ALTER TABLE jobs ADD COLUMN queue_items TEXT NOT NULL DEFAULT '[]'`,
-		`INSERT INTO schema_migrations(version) VALUES (4)`,
-	} {
-		if _, err := tx.Exec(statement); err != nil {
-			return err
-		}
-	}
-	return tx.Commit()
-}
-
-// migrateV3 stores each job's media selection and the user's bounded scheduler limit.
-func (s *jobStore) migrateV3() error {
-	var version int
-	if err := s.db.QueryRow(`SELECT COALESCE(MAX(version), 0) FROM schema_migrations`).Scan(&version); err != nil {
-		return err
-	}
-	if version >= 3 {
-		return nil
-	}
-	tx, err := s.db.Begin()
-	if err != nil {
-		return err
-	}
-	defer func() { _ = tx.Rollback() }()
-	for _, statement := range []string{
-		`ALTER TABLE jobs ADD COLUMN media_type TEXT NOT NULL DEFAULT 'video'`,
-		`ALTER TABLE jobs ADD COLUMN audio_bitrate TEXT NOT NULL DEFAULT '192k'`,
-		`ALTER TABLE app_settings ADD COLUMN max_concurrent_downloads INTEGER NOT NULL DEFAULT 3`,
-		`INSERT INTO schema_migrations(version) VALUES (3)`,
-	} {
-		if _, err := tx.Exec(statement); err != nil {
-			return err
-		}
-	}
-	return tx.Commit()
-}
-
-// migrateV2 atomically adds persisted file metadata and the singleton UI
-// preferences row to databases at schema version 1.
-func (s *jobStore) migrateV2() error {
-	var version int
-	if err := s.db.QueryRow(`SELECT COALESCE(MAX(version), 0) FROM schema_migrations`).Scan(&version); err != nil {
-		return err
-	}
-	if version >= 2 {
-		return nil
-	}
-	tx, err := s.db.Begin()
-	if err != nil {
-		return err
-	}
-	defer func() { _ = tx.Rollback() }()
-	for _, statement := range []string{
-		`ALTER TABLE job_files ADD COLUMN title TEXT NOT NULL DEFAULT ''`,
-		`ALTER TABLE job_files ADD COLUMN author TEXT NOT NULL DEFAULT ''`,
-		`ALTER TABLE job_files ADD COLUMN duration_seconds INTEGER NOT NULL DEFAULT 0`,
-		`ALTER TABLE job_files ADD COLUMN thumbnail_url TEXT NOT NULL DEFAULT ''`,
-		`ALTER TABLE job_files ADD COLUMN publish_date TEXT NOT NULL DEFAULT ''`,
-		`ALTER TABLE job_files ADD COLUMN category TEXT NOT NULL DEFAULT ''`,
-		`CREATE TABLE app_settings (
-			id INTEGER PRIMARY KEY CHECK(id = 1),
-			default_quality TEXT NOT NULL,
-			updated_at INTEGER NOT NULL
-		)`,
-		`INSERT INTO app_settings(id, default_quality, updated_at) VALUES(1, 'best', 0)`,
-		`INSERT INTO schema_migrations(version) VALUES (2)`,
-	} {
-		if _, err := tx.Exec(statement); err != nil {
-			return err
-		}
-	}
-	return tx.Commit()
-}
-
 func (s *jobStore) close() error {
 	if s == nil || s.db == nil {
 		return nil
 	}
 	return s.db.Close()
-}
-
-func (s *jobStore) saveConfig(c config) error {
-	values := map[string]string{
-		"addr":          c.addr,
-		"data_dir":      c.root,
-		"max_jobs":      fmt.Sprint(c.maxJobs),
-		"max_job_bytes": fmt.Sprint(c.maxBytes),
-		"job_timeout":   c.timeout.String(),
-		"retention":     c.retain.String(),
-	}
-	tx, err := s.db.Begin()
-	if err != nil {
-		return err
-	}
-	defer func() { _ = tx.Rollback() }()
-	for key, value := range values {
-		if _, err := tx.Exec(`INSERT INTO config(key,value,updated_at) VALUES(?,?,?)
-			ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at`, key, value, time.Now().UnixNano()); err != nil {
-			return err
-		}
-	}
-	return tx.Commit()
 }
 
 func (s *jobStore) loadAppSettings() (AppSettings, error) {

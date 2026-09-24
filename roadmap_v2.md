@@ -289,7 +289,7 @@ The original unpaged `GET /api/jobs` and SSE snapshot return full active-job sta
 
 ### M1.5 Startup resilience, integrity, and backup
 
-**Status:** [~] Startup integrity preflight, automatic migration backups, corruption quarantine, and Windows ACL validation merged; Library export active; import remains · **P1** · **Area:** persistence
+**Status:** [~] Startup integrity preflight, automatic migration backups, corruption quarantine, Windows ACL validation, and Library export merged; import remains · **P1** · **Area:** persistence
 
 One malformed JSON row in `queue_items` or `subtitle_json` makes startup fail fatally with "cannot load download history" (`store.go:798-800, 887-890`; `main.go:208-211`). There is no integrity check or backup.
 
@@ -310,11 +310,11 @@ The startup integrity preflight merged in [PR #72](https://github.com/ajbergh/yt
 
 `feat/windows-data-dir-acl` merged in [PR #75](https://github.com/ajbergh/yt-dl-go/pull/75) as `ef0b07c`. Startup now reads the Windows DATA_DIR owner and DACL, requires ownership by the current user, and rejects grants to common shared logon groups and package-wide application principals; SYSTEM and Administrators remain allowed. The existing POSIX 0700 check remains in place. PR #75's final CI and CodeQL checks passed across Windows, Linux, and macOS after its fixtures set owner plus a private DACL, the scoped `TestCancellationQueueAndTimeout` wait increased to 90 seconds, and the retention test began waiting for the durable terminal row before aging it and advancing the prune clock. The affected test passed 20 consecutive local runs, followed by the full Go suite and `go vet ./...` locally. Library export/import remains open.
 
-`feat/library-export` is in [PR #76](https://github.com/ajbergh/yt-dl-go/pull/76), based on the merged ACL work. It creates a consistent `VACUUM INTO` database snapshot and bundles that database with a versioned manifest and Library-only JSON/CSV metadata. Portable metadata omits absolute output paths and quarantined raw values; the database snapshot itself contains private application state and is labeled accordingly. Media files are not included. The authenticated Settings export action and archive tests are implemented. Full Go tests, `go vet ./...`, `npm run check`, and `git diff --check` pass locally. Initial CI passed the new export UI test but exposed Happy DOM following its blob download and changing the shared test origin; the test now intercepts the anchor click, and CI is rerunning. Import semantics remain open because a database snapshot without managed media is not a complete restore.
+`feat/library-export` merged in [PR #76](https://github.com/ajbergh/yt-dl-go/pull/76) as `9f61221`. It creates a consistent `VACUUM INTO` database snapshot and bundles that database with a versioned manifest and Library-only JSON/CSV metadata. Portable metadata omits absolute output paths and quarantined raw values; the database snapshot itself contains private application state and is labeled accordingly. Media files are not included. The authenticated Settings export action passed the frontend integration test; the test intercepts the blob download to prevent Happy DOM from navigating the shared window. Full CI and CodeQL passed across Windows, Linux, and macOS. Import semantics remain open because a database snapshot without managed media is not a complete restore.
 
 ### M1.6 Table-driven migrations with fixture tests
 
-**Status:** [ ] · **P2** · **Area:** maintainability
+**Status:** [~] · **P2** · **Area:** maintainability
 
 Migrations v2–v15 are 14 near-identical copy-pasted functions and call blocks, about 375 lines (`store.go:123-557`). v1 runs outside a transaction.
 
@@ -322,7 +322,9 @@ Migrations v2–v15 are 14 near-identical copy-pasted functions and call blocks,
 
 - Replace them with a `[]migration{version, stmts}` table run in transactions.
 - Add golden fixture DBs at v1, v6, v10, and v14, each tested to migrate to head.
-- Remove the write-only `config` table (`store.go:566-587`) and the write-only `download_parts` table (see M2.3), or wire them up.
+- Remove the write-only `config` table with a compatibility migration. Keep `download_parts`: native and browser-SABR resume paths use it to persist transfer checkpoints.
+
+**Progress (2026-09-24):** `roadmap/m1-6-migration-fixtures` is active in [PR #78](https://github.com/ajbergh/yt-dl-go/pull/78). Schema-only migrations v2–v15 now use a versioned descriptor table and a shared transaction helper; v1 bootstrap and custom v16+ data/table-rebuild migrations remain separate. Historical SQLite fixtures at v1, v6, v10, and v14 are checked in and migrate through the current schema with representative job, file, Library-backfill, and legacy queue assertions. Migration v29 removes the write-only `config` table, including from existing databases; runtime no longer writes effective configuration to SQLite. `download_parts` is confirmed active for resume and is retained. The focused fixtures and backup tests, full Go suite, and `go vet ./...` pass locally and in the PR’s completed validation jobs; the branch was rebased after PR #76 and CI is rerunning on the latest head.
 
 ### M1.7 Move desktop-relevant settings into the UI
 
@@ -951,7 +953,7 @@ No tests exist for:
 
 **Progress (2026-09-23):** M7.3 PR #26's first CI attempt exposed an intermittent ordering assumption in `TestCancellationQueueAndTimeout`: with a single active-item slot, playlist workers may let blocked item 2 start before item 1 completes, while the test waits for item 1 before issuing cancellation. The failed Go test passed on the workflow rerun, but the fixture still needs deterministic ordering. PR #31's race-detector run also found an actual queue ownership race: `setQueueItems` copied `j.Items` before locking while cancellation refreshed the slice under the mutex. The lock now covers the snapshot, replacement, refresh, and persistence. Both scheduler findings should be addressed before extending this milestone's coverage work.
 
-**Progress (2026-09-24):** The M1.5 Library export CI package run exposed a timing-sensitive terminal-thumbnail race on Linux arm64. Completion evicts terminal jobs from memory; a thumbnail request could pass the shared job preflight, lose the job to eviction, then fail its second lookup with 404 despite the persisted Library record and thumbnail being available. The thumbnail handler now hydrates the terminal record again under the same lock as file selection, and its regression removes the in-memory job before requesting the persisted thumbnail. The regression passed 20 repetitions; the full Go suite and `go vet ./...` pass locally. Tracked in [PR #77](https://github.com/ajbergh/yt-dl-go/pull/77); cross-platform CI is pending.
+**Progress (2026-09-24):** The M1.5 Library export CI package run exposed a timing-sensitive terminal-thumbnail race on Linux arm64. Completion evicts terminal jobs from memory; a thumbnail request could pass the shared job preflight, lose the job to eviction, then fail its second lookup with 404 despite the persisted Library record and thumbnail being available. The thumbnail handler now hydrates the terminal record again under the same lock as file selection, and its regression removes the in-memory job before requesting the persisted thumbnail. [PR #77](https://github.com/ajbergh/yt-dl-go/pull/77) merged as `85e8abd`; its full CI and CodeQL checks passed, including the previously failing Linux arm64 package job.
 
 ### M7.5 Typed frontend tests and E2E robustness
 
