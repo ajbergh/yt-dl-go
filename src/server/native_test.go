@@ -1063,6 +1063,9 @@ func TestCancellationQueueAndTimeout(t *testing.T) {
 		return io.NopCloser(strings.NewReader(fixtureData)), int64(len(fixtureData)), nil
 	}
 	s := testServer(t, fake, func(c *config) { c.maxJobs = 2 })
+	waitScenarioState := func(id string, accept func(Job) bool) Job {
+		return waitJobFor(t, s, id, 45*time.Second, accept)
+	}
 	if response := request(s, "PUT", "/api/settings", `{"defaultQuality":"best","maxConcurrentDownloads":1}`, nil); response.Code != 200 {
 		t.Fatalf("limit concurrent downloads for cancellation fixture: %d %s", response.Code, response.Body.String())
 	}
@@ -1072,7 +1075,7 @@ func TestCancellationQueueAndTimeout(t *testing.T) {
 	case <-time.After(3 * time.Second):
 		t.Fatal("fixture stream did not enter blocked read")
 	}
-	progress := waitJob(t, s, first.ID, func(j Job) bool { return j.CompletedCount == 1 })
+	progress := waitScenarioState(first.ID, func(j Job) bool { return j.CompletedCount == 1 })
 	if progress.Progress == nil || *progress.Progress >= 100 || *progress.Progress <= 0 {
 		t.Fatal("current-file progress was not reset for the next entry")
 	}
@@ -1090,11 +1093,11 @@ func TestCancellationQueueAndTimeout(t *testing.T) {
 		t.Fatal("job ordering changed")
 	}
 	request(s, "POST", "/api/jobs/"+second.ID+"/cancel", "", nil)
-	if waitTerminal(t, s, second.ID).Status != "cancelled" {
+	if waitScenarioState(second.ID, func(j Job) bool { return terminal(j.Status) }).Status != "cancelled" {
 		t.Fatal("queued cancellation failed")
 	}
 	request(s, "POST", "/api/jobs/"+first.ID+"/cancel", "", nil)
-	j := waitTerminal(t, s, first.ID)
+	j := waitScenarioState(first.ID, func(j Job) bool { return terminal(j.Status) })
 	if j.Status != "cancelled" || j.CompletedCount != 1 {
 		t.Fatalf("stream cancellation lost finalized output: %+v", j)
 	}
@@ -1108,7 +1111,7 @@ func TestCancellationQueueAndTimeout(t *testing.T) {
 	stalled := fixtureClient(1)
 	stalled.videoFn = func(ctx context.Context, _ string) (*youtube.Video, error) { <-ctx.Done(); return nil, ctx.Err() }
 	short := testServer(t, stalled, func(c *config) { c.timeout = 30 * time.Millisecond })
-	timed := waitTerminal(t, short, createJob(t, short, testVideo).ID)
+	timed := waitJobFor(t, short, createJob(t, short, testVideo).ID, 45*time.Second, func(j Job) bool { return terminal(j.Status) })
 	if timed.Status != "failed" || !strings.Contains(timed.Error, "timeout") {
 		t.Fatal("native metadata timeout was not honored")
 	}
