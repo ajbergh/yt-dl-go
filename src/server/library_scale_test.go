@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -12,6 +13,10 @@ import (
 
 func TestLibraryPaginationHandlesMoreThanTenThousandFilesWithoutRetainingFinishedJobs(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "data")
+	if err := os.MkdirAll(root, 0700); err != nil {
+		t.Fatal(err)
+	}
+	prepareTestDataDir(t, root)
 	config := config{
 		addr: "127.0.0.1:8080", root: root, token: "",
 		origins: map[string]bool{}, hosts: map[string]bool{"127.0.0.1:8080": true},
@@ -191,6 +196,10 @@ func firstLibraryJobID(jobs []Job) string {
 
 func BenchmarkLibraryAPIAt10100Files(b *testing.B) {
 	root := filepath.Join(b.TempDir(), "data")
+	if err := os.MkdirAll(root, 0700); err != nil {
+		b.Fatal(err)
+	}
+	prepareTestDataDir(b, root)
 	config := config{
 		addr: "127.0.0.1:8080", root: root, token: "",
 		origins: map[string]bool{}, hosts: map[string]bool{"127.0.0.1:8080": true},

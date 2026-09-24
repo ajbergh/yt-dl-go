@@ -219,6 +219,9 @@ func newServer(c config) (*server, error) {
 	if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 || (runtime.GOOS != "windows" && info.Mode().Perm()&0077 != 0) {
 		return nil, errors.New("DATA_DIR must be a real private directory with mode 0700")
 	}
+	if err := checkPrivateDataDirACL(root); err != nil {
+		return nil, fmt.Errorf("DATA_DIR must be private to the current Windows user: %w", err)
+	}
 	c.root = root
 	store, err := openJobStore(root)
 	if err != nil {
