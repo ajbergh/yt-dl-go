@@ -136,6 +136,107 @@ func TestFileChaptersPersistThroughSQLite(t *testing.T) {
 	t.Fatal("job with chapters was not loaded from SQLite")
 }
 
+func TestLibraryItemsMirrorEveryFinalizedFileAndRemoveStaleRows(t *testing.T) {
+	s := newPersistenceTestServer(t)
+	job := &jobState{Job: Job{
+		ID: "job-library-items", URL: testVideo, Kind: "video", Quality: "best", Status: "partial",
+		CreatedAt: time.Now().UTC().Format(time.RFC3339Nano),
+		Files: []mediaFile{
+			{ID: "file-primary", Name: "primary.mp3", Size: 123, MimeType: "audio/mpeg", Title: "Primary", OutputPath: filepath.Join(s.cfg.root, "published-primary.mp3"), SourceItemIndex: 1},
+			{ID: "file-chapter", Name: "chapter-2.mp3", Size: 45, MimeType: "audio/mpeg", Title: "Primary", OutputPath: filepath.Join(s.cfg.root, "published-chapter.mp3"), SourceItemIndex: 1, ChapterIndex: 2, ChapterTitle: "Second chapter"},
+			{ID: "file-next-item", Name: "next.mp3", Size: 67, MimeType: "audio/mpeg", Title: "Next item", SourceItemIndex: 2},
+		},
+	}, dir: filepath.Join(s.cfg.root, "job-library-items"), done: time.Now()}
+	if err := s.store.saveJob(job); err != nil {
+		t.Fatal(err)
+	}
+	var count int
+	if err := s.store.db.QueryRow(`SELECT COUNT(*) FROM library_items WHERE source_job_id=?`, job.ID).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 3 {
+		t.Fatalf("Library row count = %d, want one row for each finalized file", count)
+	}
+	var fileJSON, outputPath string
+	if err := s.store.db.QueryRow(`SELECT file_json,output_path FROM library_items WHERE file_id='file-chapter'`).Scan(&fileJSON, &outputPath); err != nil {
+		t.Fatal(err)
+	}
+	var chapter mediaFile
+	if err := json.Unmarshal([]byte(fileJSON), &chapter); err != nil {
+		t.Fatal(err)
+	}
+	if chapter.ChapterIndex != 2 || chapter.ChapterTitle != "Second chapter" || chapter.SourceItemIndex != 1 || outputPath != job.Files[1].OutputPath {
+		t.Fatalf("persisted Library chapter metadata = %+v output path %q", chapter, outputPath)
+	}
+
+	job.Files = []mediaFile{job.Files[0], job.Files[2]}
+	if err := s.store.saveJob(job); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.store.db.QueryRow(`SELECT COUNT(*) FROM library_items WHERE source_job_id=?`, job.ID).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 2 {
+		t.Fatalf("Library row count after finalized-file removal = %d, want 2", count)
+	}
+	if err := s.store.deleteJob(job.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.store.db.QueryRow(`SELECT COUNT(*) FROM library_items WHERE source_job_id=?`, job.ID).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 {
+		t.Fatalf("Library rows remained after job-history deletion: %d", count)
+	}
+}
+
+func TestLibraryItemsMigrationBackfillsGroupedFiles(t *testing.T) {
+	s := newPersistenceTestServer(t)
+	job := &jobState{Job: Job{
+		ID: "job-library-backfill", URL: testVideo, Kind: "video", Quality: "best", Status: "completed",
+		CreatedAt: time.Now().UTC().Format(time.RFC3339Nano),
+		Files: []mediaFile{
+			{ID: "backfill-primary", Name: "primary.mp3", Size: 123, MimeType: "audio/mpeg", SourceItemIndex: 1},
+			{ID: "backfill-chapter", Name: "chapter.mp3", Size: 45, MimeType: "audio/mpeg", SourceItemIndex: 1, ChapterIndex: 1, ChapterTitle: "Opening"},
+		},
+	}, dir: filepath.Join(s.cfg.root, "job-library-backfill"), done: time.Now()}
+	if err := s.store.saveJob(job); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.store.db.Exec(`DROP TABLE library_items`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.store.db.Exec(`DELETE FROM schema_migrations WHERE version=20`); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.store.migrateV20(s.cfg.root); err != nil {
+		t.Fatalf("backfill Library items: %v", err)
+	}
+	var count int
+	if err := s.store.db.QueryRow(`SELECT COUNT(*) FROM library_items WHERE source_job_id=?`, job.ID).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 2 {
+		t.Fatalf("backfilled Library row count = %d, want both primary and chapter files", count)
+	}
+	var foreignKeys int
+	rows, err := s.store.db.Query(`PRAGMA foreign_key_list(library_items)`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for rows.Next() {
+		foreignKeys++
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		t.Fatal(err)
+	}
+	_ = rows.Close()
+	if foreignKeys != 0 {
+		t.Fatalf("Library table has %d foreign keys; job deletion must not cascade implicitly", foreignKeys)
+	}
+}
+
 func TestDownloadPartCheckpointsAreIndependentPerTrack(t *testing.T) {
 	s := newPersistenceTestServer(t)
 	job := &jobState{Job: Job{

@@ -208,7 +208,7 @@ Goal: make the "searchable local media library" durable over months and thousand
 
 ### M1.1 Separate Library records from download jobs
 
-**Status:** [ ] · **P1** · **Area:** backend / data model
+**Status:** [~] Durable Library storage foundation underway on `roadmap/m1-1-library-storage`; UI/API cutover remains · **P1** · **Area:** backend / data model
 
 Today a Library entry is a retained job (`src/pages/library.tsx:51`), so Library lifetime equals job retention.
 
@@ -223,6 +223,8 @@ Today a Library entry is a retained job (`src/pages/library.tsx:51`), so Library
 
 - The Library can hold 10,000+ items with no in-memory job state kept for finished work.
 - All v1 deletion scopes (P0.3) still behave as documented.
+
+**Progress (2026-09-24):** The current increment adds a durable per-file `library_items` table with job/item provenance, migration backfill (including grouped chapter files), same-transaction mirroring on job saves, and explicit history deletion cleanup. The table is independent of `jobs` and has no cascading foreign key. The full M1.1 acceptance remains open: Library API/UI cutover, independent file ownership and access, finished-job eviction from memory, and scale validation are not part of this storage-foundation increment.
 
 ### M1.2 Normalize queue items and write incrementally
 
@@ -428,7 +430,7 @@ Adaptive H.264 MP4 output takes its AAC track from the progressive itag-18 strea
 - Build a recorded-fixture corpus of player responses and UMP streams, with drift tests that fail loudly when the format changes.
 - Keep kkdai upstream releases monitored through Dependabot (weekly Go-module updates are already configured).
 
-**Progress (2026-09-24):** The extractor profiles, serialized profile selection, profile-matched stream/range requests, safe resume validation, local health probe, and `hl=en` browser locale merged as [PR #42](https://github.com/ajbergh/yt-dl-go/pull/42) (`79c4405`). CI passed Go/race tests, lint, dependency/security scans, vet, browser E2E, CodeQL, and Linux/Windows/macOS builds. CI initially caught a Staticcheck warning in the fixture transport; the assignment was removed and the rerun passed. [PR #43](https://github.com/ajbergh/yt-dl-go/pull/43) merged as `3d264cb`, adding a checked-in minimal UMP parser/assembly regression fixture and provenance for both fixtures. The player and UMP fixtures are synthetic deterministic inputs, not captured YouTube responses or playable media; see `src/server/testdata/youtube/PROVENANCE.md`. PR #43's Go/race tests, lint, dependency/security scans, vet, browser E2E, CodeQL, and Linux/Windows/macOS builds passed; an initial duplicate browser E2E job timed out during Chrome startup and its rerun passed. The `roadmap/m2-8-drift-coverage` follow-up adds synthetic player cases for progressive/adaptive formats, bitrate ordering, optional/unknown fields, and empty-format rejection, plus UMP parser parity, unknown-field, and time-range cases; branch validation is pending. Captured, redistributable player/UMP samples remain open before M2.8 can be marked complete. Weekly Go Dependabot already covers the dependency.
+**Progress (2026-09-24):** The extractor profiles, serialized profile selection, profile-matched stream/range requests, safe resume validation, local health probe, and `hl=en` browser locale merged as [PR #42](https://github.com/ajbergh/yt-dl-go/pull/42) (`79c4405`). CI passed Go/race tests, lint, dependency/security scans, vet, browser E2E, CodeQL, and Linux/Windows/macOS builds. CI initially caught a Staticcheck warning in the fixture transport; the assignment was removed and the rerun passed. [PR #43](https://github.com/ajbergh/yt-dl-go/pull/43) merged as `3d264cb`, adding a checked-in minimal UMP parser/assembly regression fixture and provenance for both fixtures. The player and UMP fixtures are synthetic deterministic inputs, not captured YouTube responses or playable media; see `src/server/testdata/youtube/PROVENANCE.md`. PR #43's Go/race tests, lint, dependency/security scans, vet, browser E2E, CodeQL, and Linux/Windows/macOS builds passed; an initial duplicate browser E2E job timed out during Chrome startup and its rerun passed. Synthetic drift coverage for progressive/adaptive formats, bitrate ordering, optional/unknown fields, empty-format rejection, UMP parser parity, unknown protobuf fields, and time-range data merged in [PR #50](https://github.com/ajbergh/yt-dl-go/pull/50) (`8f805c1`); Go/race validation, lint, static analysis, CodeQL, and Linux/Windows/macOS builds passed. Captured, redistributable player/UMP samples remain open before M2.8 can be marked complete. Weekly Go Dependabot already covers the dependency.
 
 ### M2.9 Bandwidth limiter improvements
 

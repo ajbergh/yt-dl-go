@@ -199,7 +199,112 @@ func openJobStore(root string) (*jobStore, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("migrate state database: %w", err)
 	}
+	if err := store.migrateV20(root); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("migrate state database: %w", err)
+	}
 	return store, nil
+}
+
+// migrateV20 introduces durable per-file Library rows alongside the existing
+// job history. Job deletion semantics remain explicit because library_items
+// deliberately has no foreign key to jobs.
+func (s *jobStore) migrateV20(root string) error {
+	var version int
+	if err := s.db.QueryRow(`SELECT COALESCE(MAX(version), 0) FROM schema_migrations`).Scan(&version); err != nil {
+		return err
+	}
+	if version >= 20 {
+		return nil
+	}
+	createTx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = createTx.Rollback() }()
+	for _, statement := range []string{
+		`CREATE TABLE IF NOT EXISTS library_items (
+			file_id TEXT PRIMARY KEY,
+			source_job_id TEXT NOT NULL,
+			source_item_index INTEGER NOT NULL,
+			file_json TEXT NOT NULL,
+			output_path TEXT NOT NULL,
+			created_at INTEGER NOT NULL
+		)`,
+		`CREATE INDEX IF NOT EXISTS library_items_source_job ON library_items(source_job_id, source_item_index)`,
+	} {
+		if _, err := createTx.Exec(statement); err != nil {
+			return err
+		}
+	}
+	if err := createTx.Commit(); err != nil {
+		return err
+	}
+
+	// Reuse the canonical row loader so the migration includes every finalized
+	// primary and grouped file, including chapter outputs stored in JSON.
+	loaded, err := s.loadJobs(root)
+	if err != nil {
+		return err
+	}
+	backfillTx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = backfillTx.Rollback() }()
+	for _, saved := range loaded {
+		createdAt := int64(0)
+		if !saved.done.IsZero() {
+			createdAt = saved.done.UnixNano()
+		}
+		for itemIndex, group := range saved.items {
+			for _, file := range group {
+				if err := upsertLibraryItem(backfillTx, saved.job.ID, itemIndex, file, createdAt); err != nil {
+					return err
+				}
+			}
+		}
+	}
+	if _, err := backfillTx.Exec(`INSERT INTO schema_migrations(version) VALUES (20)`); err != nil {
+		return err
+	}
+	return backfillTx.Commit()
+}
+
+func upsertLibraryItem(tx *sql.Tx, sourceJobID string, sourceItemIndex int, file mediaFile, createdAt int64) error {
+	if sourceItemIndex < 1 {
+		sourceItemIndex = file.SourceItemIndex
+	}
+	if sourceItemIndex < 1 {
+		sourceItemIndex = 1
+	}
+	file.ID = libraryItemID(sourceJobID, sourceItemIndex, file)
+	file.SourceItemIndex = sourceItemIndex
+	data, err := json.Marshal(file)
+	if err != nil {
+		return err
+	}
+	if createdAt == 0 {
+		createdAt = time.Now().UnixNano()
+	}
+	_, err = tx.Exec(`INSERT INTO library_items(file_id,source_job_id,source_item_index,file_json,output_path,created_at)
+		VALUES(?,?,?,?,?,?)
+		ON CONFLICT(file_id) DO UPDATE SET source_job_id=excluded.source_job_id,source_item_index=excluded.source_item_index,file_json=excluded.file_json,output_path=excluded.output_path`,
+		file.ID, sourceJobID, sourceItemIndex, string(data), file.OutputPath, createdAt)
+	return err
+}
+
+func libraryItemID(sourceJobID string, sourceItemIndex int, file mediaFile) string {
+	if file.ID != "" {
+		return file.ID
+	}
+	if sourceItemIndex < 1 {
+		sourceItemIndex = file.SourceItemIndex
+	}
+	if sourceItemIndex < 1 {
+		sourceItemIndex = 1
+	}
+	return fmt.Sprintf("%s:%d:%s", sourceJobID, sourceItemIndex, file.Name)
 }
 
 func (s *jobStore) migrateV19() error {
@@ -825,6 +930,11 @@ func (s *jobStore) saveJob(j *jobState) error {
 		return err
 	}
 	groups := groupedJobFiles(j)
+	libraryFileIDs := make(map[string]bool, len(j.Files))
+	libraryCreatedAt := time.Now().UnixNano()
+	if !j.done.IsZero() {
+		libraryCreatedAt = j.done.UnixNano()
+	}
 	itemIndexes := make([]int, 0, len(groups))
 	for itemIndex := range groups {
 		itemIndexes = append(itemIndexes, itemIndex)
@@ -879,6 +989,15 @@ func (s *jobStore) saveJob(j *jobState) error {
 			file.DurationSeconds, file.ThumbnailURL, file.ThumbnailMimeType, thumbnailLocalAvailable, file.PublishDate, file.Category, file.OutputName, file.OutputPath, file.OutputRelativePath, managedAvailable, publishedAvailable, subtitleJSON, file.SubtitleError, chaptersJSON, additionalFilesJSON); err != nil {
 			return err
 		}
+		for _, groupedFile := range group {
+			if err := upsertLibraryItem(tx, j.ID, itemIndex, groupedFile, libraryCreatedAt); err != nil {
+				return err
+			}
+			libraryFileIDs[libraryItemID(j.ID, itemIndex, groupedFile)] = true
+		}
+	}
+	if err := removeStaleLibraryItems(tx, j.ID, libraryFileIDs); err != nil {
+		return err
 	}
 	if _, err = tx.Exec(`DELETE FROM job_failures WHERE job_id=?`, j.ID); err != nil {
 		return err
@@ -889,6 +1008,37 @@ func (s *jobStore) saveJob(j *jobState) error {
 		}
 	}
 	return tx.Commit()
+}
+
+func removeStaleLibraryItems(tx *sql.Tx, sourceJobID string, activeFileIDs map[string]bool) error {
+	rows, err := tx.Query(`SELECT file_id FROM library_items WHERE source_job_id=?`, sourceJobID)
+	if err != nil {
+		return err
+	}
+	var stale []string
+	for rows.Next() {
+		var fileID string
+		if err := rows.Scan(&fileID); err != nil {
+			_ = rows.Close()
+			return err
+		}
+		if !activeFileIDs[fileID] {
+			stale = append(stale, fileID)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return err
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	for _, fileID := range stale {
+		if _, err := tx.Exec(`DELETE FROM library_items WHERE file_id=? AND source_job_id=?`, fileID, sourceJobID); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (s *jobStore) saveQueueOrder(jobIDs []string) error {
@@ -963,8 +1113,18 @@ func (s *jobStore) deleteJob(jobID string) error {
 	if s == nil {
 		return nil
 	}
-	_, err := s.db.Exec(`DELETE FROM jobs WHERE id=?`, jobID)
-	return err
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.Exec(`DELETE FROM library_items WHERE source_job_id=?`, jobID); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`DELETE FROM jobs WHERE id=?`, jobID); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (s *jobStore) loadJobs(root string) ([]*storedJob, error) {
