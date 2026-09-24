@@ -607,9 +607,9 @@ func TestDownloadedLibraryFileCarriesDescriptionChapters(t *testing.T) {
 	if len(chapters) != 2 || chapters[0].EndMs != 75_000 || chapters[1].StartMs != 75_000 || chapters[1].EndMs != 300_000 {
 		t.Fatalf("Library file chapters = %+v", chapters)
 	}
-	response := request(s, "GET", "/api/jobs", "", nil)
+	response := request(s, "GET", "/api/library", "", nil)
 	if response.Code != 200 || !strings.Contains(response.Body.String(), `"chapters":[{"startMs":0,"endMs":75000,"title":"Opening"}`) {
-		t.Fatalf("job API omitted saved Library chapters: %d %s", response.Code, response.Body.String())
+		t.Fatalf("Library API omitted saved chapters: %d %s", response.Code, response.Body.String())
 	}
 }
 
