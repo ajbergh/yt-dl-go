@@ -328,11 +328,9 @@ Goal: no hung slots, no silent corruption, no avoidable restarts from zero.
 
 ### M2.2 Atomic, durable finalization everywhere
 
-**Status:** [~] Implementation complete; PR validation pending on `roadmap/m2-2-atomic-durable-finalization` · **P0** · **Area:** engine / file safety
+**Status:** [x] Merged by PR #36 · **P0** · **Area:** engine / file safety
 
-- Adaptive MP4/WebM outputs are renamed without `Sync` (`worker.go:1838, 1998`).
-- `publishOutput` writes directly to the final user-visible name (`output.go:202-215`). A crash leaves an untracked, truncated file in the user's media folder.
-- Several paths reuse an existing final file without verifying its size (`worker.go:1263-1271, 1745-1751, 1855-1861`).
+Before M2.2, adaptive MP4/WebM outputs were renamed without `Sync`, `publishOutput` wrote directly to final user-visible names, and several paths reused existing files without verifying their size.
 
 #### Scope
 
@@ -341,19 +339,21 @@ Goal: no hung slots, no silent corruption, no avoidable restarts from zero.
 - Always verify the expected size before reusing an existing final file.
 - `published-only` should `rename` when source and destination are on the same volume instead of copying then deleting multi-GB files (`output.go:209`, `worker.go:1160`).
 
-**Progress (2026-09-23):** Implemented on `roadmap/m2-2-atomic-durable-finalization`. Media, adaptive mux, thumbnail, managed caption, and published sidecar outputs now finalize from temporary names with checked sync/close and durable rename/publication. Existing transfer files are reused only with an exact known expected size; adaptive mux outputs are rebuilt because their final size is unknown until muxing completes. `published-only` first moves the managed file to a temporary name in the destination directory and falls back to a synced copy for cross-volume moves. POSIX directory entries are synced; Windows uses `MoveFileExW` with `MOVEFILE_WRITE_THROUGH` because Windows directory handles cannot be synced. The full Go suite and `go vet ./...` pass locally; PR validation is pending.
+**Progress (2026-09-23):** Merged by [PR #36](https://github.com/ajbergh/yt-dl-go/pull/36) (`a1bc45c`) after the Go tests, race tests, browser end-to-end checks, CodeQL, and Linux, Windows, and macOS builds passed. Media and caption outputs now finalize from temporary names with checked sync/close and durable rename/publication. Existing transfer files are reused only when a known expected size matches; adaptive mux outputs are rebuilt because their final size is unknown until muxing completes. `published-only` moves the managed file into the destination directory when possible, with a synced copy fallback for cross-volume moves. POSIX directory entries are synced; Windows uses `MoveFileExW` with `MOVEFILE_WRITE_THROUGH` because directory handles cannot be synced there.
 
 ### M2.3 Resume on every transfer path
 
-**Status:** [ ] · **P1** · **Area:** engine
+**Status:** [~] Implementation complete; PR validation pending on `roadmap/m2-3-resume-every-transfer` · **P1** · **Area:** engine
 
-Only native adaptive ranges resume. The progressive, M4A, and MP3-source paths delete their `.part` before starting again (`worker.go:1652, 1420, 1273`), and MP3 source parts are always removed regardless of `keepPartial` (`worker.go:1275-1281`). The `download_parts` table is written but never read. Resume instead relies on `stat`-ing `.part` sizes (`worker.go:2020`).
+Before this work, only native adaptive ranges resumed. Progressive video, M4A, and MP3 source streams restarted from zero, and `download_parts` was write-only. Adaptive resume trusted `.part` size without validating source identity or acquisition method.
 
 #### Scope
 
-- Use HTTP Range resume for progressive and audio streams.
-- Use `download_parts` to validate itag, expected length, and source identity before appending, or delete the table.
-- **Investigate (not verified):** a partial part captured through the browser SABR path may later be appended to by native ranges after a crash (`worker.go:2020-2025, 1924`), which could corrupt the file. Tag each part with its acquisition method and never mix methods.
+- [x] Use HTTP Range resume for progressive and audio streams when the source has a known length and a resolvable media URL.
+- [x] Use per-track `download_parts` checkpoints to validate itag, expected length, source fingerprint, path, and acquisition method before appending.
+- [x] Confirm and prevent the browser SABR crash-recovery hazard: tag browser parts and discard incomplete browser-acquired bytes instead of appending native ranges.
+
+**Progress (2026-09-23):** Implemented on `roadmap/m2-3-resume-every-transfer`. Checkpoints now store a per-track key, path, committed byte count, expected size, itag, stable source fingerprint, and `native-range` or `browser-sabr` method. Schema migration v16 discards legacy untagged checkpoints; old partial files are removed instead of guessed at. Data is synced before each checkpoint advances; after a crash, uncheckpointed trailing bytes are truncated and identity mismatches are deleted. Progressive video, M4A, MP3 source audio, and adaptive tracks share the range downloader; refreshed stream URLs must match the original source fingerprint. Adaptive video/audio checkpoints remain until mux finalization. Browser partials are deleted before native range fallback. Unknown-length streams or streams without a resolvable URL keep the existing from-zero stream path because a safe range offset and completion size cannot be established. Added tests cover offset requests, independent track records, source mismatch restart, and browser/native separation. `go test ./... -count=1` and `go vet ./...` pass locally; PR validation is pending.
 
 ### M2.4 Deterministic output naming and richer tokens
 

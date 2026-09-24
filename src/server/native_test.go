@@ -5,7 +5,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -405,15 +408,150 @@ func (*retryBrowserProvider) Close() error { return nil }
 func TestAdaptiveRangesRetriesBrowserCapture(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "video.part")
 	provider := &retryBrowserProvider{data: []byte("verified adaptive media")}
-	format := &youtube.Format{ItagNo: 315, ContentLength: 1024}
+	format := &youtube.Format{ItagNo: 315, ContentLength: int64(len(provider.data))}
 	video := &youtube.Video{ID: "JapSnYBq3U8"}
 	s := &server{}
-	size, browserUsed, err := s.downloadAdaptiveRanges(context.Background(), &jobState{}, nil, video, format, path, 1, 2048, nil, provider)
+	size, browserUsed, err := s.downloadAdaptiveRanges(context.Background(), &jobState{}, nil, video, format, path, "video", 1, 2048, nil, provider)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if provider.calls != 2 || !browserUsed || size != int64(len(provider.data)) {
 		t.Fatalf("browser retry calls=%d used=%t size=%d", provider.calls, browserUsed, size)
+	}
+}
+
+func TestAdaptiveRangesResumeValidatedNativeCheckpoint(t *testing.T) {
+	payload := []byte("resumable-native-media")
+	var requestedRange string
+	serverHTTP := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestedRange = r.Header.Get("Range")
+		start, end := int64(0), int64(0)
+		if _, err := fmt.Sscanf(r.URL.Query().Get("range"), "%d-%d", &start, &end); err != nil {
+			t.Errorf("invalid range query: %v", err)
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		if r.Header.Get("Range") != fmt.Sprintf("bytes=%d-%d", start, end) {
+			t.Errorf("Range header = %q", r.Header.Get("Range"))
+		}
+		w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", start, end, len(payload)))
+		w.WriteHeader(http.StatusPartialContent)
+		_, _ = w.Write(payload[start : end+1])
+	}))
+	defer serverHTTP.Close()
+
+	s := newPersistenceTestServer(t)
+	job := &jobState{Job: Job{ID: "job-resume", URL: testVideo, Kind: "video", Quality: "best", Status: "queued", CreatedAt: time.Now().UTC().Format(time.RFC3339Nano)}}
+	if err := s.store.saveJob(job); err != nil {
+		t.Fatal(err)
+	}
+	video := &youtube.Video{ID: "resume-video"}
+	format := &youtube.Format{ItagNo: 18, URL: serverHTTP.URL, MimeType: "video/mp4", ContentLength: int64(len(payload))}
+	path := filepath.Join(t.TempDir(), "video.part")
+	const prefix = 8
+	if err := os.WriteFile(path, payload[:prefix], 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.saveDownloadPart(job, video.ID, 1, "video", path, "native-range", format, prefix); err != nil {
+		t.Fatal(err)
+	}
+	s.rangeHTTPClient = serverHTTP.Client()
+	size, browserUsed, err := s.downloadAdaptiveRanges(context.Background(), job, nil, video, format, path, "video", 1, int64(len(payload)), nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if browserUsed || size != int64(len(payload)) || requestedRange != fmt.Sprintf("bytes=%d-%d", prefix, len(payload)-1) {
+		t.Fatalf("resume usedBrowser=%t size=%d range=%q", browserUsed, size, requestedRange)
+	}
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got, payload) {
+		t.Fatalf("resumed bytes = %q, want %q", got, payload)
+	}
+	checkpoint, err := s.store.loadPart(job.ID, 1, "video")
+	if err != nil || checkpoint.CompletedBytes != int64(len(payload)) {
+		t.Fatalf("completed checkpoint = %+v, error = %v", checkpoint, err)
+	}
+}
+
+func TestAdaptiveRangesDiscardBrowserPartBeforeNativeResume(t *testing.T) {
+	payload := []byte("native-range-complete")
+	var requestedRange string
+	serverHTTP := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestedRange = r.Header.Get("Range")
+		w.Header().Set("Content-Range", fmt.Sprintf("bytes 0-%d/%d", len(payload)-1, len(payload)))
+		w.WriteHeader(http.StatusPartialContent)
+		_, _ = w.Write(payload)
+	}))
+	defer serverHTTP.Close()
+
+	s := newPersistenceTestServer(t)
+	job := &jobState{Job: Job{ID: "job-browser-part", URL: testVideo, Kind: "video", Quality: "best", Status: "queued", CreatedAt: time.Now().UTC().Format(time.RFC3339Nano)}}
+	if err := s.store.saveJob(job); err != nil {
+		t.Fatal(err)
+	}
+	video := &youtube.Video{ID: "browser-video"}
+	format := &youtube.Format{ItagNo: 137, URL: serverHTTP.URL, MimeType: "video/mp4", ContentLength: int64(len(payload))}
+	path := filepath.Join(t.TempDir(), "video.part")
+	if err := os.WriteFile(path, []byte("browser-sabr-prefix"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.saveDownloadPart(job, video.ID, 1, "video", path, "browser-sabr", format, 0); err != nil {
+		t.Fatal(err)
+	}
+	s.rangeHTTPClient = serverHTTP.Client()
+	size, _, err := s.downloadAdaptiveRanges(context.Background(), job, nil, video, format, path, "video", 1, int64(len(payload)), nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if size != int64(len(payload)) || requestedRange != fmt.Sprintf("bytes=0-%d", len(payload)-1) || !bytes.Equal(got, payload) {
+		t.Fatalf("browser part mixed with native data: size=%d range=%q data=%q", size, requestedRange, got)
+	}
+}
+
+func TestAdaptiveRangesDiscardCheckpointForDifferentSource(t *testing.T) {
+	payload := []byte("current-source-representation")
+	var requestedRange string
+	serverHTTP := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestedRange = r.Header.Get("Range")
+		w.Header().Set("Content-Range", fmt.Sprintf("bytes 0-%d/%d", len(payload)-1, len(payload)))
+		w.WriteHeader(http.StatusPartialContent)
+		_, _ = w.Write(payload)
+	}))
+	defer serverHTTP.Close()
+
+	s := newPersistenceTestServer(t)
+	job := &jobState{Job: Job{ID: "job-source-change", URL: testVideo, Kind: "video", Quality: "best", Status: "queued", CreatedAt: time.Now().UTC().Format(time.RFC3339Nano)}}
+	if err := s.store.saveJob(job); err != nil {
+		t.Fatal(err)
+	}
+	video := &youtube.Video{ID: "changed-video"}
+	format := &youtube.Format{ItagNo: 137, URL: serverHTTP.URL, MimeType: "video/mp4", ContentLength: int64(len(payload))}
+	path := filepath.Join(t.TempDir(), "video.part")
+	if err := os.WriteFile(path, []byte("stale-prefix"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	checkpoint := downloadPart{Path: path, CompletedBytes: int64(len("stale-prefix")), ExpectedBytes: int64(len(payload)), Itag: format.ItagNo, SourceFingerprint: "different-source", Method: "native-range"}
+	if err := s.store.savePart(job.ID, 1, "video", checkpoint); err != nil {
+		t.Fatal(err)
+	}
+	s.rangeHTTPClient = serverHTTP.Client()
+	size, _, err := s.downloadAdaptiveRanges(context.Background(), job, nil, video, format, path, "video", 1, int64(len(payload)), nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if size != int64(len(payload)) || requestedRange != fmt.Sprintf("bytes=0-%d", len(payload)-1) || !bytes.Equal(got, payload) {
+		t.Fatalf("mismatched source was appended: size=%d range=%q data=%q", size, requestedRange, got)
 	}
 }
 

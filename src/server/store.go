@@ -176,7 +176,48 @@ func openJobStore(root string) (*jobStore, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("migrate state database: %w", err)
 	}
+	if err := store.migrateV16(); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("migrate state database: %w", err)
+	}
 	return store, nil
+}
+
+func (s *jobStore) migrateV16() error {
+	var version int
+	if err := s.db.QueryRow(`SELECT COALESCE(MAX(version), 0) FROM schema_migrations`).Scan(&version); err != nil {
+		return err
+	}
+	if version >= 16 {
+		return nil
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	for _, statement := range []string{
+		`DROP TABLE download_parts`,
+		`CREATE TABLE download_parts (
+			job_id TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+			item_index INTEGER NOT NULL,
+			part_key TEXT NOT NULL,
+			path TEXT NOT NULL,
+			completed_bytes INTEGER NOT NULL,
+			expected_bytes INTEGER NOT NULL,
+			itag INTEGER NOT NULL,
+			source_fingerprint TEXT NOT NULL,
+			method TEXT NOT NULL,
+			updated_at INTEGER NOT NULL,
+			PRIMARY KEY (job_id, item_index, part_key)
+		)`,
+		`INSERT INTO schema_migrations(version) VALUES (16)`,
+	} {
+		if _, err := tx.Exec(statement); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 func (s *jobStore) migrateV15() error {
@@ -732,22 +773,40 @@ func (s *jobStore) saveQueueOrder(jobIDs []string) error {
 	return tx.Commit()
 }
 
-func (s *jobStore) savePart(jobID string, itemIndex int, path string, completed, expected int64) error {
+type downloadPart struct {
+	Path              string
+	CompletedBytes    int64
+	ExpectedBytes     int64
+	Itag              int
+	SourceFingerprint string
+	Method            string
+}
+
+func (s *jobStore) savePart(jobID string, itemIndex int, partKey string, part downloadPart) error {
 	if s == nil {
 		return nil
 	}
-	_, err := s.db.Exec(`INSERT INTO download_parts(job_id,item_index,path,completed_bytes,expected_bytes,updated_at)
-		VALUES(?,?,?,?,?,?) ON CONFLICT(job_id,item_index) DO UPDATE SET path=excluded.path,
-		completed_bytes=excluded.completed_bytes,expected_bytes=excluded.expected_bytes,updated_at=excluded.updated_at`,
-		jobID, itemIndex, path, completed, expected, time.Now().UnixNano())
+	_, err := s.db.Exec(`INSERT INTO download_parts(job_id,item_index,part_key,path,completed_bytes,expected_bytes,itag,source_fingerprint,method,updated_at)
+		VALUES(?,?,?,?,?,?,?,?,?,?) ON CONFLICT(job_id,item_index,part_key) DO UPDATE SET path=excluded.path,
+		completed_bytes=excluded.completed_bytes,expected_bytes=excluded.expected_bytes,itag=excluded.itag,
+		source_fingerprint=excluded.source_fingerprint,method=excluded.method,updated_at=excluded.updated_at`,
+		jobID, itemIndex, partKey, part.Path, part.CompletedBytes, part.ExpectedBytes, part.Itag, part.SourceFingerprint, part.Method, time.Now().UnixNano())
 	return err
 }
 
-func (s *jobStore) deletePart(jobID string, itemIndex int) error {
+func (s *jobStore) loadPart(jobID string, itemIndex int, partKey string) (downloadPart, error) {
+	var part downloadPart
+	err := s.db.QueryRow(`SELECT path,completed_bytes,expected_bytes,itag,source_fingerprint,method
+		FROM download_parts WHERE job_id=? AND item_index=? AND part_key=?`, jobID, itemIndex, partKey).Scan(
+		&part.Path, &part.CompletedBytes, &part.ExpectedBytes, &part.Itag, &part.SourceFingerprint, &part.Method)
+	return part, err
+}
+
+func (s *jobStore) deletePart(jobID string, itemIndex int, partKey string) error {
 	if s == nil {
 		return nil
 	}
-	_, err := s.db.Exec(`DELETE FROM download_parts WHERE job_id=? AND item_index=?`, jobID, itemIndex)
+	_, err := s.db.Exec(`DELETE FROM download_parts WHERE job_id=? AND item_index=? AND part_key=?`, jobID, itemIndex, partKey)
 	return err
 }
 

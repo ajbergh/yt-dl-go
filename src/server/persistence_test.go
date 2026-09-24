@@ -91,19 +91,53 @@ func TestDownloadCheckpointMethodsReturnDatabaseErrors(t *testing.T) {
 	if _, err := s.store.db.Exec(`CREATE TRIGGER reject_part_insert BEFORE INSERT ON download_parts BEGIN SELECT RAISE(FAIL, 'forced insert failure'); END`); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.store.savePart("job", 1, "part", 10, 20); err == nil {
+	checkpoint := downloadPart{Path: "part", CompletedBytes: 10, ExpectedBytes: 20, Itag: 1, SourceFingerprint: "fingerprint", Method: "native-range"}
+	if err := s.store.savePart("job", 1, "video", checkpoint); err == nil {
 		t.Fatal("savePart hid the database error")
 	}
 	if _, err := s.store.db.Exec(`DROP TRIGGER reject_part_insert`); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.store.savePart("job", 1, "part", 10, 20); err != nil {
+	if err := s.store.savePart("job", 1, "video", checkpoint); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s.store.db.Exec(`CREATE TRIGGER reject_part_delete BEFORE DELETE ON download_parts BEGIN SELECT RAISE(FAIL, 'forced delete failure'); END`); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.store.deletePart("job", 1); err == nil {
+	if err := s.store.deletePart("job", 1, "video"); err == nil {
 		t.Fatal("deletePart hid the database error")
+	}
+}
+
+func TestDownloadPartCheckpointsAreIndependentPerTrack(t *testing.T) {
+	s := newPersistenceTestServer(t)
+	job := &jobState{Job: Job{
+		ID: "job-checkpoints", URL: testVideo, Kind: "video", Quality: "best", Status: "queued",
+		CreatedAt: time.Now().UTC().Format(time.RFC3339Nano),
+	}}
+	if err := s.store.saveJob(job); err != nil {
+		t.Fatal(err)
+	}
+	video := downloadPart{Path: "video.part", CompletedBytes: 10, ExpectedBytes: 100, Itag: 137, SourceFingerprint: "video-fingerprint", Method: "native-range"}
+	audio := downloadPart{Path: "audio.part", CompletedBytes: 20, ExpectedBytes: 200, Itag: 140, SourceFingerprint: "audio-fingerprint", Method: "native-range"}
+	if err := s.store.savePart(job.ID, 1, "video", video); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.store.savePart(job.ID, 1, "audio", audio); err != nil {
+		t.Fatal(err)
+	}
+	gotVideo, err := s.store.loadPart(job.ID, 1, "video")
+	if err != nil || gotVideo != video {
+		t.Fatalf("video checkpoint = %+v, error = %v", gotVideo, err)
+	}
+	gotAudio, err := s.store.loadPart(job.ID, 1, "audio")
+	if err != nil || gotAudio != audio {
+		t.Fatalf("audio checkpoint = %+v, error = %v", gotAudio, err)
+	}
+	if err := s.store.deletePart(job.ID, 1, "video"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.store.loadPart(job.ID, 1, "audio"); err != nil {
+		t.Fatalf("deleting the video checkpoint also deleted audio: %v", err)
 	}
 }
