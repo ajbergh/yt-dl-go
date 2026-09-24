@@ -314,7 +314,7 @@ The startup integrity preflight merged in [PR #72](https://github.com/ajbergh/yt
 
 ### M1.6 Table-driven migrations with fixture tests
 
-**Status:** [~] · **P2** · **Area:** maintainability
+**Status:** [x] Complete in PR #78 · **P2** · **Area:** maintainability
 
 Migrations v2–v15 are 14 near-identical copy-pasted functions and call blocks, about 375 lines (`store.go:123-557`). v1 runs outside a transaction.
 
@@ -324,7 +324,7 @@ Migrations v2–v15 are 14 near-identical copy-pasted functions and call blocks,
 - Add golden fixture DBs at v1, v6, v10, and v14, each tested to migrate to head.
 - Remove the write-only `config` table with a compatibility migration. Keep `download_parts`: native and browser-SABR resume paths use it to persist transfer checkpoints.
 
-**Progress (2026-09-24):** `roadmap/m1-6-migration-fixtures` is active in [PR #78](https://github.com/ajbergh/yt-dl-go/pull/78). Schema-only migrations v2–v15 now use a versioned descriptor table and a shared transaction helper; v1 bootstrap and custom v16+ data/table-rebuild migrations remain separate. Historical SQLite fixtures at v1, v6, v10, and v14 are checked in and migrate through the current schema with representative job, file, Library-backfill, and legacy queue assertions. Migration v29 removes the write-only `config` table, including from existing databases; runtime no longer writes effective configuration to SQLite. `download_parts` is confirmed active for resume and is retained. The focused fixtures and backup tests, full Go suite, and `go vet ./...` pass locally and in the PR’s completed validation jobs; the branch was rebased after PR #76 and CI is rerunning on the latest head.
+**Progress (2026-09-24):** M1.6 merged in [PR #78](https://github.com/ajbergh/yt-dl-go/pull/78) as `5f0c649`. Schema-only migrations v2–v15 now use a versioned descriptor table and a shared transaction helper; v1 bootstrap and custom v16+ data/table-rebuild migrations remain separate. Historical SQLite fixtures at v1, v6, v10, and v14 migrate through the current schema with representative job, file, Library-backfill, and legacy queue assertions. Migration v29 removes the write-only `config` table from existing databases and runtime no longer writes effective configuration to SQLite. `download_parts` remains because resume paths use it. Focused fixture/backup tests, full Go tests, frontend integration/E2E, race, vet/lint/security scans, CodeQL, and Windows/Linux/macOS builds all passed in CI.
 
 ### M1.7 Move desktop-relevant settings into the UI
 
