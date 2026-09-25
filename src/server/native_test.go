@@ -1083,13 +1083,15 @@ func TestDownloadSlotsEnvironmentOverride(t *testing.T) {
 func TestCancellationQueueAndTimeout(t *testing.T) {
 	stream := &blockedStream{closed: make(chan struct{}), entered: make(chan struct{}), prefix: []byte("partial")}
 	fake := fixtureClient(2)
+	var streamCalls int
 	fake.streamFn = func(_ context.Context, v *youtube.Video, _ *youtube.Format) (io.ReadCloser, int64, error) {
-		if v.ID == "00000000002" {
+		streamCalls++
+		if streamCalls == 2 {
 			return stream, int64(len(fixtureData)), nil
 		}
 		return io.NopCloser(strings.NewReader(fixtureData)), int64(len(fixtureData)), nil
 	}
-	s := testServer(t, fake, func(c *config) { c.maxJobs = 2 })
+	s := testServer(t, fake, func(c *config) { c.maxJobs, c.timeout = 2, 0 })
 	waitScenarioState := func(id string, accept func(Job) bool) Job {
 		return waitJobFor(t, s, id, 90*time.Second, accept)
 	}
@@ -1102,10 +1104,9 @@ func TestCancellationQueueAndTimeout(t *testing.T) {
 	case <-time.After(3 * time.Second):
 		t.Fatal("fixture stream did not enter blocked read")
 	}
-	progress := waitScenarioState(first.ID, func(j Job) bool { return j.CompletedCount == 1 })
-	if progress.Progress == nil || *progress.Progress >= 100 || *progress.Progress <= 0 {
-		t.Fatal("current-file progress was not reset for the next entry")
-	}
+	waitScenarioState(first.ID, func(j Job) bool {
+		return j.CompletedCount == 1 && j.Progress != nil && *j.Progress > 0 && *j.Progress < 100
+	})
 	second := createJob(t, s, testPlaylist)
 	if second.Status != "queued" || request(s, "POST", "/api/jobs/"+first.ID+"/ticket", `{}`, nil).Code != 409 {
 		t.Fatal("queue or terminal-file guard failed")

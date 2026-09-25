@@ -100,14 +100,15 @@ beforeEach(async () => {
     if (path === "/api/settings" && init.method === "PUT") {
       const settings = JSON.parse(init.body);
       notificationsEnabled = settings.notificationsEnabled === true;
-      return Response.json({ settings, sources: { retention: "SQLite (active)", maxJobBytes: "SQLite (active)", jobTimeout: "SQLite (active)", chromePath: "SQLite (active)", downloadSlots: "SQLite (active)" } });
+      return Response.json({ settings, sources: { retention: "SQLite (active)", maxJobBytes: "SQLite (active)", jobTimeout: "SQLite (active)", chromePath: "SQLite (active)", downloadSlots: "SQLite (active)" }, effective: { retention: "never", maxJobBytes: 10737418240, jobTimeout: "none", chromePath: "", downloadSlots: 4 } });
     }
     if (path === "/api/folders/select" && init.method === "POST") return Response.json({ path: "C:\\Media\\YouTube" });
-    if (path === "/api/settings") return Response.json({ settings: { defaultQuality: "best", defaultVideoStrategy: "best", allow360pFallback: false, maxConcurrentDownloads: 3, bandwidthLimitBytesPerSec: 0, notificationsEnabled, downloadLocation: "C:\\Downloads\\YouTube_Vault", namingPattern: "{channel} - {title} [{resolution}]", subfolderSorting: "channel", defaultCategory: "General", userCategories: ["General", "Music"], storageMode: "managed-published", outputFileMode: "0600", outputFolderMode: "0700", retention: "never", maxJobBytes: 10737418240, jobTimeout: "none", chromePath: "", downloadSlots: 4 }, sources: { retention: "SQLite (active)", maxJobBytes: "SQLite (active)", jobTimeout: "SQLite (active)", chromePath: "SQLite (active)", downloadSlots: "SQLite (active)" } });
+    if (path === "/api/settings") return Response.json({ settings: { defaultQuality: "best", defaultVideoStrategy: "best", allow360pFallback: false, maxConcurrentDownloads: 3, bandwidthLimitBytesPerSec: 0, notificationsEnabled, downloadLocation: "C:\\Downloads\\YouTube_Vault", namingPattern: "{channel} - {title} [{resolution}]", subfolderSorting: "channel", defaultCategory: "General", userCategories: ["General", "Music"], storageMode: "managed-published", outputFileMode: "0600", outputFolderMode: "0700", retention: "never", maxJobBytes: 10737418240, jobTimeout: "none", chromePath: "", downloadSlots: 4 }, sources: { retention: "SQLite (active)", maxJobBytes: "SQLite (active)", jobTimeout: "SQLite (active)", chromePath: "SQLite (active)", downloadSlots: "SQLite (active)" }, effective: { retention: "never", maxJobBytes: 10737418240, jobTimeout: "none", chromePath: "", downloadSlots: 4 } });
     if (path === "/api/events") {
       const settings = { defaultQuality: "best", defaultVideoStrategy: "best", allow360pFallback: false, maxConcurrentDownloads: 3, bandwidthLimitBytesPerSec: 0, notificationsEnabled, downloadLocation: "C:\\Downloads\\YouTube_Vault", namingPattern: "{channel} - {title} [{resolution}]", subfolderSorting: "channel", defaultCategory: "General", userCategories: ["General", "Music"], storageMode: "managed-published", outputFileMode: "0600", outputFolderMode: "0700", retention: "never", maxJobBytes: 10737418240, jobTimeout: "none", chromePath: "", downloadSlots: 4 };
       const settingsSources = { retention: "SQLite (active)", maxJobBytes: "SQLite (active)", jobTimeout: "SQLite (active)", chromePath: "SQLite (active)", downloadSlots: "SQLite (active)" };
-      const events = [{ type: "snapshot", jobs: rows, settings, settingsSources }, ...(liveEvent ? [liveEvent] : [])];
+      const settingsEffective = { retention: "never", maxJobBytes: 10737418240, jobTimeout: "none", chromePath: "", downloadSlots: 4 };
+      const events = [{ type: "snapshot", jobs: rows, settings, settingsSources, settingsEffective }, ...(liveEvent ? [liveEvent] : [])];
       const body = events.map((event, index) => `id: ${index + 1}\nevent: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`).join("");
       return new Response(body, { headers: { "Content-Type": "text/event-stream" } });
     }
@@ -431,7 +432,8 @@ describe("Downloader UI and Go API integration", () => {
   test("persists only a supported preference through the service API", async () => {
     await click(button("Settings"));
     expect(container.textContent).toContain("Service runtime limits");
-    expect(container.textContent).toContain("Active source: SQLite (active)");
+    expect(container.textContent).toContain("source: SQLite (active)");
+    expect(container.textContent).toContain("Active value: 10737418240");
     const quality = container.querySelector('select[aria-label="Default maximum video quality"]');
     await act(async () => {
       Object.getOwnPropertyDescriptor(testWindow.HTMLSelectElement.prototype, "value").set.call(quality, "720");

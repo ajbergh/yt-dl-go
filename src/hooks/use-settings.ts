@@ -1,5 +1,5 @@
 import { useState, type Dispatch, type FormEvent, type SetStateAction } from "react";
-import { api, type AppSettings, type RuntimeSettingSources, type ServiceConnection } from "../lib/downloader";
+import { api, type AppSettings, type RuntimeSettingSources, type RuntimeSettingValues, type ServiceConnection } from "../lib/downloader";
 import { errorMessage, notificationAPI } from "../components/downloader/view-model";
 
 type UseSettingsOptions = {
@@ -8,12 +8,13 @@ type UseSettingsOptions = {
   settings: AppSettings;
   setSettings: Dispatch<SetStateAction<AppSettings>>;
   setRuntimeSettingSources: Dispatch<SetStateAction<RuntimeSettingSources>>;
+  setRuntimeSettingValues: Dispatch<SetStateAction<RuntimeSettingValues>>;
   setServiceError: Dispatch<SetStateAction<string>>;
   setNotice: Dispatch<SetStateAction<string>>;
 };
 
 export function useSettings({
-  connection, serviceReady, settings, setSettings, setRuntimeSettingSources, setServiceError, setNotice,
+  connection, serviceReady, settings, setSettings, setRuntimeSettingSources, setRuntimeSettingValues, setServiceError, setNotice,
 }: UseSettingsOptions) {
   const [newCategoryInput, setNewCategoryInput] = useState("");
   const [savingSettings, setSavingSettings] = useState(false);
@@ -51,13 +52,14 @@ export function useSettings({
     setServiceError("");
     setSettingsSaved(false);
     try {
-      const result = await api<{ settings: AppSettings; sources?: RuntimeSettingSources }>(connection, "/api/settings", {
+      const result = await api<{ settings: AppSettings; sources?: RuntimeSettingSources; effective?: RuntimeSettingValues }>(connection, "/api/settings", {
         method: "PUT",
         body: JSON.stringify(settings),
         signal: AbortSignal.timeout(10000),
       });
       setSettings(result.settings);
       setRuntimeSettingSources(result.sources ?? {});
+      setRuntimeSettingValues(result.effective ?? {});
       setSettingsSaved(true);
     } catch (error) {
       setServiceError(errorMessage(error));

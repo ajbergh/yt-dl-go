@@ -97,8 +97,9 @@ func TestRuntimeSettingsPersistAndReportEffectiveSource(t *testing.T) {
 	get := httptest.NewRecorder()
 	s.ServeHTTP(get, httptest.NewRequest(http.MethodGet, "http://127.0.0.1:8080/api/settings", nil))
 	var response struct {
-		Settings AppSettings       `json:"settings"`
-		Sources  map[string]string `json:"sources"`
+		Settings  AppSettings       `json:"settings"`
+		Sources   map[string]string `json:"sources"`
+		Effective map[string]any    `json:"effective"`
 	}
 	if get.Code != http.StatusOK || json.Unmarshal(get.Body.Bytes(), &response) != nil {
 		t.Fatalf("get runtime settings: %d %s", get.Code, get.Body.String())
@@ -110,6 +111,9 @@ func TestRuntimeSettingsPersistAndReportEffectiveSource(t *testing.T) {
 		if response.Sources[key] != "SQLite (active)" {
 			t.Fatalf("default %s source = %q", key, response.Sources[key])
 		}
+	}
+	if response.Effective["retention"] != "never" || response.Effective["maxJobBytes"] != float64(10<<30) || response.Effective["jobTimeout"] != "none" || response.Effective["downloadSlots"] != float64(4) {
+		t.Fatalf("default effective runtime settings = %+v", response.Effective)
 	}
 
 	body := `{"retention":"720h","maxJobBytes":123456789,"jobTimeout":"2h","chromePath":"C:\\Tools\\Chrome\\chrome.exe","downloadSlots":8}`
@@ -125,6 +129,9 @@ func TestRuntimeSettingsPersistAndReportEffectiveSource(t *testing.T) {
 	}
 	if response.Settings.Retention != "720h0m0s" || response.Settings.MaxJobBytes != 123456789 || response.Settings.JobTimeout != "2h0m0s" || response.Settings.DownloadSlots != 8 {
 		t.Fatalf("saved runtime settings = %+v", response.Settings)
+	}
+	if response.Effective["maxJobBytes"] != float64(10<<30) || response.Effective["downloadSlots"] != float64(4) {
+		t.Fatalf("saving restart-required settings changed active values: %+v", response.Effective)
 	}
 	for _, key := range []string{"retention", "maxJobBytes", "jobTimeout", "chromePath", "downloadSlots"} {
 		if response.Sources[key] != "SQLite (restart required)" {

@@ -9,13 +9,14 @@ import (
 )
 
 type serviceEvent struct {
-	ID              int64             `json:"id"`
-	Type            string            `json:"type"`
-	Job             *Job              `json:"job,omitempty"`
-	JobID           string            `json:"jobId,omitempty"`
-	Jobs            *[]Job            `json:"jobs,omitempty"`
-	Settings        *AppSettings      `json:"settings,omitempty"`
-	SettingsSources map[string]string `json:"settingsSources,omitempty"`
+	ID                int64             `json:"id"`
+	Type              string            `json:"type"`
+	Job               *Job              `json:"job,omitempty"`
+	JobID             string            `json:"jobId,omitempty"`
+	Jobs              *[]Job            `json:"jobs,omitempty"`
+	Settings          *AppSettings      `json:"settings,omitempty"`
+	SettingsSources   map[string]string `json:"settingsSources,omitempty"`
+	SettingsEffective map[string]any    `json:"settingsEffective,omitempty"`
 }
 
 type eventBroker struct {
@@ -92,7 +93,10 @@ func (s *server) publishSettingsEventLocked(settings AppSettings) {
 	}
 	copy := settings
 	copy.UserCategories = append([]string(nil), settings.UserCategories...)
-	s.events.publish(serviceEvent{Type: "settings-changed", Settings: &copy, SettingsSources: runtimeSettingSources(settings, s.cfg)})
+	s.events.publish(serviceEvent{
+		Type: "settings-changed", Settings: &copy, SettingsSources: runtimeSettingSources(settings, s.cfg),
+		SettingsEffective: runtimeSettingEffectiveValues(s.cfg),
+	})
 }
 
 func writeSSE(w http.ResponseWriter, event serviceEvent) error {
@@ -141,8 +145,12 @@ func (s *server) serveEvents(w http.ResponseWriter, r *http.Request) {
 	}
 	settings := mergeAppSettings(defaultAppSettings(), s.settings)
 	settingsSources := runtimeSettingSources(settings, s.cfg)
+	settingsEffective := runtimeSettingEffectiveValues(s.cfg)
 	s.mu.Unlock()
-	initial := serviceEvent{Type: "snapshot", Jobs: &jobs, Settings: &settings, SettingsSources: settingsSources}
+	initial := serviceEvent{
+		Type: "snapshot", Jobs: &jobs, Settings: &settings, SettingsSources: settingsSources,
+		SettingsEffective: settingsEffective,
+	}
 	if err := writeSSE(w, initial); err != nil {
 		return
 	}

@@ -194,10 +194,12 @@ export interface ServiceEvent {
   jobs?: DownloadJob[];
   settings?: AppSettings;
   settingsSources?: RuntimeSettingSources;
+  settingsEffective?: RuntimeSettingValues;
 }
 
 export type RuntimeSettingKey = "retention" | "maxJobBytes" | "jobTimeout" | "chromePath" | "downloadSlots";
 export type RuntimeSettingSources = Partial<Record<RuntimeSettingKey, string>>;
+export type RuntimeSettingValues = Partial<Record<RuntimeSettingKey, string | number>>;
 
 export interface AppSettings {
   defaultQuality: Quality;

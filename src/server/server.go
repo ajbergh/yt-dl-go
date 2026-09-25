@@ -206,6 +206,21 @@ func runtimeSettingSources(settings AppSettings, cfg config) map[string]string {
 	}
 }
 
+func runtimeSettingEffectiveValues(cfg config) map[string]any {
+	jobTimeout := "none"
+	if cfg.timeout > 0 {
+		jobTimeout = cfg.timeout.String()
+	}
+	retention := "never"
+	if cfg.retain > 0 {
+		retention = cfg.retain.String()
+	}
+	return map[string]any{
+		"retention": retention, "maxJobBytes": cfg.maxBytes, "jobTimeout": jobTimeout,
+		"chromePath": cfg.browserPath, "downloadSlots": cfg.downloadSlots,
+	}
+}
+
 func terminal(status string) bool {
 	return status == "completed" || status == "partial" || status == "failed" || status == "cancelled"
 }
@@ -1126,8 +1141,9 @@ func (s *server) handleSettings(w http.ResponseWriter, r *http.Request) {
 		s.mu.Lock()
 		settings := mergeAppSettings(defaultAppSettings(), s.settings)
 		sources := runtimeSettingSources(settings, s.cfg)
+		effective := runtimeSettingEffectiveValues(s.cfg)
 		s.mu.Unlock()
-		reply(w, 200, map[string]any{"settings": settings, "sources": sources})
+		reply(w, 200, map[string]any{"settings": settings, "sources": sources, "effective": effective})
 	case http.MethodPut:
 		var patch struct {
 			DefaultQuality            *string   `json:"defaultQuality"`
@@ -1262,9 +1278,10 @@ func (s *server) handleSettings(w http.ResponseWriter, r *http.Request) {
 		s.recordPersistenceSuccess()
 		s.publishSettingsEventLocked(settings)
 		sources := runtimeSettingSources(settings, s.cfg)
+		effective := runtimeSettingEffectiveValues(s.cfg)
 		s.notifySchedulerLocked()
 		s.mu.Unlock()
-		reply(w, 200, map[string]any{"settings": settings, "sources": sources})
+		reply(w, 200, map[string]any{"settings": settings, "sources": sources, "effective": effective})
 	default:
 		fail(w, 405, "Method not allowed")
 	}

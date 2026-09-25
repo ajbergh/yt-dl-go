@@ -339,7 +339,7 @@ Migrations v2–v15 are 14 near-identical copy-pasted functions and call blocks,
 - Persist these settings in `app_settings` with environment-variable overrides, and show which source is in effect in Settings.
 - Optionally support a `config.toml` in the data directory for headless use.
 
-**Implementation note (2026-09-24):** Persist the five runtime controls (retention, maximum job bytes, job timeout, Chrome path, and download response slots) in migration v30. Environment variables take precedence and Settings reports each effective source. Runtime edits take effect on service restart because the Chrome pool and transfer semaphore are constructed at startup; `config.toml` remains optional and is deferred. Focused migration/settings regressions, the full Go suite, Go vet, and `npm run check` pass locally; frontend integration tests and cross-platform CI are pending PR validation.
+**Implementation note (2026-09-24):** Persist the five runtime controls (retention, maximum job bytes, job timeout, Chrome path, and download response slots) in migration v30. Environment variables take precedence and Settings reports each effective source and active value. Runtime edits take effect on service restart because the Chrome pool and transfer semaphore are constructed at startup; `config.toml` remains optional and is deferred. PR [#81](https://github.com/ajbergh/yt-dl-go/pull/81) adds these controls and API/UI coverage. Local validation passes: repeated cancellation/length regressions, the full Go suite, Go vet, and `npm run check` (20 existing ESLint warnings, no errors). A Linux package timeout in CI traced to the cancellation fixture's nondeterministic blocking point; the fixture now blocks its second stream acquisition and keeps the single-download queue assertion. Updated CI validation is pending.
 
 ---
 
@@ -557,7 +557,9 @@ Subtitles are sidecar-only, and thumbnails are embedded only in MP3.
 
 ### M3.5 Bulk retry and queue editing
 
-**Status:** [~] Implementation in review · **P1** · **Area:** backend / UX
+**Status:** [ ] Planned · **P1** · **Area:** backend / UX
+
+**Progress (2026-09-24):** The former “implementation in review” status was stale: no matching open PR or local/remote feature branch exists. Reprioritize after the remaining M2.8 captured-sample gap, following the roadmap's reliability-before-media-depth sequence.
 
 - Retry works one item at a time (`retry_item.go:47-49`), and the UI's batch actions send N sequential requests (`use-jobs.ts:283-288`).
 - `dev_mock_new_ui` shows changing quality or format while an item is queued or paused.

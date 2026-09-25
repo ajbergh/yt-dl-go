@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   api, streamServiceEvents,
-  type AppSettings, type BuildInfo, type DownloadJob, type LibraryPageResponse, type LibraryQuery, type RuntimeSettingSources, type ServiceConnection, type ServiceEvent, type ServiceHealth, type UpdateStatus,
+  type AppSettings, type BuildInfo, type DownloadJob, type LibraryPageResponse, type LibraryQuery, type RuntimeSettingSources, type RuntimeSettingValues, type ServiceConnection, type ServiceEvent, type ServiceHealth, type UpdateStatus,
 } from "../lib/downloader";
 import {
   builtInServiceConnection, errorMessage, notificationAPI, terminalNotification,
@@ -120,6 +120,7 @@ export function useService() {
   const [loadingLibraryMore, setLoadingLibraryMore] = useState(false);
   const [settings, setSettings] = useState<AppSettings>(defaultSettings);
   const [runtimeSettingSources, setRuntimeSettingSources] = useState<RuntimeSettingSources>({});
+  const [runtimeSettingValues, setRuntimeSettingValues] = useState<RuntimeSettingValues>({});
   const [mp3Supported, setMp3Supported] = useState(false);
   const [buildInfo, setBuildInfo] = useState<BuildInfo>({ version: "dev", commit: "unknown", buildDate: "unknown" });
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus | null>(null);
@@ -223,7 +224,7 @@ export function useService() {
           api<LibraryPageResponse>(connection, libraryPagePath(libraryQueryRef.current), {
             signal: AbortSignal.any([controller.signal, AbortSignal.timeout(10000)]),
           }),
-          api<{ settings: AppSettings; sources?: RuntimeSettingSources }>(connection, "/api/settings", {
+          api<{ settings: AppSettings; sources?: RuntimeSettingSources; effective?: RuntimeSettingValues }>(connection, "/api/settings", {
             signal: AbortSignal.any([controller.signal, AbortSignal.timeout(10000)]),
           }),
         ]);
@@ -234,6 +235,7 @@ export function useService() {
         knownJobStatuses.current = new Map(jobResult.jobs.map(job => [job.id, job.status]));
         setSettings(previous => hydratedSettings(settingResult.settings, previous));
         setRuntimeSettingSources(settingResult.sources ?? {});
+        setRuntimeSettingValues(settingResult.effective ?? {});
         setServiceError("");
         setServiceReady(true);
         void api<UpdateStatus>(connection, "/api/update", {
@@ -299,6 +301,7 @@ export function useService() {
           setSettings(previous => hydratedSettings(event.settings!, previous));
         }
         if (event.settingsSources) setRuntimeSettingSources(event.settingsSources);
+        if (event.settingsEffective) setRuntimeSettingValues(event.settingsEffective);
       } else if (event.type === "job-deleted" && event.jobId) {
         knownJobStatuses.current.delete(event.jobId);
         setJobs(previous => previous.filter(job => job.id !== event.jobId));
@@ -311,6 +314,7 @@ export function useService() {
           notificationsEnabled: event.settings?.notificationsEnabled ?? false,
         }));
         if (event.settingsSources) setRuntimeSettingSources(event.settingsSources);
+        if (event.settingsEffective) setRuntimeSettingValues(event.settingsEffective);
       } else if (event.job) {
         maybeNotifyTerminal(event.job);
         mergeLiveJob(event.job);
@@ -375,6 +379,8 @@ export function useService() {
     setSettings,
     runtimeSettingSources,
     setRuntimeSettingSources,
+    runtimeSettingValues,
+    setRuntimeSettingValues,
     mp3Supported,
     buildInfo,
     updateStatus,
