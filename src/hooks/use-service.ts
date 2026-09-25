@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   api, streamServiceEvents,
-  type AppSettings, type BuildInfo, type DownloadJob, type LibraryPageResponse, type LibraryQuery, type ServiceConnection, type ServiceEvent, type ServiceHealth, type UpdateStatus,
+  type AppSettings, type BuildInfo, type DownloadJob, type LibraryPageResponse, type LibraryQuery, type RuntimeSettingSources, type RuntimeSettingValues, type ServiceConnection, type ServiceEvent, type ServiceHealth, type UpdateStatus,
 } from "../lib/downloader";
 import {
   builtInServiceConnection, errorMessage, notificationAPI, terminalNotification,
@@ -79,6 +79,11 @@ const defaultSettings: AppSettings = {
   defaultCategory: "General",
   userCategories: fallbackCategories,
   storageMode: "managed-published",
+  retention: "never",
+  maxJobBytes: 10 * 1024 * 1024 * 1024,
+  jobTimeout: "none",
+  chromePath: "",
+  downloadSlots: 4,
 };
 
 function hydratedSettings(settings: AppSettings, previous: AppSettings = defaultSettings): AppSettings {
@@ -97,6 +102,11 @@ function hydratedSettings(settings: AppSettings, previous: AppSettings = default
     defaultCategory: settings.defaultCategory || "General",
     userCategories: settings.userCategories?.length ? settings.userCategories : previous.userCategories,
     storageMode: settings.storageMode || "managed-published",
+    retention: settings.retention || "never",
+    maxJobBytes: settings.maxJobBytes || 10 * 1024 * 1024 * 1024,
+    jobTimeout: settings.jobTimeout || "none",
+    chromePath: settings.chromePath ?? "",
+    downloadSlots: settings.downloadSlots || 4,
   };
 }
 
@@ -109,6 +119,8 @@ export function useService() {
   const [libraryQuery, setLibraryQueryState] = useState<LibraryQuery>({});
   const [loadingLibraryMore, setLoadingLibraryMore] = useState(false);
   const [settings, setSettings] = useState<AppSettings>(defaultSettings);
+  const [runtimeSettingSources, setRuntimeSettingSources] = useState<RuntimeSettingSources>({});
+  const [runtimeSettingValues, setRuntimeSettingValues] = useState<RuntimeSettingValues>({});
   const [mp3Supported, setMp3Supported] = useState(false);
   const [buildInfo, setBuildInfo] = useState<BuildInfo>({ version: "dev", commit: "unknown", buildDate: "unknown" });
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus | null>(null);
@@ -212,7 +224,7 @@ export function useService() {
           api<LibraryPageResponse>(connection, libraryPagePath(libraryQueryRef.current), {
             signal: AbortSignal.any([controller.signal, AbortSignal.timeout(10000)]),
           }),
-          api<{ settings: AppSettings }>(connection, "/api/settings", {
+          api<{ settings: AppSettings; sources?: RuntimeSettingSources; effective?: RuntimeSettingValues }>(connection, "/api/settings", {
             signal: AbortSignal.any([controller.signal, AbortSignal.timeout(10000)]),
           }),
         ]);
@@ -222,6 +234,8 @@ export function useService() {
         setLibraryPage(normalizeLibraryPage(libraryResult));
         knownJobStatuses.current = new Map(jobResult.jobs.map(job => [job.id, job.status]));
         setSettings(previous => hydratedSettings(settingResult.settings, previous));
+        setRuntimeSettingSources(settingResult.sources ?? {});
+        setRuntimeSettingValues(settingResult.effective ?? {});
         setServiceError("");
         setServiceReady(true);
         void api<UpdateStatus>(connection, "/api/update", {
@@ -286,6 +300,8 @@ export function useService() {
         if (event.settings) {
           setSettings(previous => hydratedSettings(event.settings!, previous));
         }
+        if (event.settingsSources) setRuntimeSettingSources(event.settingsSources);
+        if (event.settingsEffective) setRuntimeSettingValues(event.settingsEffective);
       } else if (event.type === "job-deleted" && event.jobId) {
         knownJobStatuses.current.delete(event.jobId);
         setJobs(previous => previous.filter(job => job.id !== event.jobId));
@@ -297,6 +313,8 @@ export function useService() {
           bandwidthLimitBytesPerSec: event.settings?.bandwidthLimitBytesPerSec ?? 0,
           notificationsEnabled: event.settings?.notificationsEnabled ?? false,
         }));
+        if (event.settingsSources) setRuntimeSettingSources(event.settingsSources);
+        if (event.settingsEffective) setRuntimeSettingValues(event.settingsEffective);
       } else if (event.job) {
         maybeNotifyTerminal(event.job);
         mergeLiveJob(event.job);
@@ -359,6 +377,10 @@ export function useService() {
     loadingLibraryMore,
     settings,
     setSettings,
+    runtimeSettingSources,
+    setRuntimeSettingSources,
+    runtimeSettingValues,
+    setRuntimeSettingValues,
     mp3Supported,
     buildInfo,
     updateStatus,

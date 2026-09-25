@@ -48,8 +48,8 @@ func TestHistoricalMigrationFixturesReachHead(t *testing.T) {
 			if err := store.db.QueryRow(`SELECT MAX(version) FROM schema_migrations`).Scan(&version); err != nil {
 				t.Fatal(err)
 			}
-			if version != 29 {
-				t.Fatalf("fixture migrated to version %d, want 29", version)
+			if version != 30 {
+				t.Fatalf("fixture migrated to version %d, want 30", version)
 			}
 			var title, mediaType, audioFormat string
 			if err := store.db.QueryRow(`SELECT title,media_type,audio_format FROM jobs WHERE id=?`, "fixture-"+fixture.name).Scan(&title, &mediaType, &audioFormat); err != nil {

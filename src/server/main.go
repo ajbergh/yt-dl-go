@@ -23,14 +23,21 @@ import (
 )
 
 type config struct {
-	addr, root, token string
-	legacyRoot        string
-	dataDirOverridden bool
-	browserPath       string
-	origins, hosts    map[string]bool
-	maxJobs           int
-	maxBytes          int64
-	timeout, retain   time.Duration
+	addr, root, token     string
+	legacyRoot            string
+	dataDirOverridden     bool
+	runtimeSettingsFromDB bool
+	browserPath           string
+	browserPathEnv        bool
+	origins, hosts        map[string]bool
+	maxJobs               int
+	maxBytes              int64
+	timeout, retain       time.Duration
+	maxBytesEnv           bool
+	timeoutEnv            bool
+	retainEnv             bool
+	downloadSlots         int
+	downloadSlotsEnv      bool
 }
 
 type runtimeOptions struct {
@@ -79,6 +86,30 @@ func env(key, fallback string) string {
 	return fallback
 }
 
+func parseJobTimeoutSetting(value string) (time.Duration, error) {
+	value = strings.TrimSpace(value)
+	if value == "" || strings.EqualFold(value, "none") {
+		return 0, nil
+	}
+	duration, err := time.ParseDuration(value)
+	if err != nil || (duration != 0 && duration < time.Second) || duration < 0 {
+		return 0, errors.New("jobTimeout must be none, 0, or at least 1s")
+	}
+	return duration, nil
+}
+
+func parseRetentionSetting(value string) (time.Duration, error) {
+	value = strings.TrimSpace(value)
+	if value == "" || strings.EqualFold(value, "never") {
+		return 0, nil
+	}
+	duration, err := time.ParseDuration(value)
+	if err != nil || (duration != 0 && duration < 5*time.Minute) || duration < 0 {
+		return 0, errors.New("retention must be never, 0, or at least 5m")
+	}
+	return duration, nil
+}
+
 func defaultDataDir() (string, error) {
 	if runtime.GOOS == "windows" {
 		localAppData := strings.TrimSpace(os.Getenv("LOCALAPPDATA"))
@@ -118,8 +149,11 @@ func loadConfig() (config, error) {
 	}
 	c := config{
 		addr: env("ADDR", "127.0.0.1:8080"), root: root, legacyRoot: legacyRoot, dataDirOverridden: dataDirOverridden,
-		browserPath: os.Getenv("CHROME_PATH"),
-		token:       os.Getenv("API_TOKEN"), origins: map[string]bool{}, hosts: map[string]bool{},
+		runtimeSettingsFromDB: true,
+		browserPath:           os.Getenv("CHROME_PATH"), browserPathEnv: os.Getenv("CHROME_PATH") != "",
+		maxBytesEnv: os.Getenv("MAX_JOB_BYTES") != "", timeoutEnv: os.Getenv("JOB_TIMEOUT") != "", retainEnv: os.Getenv("RETENTION") != "",
+		downloadSlots: 4, downloadSlotsEnv: os.Getenv("DOWNLOAD_SLOTS") != "",
+		token: os.Getenv("API_TOKEN"), origins: map[string]bool{}, hosts: map[string]bool{},
 	}
 	host, port, err := net.SplitHostPort(c.addr)
 	if err != nil {
@@ -181,18 +215,18 @@ func loadConfig() (config, error) {
 		return c, errors.New("MAX_JOB_BYTES must be a positive byte count")
 	}
 	jobTimeout := strings.TrimSpace(os.Getenv("JOB_TIMEOUT"))
-	if jobTimeout != "" && !strings.EqualFold(jobTimeout, "none") {
-		c.timeout, err = time.ParseDuration(jobTimeout)
-		if err != nil || (c.timeout != 0 && c.timeout < time.Second) || c.timeout < 0 {
-			return c, errors.New("JOB_TIMEOUT must be 'none', 0, or at least 1s")
-		}
+	c.timeout, err = parseJobTimeoutSetting(jobTimeout)
+	if err != nil {
+		return c, errors.New("JOB_TIMEOUT must be 'none', 0, or at least 1s")
 	}
 	retention := strings.TrimSpace(env("RETENTION", "never"))
-	if !strings.EqualFold(retention, "never") {
-		c.retain, err = time.ParseDuration(retention)
-		if err != nil || (c.retain != 0 && c.retain < 5*time.Minute) {
-			return c, errors.New("RETENTION must be 'never', zero, or at least 5m")
-		}
+	c.retain, err = parseRetentionSetting(retention)
+	if err != nil {
+		return c, errors.New("RETENTION must be 'never', zero, or at least 5m")
+	}
+	c.downloadSlots, err = strconv.Atoi(env("DOWNLOAD_SLOTS", "4"))
+	if err != nil || c.downloadSlots < 1 || c.downloadSlots > 16 {
+		return c, errors.New("DOWNLOAD_SLOTS must be between 1 and 16")
 	}
 	return c, nil
 }
@@ -232,11 +266,43 @@ func newServer(c config) (*server, error) {
 		_ = store.close()
 		return nil, errors.New("cannot load application preferences")
 	}
+	if c.runtimeSettingsFromDB {
+		if !c.maxBytesEnv {
+			c.maxBytes = settings.MaxJobBytes
+		}
+		if !c.timeoutEnv {
+			c.timeout, err = parseJobTimeoutSetting(settings.JobTimeout)
+			if err != nil {
+				_ = store.close()
+				return nil, fmt.Errorf("invalid saved job timeout: %w", err)
+			}
+		}
+		if !c.retainEnv {
+			c.retain, err = parseRetentionSetting(settings.Retention)
+			if err != nil {
+				_ = store.close()
+				return nil, fmt.Errorf("invalid saved retention: %w", err)
+			}
+		}
+		if !c.browserPathEnv {
+			c.browserPath = settings.ChromePath
+		}
+		if !c.downloadSlotsEnv {
+			c.downloadSlots = settings.DownloadSlots
+		}
+	} else {
+		if c.maxBytes < 1 {
+			c.maxBytes = settings.MaxJobBytes
+		}
+		if c.downloadSlots < 1 {
+			c.downloadSlots = settings.DownloadSlots
+		}
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	browserPool := newChromeBrowserPool(ctx, c.browserPath)
 	s := &server{
 		cfg: c, settings: settings, jobs: map[string]*jobState{}, tickets: map[string]ticket{},
-		slots: make(chan struct{}, 4), scheduleChanged: make(chan struct{}),
+		slots: make(chan struct{}, c.downloadSlots), scheduleChanged: make(chan struct{}),
 		ctx: ctx, stop: cancel,
 		store:          store,
 		bandwidth:      newBandwidthLimiter(settings.BandwidthLimitBytesPerSec),

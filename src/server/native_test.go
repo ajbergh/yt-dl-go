@@ -1025,7 +1025,7 @@ func TestItemDeadlineErrorPreservesCancellation(t *testing.T) {
 }
 
 func TestOptionalJobTimeoutConfig(t *testing.T) {
-	for _, key := range []string{"ADDR", "API_TOKEN", "ALLOWED_HOSTS", "ALLOWED_ORIGINS", "MAX_JOBS", "MAX_JOB_BYTES", "JOB_TIMEOUT", "RETENTION"} {
+	for _, key := range []string{"ADDR", "API_TOKEN", "ALLOWED_HOSTS", "ALLOWED_ORIGINS", "MAX_JOBS", "MAX_JOB_BYTES", "JOB_TIMEOUT", "RETENTION", "DOWNLOAD_SLOTS"} {
 		t.Setenv(key, "")
 	}
 	for _, entry := range []struct {
@@ -1053,16 +1053,45 @@ func TestOptionalJobTimeoutConfig(t *testing.T) {
 	}
 }
 
+func TestDownloadSlotsEnvironmentOverride(t *testing.T) {
+	for _, key := range []string{"ADDR", "API_TOKEN", "ALLOWED_HOSTS", "ALLOWED_ORIGINS", "MAX_JOBS", "MAX_JOB_BYTES", "JOB_TIMEOUT", "RETENTION", "DOWNLOAD_SLOTS"} {
+		t.Setenv(key, "")
+	}
+	defaults, err := loadConfig()
+	if err != nil || defaults.downloadSlots != 4 || defaults.downloadSlotsEnv {
+		t.Fatalf("download slot defaults = %d/%v, err=%v", defaults.downloadSlots, defaults.downloadSlotsEnv, err)
+	}
+	for _, entry := range []struct {
+		value   string
+		want    int
+		wantErr bool
+	}{{"1", 1, false}, {"16", 16, false}, {"0", 0, true}, {"17", 0, true}, {"invalid", 0, true}} {
+		t.Setenv("DOWNLOAD_SLOTS", entry.value)
+		config, err := loadConfig()
+		if entry.wantErr {
+			if err == nil {
+				t.Fatalf("DOWNLOAD_SLOTS=%q accepted", entry.value)
+			}
+			continue
+		}
+		if err != nil || config.downloadSlots != entry.want || !config.downloadSlotsEnv {
+			t.Fatalf("DOWNLOAD_SLOTS=%q parsed as %d/%v, error=%v; want %d/environment", entry.value, config.downloadSlots, config.downloadSlotsEnv, err, entry.want)
+		}
+	}
+}
+
 func TestCancellationQueueAndTimeout(t *testing.T) {
 	stream := &blockedStream{closed: make(chan struct{}), entered: make(chan struct{}), prefix: []byte("partial")}
 	fake := fixtureClient(2)
+	var streamCalls int
 	fake.streamFn = func(_ context.Context, v *youtube.Video, _ *youtube.Format) (io.ReadCloser, int64, error) {
-		if v.ID == "00000000002" {
+		streamCalls++
+		if streamCalls == 2 {
 			return stream, int64(len(fixtureData)), nil
 		}
 		return io.NopCloser(strings.NewReader(fixtureData)), int64(len(fixtureData)), nil
 	}
-	s := testServer(t, fake, func(c *config) { c.maxJobs = 2 })
+	s := testServer(t, fake, func(c *config) { c.maxJobs, c.timeout = 2, 0 })
 	waitScenarioState := func(id string, accept func(Job) bool) Job {
 		return waitJobFor(t, s, id, 90*time.Second, accept)
 	}
@@ -1075,10 +1104,9 @@ func TestCancellationQueueAndTimeout(t *testing.T) {
 	case <-time.After(3 * time.Second):
 		t.Fatal("fixture stream did not enter blocked read")
 	}
-	progress := waitScenarioState(first.ID, func(j Job) bool { return j.CompletedCount == 1 })
-	if progress.Progress == nil || *progress.Progress >= 100 || *progress.Progress <= 0 {
-		t.Fatal("current-file progress was not reset for the next entry")
-	}
+	waitScenarioState(first.ID, func(j Job) bool {
+		return j.CompletedCount == 1 && j.Progress != nil && *j.Progress > 0 && *j.Progress < 100
+	})
 	second := createJob(t, s, testPlaylist)
 	if second.Status != "queued" || request(s, "POST", "/api/jobs/"+first.ID+"/ticket", `{}`, nil).Code != 409 {
 		t.Fatal("queue or terminal-file guard failed")
@@ -1136,7 +1164,7 @@ func TestSymlinksAndBindConfiguration(t *testing.T) {
 			t.Fatal("symlink opened as media")
 		}
 	}
-	for _, key := range []string{"ADDR", "API_TOKEN", "ALLOWED_HOSTS", "ALLOWED_ORIGINS", "MAX_JOBS", "MAX_JOB_BYTES", "JOB_TIMEOUT", "RETENTION"} {
+	for _, key := range []string{"ADDR", "API_TOKEN", "ALLOWED_HOSTS", "ALLOWED_ORIGINS", "MAX_JOBS", "MAX_JOB_BYTES", "JOB_TIMEOUT", "RETENTION", "DOWNLOAD_SLOTS"} {
 		t.Setenv(key, "")
 	}
 	c, err := loadConfig()

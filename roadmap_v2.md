@@ -289,7 +289,7 @@ The original unpaged `GET /api/jobs` and SSE snapshot return full active-job sta
 
 ### M1.5 Startup resilience, integrity, and backup
 
-**Status:** [~] Startup integrity preflight, automatic migration backups, corruption quarantine, Windows ACL validation, and Library export merged; metadata-only Library import in progress · **P1** · **Area:** persistence
+**Status:** [x] Complete in PRs #72–#80 · **P1** · **Area:** persistence
 
 One malformed JSON row in `queue_items` or `subtitle_json` makes startup fail fatally with "cannot load download history" (`store.go:798-800, 887-890`; `main.go:208-211`). There is no integrity check or backup.
 
@@ -312,7 +312,7 @@ The startup integrity preflight merged in [PR #72](https://github.com/ajbergh/yt
 
 `feat/library-export` merged in [PR #76](https://github.com/ajbergh/yt-dl-go/pull/76) as `9f61221`. It creates a consistent `VACUUM INTO` database snapshot and bundles that database with a versioned manifest and Library-only JSON/CSV metadata. Portable metadata omits absolute output paths and quarantined raw values; the database snapshot itself contains private application state and is labeled accordingly. Media files are not included. The authenticated Settings export action passed the frontend integration test; the test intercepts the blob download to prevent Happy DOM from navigating the shared window. Full CI and CodeQL passed across Windows, Linux, and macOS.
 
-**Progress (2026-09-24):** `feat/library-import` implements a metadata-only merge: it reads only the versioned manifest and `library.json`, leaves private database state/settings/history/queues untouched, marks imported media and subtitles unavailable, generates stable namespaced IDs, rejects collisions, and applies rows transactionally. The ZIP/API limits and Settings file picker are implemented. Imported Library sources hydrate and can be removed without a local download root. Regression coverage includes importing an actual export, repeat-import idempotency, collision rollback, invalid paths/versions/trailing JSON, authorization, and metadata-only behavior. The full Go suite, `go vet ./...`, and `npm run check` pass locally. The Bun-driven Settings upload test is queued for CI because Bun is not installed in this checkout; PR validation remains pending.
+**Progress (2026-09-24):** `feat/library-import` merged in [PR #80](https://github.com/ajbergh/yt-dl-go/pull/80) as `bfd18de`. Import is a metadata-only merge: it reads the versioned manifest and `library.json`, leaves private database state/settings/history/queues untouched, marks imported media and subtitles unavailable, generates stable namespaced IDs, rejects collisions, and applies rows transactionally. ZIP/API limits and the Settings file picker are implemented; imported Library sources hydrate and can be removed without a local download root. Regression coverage includes importing an actual export, repeat-import idempotency, collision rollback, invalid paths/versions/trailing JSON, authorization, and metadata-only behavior. Local Go tests, vet, and `npm run check` passed; all PR CI and CodeQL checks passed, including the Bun-driven Settings upload test.
 
 ### M1.6 Table-driven migrations with fixture tests
 
@@ -330,7 +330,7 @@ Migrations v2–v15 are 14 near-identical copy-pasted functions and call blocks,
 
 ### M1.7 Move desktop-relevant settings into the UI
 
-**Status:** [ ] · **P2** · **Area:** config
+**Status:** [~] In progress on `feat/runtime-settings` · **P2** · **Area:** config
 
 `RETENTION`, `MAX_JOB_BYTES`, `JOB_TIMEOUT`, and `CHROME_PATH` are environment-only (`main.go:78-148`), and the per-process transfer slot count is hard-coded at 4 (`main.go:189`). Desktop users should not need environment variables.
 
@@ -338,6 +338,8 @@ Migrations v2–v15 are 14 near-identical copy-pasted functions and call blocks,
 
 - Persist these settings in `app_settings` with environment-variable overrides, and show which source is in effect in Settings.
 - Optionally support a `config.toml` in the data directory for headless use.
+
+**Implementation note (2026-09-24):** Persist the five runtime controls (retention, maximum job bytes, job timeout, Chrome path, and download response slots) in migration v30. Environment variables take precedence and Settings reports each effective source and active value. Runtime edits take effect on service restart because the Chrome pool and transfer semaphore are constructed at startup; `config.toml` remains optional and is deferred. PR [#81](https://github.com/ajbergh/yt-dl-go/pull/81) adds these controls and API/UI coverage. Local validation passes: repeated cancellation/length regressions, the full Go suite, Go vet, and `npm run check` (20 existing ESLint warnings, no errors). A Linux package timeout in CI traced to the cancellation fixture's nondeterministic blocking point; the fixture now blocks its second stream acquisition and keeps the single-download queue assertion. Updated CI validation is pending.
 
 ---
 
@@ -555,7 +557,9 @@ Subtitles are sidecar-only, and thumbnails are embedded only in MP3.
 
 ### M3.5 Bulk retry and queue editing
 
-**Status:** [~] Implementation in review · **P1** · **Area:** backend / UX
+**Status:** [ ] Planned · **P1** · **Area:** backend / UX
+
+**Progress (2026-09-24):** The former “implementation in review” status was stale: no matching open PR or local/remote feature branch exists. Reprioritize after the remaining M2.8 captured-sample gap, following the roadmap's reliability-before-media-depth sequence.
 
 - Retry works one item at a time (`retry_item.go:47-49`), and the UI's batch actions send N sequential requests (`use-jobs.ts:283-288`).
 - `dev_mock_new_ui` shows changing quality or format while an item is queued or paused.

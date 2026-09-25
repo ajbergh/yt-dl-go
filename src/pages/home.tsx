@@ -27,7 +27,7 @@ export function HomePage() {
   const previewMedia = useRef<HTMLMediaElement | null>(null);
   const [tab, setTab] = useState<Tab>("queue");
   const {
-    connection, serviceReady, jobs, setJobs, libraryJobs, libraryPage, setLibraryQuery, loadMoreLibrary, loadingLibraryMore, refreshLibrary, settings, setSettings, mp3Supported,
+    connection, serviceReady, jobs, setJobs, libraryJobs, libraryPage, setLibraryQuery, loadMoreLibrary, loadingLibraryMore, refreshLibrary, settings, setSettings, runtimeSettingSources, setRuntimeSettingSources, runtimeSettingValues, setRuntimeSettingValues, mp3Supported,
     buildInfo, updateStatus, updateError, checkingUpdates, checkForUpdates,
     serviceError, setServiceError, pollError,
   } = useService();
@@ -43,7 +43,7 @@ export function HomePage() {
     newCategoryInput, setNewCategoryInput, savingSettings, settingsSaved, changeSetting,
     selectDownloadFolder, savePreferences, toggleNotifications, addCategory, removeCategory,
   } = useSettings({
-    connection, serviceReady, settings, setSettings, setServiceError, setNotice,
+    connection, serviceReady, settings, setSettings, setRuntimeSettingSources, setRuntimeSettingValues, setServiceError, setNotice,
   });
   const [queueFilter, setQueueFilter] = useState<QueueFilter>("all");
   const [search, setSearch] = useState("");
@@ -406,6 +406,8 @@ export function HomePage() {
           serviceReady={serviceReady}
           serviceError={serviceError}
           settings={settings}
+          runtimeSettingSources={runtimeSettingSources}
+          runtimeSettingValues={runtimeSettingValues}
           savingSettings={savingSettings}
           settingsSaved={settingsSaved}
           mp3Supported={mp3Supported}

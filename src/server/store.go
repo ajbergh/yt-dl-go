@@ -82,6 +82,11 @@ type AppSettings struct {
 	DefaultCategory           string   `json:"defaultCategory"`
 	UserCategories            []string `json:"userCategories"`
 	StorageMode               string   `json:"storageMode"`
+	Retention                 string   `json:"retention"`
+	MaxJobBytes               int64    `json:"maxJobBytes"`
+	JobTimeout                string   `json:"jobTimeout"`
+	ChromePath                string   `json:"chromePath"`
+	DownloadSlots             int      `json:"downloadSlots"`
 }
 
 type storedJob struct {
@@ -421,6 +426,10 @@ func openJobStore(root string) (*jobStore, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("migrate state database: %w", err)
 	}
+	if err := runMigration(30, store.migrateV30); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("migrate state database: %w", err)
+	}
 	store.queueItemsReady = true
 	return store, nil
 }
@@ -471,6 +480,34 @@ func (s *jobStore) migrateV29() error {
 	}
 	if _, err := tx.Exec(`INSERT INTO schema_migrations(version) VALUES (29)`); err != nil {
 		return err
+	}
+	return tx.Commit()
+}
+
+func (s *jobStore) migrateV30() error {
+	var version int
+	if err := s.db.QueryRow(`SELECT COALESCE(MAX(version), 0) FROM schema_migrations`).Scan(&version); err != nil {
+		return err
+	}
+	if version >= 30 {
+		return nil
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	for _, statement := range []string{
+		`ALTER TABLE app_settings ADD COLUMN retention TEXT NOT NULL DEFAULT 'never'`,
+		`ALTER TABLE app_settings ADD COLUMN max_job_bytes INTEGER NOT NULL DEFAULT 10737418240`,
+		`ALTER TABLE app_settings ADD COLUMN job_timeout TEXT NOT NULL DEFAULT 'none'`,
+		`ALTER TABLE app_settings ADD COLUMN chrome_path TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE app_settings ADD COLUMN download_slots INTEGER NOT NULL DEFAULT 4`,
+		`INSERT INTO schema_migrations(version) VALUES (30)`,
+	} {
+		if _, err := tx.Exec(statement); err != nil {
+			return err
+		}
 	}
 	return tx.Commit()
 }
@@ -1310,9 +1347,20 @@ func (s *jobStore) close() error {
 func (s *jobStore) loadAppSettings() (AppSettings, error) {
 	settings := defaultAppSettings()
 	var categories string
-	if err := s.db.QueryRow(`SELECT default_quality,default_video_strategy,allow_360p_fallback,max_concurrent_downloads,bandwidth_limit_bytes_per_sec,notifications_enabled,download_location,naming_pattern,subfolder_sorting,default_category,user_categories,storage_mode,output_file_mode,output_folder_mode FROM app_settings WHERE id=1`).Scan(
+	var hasRuntimeSettings bool
+	if err := s.db.QueryRow(`SELECT COUNT(*) > 0 FROM pragma_table_info('app_settings') WHERE name='retention'`).Scan(&hasRuntimeSettings); err != nil {
+		return settings, err
+	}
+	query := `SELECT default_quality,default_video_strategy,allow_360p_fallback,max_concurrent_downloads,bandwidth_limit_bytes_per_sec,notifications_enabled,download_location,naming_pattern,subfolder_sorting,default_category,user_categories,storage_mode,output_file_mode,output_folder_mode FROM app_settings WHERE id=1`
+	args := []any{
 		&settings.DefaultQuality, &settings.DefaultVideoStrategy, &settings.Allow360pFallback, &settings.MaxConcurrentDownloads, &settings.BandwidthLimitBytesPerSec, &settings.NotificationsEnabled, &settings.DownloadLocation, &settings.NamingPattern,
-		&settings.SubfolderSorting, &settings.DefaultCategory, &categories, &settings.StorageMode, &settings.OutputFileMode, &settings.OutputFolderMode); err != nil {
+		&settings.SubfolderSorting, &settings.DefaultCategory, &categories, &settings.StorageMode, &settings.OutputFileMode, &settings.OutputFolderMode,
+	}
+	if hasRuntimeSettings {
+		query = `SELECT default_quality,default_video_strategy,allow_360p_fallback,max_concurrent_downloads,bandwidth_limit_bytes_per_sec,notifications_enabled,download_location,naming_pattern,subfolder_sorting,default_category,user_categories,storage_mode,output_file_mode,output_folder_mode,retention,max_job_bytes,job_timeout,chrome_path,download_slots FROM app_settings WHERE id=1`
+		args = append(args, &settings.Retention, &settings.MaxJobBytes, &settings.JobTimeout, &settings.ChromePath, &settings.DownloadSlots)
+	}
+	if err := s.db.QueryRow(query).Scan(args...); err != nil {
 		return settings, err
 	}
 	if err := json.Unmarshal([]byte(categories), &settings.UserCategories); err != nil {
@@ -1339,9 +1387,10 @@ func (s *jobStore) saveAppSettings(settings AppSettings) error {
 	if err != nil {
 		return err
 	}
-	_, err = s.db.Exec(`UPDATE app_settings SET default_quality=?,default_video_strategy=?,allow_360p_fallback=?,max_concurrent_downloads=?,bandwidth_limit_bytes_per_sec=?,notifications_enabled=?,download_location=?,naming_pattern=?,subfolder_sorting=?,default_category=?,user_categories=?,storage_mode=?,output_file_mode=?,output_folder_mode=?,updated_at=? WHERE id=1`,
+	_, err = s.db.Exec(`UPDATE app_settings SET default_quality=?,default_video_strategy=?,allow_360p_fallback=?,max_concurrent_downloads=?,bandwidth_limit_bytes_per_sec=?,notifications_enabled=?,download_location=?,naming_pattern=?,subfolder_sorting=?,default_category=?,user_categories=?,storage_mode=?,output_file_mode=?,output_folder_mode=?,retention=?,max_job_bytes=?,job_timeout=?,chrome_path=?,download_slots=?,updated_at=? WHERE id=1`,
 		settings.DefaultQuality, settings.DefaultVideoStrategy, settings.Allow360pFallback, settings.MaxConcurrentDownloads, settings.BandwidthLimitBytesPerSec, settings.NotificationsEnabled, settings.DownloadLocation, settings.NamingPattern,
-		settings.SubfolderSorting, settings.DefaultCategory, string(categories), settings.StorageMode, settings.OutputFileMode, settings.OutputFolderMode, time.Now().UnixNano())
+		settings.SubfolderSorting, settings.DefaultCategory, string(categories), settings.StorageMode, settings.OutputFileMode, settings.OutputFolderMode,
+		settings.Retention, settings.MaxJobBytes, settings.JobTimeout, settings.ChromePath, settings.DownloadSlots, time.Now().UnixNano())
 	return err
 }
 
