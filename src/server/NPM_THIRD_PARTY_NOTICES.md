@@ -14,7 +14,7 @@ Generated from production dependencies in the root `package-lock.json` with `lic
 | `react-dom@19.2.5` | `19.2.5` | MIT | [repository](https://github.com/facebook/react) | [text](licenses/npm/react-dom-19.2.5-110e8eb1.txt) |
 | `react-router-dom@7.18.4` | `7.18.4` | MIT | [repository](https://github.com/remix-run/react-router) | [text](licenses/npm/react-router-dom-7.18.4-b18818fe.txt) |
 | `react-router@7.18.4` | `7.18.4` | MIT | [repository](https://github.com/remix-run/react-router) | [text](licenses/npm/react-router-7.18.4-43e2a4e4.txt) |
-| `react@19.2.5` | `19.2.5` | MIT | [repository](https://github.com/facebook/react) | [text](licenses/npm/react-19.2.5-658f6af3.txt) |
+| `react@19.3.0` | `19.3.0` | MIT | [repository](https://github.com/facebook/react) | [text](licenses/npm/react-19.3.0-bd679726.txt) |
 | `scheduler@0.27.0` | `0.27.0` | MIT | [repository](https://github.com/facebook/react) | [text](licenses/npm/scheduler-0.27.0-e21311c6.txt) |
 | `set-cookie-parser@2.7.2` | `2.7.2` | MIT | [repository](https://github.com/nfriedly/set-cookie-parser) | [text](licenses/npm/set-cookie-parser-2.7.2-ffda4466.txt) |
 | `tslib@2.8.1` | `2.8.1` | 0BSD | [repository](https://github.com/Microsoft/tslib) | [text](licenses/npm/tslib-2.8.1-b1547103.txt) |
