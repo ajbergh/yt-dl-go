@@ -1,12 +1,10 @@
 module youtube-downloader
 
-go 1.26.0
-
-toolchain go1.26.8
+go 1.27
 
 require (
 	github.com/at-wat/ebml-go v0.19.4
-	github.com/chromedp/cdproto v0.0.0-20250724212937-08a3db8b4327
+	github.com/chromedp/cdproto v0.157.6
 	github.com/chromedp/chromedp v0.14.1
 	github.com/kkdai/youtube/v2 v2.10.6
 	github.com/tphakala/go-m4a v0.5.0
@@ -18,7 +16,6 @@ require (
 
 require (
 	github.com/bitly/go-simplejson v0.5.1 // indirect
-	github.com/chromedp/sysutil v1.1.0 // indirect
 	github.com/dlclark/regexp2 v1.11.5 // indirect
 	github.com/dop251/goja v0.0.0-20260311135729-065cd970411c // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
