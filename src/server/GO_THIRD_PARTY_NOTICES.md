@@ -4,7 +4,7 @@ Generated from the Go packages used by supported release targets with `go-licens
 
 | Package | Version | License | Source | Included text/source |
 | --- | --- | --- | --- | --- |
-| `github.com/at-wat/ebml-go` | `v0.19.3` | Apache-2.0 | [source](https://pkg.go.dev/github.com/at-wat/ebml-go@v0.19.3) | [license files](licenses/go/github.com/at-wat/ebml-go) |
+| `github.com/at-wat/ebml-go` | `v0.19.4` | Apache-2.0 | [source](https://pkg.go.dev/github.com/at-wat/ebml-go@v0.19.4) | [license files](licenses/go/github.com/at-wat/ebml-go) |
 | `github.com/bitly/go-simplejson` | `v0.5.1` | MIT | [source](https://pkg.go.dev/github.com/bitly/go-simplejson@v0.5.1) | [license files](licenses/go/github.com/bitly/go-simplejson) |
 | `github.com/chromedp/cdproto` | `v0.0.0-20250724212937-08a3db8b4327` | MIT | [source](https://pkg.go.dev/github.com/chromedp/cdproto@v0.0.0-20250724212937-08a3db8b4327) | [license files](licenses/go/github.com/chromedp/cdproto) |
 | `github.com/chromedp/chromedp` | `v0.14.1` | MIT | [source](https://pkg.go.dev/github.com/chromedp/chromedp@v0.14.1) | [license files](licenses/go/github.com/chromedp/chromedp) |
