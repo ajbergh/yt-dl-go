@@ -4,7 +4,6 @@ package main
 
 import (
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"io"
@@ -19,13 +18,11 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/chromedp/cdproto/cdp"
 	"github.com/chromedp/cdproto/emulation"
 	"github.com/chromedp/cdproto/fetch"
 	cdpio "github.com/chromedp/cdproto/io"
 	"github.com/chromedp/cdproto/network"
 	"github.com/chromedp/cdproto/page"
-	cdpruntime "github.com/chromedp/cdproto/runtime"
 	"github.com/chromedp/chromedp"
 	"github.com/kkdai/youtube/v2"
 )
@@ -138,9 +135,12 @@ func chromeBrowserOptions(executable string) []chromedp.ExecAllocatorOption {
 func launchChromeBrowser(parent context.Context, executable string) (context.Context, context.CancelFunc, context.CancelFunc, error) {
 	allocCtx, allocCancel := chromedp.NewExecAllocator(parent, chromeBrowserOptions(executable)...)
 	browserCtx, cancel := chromedp.NewContext(allocCtx)
-	startCtx, startCancel := context.WithTimeout(browserCtx, browserPoolStartTimeout)
-	err := chromedp.Run(startCtx, chromedp.Navigate("about:blank"))
-	startCancel()
+	// ChromeDP 0.19 ties the first Do call's context lifetime to Chrome itself.
+	// Bound startup by cancelling the persistent browser context on timeout
+	// rather than passing a disposable timeout context to the first Do.
+	stopStartupTimeout := time.AfterFunc(browserPoolStartTimeout, cancel)
+	err := chromedp.Do(browserCtx, chromedp.Navigate("about:blank"))
+	stopStartupTimeout.Stop()
 	if err != nil {
 		cancel()
 		allocCancel()
@@ -247,13 +247,23 @@ func (p *chromeBrowserProvider) Prepare(ctx context.Context, id string, format *
 		cancelPrepare()
 	}()
 	var mediaReady, playing bool
-	if err := chromedp.Run(prepareCtx,
-		network.Enable(),
-		chromedp.Navigate(videoURL),
-		chromedp.Poll(configureQualityScript, &mediaReady, chromedp.WithPollingInterval(100*time.Millisecond), chromedp.WithPollingTimeout(browserPrepareTimeout)),
-		chromedp.Evaluate(playScript, nil),
-		chromedp.Poll(playingScript, &playing, chromedp.WithPollingInterval(100*time.Millisecond), chromedp.WithPollingTimeout(browserPlaybackReadyTimeout)),
-	); err != nil {
+
+	if _, err := chromedp.Call(prepareCtx, network.Enable, network.EnableParams{}); err != nil {
+		return errBrowserUnavailable
+	}
+	if err := chromedp.Do(prepareCtx, chromedp.Navigate(videoURL)); err != nil {
+		return errBrowserUnavailable
+	}
+	var err error
+	mediaReady, err = chromedp.Run(prepareCtx, chromedp.Poll[bool](configureQualityScript, chromedp.WithPollingInterval(100*time.Millisecond), chromedp.WithPollingTimeout(browserPrepareTimeout)))
+	if err != nil {
+		return errBrowserUnavailable
+	}
+	if err := chromedp.Do(prepareCtx, chromedp.Evaluate[chromedp.Void](playScript)); err != nil {
+		return errBrowserUnavailable
+	}
+	playing, err = chromedp.Run(prepareCtx, chromedp.Poll[bool](playingScript, chromedp.WithPollingInterval(100*time.Millisecond), chromedp.WithPollingTimeout(browserPlaybackReadyTimeout)))
+	if err != nil {
 		return errBrowserUnavailable
 	}
 	if !mediaReady || !playing {
@@ -378,7 +388,7 @@ func (p *chromeBrowserProvider) waitForCapture(ctx context.Context, capture sabr
 				}
 				return errBrowserUnavailable
 			}
-			if err := chromedp.Run(p.ctx, chromedp.Evaluate(keepAlive, nil)); err != nil {
+			if err := chromedp.Do(p.ctx, chromedp.Evaluate[chromedp.Void](keepAlive)); err != nil {
 				if os.Getenv("YTDL_TRACE_SABR") != "" {
 					log.Printf("browser keep-alive failed: %v", err)
 				}
@@ -640,13 +650,13 @@ func (p *chromeBrowserProvider) normalizeHeadlessIdentity() error {
   const hints = await data.getHighEntropyValues(['architecture','bitness','fullVersionList','model','platformVersion','uaFullVersion','wow64']);
   return JSON.stringify({ua:navigator.userAgent,brands:data.brands,mobile:data.mobile,platform:data.platform,hints});
 })()`
-		var raw string
-		if err := chromedp.Run(p.ctx,
-			chromedp.Navigate("http://"+listener.Addr().String()+"/"),
-			chromedp.Evaluate(metadataScript, &raw, func(params *cdpruntime.EvaluateParams) *cdpruntime.EvaluateParams {
-				return params.WithAwaitPromise(true)
-			}),
-		); err != nil {
+
+		if err := chromedp.Do(p.ctx, chromedp.Navigate("http://"+listener.Addr().String()+"/")); err != nil {
+			p.uaErr = err
+			return
+		}
+		raw, err := chromedp.Run(p.ctx, chromedp.Evaluate[string](metadataScript, chromedp.EvalAwaitPromise))
+		if err != nil {
 			p.uaErr = err
 			return
 		}
@@ -669,14 +679,16 @@ func (p *chromeBrowserProvider) normalizeHeadlessIdentity() error {
 			p.uaErr = err
 			return
 		}
-		p.uaErr = emulation.SetUserAgentOverride(userAgent).
-			WithAcceptLanguage("en-US,en;q=0.9").
-			WithUserAgentMetadata(&emulation.UserAgentMetadata{
+
+		_, p.uaErr = chromedp.Call(execCtx, emulation.SetUserAgentOverride, emulation.SetUserAgentOverrideParams{
+			UserAgent: userAgent, AcceptLanguage: "en-US,en;q=0.9",
+			UserAgentMetadata: &emulation.UserAgentMetadata{
 				Brands: brands, FullVersionList: fullVersions,
 				Platform: metadata.Platform, PlatformVersion: metadata.Hints.PlatformVersion,
 				Architecture: metadata.Hints.Architecture, Model: metadata.Hints.Model,
 				Mobile: metadata.Mobile, Bitness: metadata.Hints.Bitness, Wow64: metadata.Hints.Wow64,
-			}).Do(execCtx)
+			},
+		})
 	})
 	return p.uaErr
 }
@@ -738,18 +750,27 @@ func (p *chromeBrowserProvider) configurePlaybackCodec(format *youtube.Format) e
 		return "try { localStorage.setItem('yt-player-av1-pref', " + strconv.Quote(policy.av1Preference) + "); } catch (_) {}"
 	}() + `
 })()`
-	_, err = page.AddScriptToEvaluateOnNewDocument(script).WithRunImmediately(true).Do(execCtx)
+	_, err = chromedp.Call(execCtx, page.AddScriptToEvaluateOnNewDocument, page.AddScriptToEvaluateOnNewDocumentParams{Source: script, RunImmediately: new(true)})
 	return err
 }
 
 func (p *chromeBrowserProvider) ensureFetch() error {
 	p.fetchOnce.Do(func() {
-		chromedp.ListenTarget(p.ctx, p.handleFetchEvent)
+
+		events := chromedp.Events(p.ctx, fetch.RequestPaused)
+		go func() {
+			for event, err := range events {
+				if err != nil {
+					return
+				}
+				p.handleFetchEvent(&event)
+			}
+		}()
 		pattern := &fetch.RequestPattern{
 			URLPattern:   "*googlevideo.com/videoplayback*",
 			RequestStage: fetch.RequestStageResponse,
 		}
-		p.fetchErr = chromedp.Run(p.ctx, fetch.Enable().WithPatterns([]*fetch.RequestPattern{pattern}))
+		_, p.fetchErr = chromedp.Call(p.ctx, fetch.Enable, fetch.EnableParams{Patterns: []*fetch.RequestPattern{pattern}})
 	})
 	return p.fetchErr
 }
@@ -787,9 +808,9 @@ func (p *chromeBrowserProvider) continuePaused(paused *fetch.EventRequestPaused)
 	ctx, cancel := context.WithTimeout(execCtx, 10*time.Second)
 	defer cancel()
 	if paused.ResponseStatusCode > 0 {
-		_ = fetch.ContinueResponse(paused.RequestID).Do(ctx)
+		_, _ = chromedp.Call(ctx, fetch.ContinueResponse, fetch.ContinueResponseParams{RequestID: paused.RequestID})
 	} else {
-		_ = fetch.ContinueRequest(paused.RequestID).Do(ctx)
+		_, _ = chromedp.Call(ctx, fetch.ContinueRequest, fetch.ContinueRequestParams{RequestID: paused.RequestID})
 	}
 }
 
@@ -804,15 +825,16 @@ func (p *chromeBrowserProvider) capturePausedResponse(paused *fetch.EventRequest
 		pending.done <- browserStreamResult{err: errBrowserUnavailable}
 		return
 	}
-	streamHandle, err := fetch.TakeResponseBodyAsStream(paused.RequestID).Do(execCtx)
+
+	streamResult, err := chromedp.Call(execCtx, fetch.TakeResponseBodyAsStream, fetch.TakeResponseBodyAsStreamParams{RequestID: paused.RequestID})
 	if err != nil {
-		_ = fetch.FailRequest(paused.RequestID, network.ErrorReasonFailed).Do(execCtx)
+		_, _ = chromedp.Call(execCtx, fetch.FailRequest, fetch.FailRequestParams{RequestID: paused.RequestID, ErrorReason: network.ErrorReasonFailed})
 		pending.done <- browserStreamResult{err: err}
 		return
 	}
 	readCtx, cancel := context.WithCancel(execCtx)
 	stream := &cdpBrowserStream{
-		handle:     streamHandle,
+		handle:     streamResult.Stream,
 		readCtx:    readCtx,
 		readCancel: cancel,
 		browserCtx: execCtx,
@@ -831,7 +853,7 @@ func (p *chromeBrowserProvider) targetContext() (context.Context, error) {
 	if c == nil || c.Target == nil {
 		return nil, errBrowserUnavailable
 	}
-	return cdp.WithExecutor(p.ctx, c.Target), nil
+	return p.ctx, nil
 }
 
 func (p *chromeBrowserProvider) OpenRange(ctx context.Context, _ string, format *youtube.Format, start, end int64) (io.ReadCloser, int64, error) {
@@ -870,7 +892,7 @@ func (p *chromeBrowserProvider) OpenRange(ctx context.Context, _ string, format 
 	}()
 	encodedURL, _ := json.Marshal(targetURL)
 	script := `fetch(` + string(encodedURL) + `, {credentials:'include', cache:'no-store'}).catch(() => {})`
-	if err := chromedp.Run(p.ctx, chromedp.Evaluate(script, nil)); err != nil {
+	if err := chromedp.Do(p.ctx, chromedp.Evaluate[chromedp.Void](script)); err != nil {
 		return nil, 0, errBrowserUnavailable
 	}
 	select {
@@ -922,7 +944,8 @@ func (p *chromeBrowserProvider) tracePlaybackState() {
 	if os.Getenv("YTDL_TRACE_PERFORMANCE") == "" {
 		return
 	}
-	var state struct {
+
+	type playbackState struct {
 		CurrentTime float64 `json:"currentTime"`
 		Duration    float64 `json:"duration"`
 		Rate        float64 `json:"rate"`
@@ -945,7 +968,9 @@ func (p *chromeBrowserProvider) tracePlaybackState() {
 })()`
 	stateCtx, cancel := context.WithTimeout(p.ctx, 3*time.Second)
 	defer cancel()
-	if err := chromedp.Run(stateCtx, chromedp.Evaluate(script, &state)); err != nil {
+
+	state, err := chromedp.Run(stateCtx, chromedp.Evaluate[playbackState](script))
+	if err != nil {
 		log.Printf("browser playback state unavailable: %v", err)
 		return
 	}
@@ -981,35 +1006,20 @@ func (s *cdpBrowserStream) readWithContext(readCtx context.Context, dst []byte) 
 		if s.eof {
 			return 0, io.EOF
 		}
-		var response struct {
-			Base64Encoded bool   `json:"base64Encoded"`
-			Data          string `json:"data,omitempty"`
-			EOF           bool   `json:"eof"`
-		}
-		err := cdp.Execute(readCtx, "IO.read", map[string]any{"handle": s.handle}, &response)
+
+		response, err := chromedp.Call(readCtx, cdpio.Read, cdpio.ReadParams{Handle: s.handle})
 		if err != nil {
 			return 0, err
-		}
-		var bytes []byte
-		if response.Data != "" {
-			if response.Base64Encoded {
-				bytes, err = base64.StdEncoding.DecodeString(response.Data)
-				if err != nil {
-					return 0, err
-				}
-			} else {
-				bytes = []byte(response.Data)
-			}
 		}
 		if response.EOF {
 			s.eof = true
 		}
-		if len(bytes) == 0 {
+		if len(response.Data) == 0 {
 			continue
 		}
-		n := copy(dst, bytes)
-		if n < len(bytes) {
-			s.buffer = append(s.buffer, bytes[n:]...)
+		n := copy(dst, response.Data)
+		if n < len(response.Data) {
+			s.buffer = append(s.buffer, response.Data[n:]...)
 		}
 		return n, nil
 	}
@@ -1020,7 +1030,7 @@ func (s *cdpBrowserStream) Close() error {
 	s.closeOnce.Do(func() {
 		s.readCancel()
 		closeCtx, cancel := context.WithTimeout(s.browserCtx, 5*time.Second)
-		s.closeErr = cdpio.Close(s.handle).Do(closeCtx)
+		_, s.closeErr = chromedp.Call(closeCtx, cdpio.Close, cdpio.CloseParams{Handle: s.handle})
 		cancel()
 		if s.onClose != nil {
 			s.onClose()
