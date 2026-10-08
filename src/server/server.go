@@ -245,17 +245,29 @@ func (s *server) notifySchedulerLocked() {
 	s.scheduleChanged = make(chan struct{})
 }
 
+// cloneQueueItems creates a detached view of queue state while the caller
+// holds server.mu. queueItem contains a pointer and a slice: copying only the
+// outer slice would allow future progress/file updates to modify a snapshot.
+func cloneQueueItems(items []queueItem) []queueItem {
+	if items == nil {
+		return nil
+	}
+	cloned := append([]queueItem(nil), items...)
+	for i := range cloned {
+		if cloned[i].Progress != nil {
+			progress := *cloned[i].Progress
+			cloned[i].Progress = &progress
+		}
+		cloned[i].FileIDs = append([]string(nil), cloned[i].FileIDs...)
+	}
+	return cloned
+}
+
 func snapshot(j *jobState) Job {
 	copy := j.Job
 	copy.Files = append([]mediaFile{}, j.Files...)
 	copy.Failures = append([]itemFailure{}, j.Failures...)
-	copy.Items = append([]queueItem{}, j.Items...)
-	for i := range copy.Items {
-		if copy.Items[i].Progress != nil {
-			progress := *copy.Items[i].Progress
-			copy.Items[i].Progress = &progress
-		}
-	}
+	copy.Items = cloneQueueItems(j.Items)
 	return copy
 }
 
