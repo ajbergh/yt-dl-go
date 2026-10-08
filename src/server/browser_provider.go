@@ -135,9 +135,12 @@ func chromeBrowserOptions(executable string) []chromedp.ExecAllocatorOption {
 func launchChromeBrowser(parent context.Context, executable string) (context.Context, context.CancelFunc, context.CancelFunc, error) {
 	allocCtx, allocCancel := chromedp.NewExecAllocator(parent, chromeBrowserOptions(executable)...)
 	browserCtx, cancel := chromedp.NewContext(allocCtx)
-	startCtx, startCancel := context.WithTimeout(browserCtx, browserPoolStartTimeout)
-	err := chromedp.Do(startCtx, chromedp.Navigate("about:blank"))
-	startCancel()
+	// ChromeDP 0.19 ties the first Do call's context lifetime to Chrome itself.
+	// Bound startup by cancelling the persistent browser context on timeout
+	// rather than passing a disposable timeout context to the first Do.
+	stopStartupTimeout := time.AfterFunc(browserPoolStartTimeout, cancel)
+	err := chromedp.Do(browserCtx, chromedp.Navigate("about:blank"))
+	stopStartupTimeout.Stop()
 	if err != nil {
 		cancel()
 		allocCancel()
