@@ -95,7 +95,9 @@ jobs:
       # initialization interleaving under the race detector repeatedly.
       - name: Stress queue cancellation and retention races (50 iterations)
         working-directory: src/server
-        run: go test -race -run '^Test(RetentionCleansEmptyFailedAndCancelledJobs|CancelDuringPlaylistQueueInitialization)
+        run: go test -race -run '^Test(RetentionCleansEmptyFailedAndCancelledJobs|CancelDuringPlaylistQueueInitialization)$' -count=50 .
+
+      - name: Run golangci-lint
         working-directory: src/server
         run: golangci-lint run
 
