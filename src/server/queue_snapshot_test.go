@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -32,6 +33,8 @@ func TestQueueItemSnapshotsAreDetached(t *testing.T) {
 // before run() initializes its queue items. This was the racing sequence in
 // issue #92: setQueueItems previously cloned j.Items even for fresh jobs.
 func TestCancelDuringPlaylistQueueInitialization(t *testing.T) {
+	for i := 0; i < 50; i++ {
+		t.Run(fmt.Sprintf("iteration-%02d", i), func(t *testing.T) {
 	client := fixtureClient(3)
 	entered := make(chan struct{})
 	release := make(chan struct{})
@@ -73,4 +76,6 @@ func TestCancelDuringPlaylistQueueInitialization(t *testing.T) {
 		}
 	}
 	waitPersistedTerminalJob(t, s, job.ID)
+		})
+	}
 }
