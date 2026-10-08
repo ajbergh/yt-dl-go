@@ -12,7 +12,7 @@ require (
 	github.com/tphakala/go-m4a v0.5.0
 	github.com/tphakala/go-mp3 v0.1.0
 	github.com/yapingcat/gomedia v0.0.0-20240906162731-17feea57090c
-	golang.org/x/sys v0.47.0
+	golang.org/x/sys v0.48.0
 	modernc.org/sqlite v1.59.0
 )
 
