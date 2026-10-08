@@ -250,6 +250,9 @@ func snapshot(j *jobState) Job {
 	copy.Files = append([]mediaFile{}, j.Files...)
 	copy.Failures = append([]itemFailure{}, j.Failures...)
 	copy.Items = cloneQueueItems(j.Items)
+	if copy.Items == nil {
+		copy.Items = []queueItem{}
+	}
 	return copy
 }
 
