@@ -41,7 +41,7 @@ The app does not ask you to provide an account token or import cookies from your
 
 Requirements:
 
-- Go 1.26 or newer
+- Go 1.27 or newer
 - Node.js and npm to rebuild the embedded React UI
 - Internet access on the build machine to download Go and npm dependencies
 
