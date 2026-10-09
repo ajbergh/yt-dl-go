@@ -1063,14 +1063,14 @@ The v1 P2.3 gates still apply: checksum plus signature/provenance verification, 
 
 ### M9.1 Community and governance docs
 
-**Status:** [~] Security/contribution guidance and templates added; changelog pending M8.7 · **P1** · **Area:** docs
+**Status:** [~] Governance documents, templates, and initial changelog added; automatic changelog/version management remains in M8.7 · **P1** · **Area:** docs
 
 #### Scope
 
 - [x] Add `LICENSE` (M0.6).
 - [x] Add `SECURITY.md` with private vulnerability reporting guidance and the local API token/ticket model.
 - [x] Add `CONTRIBUTING.md` with setup, npm/Bun roles, CI checks, and contribution guidance.
-- [ ] Add `CHANGELOG.md` with M8.7 release automation.
+- [x] Add an initial `CHANGELOG.md` for the unreleased v0.1.0 candidate; automate versioning and release-note generation separately in M8.7.
 - [x] Add bug, feature-request, and pull-request templates.
 
 **Progress (2026-09-23):** Implemented on `roadmap/m9-1-governance-docs`; the changelog remains tied to M8.7 so it can be generated from the release history.
