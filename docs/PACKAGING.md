@@ -8,7 +8,7 @@ The CI workflow builds and verifies these package targets:
 
 | Platform | Architecture | Package |
 | --- | --- | --- |
-| Windows | amd64 on the current Windows runner | `youtube-downloader-windows-<arch>.zip` |
+| Windows | amd64 / arm64 | `youtube-downloader-windows-<arch>.zip` |
 | Linux | amd64 | `youtube-downloader-linux-amd64.tar.gz` |
 | Linux | arm64 | `youtube-downloader-linux-arm64.tar.gz` |
 | macOS | amd64 | `youtube-downloader-darwin-amd64.tar.gz` |
@@ -20,7 +20,7 @@ The Windows artifact also retains the raw `youtube-downloader.exe` for compatibi
 
 ## Local builds
 
-Install Go 1.26+, Node.js/npm, and run `npm ci` first.
+Install Go 1.27 or newer, Node.js/npm, and run `npm ci` first.
 
 ### Windows
 
