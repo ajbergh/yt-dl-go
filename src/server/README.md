@@ -23,7 +23,7 @@ go build -buildvcs=false -trimpath -ldflags='-s -w' -o ..\..\dist\youtube-downlo
 
 The repository-level packaging scripts build the embedded frontend, validate the native host, and package Windows/Linux/macOS output with checksums. See [../../docs/PACKAGING.md](../../docs/PACKAGING.md).
 
-Go 1.26 or newer is required. The process listens on `127.0.0.1:8080` by default, serves the SPA at `/`, and asks the operating system to open that address in the default browser. `ADDR` changes the listener and browser URL. If automatic browser launch is blocked, visit the configured address manually. The built-in UI uses the same origin, so it also follows a custom `ADDR`.
+Go 1.27 or newer is required. The process listens on `127.0.0.1:8080` by default, serves the SPA at `/`, and asks the operating system to open that address in the default browser. `ADDR` changes the listener and browser URL. If automatic browser launch is blocked, visit the configured address manually. The built-in UI uses the same origin, so it also follows a custom `ADDR`.
 
 ## Format selection and adaptive HD / 4K path
 
