@@ -93,7 +93,7 @@ youtube-downloader --version
 
 Release builds perform a non-blocking check of the repository's latest stable **published** GitHub Release. Development builds skip that external request entirely.
 
-Update discovery is advisory only. The app links to the validated GitHub Release when a newer stable version exists; it does **not** download or replace its own executable. Automatic self-update remains disabled until Windows Authenticode signing, macOS Developer ID/notarization, post-download verification, and rollback-safe replacement are implemented. See [Release and update policy](docs/RELEASES.md) for the draft publication, provenance, signing, and rollback gates.
+Update discovery is advisory only. The app links to the validated GitHub Release when a newer stable version exists; it does **not** download or replace its own executable. Automatic self-update remains disabled until Windows Authenticode signing, macOS Developer ID/notarization, post-download verification, and rollback-safe replacement are implemented. See [Release and update policy](docs/RELEASES.md) and the [first release verification checklist](docs/RELEASE_CHECKLIST.md) for the draft publication, artifact checks, signing, and rollback gates.
 
 ## Configuration
 

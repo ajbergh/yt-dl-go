@@ -84,6 +84,10 @@ There is no single OS-native application-signing standard. SHA-256 plus GitHub/S
 
 No signing certificate, private key, Apple credential, or password belongs in the repository. Use protected GitHub environments/secrets or an external signing service.
 
+## First release verification
+
+Use the step-by-step [v0.1.0 release checklist](RELEASE_CHECKLIST.md) for release-source validation, artifact checksum and provenance verification, real-platform smoke tests, signing disclosures, and sign-off. A successful nonpublishing dry run does not create a tag, a draft, or a published release.
+
 ## Publishing a draft
 
 Before changing a generated draft to a normal published release:
