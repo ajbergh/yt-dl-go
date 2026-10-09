@@ -383,3 +383,48 @@ func TestDownloadPartCheckpointsAreIndependentPerTrack(t *testing.T) {
 		t.Fatalf("deleting the video checkpoint also deleted audio: %v", err)
 	}
 }
+
+
+func TestTerminalJobIsNotEvictedWhilePersistencePending(t *testing.T) {
+	s := newPersistenceTestServer(t)
+	j := &jobState{Job: Job{
+		ID: "pending-terminal-job", URL: testVideo, Kind: "video", Quality: "best",
+		Status: "completed", CreatedAt: time.Now().UTC().Format(time.RFC3339Nano),
+	}, dir: filepath.Join(s.cfg.root, "pending-terminal-job")}
+	if err := s.store.saveJob(j); err != nil {
+		t.Fatal(err)
+	}
+
+	// Model the period when persistJobSnapshotLocked has released s.mu
+	// for its SQLite write. The in-memory terminal state is newer than disk.
+	s.mu.Lock()
+	s.jobs[j.ID] = j
+	s.order = append(s.order, j.ID)
+	j.persistencePending = 1
+	s.evictTerminalJobLocked(j)
+	if s.jobs[j.ID] != j {
+		s.mu.Unlock()
+		t.Fatal("terminal job was evicted before its persistence completed")
+	}
+	s.mu.Unlock()
+
+	// A ticket preflight must still find the terminal job while its
+	// most recent snapshot has not yet been committed.
+	res := request(s, "POST", "/api/jobs/"+j.ID+"/ticket", "{}", nil)
+	if res.Code == http.StatusNotFound {
+		t.Fatalf("ticket preflight lost the pending terminal job: %s", res.Body.String())
+	}
+
+	s.mu.Lock()
+	j.persistencePending = 0
+	s.evictTerminalJobLocked(j)
+	if s.jobs[j.ID] != nil {
+		s.mu.Unlock()
+		t.Fatal("committed terminal job should be eligible for eviction")
+	}
+	loaded, hydrated, err := s.hydrateTerminalJobLocked(j.ID)
+	s.mu.Unlock()
+	if err != nil || !hydrated || loaded == nil {
+		t.Fatalf("committed terminal job must rehydrate: hydrated=%t err=%v", hydrated, err)
+	}
+}
