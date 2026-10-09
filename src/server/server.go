@@ -337,7 +337,7 @@ func (s *server) hydrateLibraryJobLocked(jobID string) (*jobState, bool, error) 
 // evictTerminalJobLocked drops a finished job's working state without sending
 // job-deleted: the durable Library record and history still exist.
 func (s *server) evictTerminalJobLocked(job *jobState) {
-	if job == nil || !terminal(job.Status) || job.persistenceFailed || s.jobs[job.ID] != job {
+	if job == nil || !terminal(job.Status) || job.persistenceFailed || job.persistencePending > 0 || s.jobs[job.ID] != job {
 		return
 	}
 	delete(s.jobs, job.ID)
