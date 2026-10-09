@@ -384,7 +384,6 @@ func TestDownloadPartCheckpointsAreIndependentPerTrack(t *testing.T) {
 	}
 }
 
-
 func TestTerminalJobIsNotEvictedWhilePersistencePending(t *testing.T) {
 	s := newPersistenceTestServer(t)
 	j := &jobState{Job: Job{
