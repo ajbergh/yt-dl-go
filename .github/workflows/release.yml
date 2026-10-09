@@ -142,6 +142,23 @@ jobs:
           TARGET_ARCH: ${{ matrix.arch }}
         run: ./scripts/build-windows.ps1 -OutputPath dist/release/youtube-downloader.exe
 
+      - name: Verify Windows release build identity (native only)
+        shell: pwsh
+        run: |
+          $hostArch = (go env GOARCH).Trim()
+          if ($hostArch -ne "${{ matrix.arch }}") {
+            Write-Host "Skipping execution of cross-built Windows ${{ matrix.arch }} binary on $hostArch runner."
+            exit 0
+          }
+          $actual = & ./dist/release/youtube-downloader.exe --version
+          if ($LASTEXITCODE -ne 0) {
+            throw "Packaged Windows executable failed --version ($LASTEXITCODE)."
+          }
+          $expected = "youtube-downloader $env:RELEASE_VERSION (commit $env:COMMIT, built $env:BUILD_DATE)"
+          if ($actual -ne $expected) {
+            throw "Incorrect Windows build identity. Expected '$expected'; got '$actual'."
+          }
+
       - name: Detect Windows architecture
         id: platform
         shell: pwsh
@@ -234,6 +251,23 @@ jobs:
           TARGET_OS: ${{ matrix.target }}
           TARGET_ARCH: ${{ matrix.arch }}
         run: bash ./scripts/build-unix.sh "dist/release/youtube-downloader-${{ matrix.target }}-${{ matrix.arch }}"
+
+      - name: Verify Unix release build identity (native only)
+        shell: bash
+        run: |
+          set -euo pipefail
+          host_os="$(go env GOOS)"
+          host_arch="$(go env GOARCH)"
+          if [[ "$host_os" != "${{ matrix.target }}" || "$host_arch" != "${{ matrix.arch }}" ]]; then
+            echo "Skipping execution of cross-built ${{ matrix.target }}/${{ matrix.arch }} binary on ${host_os}/${host_arch} runner."
+            exit 0
+          fi
+          expected="youtube-downloader ${RELEASE_VERSION} (commit ${COMMIT}, built ${BUILD_DATE})"
+          actual="$(./dist/release/youtube-downloader-${{ matrix.target }}-${{ matrix.arch }} --version)"
+          if [[ "$actual" != "$expected" ]]; then
+            echo "Incorrect ${{ matrix.label }} build identity. Expected '$expected'; got '$actual'." >&2
+            exit 1
+          fi
 
       - name: Attest ${{ matrix.label }} release package
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
