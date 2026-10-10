@@ -116,9 +116,16 @@ jobs:
           test "$(find . -maxdepth 1 -type f \( -name '*.tar.gz' -o -name '*.zip' \) | wc -l | tr -d ' ')" = 7
           sha256sum --check SHA256SUMS.txt
           for sidecar in *.sha256; do sha256sum --check "$sidecar"; done
-          for archive in *.zip *.tar.gz SHA256SUMS.txt; do
+          # Build attests six platform archives and SHA256SUMS.txt. Its source
+          # tarball is checksum-covered but not individually attested; verify its
+          # exact git-archive derivation instead of claiming a nonexistent attestation.
+          for archive in *.zip youtube-downloader-linux-*.tar.gz youtube-downloader-darwin-*.tar.gz SHA256SUMS.txt; do
             gh attestation verify "$archive" --repo "$GITHUB_REPOSITORY"
           done
+          git -C "$GITHUB_WORKSPACE" archive --format=tar \
+            --prefix="yt-dl-go-${RELEASE_TAG}/" "$RELEASE_SHA" | gzip -n > expected-source.tar.gz
+          cmp expected-source.tar.gz "yt-dl-go-source-${RELEASE_TAG}.tar.gz"
+          rm expected-source.tar.gz
 
       - name: Prepare unsigned draft release with validated assets
         shell: bash
