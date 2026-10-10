@@ -1,6 +1,6 @@
 # First public release verification — v0.1.0
 
-This is a maintainer runbook, **not** evidence that a release has already shipped. The release version in `package.json` is currently `0.1.0`; if it changes, replace `v0.1.0` below with the matching stable tag.
+**Historical runbook:** [v0.1.0 was published on October 10, 2026](https://github.com/ajbergh/yt-dl-go/releases/tag/v0.1.0) with explicit approval and disclosed outstanding signing, independent attestation verification, and manual end-to-end testing. Unchecked tasks below are **not** represented as completed; reuse this checklist for future releases, updating the version to match `package.json`.
 
 ## 1. Check the source revision
 
