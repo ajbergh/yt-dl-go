@@ -181,6 +181,34 @@ jobs:
         shell: pwsh
         run: ./scripts/package-windows.ps1 -ExecutablePath dist/release/youtube-downloader.exe -Architecture "${{ steps.platform.outputs.arch }}" -ArchivePath "dist/release/youtube-downloader-windows-${{ steps.platform.outputs.arch }}.zip"
 
+      - name: Smoke-test extracted Windows release package (native only)
+        shell: pwsh
+        env:
+          RELEASE_ARCH: ${{ matrix.arch }}
+        run: |
+          $hostArch = (go env GOARCH).Trim()
+          if ($hostArch -ne $env:RELEASE_ARCH) {
+            Write-Host "Skipping execution of cross-built Windows $env:RELEASE_ARCH on $hostArch runner."
+            exit 0
+          }
+          $archive = "dist/release/youtube-downloader-windows-$env:RELEASE_ARCH.zip"
+          $stage = Join-Path $env:RUNNER_TEMP ("yt-dl-go-release-smoke-" + [Guid]::NewGuid().ToString('N'))
+          try {
+            Expand-Archive -LiteralPath $archive -DestinationPath $stage -ErrorAction Stop
+            $executable = Join-Path $stage "youtube-downloader-windows-$env:RELEASE_ARCH/youtube-downloader.exe"
+            if (-not (Test-Path -LiteralPath $executable -PathType Leaf)) {
+              throw "Packaged Windows executable was not found in the extracted archive."
+            }
+            & node ./scripts/release-smoke.mjs $executable
+            if ($LASTEXITCODE -ne 0) {
+              throw "Windows release smoke test failed with exit code $LASTEXITCODE."
+            }
+          } finally {
+            if (Test-Path -LiteralPath $stage) {
+              Remove-Item -LiteralPath $stage -Recurse -Force
+            }
+          }
+
       - name: Attest Windows release package
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
@@ -283,6 +311,27 @@ jobs:
             echo "Incorrect ${{ matrix.label }} build identity. Expected '$expected'; got '$actual'." >&2
             exit 1
           fi
+
+      - name: Smoke-test extracted Unix release package (native only)
+        shell: bash
+        env:
+          RELEASE_TARGET: ${{ matrix.target }}
+          RELEASE_ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          host_os="$(go env GOOS)"
+          host_arch="$(go env GOARCH)"
+          if [[ "$host_os" != "$RELEASE_TARGET" || "$host_arch" != "$RELEASE_ARCH" ]]; then
+            echo "Skipping execution of cross-built $RELEASE_TARGET/$RELEASE_ARCH on $host_os/$host_arch runner."
+            exit 0
+          fi
+          stage="$(mktemp -d)"
+          trap 'rm -rf "$stage"' EXIT
+          archive="dist/release/youtube-downloader-$RELEASE_TARGET-$RELEASE_ARCH.tar.gz"
+          tar -xzf "$archive" -C "$stage"
+          executable="$stage/youtube-downloader-$RELEASE_TARGET-$RELEASE_ARCH/youtube-downloader"
+          test -x "$executable"
+          node ./scripts/release-smoke.mjs "$executable"
 
       - name: Attest ${{ matrix.label }} release package
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
