@@ -52,17 +52,22 @@ jobs:
         run: |
           set -euo pipefail
           actual="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$RELEASE_TAG" --jq '.object.sha' 2>/dev/null || true)"
-          if [[ -n "$actual" ]]; then
+          # GitHub CLI may return a JSON 404 body on stdout; it is NOT
+          # an existing tag. Treat only a 40-character SHA as an existing ref.
+          if [[ "$actual" =~ ^[0-9a-f]{40}$ ]]; then
             test "$actual" = "$RELEASE_SHA" || {
               echo "Version tag already exists at a different commit: $actual" >&2
               exit 1
             }
             echo "Expected tag already exists at approved source commit."
-          else
+          elif [[ -z "$actual" || "$actual" == *'"status":"404"'* ]]; then
             gh api --method POST "repos/$GITHUB_REPOSITORY/git/refs" \
               -f "ref=refs/tags/$RELEASE_TAG" \
               -f "sha=$RELEASE_SHA" >/dev/null
             echo "Created immutable release tag $RELEASE_TAG at $RELEASE_SHA."
+          else
+            echo "Unexpected response when checking release tag; refusing to proceed." >&2
+            exit 1
           fi
 
       - name: Dispatch the standard Release workflow on the tag
