@@ -34,7 +34,7 @@ gh attestation verify youtube-downloader-linux-amd64.tar.gz --repo ajbergh/yt-dl
 gh attestation verify SHA256SUMS.txt --repo ajbergh/yt-dl-go
 ```
 
-- [ ] Confirm native executable `--version` prints the expected version, source commit and UTC build date. The workflow checks this on native runners; cross-built architectures still require a compatible real machine or emulator.
+- [ ] Confirm native executable `--version` prints the expected version, source commit and UTC build date. The release workflow also extracts native packages and smoke-tests API readiness, embedded UI, private SQLite storage and restart before attestation. Cross-built architectures still require a compatible real machine or emulator; Windows graceful console shutdown remains a manual gate.
 - [ ] Do not confuse a GitHub build-provenance attestation or SHA-256 hash with Authenticode signing or Apple Developer ID notarization.
 
 ## 4. Smoke-test actual end-user packages
