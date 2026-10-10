@@ -193,7 +193,33 @@ jobs:
           }
           $archive = "dist/release/youtube-downloader-windows-$env:RELEASE_ARCH.zip"
           $stage = Join-Path $env:RUNNER_TEMP ("yt-dl-go-release-smoke-" + [Guid]::NewGuid().ToString('N'))
+          $privateData = Join-Path $env:RUNNER_TEMP ("yt-dl-go-private-data-" + [Guid]::NewGuid().ToString('N'))
           try {
+            # DATA_DIR intentionally rejects Administrators-owned/shared temporary
+            # folders. Construct a directory owned by the actual runner identity
+            # with a protected DACL instead of weakening runtime validation.
+            New-Item -ItemType Directory -Path $privateData -ErrorAction Stop | Out-Null
+            $owner = [System.Security.Principal.WindowsIdentity]::GetCurrent().User
+            $privateAcl = [System.Security.AccessControl.DirectorySecurity]::new()
+            $privateAcl.SetOwner($owner)
+            $privateAcl.SetAccessRuleProtection($true, $false)
+            foreach ($sid in @(
+              $owner,
+              [System.Security.Principal.SecurityIdentifier]::new('S-1-5-18'),
+              [System.Security.Principal.SecurityIdentifier]::new('S-1-5-32-544')
+            )) {
+              $rule = [System.Security.AccessControl.FileSystemAccessRule]::new(
+                $sid,
+                [System.Security.AccessControl.FileSystemRights]::FullControl,
+                ([System.Security.AccessControl.InheritanceFlags]::ContainerInherit -bor
+                  [System.Security.AccessControl.InheritanceFlags]::ObjectInherit),
+                [System.Security.AccessControl.PropagationFlags]::None,
+                [System.Security.AccessControl.AccessControlType]::Allow
+              )
+              $privateAcl.AddAccessRule($rule)
+            }
+            Set-Acl -LiteralPath $privateData -AclObject $privateAcl -ErrorAction Stop
+            $env:YTDL_RELEASE_SMOKE_DATA_DIR = $privateData
             Expand-Archive -LiteralPath $archive -DestinationPath $stage -ErrorAction Stop
             $executable = Join-Path $stage "youtube-downloader-windows-$env:RELEASE_ARCH/youtube-downloader.exe"
             if (-not (Test-Path -LiteralPath $executable -PathType Leaf)) {
@@ -204,8 +230,12 @@ jobs:
               throw "Windows release smoke test failed with exit code $LASTEXITCODE."
             }
           } finally {
+            Remove-Item Env:\YTDL_RELEASE_SMOKE_DATA_DIR -ErrorAction SilentlyContinue
             if (Test-Path -LiteralPath $stage) {
               Remove-Item -LiteralPath $stage -Recurse -Force
+            }
+            if (Test-Path -LiteralPath $privateData) {
+              Remove-Item -LiteralPath $privateData -Recurse -Force
             }
           }
 
