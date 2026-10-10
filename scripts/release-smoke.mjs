@@ -25,8 +25,11 @@ async function availablePort() {
   return port;
 }
 
-const temp = await mkdtemp(path.join(os.tmpdir(), 'yt-dl-go-release-smoke-'));
-const dataDir = path.join(temp, 'private-data');
+// Windows test runners prepare a private user-owned DACL-protected directory
+// externally. Generic OS temporary directories may be Administrators-owned and
+// are correctly rejected by the application's DATA_DIR security checks.
+const temp = process.env.YTDL_RELEASE_SMOKE_DATA_DIR ? undefined : await mkdtemp(path.join(os.tmpdir(), 'yt-dl-go-release-smoke-'));
+const dataDir = process.env.YTDL_RELEASE_SMOKE_DATA_DIR || path.join(temp, 'private-data');
 let child;
 let exited;
 let output = '';
@@ -124,5 +127,5 @@ try {
   await smoke(2); // Restart against the same private database.
   console.log('Extracted release package startup/restart smoke test passed');
 } finally {
-  try { await stopChild(); } finally { await rm(temp, { recursive: true, force: true }); }
+  try { await stopChild(); } finally { if (temp) await rm(temp, { recursive: true, force: true }); }
 }
