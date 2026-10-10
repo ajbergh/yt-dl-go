@@ -1,8 +1,12 @@
 # Changelog
 
-This file summarizes notable user-facing changes. The first public release is still being prepared. The version below is a **candidate**, not a published release.
+This file summarizes notable user-facing changes. Version **v0.1.0** was publicly released on **2026-10-10**.
 
-## [Unreleased] — v0.1.0 candidate
+## [Unreleased]
+
+No changes recorded since v0.1.0.
+
+## [0.1.0] — 2026-10-10
 
 ### Added
 - One local-first, CGO-free Go executable that serves an embedded React interface on Windows, macOS, and Linux.
@@ -29,7 +33,7 @@ This file summarizes notable user-facing changes. The first public release is st
 - Only download content you own or are permitted to save. YouTube delivery changes can affect format availability; no requested resolution is guaranteed.
 - Browser-assisted adaptive capture requires a compatible locally installed Chromium-based browser and does not import normal browser cookies or private account credentials.
 - The bundled UI does not send `API_TOKEN`, so token-protected API deployments need a separate authenticated client.
-- Initial CI packages are validation artifacts, not signed/notarized public installers. No public release is implied by this changelog entry.
+- Initial public Windows and macOS packages are unsigned and not notarized. Check their SHA-256 hashes; independent GitHub attestation API verification was unavailable at publication.
 - Automatic self-update remains disabled pending native signing, final-artifact verification, atomic replacement, and rollback support.
 
-After the first public version is actually published, convert this candidate section into a dated `[0.1.0]` release section, then maintain a new `[Unreleased]` section for future changes.
+The v0.1.0 release contains six OS/architecture archives, a source archive, and checksum files. See the public GitHub Release for download links and disclosures.
