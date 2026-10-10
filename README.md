@@ -83,6 +83,8 @@ On Windows the executable result remains `dist\youtube-downloader.exe`. Unix pac
 
 ### Releases and update checks
 
+**First public release:** [v0.1.0 (October 10, 2026)](https://github.com/ajbergh/yt-dl-go/releases/tag/v0.1.0), with Windows, Linux, and macOS AMD64/ARM64 packages, source archive, and SHA-256 manifest. **Windows builds are unsigned; macOS builds are unsigned and not notarized.** Independent provenance verification via GitHub's attestations API was unavailable at publication; read the release notes before using packages.
+
 Tagged stable releases use `.github/workflows/release.yml`. A tag must use `vMAJOR.MINOR.PATCH` form **and exactly match `package.json`**. The workflow runs the full frontend/Go/browser validation suite, builds the Windows/Linux/macOS package matrix, verifies each archive checksum, creates a canonical `SHA256SUMS.txt`, attaches GitHub build-provenance attestations, and creates a **draft** GitHub Release. Draft releases are intentionally invisible to update discovery until a human completes the publication gate.
 
 Release builds embed immutable `version`, source commit, and build-date metadata through Go linker variables. Local/ordinary CI builds remain `dev / unknown`. The Settings page shows this metadata, and packaged binaries can report the same identity without starting the service:
