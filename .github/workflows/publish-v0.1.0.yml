@@ -1,0 +1,115 @@
+name: Publish approved v0.1.0 release
+
+# One-time release approval action, intentionally kept off main.
+on:
+  push:
+    branches:
+      - release-publish/v0.1.0
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    if: github.repository == 'ajbergh/yt-dl-go' && github.ref == 'refs/heads/release-publish/v0.1.0'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      GH_TOKEN: ${{ github.token }}
+      RELEASE_TAG: v0.1.0
+      EXPECTED_SHA: e285dbec5ca3159992cbf41d905b2d28f9b9553f
+      RELEASE_ID: "408915880"
+    steps:
+      - name: Check out the approved tagged release source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: e285dbec5ca3159992cbf41d905b2d28f9b9553f
+          persist-credentials: false
+
+      - name: Verify tag, release identity and uploaded assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          test "$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$RELEASE_TAG" --jq '.object.sha')" = "$EXPECTED_SHA"
+          test "$(node -p 'require("./package.json").version')" = "0.1.0"
+          release_json="$(gh api "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID")"
+          jq -e --arg tag "$RELEASE_TAG" '.tag_name == $tag and .draft == true and .prerelease == false' <<< "$release_json"
+          jq -e '.assets | length == 15 and all(.[]; .size > 0)' <<< "$release_json"
+          expected_assets="$(cat <<'EXPECTED'
+          SHA256SUMS.txt
+          youtube-downloader-darwin-amd64.tar.gz
+          youtube-downloader-darwin-amd64.tar.gz.sha256
+          youtube-downloader-darwin-arm64.tar.gz
+          youtube-downloader-darwin-arm64.tar.gz.sha256
+          youtube-downloader-linux-amd64.tar.gz
+          youtube-downloader-linux-amd64.tar.gz.sha256
+          youtube-downloader-linux-arm64.tar.gz
+          youtube-downloader-linux-arm64.tar.gz.sha256
+          youtube-downloader-windows-amd64.zip
+          youtube-downloader-windows-amd64.zip.sha256
+          youtube-downloader-windows-arm64.zip
+          youtube-downloader-windows-arm64.zip.sha256
+          yt-dl-go-source-v0.1.0.tar.gz
+          yt-dl-go-source-v0.1.0.tar.gz.sha256
+          EXPECTED
+          )"
+          actual_assets="$(jq -r '.assets[].name' <<< "$release_json" | sort)"
+          diff -u <(printf '%s\n' "$expected_assets" | sort) <(printf '%s\n' "$actual_assets")
+          echo "Approved release tag, source SHA, and all 15 assets verified."
+
+      - name: Prepare accurate public-facing release notes
+        shell: bash
+        run: |
+          cat > "$RUNNER_TEMP/v0.1.0-release-notes.md" <<'NOTES'
+          # yt-dl-go v0.1.0 — First Public Release
+
+          Initial packaged release of the local-first Go downloader and SQLite-backed media library.
+
+          ### Highlights
+          - Embedded React UI and native Go media download engine.
+          - Persistent queue management, downloads, and searchable Library.
+          - Configurable storage and naming, media file access, metadata, and subtitle support.
+          - Windows, Linux and macOS packages for AMD64 and ARM64.
+          - Manual update discovery; the app does not automatically install updates.
+
+          ### Downloads and verification
+          Select the archive matching your OS and CPU architecture below. Each platform archive has a SHA-256 sidecar; `SHA256SUMS.txt` covers all seven archives, including the matching source/relinking archive. Verify checksums before using downloaded files.
+
+          The build pipeline passed CI, CodeQL, six-platform packaging, and automated native package startup/health/UI/SQLite/restart smoke tests on Windows AMD64, Linux AMD64 and macOS ARM64.
+
+          ### Security and compatibility disclosures
+          **Windows packages are not Authenticode-signed; macOS packages are not Apple Developer ID signed or notarized.** OS security warnings may occur. Evaluate these packages before use; the SHA-256 checksum manifest is provided for integrity checking.
+
+          GitHub build-provenance attestation steps completed in CI, but **independent `gh attestation verify` could not be completed** because the GitHub attestations API returned HTTP 404. Therefore, independent provenance verification is not claimed.
+
+          Full manual installation tests on every architecture and end-to-end authorized-media download testing were not completed before publication. Browser-assisted adaptive media capture requires a compatible local browser; supported output formats and resolution depend on source delivery. Back up your application data before replacing binaries or testing rollback. Only download content you own or are authorized to save.
+
+          This release is being published with the repository owner's approval and these limitations disclosed. See `CHANGELOG.md`, `docs/RELEASES.md`, and `docs/RELEASE_CHECKLIST.md` in the source repository for further details.
+          NOTES
+
+      - name: Update draft notes, then publish approved release
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" \
+            --notes-file "$RUNNER_TEMP/v0.1.0-release-notes.md"
+          test "$(gh api "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" --jq '.draft')" = "true"
+          gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --draft=false
+          echo "Approved v0.1.0 draft changed to public release."
+
+      - name: Verify that the release is public
+        shell: bash
+        run: |
+          set -euo pipefail
+          for i in $(seq 1 12); do
+            release_json="$(gh api "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID")"
+            if jq -e --arg tag "$RELEASE_TAG" '.tag_name == $tag and .draft == false and .prerelease == false and (.published_at != null) and (.assets | length == 15)' <<< "$release_json" >/dev/null; then
+              echo "Public release verified:"
+              jq '{tag_name, draft, prerelease, published_at, html_url, assets: (.assets | length)}' <<< "$release_json"
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "GitHub did not confirm public release state." >&2
+          exit 1
