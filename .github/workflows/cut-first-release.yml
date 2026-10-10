@@ -1,0 +1,141 @@
+name: Cut v0.1.0 draft release
+
+# One-time, release-only workflow on a dedicated unmerged branch.
+# This file must never be copied to main: main's Release workflow owns builds.
+on:
+  push:
+    branches:
+      - release-cut/v0.1.0
+
+permissions:
+  contents: write
+  actions: write
+  attestations: read
+
+concurrency:
+  group: cut-first-release-v0.1.0
+  cancel-in-progress: false
+
+jobs:
+  cut-draft:
+    if: github.repository == 'ajbergh/yt-dl-go'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      GH_TOKEN: ${{ github.token }}
+      RELEASE_TAG: v0.1.0
+      RELEASE_SHA: e285dbec5ca3159992cbf41d905b2d28f9b9553f
+      VERIFIED_VALIDATION_RUN: "38021244625"
+    steps:
+      - name: Check out approved main commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: e285dbec5ca3159992cbf41d905b2d28f9b9553f
+          persist-credentials: false
+
+      - name: Verify release source and approvals
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$RELEASE_SHA"
+          test "$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq '.object.sha')" = "$RELEASE_SHA"
+          test "$(node -p 'require("./package.json").version')" = "0.1.0"
+          test "$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$VERIFIED_VALIDATION_RUN" --jq '.head_sha')" = "$RELEASE_SHA"
+          test "$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$VERIFIED_VALIDATION_RUN" --jq '.conclusion')" = "success"
+          if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Refusing to overwrite an existing release $RELEASE_TAG" >&2
+            exit 1
+          fi
+
+      - name: Create version tag at approved commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          actual="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$RELEASE_TAG" --jq '.object.sha' 2>/dev/null || true)"
+          if [[ -n "$actual" ]]; then
+            test "$actual" = "$RELEASE_SHA" || {
+              echo "Version tag already exists at a different commit: $actual" >&2
+              exit 1
+            }
+            echo "Expected tag already exists at approved source commit."
+          else
+            gh api --method POST "repos/$GITHUB_REPOSITORY/git/refs" \
+              -f "ref=refs/tags/$RELEASE_TAG" \
+              -f "sha=$RELEASE_SHA" >/dev/null
+            echo "Created immutable release tag $RELEASE_TAG at $RELEASE_SHA."
+          fi
+
+      - name: Dispatch the standard Release workflow on the tag
+        id: dispatch
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "dispatch_after=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+          gh workflow run release.yml --repo "$GITHUB_REPOSITORY" \
+            --ref "$RELEASE_TAG" --field "version=$RELEASE_TAG"
+
+      - name: Await successful tag-sourced build
+        id: built
+        shell: bash
+        env:
+          DISPATCH_AFTER: ${{ steps.dispatch.outputs.dispatch_after }}
+        run: |
+          set -euo pipefail
+          run_id=""
+          for i in $(seq 1 60); do
+            run_id="$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/release.yml/runs?event=workflow_dispatch&per_page=50" \
+              --jq ".workflow_runs | map(select(.head_sha == \"$RELEASE_SHA\" and .created_at >= \"$DISPATCH_AFTER\")) | sort_by(.created_at) | last | .id // empty")"
+            if [[ -n "$run_id" ]]; then break; fi
+            sleep 10
+          done
+          test -n "$run_id" || {
+            echo "Dispatched tag build not found." >&2
+            exit 1
+          }
+          echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
+          echo "Monitoring release workflow run $run_id"
+          gh run watch "$run_id" --repo "$GITHUB_REPOSITORY" --exit-status --interval 30
+          test "$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run_id" --jq '.conclusion')" = success
+          test "$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run_id" --jq '.head_sha')" = "$RELEASE_SHA"
+
+      - name: Download, verify and attest final tag-built assets
+        shell: bash
+        env:
+          RELEASE_RUN_ID: ${{ steps.built.outputs.run_id }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist/release
+          gh run download "$RELEASE_RUN_ID" --repo "$GITHUB_REPOSITORY" \
+            --name "release-dry-run-$RELEASE_TAG" --dir dist/release
+          cd dist/release
+          test "$(find . -maxdepth 1 -type f \( -name '*.tar.gz' -o -name '*.zip' \) | wc -l | tr -d ' ')" = 7
+          sha256sum --check SHA256SUMS.txt
+          for sidecar in *.sha256; do sha256sum --check "$sidecar"; done
+          for archive in *.zip *.tar.gz SHA256SUMS.txt; do
+            gh attestation verify "$archive" --repo "$GITHUB_REPOSITORY"
+          done
+
+      - name: Prepare unsigned draft release with validated assets
+        shell: bash
+        env:
+          RELEASE_RUN_ID: ${{ steps.built.outputs.run_id }}
+        run: |
+          set -euo pipefail
+          cat > dist/release-notes.md <<'RELEASE_NOTES'
+          # yt-dl-go v0.1.0
+
+          First packaged release candidate of the local-first downloader and SQLite-backed media library.
+
+          Includes embedded React UI, native Go download engine, queue management, persistent Library, configurable storage, file tickets, metadata/subtitle capabilities, and portable Windows, Linux and macOS packages.
+
+          **Distribution note:** These Windows and macOS artifacts are **not Authenticode-signed or Apple Developer ID signed/notarized**. GitHub/Sigstore provenance and SHA-256 checksums verify the supplied build artifacts but do **not** replace OS-native signatures. Browser-assisted adaptive extraction requires a compatible local browser. Download only content that you own or are permitted to save.
+
+          **Publication status:** Draft pending final maintainer sign-off for signing policy, real-hardware installation and authorized-media workflow tests. The app does not self-install updates.
+
+          See `CHANGELOG.md` and `docs/RELEASE_CHECKLIST.md` for features, limitations and final release gates.
+          RELEASE_NOTES
+          gh release create "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" \
+            --verify-tag --draft --title "yt-dl-go $RELEASE_TAG" \
+            --notes-file dist/release-notes.md \
+            dist/release/*.zip dist/release/*.tar.gz dist/release/*.sha256 dist/release/SHA256SUMS.txt
+          echo "Draft release created with tagged workflow run $RELEASE_RUN_ID"
