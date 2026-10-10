@@ -981,9 +981,9 @@ No tests exist for:
 
 ### M8.1 Ship the first release
 
-**Status:** [T] Dry run validated; first release version and tag pending · **P1** · **Area:** release
+**Status:** [x] Initial public v0.1.0 release published 2026-10-10; native signing and independent attestation gaps remain · **P1** · **Area:** release
 
-- No release tag exists yet and `package.json` remains `0.1.0`; the successful dry run validated `v0.1.0` without publishing a release.
+- Public [`v0.1.0` release](https://github.com/ajbergh/yt-dl-go/releases/tag/v0.1.0) exists at commit `e285dbe`, with six platform packages, source archive and 15 uploaded assets. Signing/notarization and external attestation lookup limitations are disclosed.
 - Shared action versions now align between the release and CI workflows.
 - The README's Windows download now points to GitHub Releases rather than the gitignored `dist/` directory.
 
@@ -991,10 +991,10 @@ No tests exist for:
 
 - [x] Add a `workflow_dispatch` dry-run mode to `release.yml` that skips `gh release create` and uploads release artifacts for inspection.
 - [x] Align shared action versions between the two workflows.
-- Cut `v0.2.0` (or `v1.0.0` after Milestone 0).
+- [x] Cut and publicly publish initial `v0.1.0` release with explicit approval and disclosed distribution limitations. Future release versions follow the versioning plan.
 - [x] Point the README at GitHub Releases.
 
-**Progress (2026-09-24):** Merged by [PR #15](https://github.com/ajbergh/yt-dl-go/pull/15); all six CI jobs passed. The authorized `v0.1.0` run (35921227203) exposed a source archive checksum path issue, fixed in [PR #31](https://github.com/ajbergh/yt-dl-go/pull/31). Its rerun (35924524457) passed all seven checksum checks but exposed CRLF handling in expected-archive validation, fixed in [PR #32](https://github.com/ajbergh/yt-dl-go/pull/32). Final dry run [35925902083](https://github.com/ajbergh/yt-dl-go/actions/runs/35925902083) passed source validation, all six platform builds, archive and manifest checksums, provenance attestations, and uploaded the 77.5 MB `release-dry-run-v0.1.0` artifact. A fresh user-requested `v0.1.0` dry run [35955844770](https://github.com/ajbergh/yt-dl-go/actions/runs/35955844770) also passed on `main` (SHA `15f9369`). Source validation, browser E2E, all six platform packages, provenance attestations, source/relinking archive, checksum manifest and artifact upload passed; the 78.2 MB `release-dry-run-v0.1.0` artifact is available in the run, and the GitHub Release creation step was skipped. No `v0.1.0` tag or release was created. The first public release version/tag decision remains pending.
+**Historical progress (2026-09-24, before v0.1.0 publication):** Merged by [PR #15](https://github.com/ajbergh/yt-dl-go/pull/15); all six CI jobs passed. The authorized `v0.1.0` run (35921227203) exposed a source archive checksum path issue, fixed in [PR #31](https://github.com/ajbergh/yt-dl-go/pull/31). Its rerun (35924524457) passed all seven checksum checks but exposed CRLF handling in expected-archive validation, fixed in [PR #32](https://github.com/ajbergh/yt-dl-go/pull/32). Final dry run [35925902083](https://github.com/ajbergh/yt-dl-go/actions/runs/35925902083) passed source validation, all six platform builds, archive and manifest checksums, provenance attestations, and uploaded the 77.5 MB `release-dry-run-v0.1.0` artifact. A fresh user-requested `v0.1.0` dry run [35955844770](https://github.com/ajbergh/yt-dl-go/actions/runs/35955844770) also passed on `main` (SHA `15f9369`). Source validation, browser E2E, all six platform packages, provenance attestations, source/relinking archive, checksum manifest and artifact upload passed; the 78.2 MB `release-dry-run-v0.1.0` artifact is available in the run, and the GitHub Release creation step was skipped. No `v0.1.0` tag or release was created. The first public release version/tag decision remains pending.
 
 ### M8.2 Harden the release workflow
 
@@ -1070,7 +1070,7 @@ The v1 P2.3 gates still apply: checksum plus signature/provenance verification, 
 - [x] Add `LICENSE` (M0.6).
 - [x] Add `SECURITY.md` with private vulnerability reporting guidance and the local API token/ticket model.
 - [x] Add `CONTRIBUTING.md` with setup, npm/Bun roles, CI checks, and contribution guidance.
-- [x] Add an initial `CHANGELOG.md` for the unreleased v0.1.0 candidate; automate versioning and release-note generation separately in M8.7.
+- [x] Maintain initial `CHANGELOG.md` with dated public `v0.1.0` release; automate versioning and release-note generation separately in M8.7.
 - [x] Add bug, feature-request, and pull-request templates.
 
 **Progress (2026-09-23):** Implemented on `roadmap/m9-1-governance-docs`; the changelog remains tied to M8.7 so it can be generated from the release history.
