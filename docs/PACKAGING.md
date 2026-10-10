@@ -101,6 +101,8 @@ The workflow:
 8. creates GitHub build-provenance attestations for each release archive and the checksum manifest using OIDC;
 9. creates a **draft** GitHub Release containing the binaries, source archive, and checksum files.
 
+Native-architecture release jobs now extract their finished archive and run a self-contained smoke test before attestation. The test starts the packaged executable against disposable private data, verifies `/api/health`, embedded UI, security headers, version metadata and SQLite initialization, stops the process and restarts it on the same database. Cross-built architectures cannot execute on a mismatched runner and are explicitly skipped; real-platform testing and Windows graceful-console shutdown remain separate release gates.
+
 The draft is the release-publication safety gate: it is not returned by GitHub's latest-release endpoint, so the app cannot advertise the release until a human publishes it after the required review/signing steps in [RELEASES.md](RELEASES.md).
 
 For local release-like builds, the package scripts accept these optional environment variables:
