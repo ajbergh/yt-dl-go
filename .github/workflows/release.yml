@@ -249,7 +249,7 @@ jobs:
         run: '"youtube-downloader-windows-${{ steps.platform.outputs.arch }}.zip" | Set-Content -Path "dist/release/expected-windows-${{ steps.platform.outputs.arch }}.txt" -Encoding ascii'
 
       - name: Upload Windows release package
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-windows-${{ steps.platform.outputs.arch }}
           path: |
@@ -373,7 +373,7 @@ jobs:
         run: echo "youtube-downloader-${{ matrix.target }}-${{ matrix.arch }}.tar.gz" > "dist/release/expected-${{ matrix.target }}-${{ matrix.arch }}.txt"
 
       - name: Upload ${{ matrix.label }} release package
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-${{ matrix.target }}-${{ matrix.arch }}
           path: |
@@ -448,7 +448,7 @@ jobs:
 
       - name: Upload dry-run release artifacts
         if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/heads/release-validation/')
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-dry-run-${{ env.RELEASE_VERSION }}
           path: |
