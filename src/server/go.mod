@@ -4,7 +4,7 @@ go 1.27
 
 require (
 	github.com/at-wat/ebml-go v0.19.4
-	github.com/chromedp/cdproto v0.157.6
+	github.com/chromedp/cdproto v0.158.2
 	github.com/chromedp/chromedp v0.19.1
 	github.com/kkdai/youtube/v2 v2.10.6
 	github.com/tphakala/go-m4a v0.5.0
@@ -19,6 +19,7 @@ require (
 	github.com/dlclark/regexp2 v1.11.5 // indirect
 	github.com/dop251/goja v0.0.0-20260311135729-065cd970411c // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
+	github.com/go-json-experiment/json v0.0.0-20260213210345-44df1a37e875 // indirect
 	github.com/go-sourcemap/sourcemap v2.1.4+incompatible // indirect
 	github.com/google/pprof v0.0.0-20260802141513-ef3492d7dac3 // indirect
 	github.com/google/uuid v1.6.0 // indirect
