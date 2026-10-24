@@ -20,7 +20,7 @@ The Windows artifact also retains the raw `youtube-downloader.exe` for compatibi
 
 ## Local builds
 
-Install Go 1.27 or newer, Node.js/npm, and run `npm ci` first.
+Install Go 1.27.3 or newer, Node.js/npm, and run `npm ci` first.
 
 ### Windows
 

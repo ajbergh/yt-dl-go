@@ -1,6 +1,6 @@
 module youtube-downloader
 
-go 1.27.0
+go 1.27.3
 
 require (
 	github.com/at-wat/ebml-go v0.19.4
