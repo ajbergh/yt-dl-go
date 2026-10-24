@@ -184,6 +184,9 @@ func TestBulkJobsValidatesIDsAndReportsPerJobFailures(t *testing.T) {
 	if first.Code != http.StatusAccepted || second.Code != http.StatusAccepted || firstJob.Status != "paused" || secondJob.Status != "paused" {
 		t.Fatalf("startPaused jobs: first=%d/%s second=%d/%s", first.Code, firstJob.Status, second.Code, secondJob.Status)
 	}
+	if len(firstJob.Items) != 1 || firstJob.Items[0].Status != "paused" {
+		t.Fatalf("new paused job has inconsistent item status: %+v", firstJob.Items)
+	}
 
 	duplicate := request(s, http.MethodPost, "/api/jobs/bulk", `{"action":"resume","jobIds":["`+firstJob.ID+`","`+firstJob.ID+`"]}`, nil)
 	if duplicate.Code != http.StatusBadRequest || firstJob.Status != "paused" {

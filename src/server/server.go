@@ -1480,6 +1480,7 @@ func (s *server) enqueueJobWithFallback(w http.ResponseWriter, u, kind, quality,
 		total := 1
 		j.TotalCount = &total
 	}
+	s.refreshAllQueueItemsLocked(j)
 	if err := s.persistJobSnapshotLocked(j, "create job"); err != nil {
 		_ = os.RemoveAll(j.dir)
 		fail(w, 500, "Cannot persist download job")

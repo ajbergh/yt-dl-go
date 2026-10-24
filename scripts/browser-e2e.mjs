@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
@@ -244,6 +244,26 @@ async function readValue(cdp, selector) {
   return cdp.evaluate(`document.querySelector(${JSON.stringify(selector)})?.value ?? null`);
 }
 
+async function captureScreenshot(cdp, name, width = 1440, height = 1000) {
+  await cdp.send("Emulation.setDeviceMetricsOverride", { width, height, deviceScaleFactor: 1, mobile: false });
+  await cdp.evaluate("new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))");
+  if (name.startsWith("library-")) {
+    const clipped = await cdp.evaluate(`Array.from(document.querySelectorAll('article button[aria-label], article h4')).filter(element => {
+      const bounds = element.getBoundingClientRect();
+      const card = element.closest('article').getBoundingClientRect();
+      return bounds.width <= 0 || bounds.left < card.left || bounds.right > card.right || bounds.bottom > card.bottom;
+    }).map(element => element.getAttribute('aria-label') || element.textContent)`);
+    assert.deepEqual(clipped, [], `${name} has clipped file controls or titles`);
+  }
+  if (process.env.E2E_SCREENSHOT_DIR) {
+    await mkdir(process.env.E2E_SCREENSHOT_DIR, { recursive: true });
+    const { cssContentSize } = await cdp.send("Page.getLayoutMetrics");
+    const { data } = await cdp.send("Page.captureScreenshot", { format: "png", captureBeyondViewport: true, clip: { ...cssContentSize, scale: 1 } });
+    await writeFile(path.join(process.env.E2E_SCREENSHOT_DIR, `${name}.png`), Buffer.from(data, "base64"));
+  }
+  await cdp.send("Emulation.clearDeviceMetricsOverride");
+}
+
 async function getJSON(url) {
   const response = await fetch(url);
   assert.equal(response.ok, true, `GET ${url} failed: ${response.status}`);
@@ -270,6 +290,15 @@ async function main() {
   const binary = path.join(tempRoot, process.platform === "win32" ? "yt-dl-go-e2e.exe" : "yt-dl-go-e2e");
   await mkdir(dataDir, { recursive: true, mode: 0o700 });
   await mkdir(chromeData, { recursive: true, mode: 0o700 });
+  if (process.platform === "win32") {
+    // Node's mkdir mode does not restrict Windows ACLs. The fixture must meet
+    // the same private DATA_DIR policy as a normal service instance.
+    const identity = spawnSync("whoami", ["/user", "/fo", "csv", "/nh"], { encoding: "utf8", windowsHide: true });
+    const sid = identity.stdout?.match(/S-1-[0-9-]+/)?.[0];
+    assert.ok(sid, `Could not resolve the Windows test identity: ${identity.stderr}`);
+    const acl = spawnSync("icacls", [dataDir, "/inheritance:r", "/grant:r", `*${sid}:(OI)(CI)F`], { encoding: "utf8", windowsHide: true });
+    assert.equal(acl.status, 0, `Could not secure the E2E data directory: ${acl.stdout}\n${acl.stderr}`);
+  }
 
   let service;
   let chrome;
@@ -346,7 +375,21 @@ async function main() {
     await clickButton(cdp, "Inspect qualities");
     await waitFor(cdp, bodyIncludes("E2E Fixture Video"), "fixture inspection result");
     await clickSelector(cdp, 'input[aria-label="Confirm download rights"]');
+    await clickSelector(cdp, 'input[aria-label="Add as paused"]');
     await clickButton(cdp, "Add 1 to queue");
+    await waitForBackendJobStatus(baseURL, "paused");
+    await waitForEnabledSelector(cdp, '[aria-label^="Edit queued settings for "]', "paused configuration editor");
+    await clickSelector(cdp, '[aria-label^="Edit queued settings for "]');
+    await setValue(cdp, 'select[aria-label^="Quality for "]', "480");
+    await captureScreenshot(cdp, "queue-editor");
+    const configurationResponse = cdp.waitEvent("Network.responseReceived", params => params?.response?.url?.endsWith("/configuration") === true);
+    await clickButton(cdp, "Save queue settings");
+    assert.equal((await configurationResponse).response.status, 200);
+    assert.equal((await getJSON(`${baseURL}/api/jobs`)).jobs[0].quality, "480");
+    await clickSelector(cdp, 'input[aria-label^="Select "]');
+    const bulkResponse = cdp.waitEvent("Network.responseReceived", params => params?.response?.url?.endsWith("/bulk") === true);
+    await clickSelector(cdp, '[aria-label="Resume selected jobs"]');
+    assert.equal((await bulkResponse).response.status, 200);
     await waitFor(cdp, bodyIncludes("Downloading"), "active download");
 
     // 4: pause and resume through the browser UI while the fixture stream is live.
@@ -381,6 +424,8 @@ async function main() {
     await clickButton(cdp, "Library");
     await waitFor(cdp, bodyIncludes("Download library"), "Library page");
     await waitFor(cdp, bodyIncludes("E2E Fixture Video"), "completed Library item");
+    await captureScreenshot(cdp, "library-desktop");
+    await captureScreenshot(cdp, "library-mobile", 390, 844);
 
     const beforeRestart = await getJSON(`${baseURL}/api/library`);
     assert.equal(beforeRestart.jobs.length, 1, "completed Library item was not persisted");
@@ -436,7 +481,7 @@ async function main() {
     const afterDelete = await getJSON(`${baseURL}/api/library`);
     assert.equal(afterDelete.jobs.length, 0, "confirmed delete-everywhere did not remove Library history");
 
-    console.log("Browser E2E passed: startup, inspect, queue, pause/resume, completion, Library, settings, restart persistence, confirmation.");
+    console.log("Browser E2E passed: startup, inspect, add-as-paused, configuration editing, bulk resume, pause/resume, completion, Library, settings, restart persistence, confirmation.");
   } catch (error) {
     console.error(error?.stack || error);
     if (cdp) {

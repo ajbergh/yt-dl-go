@@ -557,7 +557,7 @@ Subtitles are sidecar-only, and thumbnails are embedded only in MP3.
 
 ### M3.5 Bulk retry and queue editing
 
-**Status:** [~] Implemented on `chore/repository-cleanup`; integration validation pending · **P1** · **Area:** backend / UX
+**Status:** [x] Implemented · **P1** · **Area:** backend / UX
 
 **Progress (2026-10-24):** Retained the local M3.5 implementation and reconciled it with current main. The queue supports retrying all failed playlist items, bounded bulk pause/resume/cancel/delete requests, editing queued or paused settings, and add-as-paused. Partial deletion retains failed selections. Reconfiguration clears unfinished resumable output while preserving finalized siblings; single and bulk lifecycle actions share persistence and reader guards. API documentation and regression tests accompany the implementation.
 

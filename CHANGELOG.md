@@ -4,7 +4,14 @@ This file summarizes notable user-facing changes. Version **v0.1.0** was publicl
 
 ## [Unreleased]
 
-No changes recorded since v0.1.0.
+### Added
+- Bulk queue pause, resume, cancel, and delete, with per-job failure reporting.
+- Retry all failed playlist items while retaining successful files.
+- Edit queued or paused download settings and add new downloads as paused.
+
+### Fixed
+- Preserve failed selections after partial deletion, protect active file transfers, and clear obsolete resumable output when changing media settings.
+- Coordinate dependency and CodeQL updates, refresh license notices, and keep generated frontend bundles and build caches out of Git.
 
 ## [0.1.0] — 2026-10-10
 

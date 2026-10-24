@@ -92,6 +92,10 @@ func (s *server) handleBulkJobs(w http.ResponseWriter, r *http.Request) {
 		if job == nil {
 			continue
 		}
+		if s.jobs[id] != job {
+			response.Failures = append(response.Failures, bulkJobFailure{id, "Job changed while the bulk request was being processed"})
+			continue
+		}
 		message := validateBulkJobAction(job, request.Action)
 		if job.deleting || message != "" {
 			if message == "" {
@@ -146,10 +150,11 @@ func (s *server) applyBulkJobActionLocked(job *jobState, action string) error {
 	var cancel context.CancelFunc
 	switch action {
 	case "pause":
-		if job.Status == "queued" {
+		switch job.Status {
+		case "queued":
 			job.Status, job.Error = "paused", ""
 			s.notifySchedulerLocked()
-		} else if job.Status == "downloading" || job.Status == "processing" {
+		case "downloading", "processing":
 			job.pauseRequested = true
 			job.Error = "Pausing after the current download or conversion stops"
 			cancel = job.cancel

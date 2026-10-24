@@ -45,6 +45,8 @@ npm run e2e:browser
 
 The browser E2E checks require Go and Chrome or Chromium. The embedded frontend build writes into `src/server/dist`; do not put `DATA_DIR` under the root `dist` directory because frontend builds clear that directory.
 
+Frontend bundles and Go build caches are generated and ignored. Only the embedded `dist/.gitkeep` placeholder is tracked; Vite copies it from `public/` so builds keep the worktree clean. Build the embedded frontend before running the Go service. To inspect browser-test screenshots, set `E2E_SCREENSHOT_DIR` to a temporary output directory before running `npm run e2e:browser`.
+
 If you change dependencies or license notices, update the corresponding lockfile and generated notice files. To regenerate notices, install the pinned scanner tools as CI does, then run `npm run licenses:generate`.
 
 ## Pull requests and commits
