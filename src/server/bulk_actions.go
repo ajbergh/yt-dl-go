@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -51,13 +52,22 @@ func (s *server) handleBulkJobs(w http.ResponseWriter, r *http.Request) {
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	hydratedJobs := []*jobState{}
+	defer func() {
+		for _, job := range hydratedJobs {
+			s.evictTerminalJobLocked(job)
+		}
+	}()
 	response := bulkJobResponse{Jobs: []Job{}, DeletedIDs: []string{}, Failures: []bulkJobFailure{}}
 	// Validate every target before mutating any of them. Valid targets are then
 	// processed independently; failures are reported per ID as cleanup and DB
 	// operations cannot be rolled back together.
 	eligible := make(map[string]*jobState, len(request.JobIDs))
 	for _, id := range request.JobIDs {
-		job, _, loadErr := s.hydrateTerminalJobLocked(id)
+		job, hydrated, loadErr := s.hydrateTerminalJobLocked(id)
+		if hydrated {
+			hydratedJobs = append(hydratedJobs, job)
+		}
 		if loadErr != nil {
 			response.Failures = append(response.Failures, bulkJobFailure{id, "Could not load saved job: " + loadErr.Error()})
 			continue
@@ -102,6 +112,9 @@ func (s *server) handleBulkJobs(w http.ResponseWriter, r *http.Request) {
 			}); err != nil {
 				job.deleting = false
 				s.recordPersistenceFailure("delete job", job.ID, err)
+				// Preserve the fact that managed files were removed even when
+				// deleting the history row fails.
+				_ = s.persistJobLocked(job)
 				response.Failures = append(response.Failures, bulkJobFailure{id, "Managed files were removed, but job history could not be deleted: " + err.Error()})
 				continue
 			}
@@ -111,70 +124,67 @@ func (s *server) handleBulkJobs(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
-		previous := cloneJobStateForPersistence(job)
-		var cancel context.CancelFunc
-		switch request.Action {
-		case "pause":
-			if job.Status == "queued" {
-				job.Status, job.Error = "paused", ""
-				s.notifySchedulerLocked()
-			} else if job.Status == "downloading" || job.Status == "processing" {
-				job.pauseRequested = true
-				job.Error = "Pausing after the current download or conversion stops"
-				cancel = job.cancel
-			}
-		case "resume":
-			job.pauseRequested, job.cancelRequested = false, false
-			job.Status, job.Error, job.done = "queued", "", time.Time{}
-			job.QueuePosition = s.nextQueuePositionLocked()
-			s.refreshAllQueueItemsLocked(job)
-		case "cancel":
-			if job.Status == "paused" {
-				if err := discardPausedParts(job); err != nil {
-					*job = *previous
-					response.Failures = append(response.Failures, bulkJobFailure{id, "Could not remove paused temporary output: " + err.Error()})
-					continue
-				}
-				if err := s.persistOperationLocked("delete resumable download state", job.ID, func(store *jobStore) error {
-					return store.deletePartsForJob(job.ID)
-				}); err != nil {
-					*job = *previous
-					s.recordPersistenceFailure("delete resumable download state", job.ID, err)
-					response.Failures = append(response.Failures, bulkJobFailure{id, "Temporary output was removed, but resumable state could not be cleared: " + err.Error()})
-					continue
-				}
-				s.recordPersistenceSuccess()
-			}
-			job.pauseRequested = false
-			job.cancelRequested = true
-			if job.cancel != nil {
-				job.Error = "Cancellation requested; waiting for the downloader to stop"
-				cancel = job.cancel
-			} else if !terminal(job.Status) {
-				job.Status, job.Error, job.done = "cancelled", "Cancelled before download started", time.Now()
-				s.notifySchedulerLocked()
-			}
-			s.refreshAllQueueItemsLocked(job)
-		}
-
-		if err := s.persistJobSnapshotLocked(job, "save bulk job action"); err != nil {
-			*job = *previous
-			response.Failures = append(response.Failures, bulkJobFailure{id, "Could not persist job state: " + err.Error()})
+		if err := s.applyBulkJobActionLocked(job, request.Action); err != nil {
+			response.Failures = append(response.Failures, bulkJobFailure{id, err.Error()})
 			continue
 		}
-		s.publishJobEventLocked("job-status", job)
-		if cancel != nil {
-			cancel()
-		}
-		if request.Action == "resume" || request.Action == "cancel" {
-			s.notifySchedulerLocked()
-		}
 		response.Jobs = append(response.Jobs, snapshot(job))
-		if request.Action == "cancel" {
-			s.evictTerminalJobLocked(job)
-		}
+		s.evictTerminalJobLocked(job)
 	}
 	reply(w, http.StatusOK, response)
+}
+
+func (s *server) applyBulkJobActionLocked(job *jobState, action string) error {
+	if action == "cancel" && terminal(job.Status) {
+		return nil
+	}
+	job.deleting = true // Serialize API mutations while persistence releases s.mu.
+	defer func() {
+		job.deleting = false
+		s.notifySchedulerLocked()
+	}()
+	var cancel context.CancelFunc
+	switch action {
+	case "pause":
+		if job.Status == "queued" {
+			job.Status, job.Error = "paused", ""
+			s.notifySchedulerLocked()
+		} else if job.Status == "downloading" || job.Status == "processing" {
+			job.pauseRequested = true
+			job.Error = "Pausing after the current download or conversion stops"
+			cancel = job.cancel
+		}
+	case "resume":
+		job.pauseRequested, job.cancelRequested = false, false
+		job.Status, job.Error, job.done = "queued", "", time.Time{}
+		job.QueuePosition = s.nextQueuePositionLocked()
+		s.refreshAllQueueItemsLocked(job)
+	case "cancel":
+		if job.cancel == nil {
+			if err := s.discardResumableOutputLocked(job); err != nil {
+				return err
+			}
+		}
+		job.pauseRequested = false
+		job.cancelRequested = true
+		if job.cancel != nil {
+			job.Error = "Cancellation requested; waiting for the downloader to stop"
+			cancel = job.cancel
+		} else if !terminal(job.Status) {
+			job.Status, job.Error, job.done = "cancelled", "Cancelled before download started", time.Now()
+			s.notifySchedulerLocked()
+		}
+	}
+	s.refreshAllQueueItemsLocked(job)
+	// The worker can advance while SQLite is writing. Use the shared
+	// persistence-failure path instead of restoring an obsolete snapshot.
+	if err := s.persistJobLocked(job); err != nil {
+		return fmt.Errorf("could not persist job state: %w", err)
+	}
+	if cancel != nil {
+		cancel()
+	}
+	return nil
 }
 
 func validateBulkJobAction(job *jobState, action string) string {
@@ -287,6 +297,7 @@ func (s *server) handleJobConfiguration(w http.ResponseWriter, r *http.Request, 
 				return
 			}
 			updated.AudioBitrate = ""
+			updated.SplitByChapter = false
 		}
 	} else {
 		if request.AudioFormat != nil || request.AudioBitrate != nil {
@@ -304,6 +315,17 @@ func (s *server) handleJobConfiguration(w http.ResponseWriter, r *http.Request, 
 	}
 
 	previous := job.Job
+	job.deleting = true
+	defer func() {
+		job.deleting = false
+		s.notifySchedulerLocked()
+	}()
+	if updated.Quality != previous.Quality || updated.VideoStrategy != previous.VideoStrategy || updated.AudioFormat != previous.AudioFormat || updated.AudioBitrate != previous.AudioBitrate {
+		if err := s.discardResumableOutputLocked(job); err != nil {
+			fail(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+	}
 	job.Job = updated
 	if err := s.persistJobSnapshotLocked(job, "save queued job configuration"); err != nil {
 		job.Job = previous

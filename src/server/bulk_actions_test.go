@@ -2,8 +2,10 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -13,6 +15,163 @@ import (
 
 	"github.com/kkdai/youtube/v2"
 )
+
+func bulkFixtureJob(t *testing.T, s *server, status string) *jobState {
+	t.Helper()
+	j := &jobState{Job: Job{
+		ID: "bulk-fixture", URL: testVideo, Kind: "video", Quality: "best", MediaType: "video", VideoStrategy: "best", Status: status,
+		Items: []queueItem{{Index: 1, VideoID: "abcdefghijk", Status: status}},
+	}, dir: filepath.Join(s.cfg.root, "bulk-fixture")}
+	if err := os.MkdirAll(j.dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.store.saveJob(j); err != nil {
+		t.Fatal(err)
+	}
+	s.jobs[j.ID] = j
+	s.order = append(s.order, j.ID)
+	return j
+}
+
+func TestBulkPauseRefreshesItemsAndEvictsRejectedHydration(t *testing.T) {
+	s := newPersistenceTestServer(t)
+	j := bulkFixtureJob(t, s, "queued")
+	response := request(s, "POST", "/api/jobs/bulk", `{"action":"pause","jobIds":["bulk-fixture"]}`, nil)
+	var result bulkJobResponse
+	if json.Unmarshal(response.Body.Bytes(), &result) != nil || len(result.Jobs) != 1 || result.Jobs[0].Status != "paused" || result.Jobs[0].Items[0].Status != "paused" {
+		t.Fatalf("pause left inconsistent item state: %s", response.Body.String())
+	}
+	j.Status = "completed"
+	if err := s.store.saveJob(j); err != nil {
+		t.Fatal(err)
+	}
+	s.mu.Lock()
+	s.evictTerminalJobLocked(j)
+	s.mu.Unlock()
+	response = request(s, "POST", "/api/jobs/bulk", `{"action":"pause","jobIds":["bulk-fixture"]}`, nil)
+	if json.Unmarshal(response.Body.Bytes(), &result) != nil || len(result.Failures) != 1 {
+		t.Fatalf("expected rejected pause: %s", response.Body.String())
+	}
+	if s.jobs[j.ID] != nil {
+		t.Fatal("rejected bulk action retained hydrated terminal job")
+	}
+}
+
+func TestBulkCancelPreservesReaderGuard(t *testing.T) {
+	s := newPersistenceTestServer(t)
+	j := bulkFixtureJob(t, s, "completed")
+	j.readers = 1
+	response := request(s, "POST", "/api/jobs/bulk", `{"action":"cancel","jobIds":["bulk-fixture"]}`, nil)
+	if response.Code != http.StatusOK || s.jobs[j.ID] != j {
+		t.Fatal("terminal cancellation evicted a job with an active reader")
+	}
+	response = request(s, "POST", "/api/jobs/bulk", `{"action":"delete","jobIds":["bulk-fixture"]}`, nil)
+	var result bulkJobResponse
+	if json.Unmarshal(response.Body.Bytes(), &result) != nil || len(result.DeletedIDs) != 0 || len(result.Failures) != 1 {
+		t.Fatalf("delete bypassed reader guard: %s", response.Body.String())
+	}
+	j.readers = 0
+	s.mu.Lock()
+	s.evictTerminalJobLocked(j)
+	s.mu.Unlock()
+	if s.jobs[j.ID] != nil {
+		t.Fatal("job remained after reader finished")
+	}
+}
+
+func TestConfigurationDiscardsResumableOutputAndPreservesFinalizedFiles(t *testing.T) {
+	for _, transition := range []struct{ media, format, patch string }{
+		{"audio", "mp3", `{"audioFormat":"m4a"}`},
+		{"audio", "m4a", `{"audioFormat":"mp3","audioBitrate":"320k"}`},
+		{"video", "", `{"quality":"720"}`},
+	} {
+		t.Run(transition.media+transition.format, func(t *testing.T) {
+			s := newPersistenceTestServer(t)
+			j := bulkFixtureJob(t, s, "paused")
+			j.MediaType, j.AudioFormat = transition.media, transition.format
+			if transition.media == "audio" {
+				j.VideoStrategy = ""
+			}
+			finalPath := filepath.Join(j.dir, "finished.mp3")
+			if err := os.WriteFile(finalPath, []byte("finished"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			for _, name := range []string{"unfinished.m4a.part", "000002-id.source.m4a"} {
+				partPath := filepath.Join(j.dir, name)
+				if err := os.WriteFile(partPath, []byte("partial"), 0600); err != nil {
+					t.Fatal(err)
+				}
+				if err := s.store.savePart(j.ID, 1, name, downloadPart{Path: partPath}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			response := request(s, "PUT", "/api/jobs/"+j.ID+"/configuration", transition.patch, nil)
+			if response.Code != http.StatusOK {
+				t.Fatalf("configuration: %s", response.Body.String())
+			}
+			for _, name := range []string{"unfinished.m4a.part", "000002-id.source.m4a"} {
+				if _, err := os.Stat(filepath.Join(j.dir, name)); !os.IsNotExist(err) {
+					t.Fatalf("unfinished file survived: %s %v", name, err)
+				}
+				if _, err := s.store.loadPart(j.ID, 1, name); !errors.Is(err, sql.ErrNoRows) {
+					t.Fatalf("checkpoint survived: %s %v", name, err)
+				}
+			}
+			if data, err := os.ReadFile(finalPath); err != nil || string(data) != "finished" {
+				t.Fatalf("finalized media changed: %s %v", data, err)
+			}
+		})
+	}
+}
+
+func TestQueuedCancelDiscardsRestartedParts(t *testing.T) {
+	for _, bulk := range []bool{false, true} {
+		t.Run(fmt.Sprint(bulk), func(t *testing.T) {
+			s := newPersistenceTestServer(t)
+			j := bulkFixtureJob(t, s, "queued")
+			partPath := filepath.Join(j.dir, "unfinished.source.m4a")
+			if err := os.WriteFile(partPath, []byte("partial"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			if err := s.store.savePart(j.ID, 1, "mp3-source", downloadPart{Path: partPath}); err != nil {
+				t.Fatal(err)
+			}
+			path, body := "/api/jobs/"+j.ID+"/cancel", `{}`
+			if bulk {
+				path, body = "/api/jobs/bulk", `{"action":"cancel","jobIds":["bulk-fixture"]}`
+			}
+			response := request(s, "POST", path, body, nil)
+			if response.Code != http.StatusOK {
+				t.Fatalf("cancel: %s", response.Body.String())
+			}
+			if _, err := os.Stat(partPath); !os.IsNotExist(err) {
+				t.Fatalf("source survived cancel: %v", err)
+			}
+			if _, err := s.store.loadPart(j.ID, 1, "mp3-source"); !errors.Is(err, sql.ErrNoRows) {
+				t.Fatalf("checkpoint survived cancel: %v", err)
+			}
+		})
+	}
+}
+
+func TestBulkPersistenceFailureStopsWorkerWithoutRestoringSnapshot(t *testing.T) {
+	s := newPersistenceTestServer(t)
+	j := bulkFixtureJob(t, s, "downloading")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	j.cancel = cancel
+	if _, err := s.store.db.Exec(`CREATE TRIGGER reject_bulk_update BEFORE UPDATE ON jobs BEGIN SELECT RAISE(FAIL, 'forced'); END`); err != nil {
+		t.Fatal(err)
+	}
+	response := request(s, "POST", "/api/jobs/bulk", `{"action":"pause","jobIds":["bulk-fixture"]}`, nil)
+	var result bulkJobResponse
+	if json.Unmarshal(response.Body.Bytes(), &result) != nil || len(result.Failures) != 1 {
+		t.Fatalf("failure missing: %s", response.Body.String())
+	}
+	if !j.persistenceFailed || j.Status != "failed" || ctx.Err() == nil {
+		t.Fatal("failed write did not stop the worker safely")
+	}
+}
 
 func TestBulkJobsValidatesIDsAndReportsPerJobFailures(t *testing.T) {
 	s := testServer(t, fixtureClient(0), nil)

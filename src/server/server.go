@@ -8,6 +8,7 @@ import (
 	"crypto/subtle"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log"
 	"mime"
@@ -337,7 +338,7 @@ func (s *server) hydrateLibraryJobLocked(jobID string) (*jobState, bool, error) 
 // evictTerminalJobLocked drops a finished job's working state without sending
 // job-deleted: the durable Library record and history still exist.
 func (s *server) evictTerminalJobLocked(job *jobState) {
-	if job == nil || !terminal(job.Status) || job.persistenceFailed || job.persistencePending > 0 || s.jobs[job.ID] != job {
+	if job == nil || !terminal(job.Status) || job.persistenceFailed || job.persistencePending > 0 || job.readers > 0 || job.deleting || s.jobs[job.ID] != job {
 		return
 	}
 	delete(s.jobs, job.ID)
@@ -972,74 +973,16 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.recordPersistenceSuccess()
 		s.forgetJobLocked(j)
 		w.WriteHeader(http.StatusNoContent)
-	case len(parts) == 2 && parts[1] == "pause" && r.Method == http.MethodPost:
-		if j.Status == "queued" {
-			j.Status, j.Error = "paused", ""
-			s.notifySchedulerLocked()
-		} else if j.Status == "downloading" || j.Status == "processing" {
-			j.pauseRequested = true
-			j.Error = "Pausing after the current download or conversion stops"
-			if j.cancel != nil {
-				j.cancel()
-			}
-		} else if j.Status != "paused" {
-			fail(w, 409, "Only queued or downloading jobs can be paused")
+	case len(parts) == 2 && (parts[1] == "pause" || parts[1] == "resume" || parts[1] == "cancel") && r.Method == http.MethodPost:
+		if message := validateBulkJobAction(j, parts[1]); message != "" {
+			fail(w, http.StatusConflict, message)
 			return
 		}
-		s.refreshAllQueueItemsLocked(j)
-		if err := s.persistJobLocked(j); err != nil {
-			fail(w, 500, "Could not save the pause state")
+		if err := s.applyBulkJobActionLocked(j, parts[1]); err != nil {
+			fail(w, http.StatusInternalServerError, err.Error())
 			return
 		}
-		reply(w, 200, snapshot(j))
-	case len(parts) == 2 && parts[1] == "resume" && r.Method == http.MethodPost:
-		if j.Status != "paused" {
-			fail(w, 409, "Only paused jobs can be resumed")
-			return
-		}
-		j.pauseRequested = false
-		j.cancelRequested = false
-		j.Status, j.Error, j.done = "queued", "", time.Time{}
-		j.QueuePosition = s.nextQueuePositionLocked()
-		s.refreshAllQueueItemsLocked(j)
-		if err := s.persistJobLocked(j); err != nil {
-			fail(w, 500, "Could not save the resume state")
-			return
-		}
-		s.notifySchedulerLocked()
-		reply(w, 200, snapshot(j))
-	case len(parts) == 2 && parts[1] == "cancel" && r.Method == http.MethodPost:
-		if !terminal(j.Status) {
-			if j.Status == "paused" {
-				if err := discardPausedParts(j); err != nil {
-					fail(w, 500, "Could not remove paused temporary output")
-					return
-				}
-				if err := s.persistOperationLocked("delete resumable download state", j.ID, func(store *jobStore) error {
-					return store.deletePartsForJob(j.ID)
-				}); err != nil {
-					s.recordPersistenceFailure("delete resumable download state", j.ID, err)
-					fail(w, 500, "Could not remove resumable download state")
-					return
-				}
-				s.recordPersistenceSuccess()
-			}
-			j.pauseRequested = false
-			j.cancelRequested = true
-			if j.cancel != nil {
-				j.Error = "Cancellation requested; waiting for the downloader to stop"
-				j.cancel()
-			} else {
-				j.Status, j.Error, j.done = "cancelled", "Cancelled before download started", time.Now()
-			}
-			s.refreshAllQueueItemsLocked(j)
-			s.notifySchedulerLocked()
-			if err := s.persistJobLocked(j); err != nil {
-				fail(w, 500, "Could not save the cancellation state")
-				return
-			}
-		}
-		reply(w, 200, snapshot(j))
+		reply(w, http.StatusOK, snapshot(j))
 		s.evictTerminalJobLocked(j)
 	case len(parts) == 2 && parts[1] == "ticket" && r.Method == http.MethodPost:
 		s.issueTicket(w, j, fileID, requested.FileIDs, requested.Inline)
@@ -1306,12 +1249,27 @@ func discardPausedParts(j *jobState) error {
 		return err
 	}
 	for _, entry := range entries {
-		if strings.HasSuffix(entry.Name(), ".part") {
+		if strings.HasSuffix(entry.Name(), ".part") || strings.Contains(entry.Name(), ".source.") {
 			if err := os.Remove(filepath.Join(j.dir, entry.Name())); err != nil && !errors.Is(err, os.ErrNotExist) {
 				return err
 			}
 		}
 	}
+	return nil
+}
+
+// Called only while the job has no running worker. Finalized media is retained.
+func (s *server) discardResumableOutputLocked(j *jobState) error {
+	if err := discardPausedParts(j); err != nil {
+		return fmt.Errorf("could not remove unfinished output: %w", err)
+	}
+	if err := s.persistOperationLocked("delete resumable download state", j.ID, func(store *jobStore) error {
+		return store.deletePartsForJob(j.ID)
+	}); err != nil {
+		s.recordPersistenceFailure("delete resumable download state", j.ID, err)
+		return fmt.Errorf("could not clear resumable download state: %w", err)
+	}
+	s.recordPersistenceSuccess()
 	return nil
 }
 

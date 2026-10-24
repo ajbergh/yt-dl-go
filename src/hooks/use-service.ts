@@ -140,12 +140,12 @@ export function useService() {
 
   const refreshLibrary = useCallback(async () => {
     const requestID = ++libraryRequestSequence.current;
-    setLoadingLibraryMore(false);
     const response = await api<LibraryPageResponse>(connection, libraryPagePath(libraryQueryRef.current), {
       signal: AbortSignal.timeout(10000),
     });
     const result = normalizeLibraryPage(response);
     if (requestID === libraryRequestSequence.current) {
+      setLoadingLibraryMore(false);
       setLibraryJobs(result.jobs);
       setLibraryPage(result);
     }

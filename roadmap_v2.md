@@ -2,7 +2,7 @@
 
 > Successor to [`roadmap.md`](roadmap.md). Roadmap v1 (Milestones 1–6) is complete apart from two deliberately deferred items: native tray and automatic self-update. v2 comes from a full review of the backend engine, the API/persistence/security layers, the React frontend, and build/CI/release/docs as of `63f3658`.
 >
-> **Last updated:** 2026-10-09
+> **Last updated:** 2026-10-24
 
 ## Merged fixes and source branches (2026-09-23)
 
@@ -557,12 +557,9 @@ Subtitles are sidecar-only, and thumbnails are embedded only in MP3.
 
 ### M3.5 Bulk retry and queue editing
 
-**Status:** [ ] Planned · **P1** · **Area:** backend / UX
+**Status:** [~] Implemented on `chore/repository-cleanup`; integration validation pending · **P1** · **Area:** backend / UX
 
-**Progress (2026-09-25):** The former “implementation in review” status was stale: no matching open PR or local/remote feature branch existed. This is now the next code task while M2.8 waits for a verified redistributable capture source.
-
-- Retry works one item at a time (`retry_item.go:47-49`), and the UI's batch actions send N sequential requests (`use-jobs.ts:283-288`).
-- `dev_mock_new_ui` shows changing quality or format while an item is queued or paused.
+**Progress (2026-10-24):** Retained the local M3.5 implementation and reconciled it with current main. The queue supports retrying all failed playlist items, bounded bulk pause/resume/cancel/delete requests, editing queued or paused settings, and add-as-paused. Partial deletion retains failed selections. Reconfiguration clears unfinished resumable output while preserving finalized siblings; single and bulk lifecycle actions share persistence and reader guards. API documentation and regression tests accompany the implementation.
 
 #### Scope
 

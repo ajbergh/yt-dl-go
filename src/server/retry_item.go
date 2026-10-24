@@ -27,6 +27,10 @@ func (s *server) retryPlaylistItems(w http.ResponseWriter, jobID string, request
 		fail(w, http.StatusNotFound, "Job not found")
 		return
 	}
+	if job.deleting {
+		fail(w, http.StatusConflict, "This job is being removed or updated")
+		return
+	}
 	if job.Kind != "playlist" || (job.Status != "partial" && job.Status != "failed" && job.Status != "cancelled") {
 		fail(w, http.StatusConflict, "Item retry is available only for stopped playlist jobs")
 		return
@@ -71,6 +75,11 @@ func (s *server) retryPlaylistItems(w http.ResponseWriter, jobID string, request
 	}
 
 	previous := cloneJobStateForPersistence(job)
+	job.deleting = true
+	defer func() {
+		job.deleting = false
+		s.notifySchedulerLocked()
+	}()
 
 	for index := range job.Items {
 		_, job.Items[index].RetryRequested = retry[index]

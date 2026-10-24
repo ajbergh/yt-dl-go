@@ -6,8 +6,8 @@ Generated from the Go packages used by supported release targets with `go-licens
 | --- | --- | --- | --- | --- |
 | `github.com/at-wat/ebml-go` | `v0.19.4` | Apache-2.0 | [source](https://pkg.go.dev/github.com/at-wat/ebml-go@v0.19.4) | [license files](licenses/go/github.com/at-wat/ebml-go) |
 | `github.com/bitly/go-simplejson` | `v0.5.1` | MIT | [source](https://pkg.go.dev/github.com/bitly/go-simplejson@v0.5.1) | [license files](licenses/go/github.com/bitly/go-simplejson) |
-| `github.com/chromedp/cdproto` | `v0.157.6` | MIT | [source](https://pkg.go.dev/github.com/chromedp/cdproto@v0.157.6) | [license files](licenses/go/github.com/chromedp/cdproto) |
-| `github.com/chromedp/chromedp` | `v0.19.1` | MIT | [source](https://pkg.go.dev/github.com/chromedp/chromedp@v0.19.1) | [license files](licenses/go/github.com/chromedp/chromedp) |
+| `github.com/chromedp/cdproto` | `v0.158.2` | MIT | [source](https://pkg.go.dev/github.com/chromedp/cdproto@v0.158.2) | [license files](licenses/go/github.com/chromedp/cdproto) |
+| `github.com/chromedp/chromedp` | `v0.21.0` | MIT | [source](https://pkg.go.dev/github.com/chromedp/chromedp@v0.21.0) | [license files](licenses/go/github.com/chromedp/chromedp) |
 | `github.com/dlclark/regexp2` | `v1.11.5` | MIT | [source](https://pkg.go.dev/github.com/dlclark/regexp2@v1.11.5) | [license files](licenses/go/github.com/dlclark/regexp2) |
 | `github.com/dop251/goja` | `v0.0.0-20260311135729-065cd970411c` | MIT | [source](https://pkg.go.dev/github.com/dop251/goja@v0.0.0-20260311135729-065cd970411c) | [license files](licenses/go/github.com/dop251/goja) |
 | `github.com/dustin/go-humanize` | `v1.0.1` | MIT | [source](https://pkg.go.dev/github.com/dustin/go-humanize@v1.0.1) | [license files](licenses/go/github.com/dustin/go-humanize) |
@@ -19,16 +19,16 @@ Generated from the Go packages used by supported release targets with `go-licens
 | `github.com/ncruces/go-strftime` | `v1.0.0` | MIT | [source](https://pkg.go.dev/github.com/ncruces/go-strftime@v1.0.0) | [license files](licenses/go/github.com/ncruces/go-strftime) |
 | `github.com/remyoudompheng/bigfft` | `v0.0.0-20230129092748-24d4a6f8daec` | BSD-3-Clause | [source](https://pkg.go.dev/github.com/remyoudompheng/bigfft@v0.0.0-20230129092748-24d4a6f8daec) | [license files](licenses/go/github.com/remyoudompheng/bigfft) |
 | `github.com/tphakala/go-aac` | `v0.7.0` | LGPL-2.1 | [source](https://pkg.go.dev/github.com/tphakala/go-aac@v0.7.0) | [license files](licenses/go/github.com/tphakala/go-aac) |
-| `github.com/tphakala/go-m4a` | `v0.5.0` | MIT | [source](https://pkg.go.dev/github.com/tphakala/go-m4a@v0.5.0) | [license files](licenses/go/github.com/tphakala/go-m4a) |
+| `github.com/tphakala/go-m4a` | `v0.7.0` | MIT | [source](https://pkg.go.dev/github.com/tphakala/go-m4a@v0.7.0) | [license files](licenses/go/github.com/tphakala/go-m4a) |
 | `github.com/tphakala/go-mp3` | `v0.1.0` | MIT | [source](https://pkg.go.dev/github.com/tphakala/go-mp3@v0.1.0) | [license files](licenses/go/github.com/tphakala/go-mp3) |
-| `github.com/tphakala/simd` | `v1.9.0` | MIT | [source](https://pkg.go.dev/github.com/tphakala/simd@v1.9.0) | [license files](licenses/go/github.com/tphakala/simd) |
+| `github.com/tphakala/simd` | `v1.11.0` | MIT | [source](https://pkg.go.dev/github.com/tphakala/simd@v1.11.0) | [license files](licenses/go/github.com/tphakala/simd) |
 | `github.com/yapingcat/gomedia` | `v0.0.0-20240906162731-17feea57090c` | MIT | [source](https://pkg.go.dev/github.com/yapingcat/gomedia@v0.0.0-20240906162731-17feea57090c) | [license files](licenses/go/github.com/yapingcat/gomedia) |
-| `golang.org/x/sys` | `v0.48.0` | BSD-3-Clause | [source](https://pkg.go.dev/golang.org/x/sys@v0.48.0) | [license files](licenses/go/golang.org/x/sys) |
+| `golang.org/x/sys` | `v0.49.0` | BSD-3-Clause | [source](https://pkg.go.dev/golang.org/x/sys@v0.49.0) | [license files](licenses/go/golang.org/x/sys) |
 | `golang.org/x/text` | `v0.39.0` | BSD-3-Clause | [source](https://pkg.go.dev/golang.org/x/text@v0.39.0) | [license files](licenses/go/golang.org/x/text) |
-| `modernc.org/libc` | `v1.75.7` | BSD-3-Clause | [source](https://pkg.go.dev/modernc.org/libc@v1.75.7) | [license files](licenses/go/modernc.org/libc) |
+| `modernc.org/libc` | `v1.77.1` | BSD-3-Clause | [source](https://pkg.go.dev/modernc.org/libc@v1.77.1) | [license files](licenses/go/modernc.org/libc) |
 | `modernc.org/mathutil` | `v1.7.1` | BSD-3-Clause | [source](https://pkg.go.dev/modernc.org/mathutil@v1.7.1) | [license files](licenses/go/modernc.org/mathutil) |
 | `modernc.org/memory` | `v1.12.1` | BSD-3-Clause | [source](https://pkg.go.dev/modernc.org/memory@v1.12.1) | [license files](licenses/go/modernc.org/memory) |
-| `modernc.org/sqlite` | `v1.59.0` | BSD-3-Clause | [source](https://pkg.go.dev/modernc.org/sqlite@v1.59.0) | [license files](licenses/go/modernc.org/sqlite) |
+| `modernc.org/sqlite` | `v1.60.1` | BSD-3-Clause | [source](https://pkg.go.dev/modernc.org/sqlite@v1.60.1) | [license files](licenses/go/modernc.org/sqlite) |
 | `github.com/dop251/goja/ftoa` (Lucent-derived implementation) | goja module version | Lucent license | [source](https://github.com/dop251/goja) | [text](licenses/go/github.com/dop251/goja/ftoa/LICENSE_LUCENE) |
 | `github.com/dop251/goja/ftoa/internal/fast` (V8-derived implementation) | goja module version | BSD-3-Clause | [source](https://github.com/dop251/goja) | [text](licenses/go/github.com/dop251/goja/ftoa/internal/fast/LICENSE_V8) |
 | Go standard library and runtime | `1.27.x` | BSD-style | [source and license](https://go.dev/LICENSE) | [text](licenses/go/Go-Standard-Library/LICENSE) |

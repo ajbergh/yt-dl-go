@@ -190,24 +190,36 @@ export function useJobs({
     setBusyAction("bulk");
     setActionError("");
     try {
-      const result = await api<{ jobs: DownloadJob[]; deletedIds?: string[]; failures?: { jobId: string; error: string }[] }>(connection, "/api/jobs/bulk", {
-        method: "POST",
-        body: JSON.stringify({ action, jobIds: uniqueIDs }),
-        signal: AbortSignal.timeout(30000),
-      });
-      const deleted = new Set(result.deletedIds ?? []);
-      const updates = new Map(result.jobs.map(job => [job.id, job]));
-      setJobs(previous => previous.flatMap(value => {
-        if (deleted.has(value.id)) return [];
-        const updated = updates.get(value.id);
-        return updated ? [mergeJobActionResult(value, updated, action)] : [value];
-      }));
-      const failures = result.failures ?? [];
+      const deleted = new Set<string>();
+      const failures: { jobId: string; error: string }[] = [];
+      let updatedCount = 0;
+      for (let offset = 0; offset < uniqueIDs.length; offset += 100) {
+        const batch = uniqueIDs.slice(offset, offset + 100);
+        try {
+          const result = await api<{ jobs: DownloadJob[]; deletedIds?: string[]; failures?: { jobId: string; error: string }[] }>(connection, "/api/jobs/bulk", {
+            method: "POST",
+            body: JSON.stringify({ action, jobIds: batch }),
+            signal: AbortSignal.timeout(30000),
+          });
+          const batchDeleted = new Set(result.deletedIds ?? []);
+          for (const id of batchDeleted) deleted.add(id);
+          const updates = new Map(result.jobs.map(job => [job.id, job]));
+          setJobs(previous => previous.flatMap(value => {
+            if (batchDeleted.has(value.id)) return [];
+            const updated = updates.get(value.id);
+            return updated && action !== "delete" ? [mergeJobActionResult(value, updated, action)] : [value];
+          }));
+          updatedCount += result.jobs.length;
+          failures.push(...result.failures ?? []);
+        } catch (error) {
+          failures.push(...batch.map(jobId => ({ jobId, error: errorMessage(error) })));
+        }
+      }
       setNotice(action === "delete"
         ? `Removed ${deleted.size} job${deleted.size === 1 ? "" : "s"} from the Library${failures.length ? `; ${failures.length} could not be removed` : ""}.`
         : failures.length
           ? `${uniqueIDs.length - failures.length} selected jobs updated; ${failures.length} could not be changed.`
-          : `Updated ${result.jobs.length} selected jobs.`);
+          : `Updated ${updatedCount} selected jobs.`);
       if (failures.length) setActionError(failures.map(failure => `${failure.jobId}: ${failure.error}`).join("; "));
       void refreshLibrary().catch(error => setActionError(errorMessage(error)));
       return [...deleted];

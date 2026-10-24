@@ -64,7 +64,7 @@ type QueuePageProps = {
   retryPlaylistItem: (job: DownloadJob, item: QueueItem) => void | Promise<void>;
   retryAllFailedItems: (job: DownloadJob) => void | Promise<void>;
   updateJobConfiguration: (job: DownloadJob, patch: JobConfigurationPatch) => void | Promise<void>;
-  bulkJobAction: (action: "pause" | "resume" | "cancel" | "delete", jobIds: string[]) => boolean | Promise<boolean>;
+  bulkJobAction: (action: "pause" | "resume" | "cancel" | "delete", jobIds: string[]) => Promise<string[] | null>;
   saveFile: (job: DownloadJob, fileId?: string | string[]) => void | Promise<void>;
   jobAction: (job: DownloadJob, action: QueueJobAction) => void | Promise<void>;
 };
@@ -270,7 +270,7 @@ export function QueuePage({
                 <button type="button" className={button} aria-label="Pause selected jobs" disabled={!serviceReady || busyAction === "bulk"} onClick={() => void bulkJobAction("pause", selectedJobIDs)}><Pause className="size-3.5" aria-hidden="true" />Pause</button>
                 <button type="button" className={button} aria-label="Resume selected jobs" disabled={!serviceReady || busyAction === "bulk"} onClick={() => void bulkJobAction("resume", selectedJobIDs)}><Play className="size-3.5" aria-hidden="true" />Resume</button>
                 <button type="button" className={button} aria-label="Cancel selected jobs" disabled={!serviceReady || busyAction === "bulk"} onClick={() => void bulkJobAction("cancel", selectedJobIDs)}><X className="size-3.5" aria-hidden="true" />Cancel</button>
-                <button type="button" className={button} aria-label="Delete selected jobs" disabled={!serviceReady || busyAction === "bulk"} onClick={async () => { if (await bulkJobAction("delete", selectedJobIDs)) setSelectedJobIDs([]); }}><Trash2 className="size-3.5" aria-hidden="true" />Delete</button>
+                <button type="button" className={button} aria-label="Delete selected jobs" disabled={!serviceReady || busyAction === "bulk"} onClick={async () => { const deleted = await bulkJobAction("delete", selectedJobIDs); if (deleted) setSelectedJobIDs(previous => previous.filter(id => !deleted.includes(id))); }}><Trash2 className="size-3.5" aria-hidden="true" />Delete</button>
                 <button type="button" className="px-2 py-1 text-xs text-neutral-400 hover:text-white" onClick={() => setSelectedJobIDs([])}>Clear selection</button>
               </div>}
 

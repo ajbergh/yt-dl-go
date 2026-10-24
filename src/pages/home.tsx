@@ -249,7 +249,7 @@ export function HomePage() {
             ...(draft.mediaType === "audio" && draft.audioFormat === "mp3" ? { audioBitrate: draft.audioBitrate } : {}),
             ...(draft.subtitleLanguage ? { subtitleLanguage: draft.subtitleLanguage, subtitleFormat: draft.subtitleFormat } : {}),
             category: draft.category, rightsConfirmed: true,
-            startPaused,
+            ...(startPaused ? { startPaused: true } : {}),
             ...(draft.kind === "playlist" ? { items: selectedPlaylistEntries(draft) } : {}),
           }),
           signal: AbortSignal.timeout(15000),
@@ -264,6 +264,7 @@ export function HomePage() {
       setDrafts([]);
       setRightsConfirmed(false);
       setBatchMode(false);
+      setStartPaused(false);
       setTab("queue");
     } catch (error) {
       if (added.length) setJobs(previous => [...added, ...previous]);

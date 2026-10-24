@@ -36,7 +36,7 @@ func (s *server) orderedQueuedJobsLocked() []*jobState {
 func (s *server) nextQueuedJobLocked() *jobState {
 	queued := s.orderedQueuedJobsLocked()
 	for _, job := range queued {
-		if job.persistencePending == 0 {
+		if job.persistencePending == 0 && !job.deleting {
 			return job
 		}
 	}
