@@ -2,7 +2,7 @@
 
 > Successor to [`roadmap.md`](roadmap.md). Roadmap v1 (Milestones 1–6) is complete apart from two deliberately deferred items: native tray and automatic self-update. v2 comes from a full review of the backend engine, the API/persistence/security layers, the React frontend, and build/CI/release/docs as of `63f3658`.
 >
-> **Last updated:** 2026-09-24
+> **Last updated:** 2026-09-25
 
 ## Merged fixes and source branches (2026-09-23)
 
@@ -330,7 +330,7 @@ Migrations v2–v15 are 14 near-identical copy-pasted functions and call blocks,
 
 ### M1.7 Move desktop-relevant settings into the UI
 
-**Status:** [~] In progress on `feat/runtime-settings` · **P2** · **Area:** config
+**Status:** [x] Merged by PR #81 (`6a73da5`) · **P2** · **Area:** config
 
 `RETENTION`, `MAX_JOB_BYTES`, `JOB_TIMEOUT`, and `CHROME_PATH` are environment-only (`main.go:78-148`), and the per-process transfer slot count is hard-coded at 4 (`main.go:189`). Desktop users should not need environment variables.
 
@@ -339,7 +339,7 @@ Migrations v2–v15 are 14 near-identical copy-pasted functions and call blocks,
 - Persist these settings in `app_settings` with environment-variable overrides, and show which source is in effect in Settings.
 - Optionally support a `config.toml` in the data directory for headless use.
 
-**Implementation note (2026-09-24):** Persist the five runtime controls (retention, maximum job bytes, job timeout, Chrome path, and download response slots) in migration v30. Environment variables take precedence and Settings reports each effective source and active value. Runtime edits take effect on service restart because the Chrome pool and transfer semaphore are constructed at startup; `config.toml` remains optional and is deferred. PR [#81](https://github.com/ajbergh/yt-dl-go/pull/81) adds these controls and API/UI coverage. Local validation passes: repeated cancellation/length regressions, the full Go suite, Go vet, and `npm run check` (20 existing ESLint warnings, no errors). A Linux package timeout in CI traced to the cancellation fixture's nondeterministic blocking point; the fixture now blocks its second stream acquisition and keeps the single-download queue assertion. Updated CI validation is pending.
+**Progress (2026-09-25):** Merged in [PR #81](https://github.com/ajbergh/yt-dl-go/pull/81) as `6a73da5`. Migration v30 persists retention, maximum job bytes, job timeout, Chrome path, and download response slots; environment variables take precedence, and Settings shows both the effective source and active value. Runtime edits take effect after service restart; `config.toml` remains deferred. A nondeterministic cancellation fixture was made deterministic by blocking its second stream acquisition. The full Go suite, Go vet, `npm run check` (20 existing ESLint warnings, no errors), CI race suite, lint, frontend integration, CodeQL, and Linux/Windows/macOS builds passed.
 
 ---
 
@@ -452,7 +452,7 @@ Adaptive H.264 MP4 output takes its AAC track from the progressive itag-18 strea
 
 ### M2.8 Extraction resilience against YouTube changes
 
-**Status:** [~] Core merged by PR #42; synthetic drift-matrix follow-up underway on `roadmap/m2-8-drift-coverage`; captured samples remain open · **P1** · **Area:** engine / resilience
+**Status:** [!] Core and synthetic drift tests merged; captured samples await verified redistribution rights · **P1** · **Area:** engine / resilience
 
 - Native extraction uses `kkdai/youtube/v2`; before M2.8 it was forced to `AndroidClient`, and range requests hard-coded that profile's User-Agent and Origin. One upstream break could stop every download.
 - Browser preparation now uses player API calls and no longer depends on the Settings/Quality DOM text; consent dismissal still checks English labels (`browser_provider.go:199-208`).
@@ -466,7 +466,7 @@ Adaptive H.264 MP4 output takes its AAC track from the progressive itag-18 strea
 - Build a recorded-fixture corpus of player responses and UMP streams, with drift tests that fail loudly when the format changes.
 - Keep kkdai upstream releases monitored through Dependabot (weekly Go-module updates are already configured).
 
-**Progress (2026-09-24):** The extractor profiles, serialized profile selection, profile-matched stream/range requests, safe resume validation, local health probe, and `hl=en` browser locale merged as [PR #42](https://github.com/ajbergh/yt-dl-go/pull/42) (`79c4405`). CI passed Go/race tests, lint, dependency/security scans, vet, browser E2E, CodeQL, and Linux/Windows/macOS builds. CI initially caught a Staticcheck warning in the fixture transport; the assignment was removed and the rerun passed. [PR #43](https://github.com/ajbergh/yt-dl-go/pull/43) merged as `3d264cb`, adding a checked-in minimal UMP parser/assembly regression fixture and provenance for both fixtures. The player and UMP fixtures are synthetic deterministic inputs, not captured YouTube responses or playable media; see `src/server/testdata/youtube/PROVENANCE.md`. PR #43's Go/race tests, lint, dependency/security scans, vet, browser E2E, CodeQL, and Linux/Windows/macOS builds passed; an initial duplicate browser E2E job timed out during Chrome startup and its rerun passed. Synthetic drift coverage for progressive/adaptive formats, bitrate ordering, optional/unknown fields, empty-format rejection, UMP parser parity, unknown protobuf fields, and time-range data merged in [PR #50](https://github.com/ajbergh/yt-dl-go/pull/50) (`8f805c1`); Go/race validation, lint, static analysis, CodeQL, and Linux/Windows/macOS builds passed. Captured, redistributable player/UMP samples remain open before M2.8 can be marked complete. Weekly Go Dependabot already covers the dependency.
+**Progress (2026-09-25):** The extractor profiles, serialized profile selection, profile-matched stream/range requests, safe resume validation, local health probe, and `hl=en` browser locale merged as [PR #42](https://github.com/ajbergh/yt-dl-go/pull/42) (`79c4405`). [PR #43](https://github.com/ajbergh/yt-dl-go/pull/43) added synthetic parser/assembly fixtures with provenance; synthetic drift coverage merged in [PR #50](https://github.com/ajbergh/yt-dl-go/pull/50) (`8f805c1`). The implementation and synthetic matrix are complete. The only remaining gate is captured player/UMP fixtures whose redistribution rights are documented. Repository and source review found no verified, redistributable captures, so none were added. Existing fixtures remain explicitly synthetic in `src/server/testdata/youtube/PROVENANCE.md`. M2.8 stays open; M3.5 is being taken next while this external sample-rights dependency is unresolved. Weekly Go Dependabot already covers the dependency.
 
 ### M2.9 Bandwidth limiter improvements
 
@@ -559,7 +559,7 @@ Subtitles are sidecar-only, and thumbnails are embedded only in MP3.
 
 **Status:** [ ] Planned · **P1** · **Area:** backend / UX
 
-**Progress (2026-09-24):** The former “implementation in review” status was stale: no matching open PR or local/remote feature branch exists. Reprioritize after the remaining M2.8 captured-sample gap, following the roadmap's reliability-before-media-depth sequence.
+**Progress (2026-09-25):** The former “implementation in review” status was stale: no matching open PR or local/remote feature branch existed. This is now the next code task while M2.8 waits for a verified redistributable capture source.
 
 - Retry works one item at a time (`retry_item.go:47-49`), and the UI's batch actions send N sequential requests (`use-jobs.ts:283-288`).
 - `dev_mock_new_ui` shows changing quality or format while an item is queued or paused.

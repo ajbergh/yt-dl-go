@@ -1,16 +1,17 @@
 import { useSensor, useSensors, KeyboardSensor, PointerSensor, DndContext, closestCenter, type DragEndEvent } from "@dnd-kit/core";
 import { SortableContext, sortableKeyboardCoordinates, verticalListSortingStrategy } from "@dnd-kit/sortable";
-import type { Dispatch, FormEvent, SetStateAction } from "react";
+import { useState, type Dispatch, type FormEvent, type SetStateAction } from "react";
 import {
   AlertCircle, ArrowDownToLine, ChevronDown, CircleHelp, DownloadCloud, Film, Layers, ListVideo,
   LoaderCircle, Pause, Play, Plus, RefreshCw, Search, Trash2, X,
 } from "lucide-react";
-import { formatBytes, isActive, type AppSettings, type DownloadJob, type QueueItem, type Quality } from "../lib/downloader";
+import { formatBytes, isActive, type AppSettings, type DownloadJob, type QueueItem, type Quality, type VideoStrategy } from "../lib/downloader";
 import {
   SortableQueueOrderRow, approximateMP3Bytes, button, dateLabel, durationLabel, etaLabel, field,
   inspectedVideoID, panel, playlistEntries, primaryButton, qualityLabels, selectablePlaylistEntries,
   selectedPlaylistEntries, statusClass, statusLabels, videoStrategyLabels, type Draft, type QueueFilter, type QueueRow,
 } from "../components/downloader/view-model";
+import type { JobConfigurationPatch } from "../hooks/use-jobs";
 
 type QueueJobAction = "pause" | "resume" | "cancel" | "retry" | "remove" | "forget-history";
 
@@ -38,6 +39,8 @@ type QueuePageProps = {
   togglePlaylistEntry: (draftIndex: number, playlistIndex: number, selected: boolean) => void;
   rightsConfirmed: boolean;
   setRightsConfirmed: Dispatch<SetStateAction<boolean>>;
+  startPaused: boolean;
+  setStartPaused: Dispatch<SetStateAction<boolean>>;
   submitting: boolean;
   addDownloads: (event: FormEvent) => void | Promise<void>;
   visibleQueueRows: QueueRow[];
@@ -59,6 +62,9 @@ type QueuePageProps = {
   setSearch: Dispatch<SetStateAction<string>>;
   filteredQueue: QueueRow[];
   retryPlaylistItem: (job: DownloadJob, item: QueueItem) => void | Promise<void>;
+  retryAllFailedItems: (job: DownloadJob) => void | Promise<void>;
+  updateJobConfiguration: (job: DownloadJob, patch: JobConfigurationPatch) => void | Promise<void>;
+  bulkJobAction: (action: "pause" | "resume" | "cancel" | "delete", jobIds: string[]) => boolean | Promise<boolean>;
   saveFile: (job: DownloadJob, fileId?: string | string[]) => void | Promise<void>;
   jobAction: (job: DownloadJob, action: QueueJobAction) => void | Promise<void>;
 };
@@ -67,11 +73,14 @@ export function QueuePage({
   url, setUrl, batchMode, setBatchMode, drafts, setDrafts, serviceReady, inspecting, inspectLinks,
   formError, setFormError, mp3Supported, settings, applyMediaTypeToAll, applyQualityToAll, applyVideoStrategyToAll, applyAudioFormatToAll,
   applyAudioBitrateToAll, applyCategoryToAll, updatePlaylistSelection, togglePlaylistEntry,
-  rightsConfirmed, setRightsConfirmed, submitting, addDownloads, visibleQueueRows, activeCount,
+  rightsConfirmed, setRightsConfirmed, startPaused, setStartPaused, submitting, addDownloads, visibleQueueRows, activeCount,
   totalCurrentSpeed, completedQueueCount, queuedCount, jobs, batchAction, clearCompleted,
   queuedJobsOrdered, reorderQueuedJobs, reorderPlaylistItems, busyAction, downloadNext, queueFilter,
-  setQueueFilter, search, setSearch, filteredQueue, retryPlaylistItem, saveFile, jobAction,
+  setQueueFilter, search, setSearch, filteredQueue, retryPlaylistItem, retryAllFailedItems, updateJobConfiguration,
+  bulkJobAction, saveFile, jobAction,
 }: QueuePageProps) {
+  const [selectedJobIDs, setSelectedJobIDs] = useState<string[]>([]);
+  const [editingJobID, setEditingJobID] = useState("");
   const queueSensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
@@ -230,6 +239,10 @@ export function QueuePage({
                       <input type="checkbox" aria-label="Confirm download rights" checked={rightsConfirmed} onChange={event => setRightsConfirmed(event.target.checked)} className="mt-0.5 size-4 shrink-0 accent-rose-600" />
                       <span>I own this content or have permission to download it.</span>
                     </label>
+                    <label className="flex cursor-pointer items-start gap-2.5 pt-2 text-xs text-neutral-300">
+                      <input type="checkbox" aria-label="Add as paused" checked={startPaused} onChange={event => setStartPaused(event.target.checked)} className="mt-0.5 size-4 shrink-0 accent-rose-600" />
+                      <span>Add as paused. The job stays in the queue until you resume it.</span>
+                    </label>
                     <div className="flex flex-wrap items-center justify-between gap-3">
                       <button type="button" onClick={() => { setDrafts([]); setRightsConfirmed(false); }} className="px-2 py-2 text-xs text-neutral-400 hover:text-white">Clear inspection</button>
                       <button type="submit" disabled={submitting || !serviceReady || !rightsConfirmed || drafts.some(draft => draft.kind === "playlist" && draft.selectedPlaylistIndexes.length === 0)} className={primaryButton}>
@@ -251,6 +264,15 @@ export function QueuePage({
                   <button type="button" className={button} onClick={clearCompleted} disabled={!serviceReady || completedQueueCount === 0}><Trash2 className="size-3.5" aria-hidden="true" />Clear completed{completedQueueCount > 0 ? ` (${completedQueueCount})` : ""}</button>
                 </div>
               </div>
+
+              {selectedJobIDs.length > 0 && <div className={`${panel} flex flex-wrap items-center gap-2 p-3`}>
+                <span className="mr-auto text-xs text-neutral-300">{selectedJobIDs.length} job{selectedJobIDs.length === 1 ? "" : "s"} selected</span>
+                <button type="button" className={button} aria-label="Pause selected jobs" disabled={!serviceReady || busyAction === "bulk"} onClick={() => void bulkJobAction("pause", selectedJobIDs)}><Pause className="size-3.5" aria-hidden="true" />Pause</button>
+                <button type="button" className={button} aria-label="Resume selected jobs" disabled={!serviceReady || busyAction === "bulk"} onClick={() => void bulkJobAction("resume", selectedJobIDs)}><Play className="size-3.5" aria-hidden="true" />Resume</button>
+                <button type="button" className={button} aria-label="Cancel selected jobs" disabled={!serviceReady || busyAction === "bulk"} onClick={() => void bulkJobAction("cancel", selectedJobIDs)}><X className="size-3.5" aria-hidden="true" />Cancel</button>
+                <button type="button" className={button} aria-label="Delete selected jobs" disabled={!serviceReady || busyAction === "bulk"} onClick={async () => { if (await bulkJobAction("delete", selectedJobIDs)) setSelectedJobIDs([]); }}><Trash2 className="size-3.5" aria-hidden="true" />Delete</button>
+                <button type="button" className="px-2 py-1 text-xs text-neutral-400 hover:text-white" onClick={() => setSelectedJobIDs([])}>Clear selection</button>
+              </div>}
 
               <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-rose-900/50 bg-rose-950/20 px-4 py-3 text-xs">
                 <div className="flex items-center gap-2 text-neutral-300"><span className={`size-2 rounded-full ${activeCount > 0 ? "animate-pulse bg-rose-500" : "bg-neutral-600"}`} /><span className="font-semibold">{activeCount > 0 ? "Batch in progress" : queuedCount > 0 ? "Queue ready" : "Queue idle"}</span><span className="text-neutral-500">{activeCount} active · {queuedCount} queued</span></div>
@@ -322,6 +344,7 @@ export function QueuePage({
                         {(itemActive || item.status === "paused" || item.status === "completed") && <div className="mt-2 h-2 overflow-hidden rounded-full bg-neutral-800"><div className={`h-full rounded-full transition-[width] ${item.status === "completed" ? "bg-emerald-500" : "bg-rose-500"} ${itemActive && item.progress === null ? "w-1/3 animate-pulse" : ""}`} style={itemActive && item.progress === null ? undefined : { width: `${Math.max(0, Math.min(100, item.progress ?? 0))}%` }} /></div>}
                       </div>
                       <div className="flex shrink-0 items-center gap-1.5">
+                        {item.index === 1 && <input type="checkbox" aria-label={`Select ${job.title}`} checked={selectedJobIDs.includes(job.id)} onChange={event => setSelectedJobIDs(previous => event.target.checked ? [...new Set([...previous, job.id])] : previous.filter(id => id !== job.id))} className="size-4 accent-rose-600" />}
                         {job.kind === "video" && (job.status === "downloading" || job.status === "processing" || job.status === "queued") && <button type="button" className={button} disabled={busyAction === job.id} onClick={() => void jobAction(job, "pause")} aria-label={`Pause ${item.title}`}><Pause className="size-3.5" aria-hidden="true" /><span className="hidden md:inline">Pause</span></button>}
                         {job.kind === "video" && job.status === "paused" && <button type="button" className={button} disabled={busyAction === job.id} onClick={() => void jobAction(job, "resume")} aria-label={`Resume ${item.title}`}><Play className="size-3.5" aria-hidden="true" /><span className="hidden md:inline">Resume</span></button>}
                         {job.kind === "video" && (isActive(job) || job.status === "paused") && <button type="button" className={button} disabled={busyAction === job.id} onClick={() => void jobAction(job, "cancel")} aria-label={`Cancel ${item.title}`}><X className="size-3.5" aria-hidden="true" /></button>}
@@ -332,10 +355,13 @@ export function QueuePage({
                         {job.kind === "video" && (job.status === "failed" || job.status === "cancelled") && <button type="button" className={button} disabled={busyAction === job.id} onClick={() => void jobAction(job, "retry")} aria-label={`Retry ${item.title}`}><RefreshCw className="size-3.5" aria-hidden="true" /></button>}
                         {batchControls && (job.status === "failed" || job.status === "partial" || job.status === "cancelled") && <button type="button" className={button} disabled={busyAction === job.id} onClick={() => void jobAction(job, "retry")} aria-label={`Retry playlist ${job.title}`}><RefreshCw className="size-3.5" aria-hidden="true" /><span className="hidden md:inline">Retry batch</span></button>}
                         {job.kind === "playlist" && (job.status === "partial" || job.status === "failed" || job.status === "cancelled") && (item.status === "failed" || item.status === "cancelled") && <button type="button" className={button} disabled={busyAction === `${job.id}:retry-item:${item.index}` || item.retryRequested === true} onClick={() => void retryPlaylistItem(job, item)} aria-label={`Retry item ${item.title}`}><RefreshCw className="size-3.5" aria-hidden="true" /><span className="hidden md:inline">{item.retryRequested ? "Retry queued" : "Retry item"}</span></button>}
+                        {batchControls && job.kind === "playlist" && ["partial", "failed", "cancelled"].includes(job.status) && (job.items ?? []).some(value => value.status === "failed" || value.status === "cancelled") && <button type="button" className={button} disabled={busyAction === `${job.id}:retry-failed`} onClick={() => void retryAllFailedItems(job)} aria-label={`Retry all failed items in ${job.title}`}><RefreshCw className="size-3.5" aria-hidden="true" /><span className="hidden md:inline">Retry failed</span></button>}
+                        {item.index === 1 && (job.status === "queued" || job.status === "paused") && <button type="button" className={button} onClick={() => setEditingJobID(current => current === job.id ? "" : job.id)} aria-expanded={editingJobID === job.id} aria-label={`Edit queued settings for ${job.title}`}>Edit</button>}
                         {item.index === 1 && ["completed", "partial", "failed", "cancelled"].includes(job.status) && <button type="button" className={button} disabled={busyAction === job.id} onClick={() => void jobAction(job, "forget-history")} aria-label={`Forget history for ${job.title}`}><Trash2 className="size-3.5" aria-hidden="true" /><span className="hidden md:inline">Forget history</span></button>}
                         {item.status === "failed" && job.kind === "video" && <button type="button" className={button} disabled={busyAction === job.id} onClick={() => void jobAction(job, "remove")} aria-label={`Remove ${item.title}`}><Trash2 className="size-3.5" aria-hidden="true" /></button>}
                       </div>
                     </div>
+                    {item.index === 1 && editingJobID === job.id && <JobConfigurationEditor key={job.id} job={job} categories={settings.userCategories} busy={busyAction === `${job.id}:configuration`} onSave={patch => void updateJobConfiguration(job, patch)} />}
                     {itemError && item.status === "failed" && <p className="mt-3 flex items-start gap-1.5 text-[11px] text-red-300"><AlertCircle className="mt-0.5 size-3 shrink-0" aria-hidden="true" />{itemError}</p>}
                     {job.note && item.index === 1 && <p className="mt-3 text-[10px] leading-relaxed text-amber-300/80">{job.note}</p>}
                   </article>;
@@ -344,4 +370,57 @@ export function QueuePage({
             </section>
           </>
   );
+}
+
+function JobConfigurationEditor({
+  job, categories, busy, onSave,
+}: {
+  job: DownloadJob;
+  categories: string[];
+  busy: boolean;
+  onSave: (patch: JobConfigurationPatch) => void;
+}) {
+  const [quality, setQuality] = useState<Quality>(job.quality);
+  const [videoStrategy, setVideoStrategy] = useState<VideoStrategy>(job.videoStrategy ?? "best");
+  const [audioFormat, setAudioFormat] = useState<"mp3" | "m4a">(job.audioFormat ?? "mp3");
+  const [audioBitrate, setAudioBitrate] = useState(job.audioBitrate ?? "192k");
+  const [category, setCategory] = useState(job.category ?? categories[0] ?? "General");
+  const options = [...new Set([...categories, category])];
+
+  return <form className="mt-4 grid gap-3 rounded-xl border border-neutral-800 bg-neutral-950/70 p-3 sm:grid-cols-2 lg:grid-cols-4" onSubmit={event => {
+    event.preventDefault();
+    onSave(job.mediaType === "video"
+      ? { quality, videoStrategy, category }
+      : { audioFormat, ...(audioFormat === "mp3" ? { audioBitrate } : {}), category });
+  }}>
+    {job.mediaType === "video" ? <>
+      <label className="text-[11px] text-neutral-400">Maximum quality
+        <select aria-label={`Quality for ${job.title}`} className={`${field} mt-1`} value={quality} onChange={event => setQuality(event.target.value as Quality)}>
+          {(Object.entries(qualityLabels) as [Quality, string][]).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+        </select>
+      </label>
+      <label className="text-[11px] text-neutral-400">Video format
+        <select aria-label={`Video format for ${job.title}`} className={`${field} mt-1`} value={videoStrategy} onChange={event => setVideoStrategy(event.target.value as VideoStrategy)}>
+          {(Object.entries(videoStrategyLabels) as [VideoStrategy, string][]).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+        </select>
+      </label>
+    </> : <>
+      <label className="text-[11px] text-neutral-400">Audio format
+        <select aria-label={`Audio format for ${job.title}`} className={`${field} mt-1`} value={audioFormat} onChange={event => setAudioFormat(event.target.value as "mp3" | "m4a")}>
+          <option value="mp3">MP3</option><option value="m4a">M4A · original AAC</option>
+        </select>
+      </label>
+      {audioFormat === "mp3" && <label className="text-[11px] text-neutral-400">MP3 bitrate
+        <select aria-label={`Audio bitrate for ${job.title}`} className={`${field} mt-1`} value={audioBitrate} onChange={event => setAudioBitrate(event.target.value)}>
+          {(["128k", "192k", "256k", "320k"]).map(value => <option key={value} value={value}>{value}</option>)}
+        </select>
+      </label>}
+    </>}
+    <label className="text-[11px] text-neutral-400">Category
+      <select aria-label={`Category for ${job.title}`} className={`${field} mt-1`} value={category} onChange={event => setCategory(event.target.value)}>
+        {options.map(value => <option key={value} value={value}>{value}</option>)}
+      </select>
+    </label>
+    <div className="flex items-end"><button type="submit" className={button} disabled={busy}>{busy ? "Saving…" : "Save queue settings"}</button></div>
+  </form>;
 }

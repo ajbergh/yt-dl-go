@@ -1,6 +1,7 @@
 node_modules/
 dist/
 .vite-cache/
+src/server/.cache/
 .env*.local
 *.log
 .browser-errors.log

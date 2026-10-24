@@ -34,6 +34,7 @@ export function HomePage() {
   const [url, setUrl] = useState("");
   const [batchMode, setBatchMode] = useState(false);
   const [rightsConfirmed, setRightsConfirmed] = useState(false);
+  const [startPaused, setStartPaused] = useState(false);
   const [drafts, setDrafts] = useState<Draft[]>([]);
   const [inspecting, setInspecting] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -66,7 +67,7 @@ export function HomePage() {
 
   const {
     busyAction, actionError, preview, setPreview, clearedQueueItems, jobAction,
-    retryPlaylistItem, previewFile, saveFile, filesystemAction, reorderQueuedJobs,
+    retryPlaylistItem, retryAllFailedItems, updateJobConfiguration, bulkJobAction, previewFile, saveFile, filesystemAction, reorderQueuedJobs,
     downloadNext, reorderPlaylistItems, batchAction, clearCompleted,
   } = useJobs({
     connection, serviceReady, jobs, setJobs, queuedJobsOrdered, setNotice, refreshLibrary,
@@ -248,6 +249,7 @@ export function HomePage() {
             ...(draft.mediaType === "audio" && draft.audioFormat === "mp3" ? { audioBitrate: draft.audioBitrate } : {}),
             ...(draft.subtitleLanguage ? { subtitleLanguage: draft.subtitleLanguage, subtitleFormat: draft.subtitleFormat } : {}),
             category: draft.category, rightsConfirmed: true,
+            startPaused,
             ...(draft.kind === "playlist" ? { items: selectedPlaylistEntries(draft) } : {}),
           }),
           signal: AbortSignal.timeout(15000),
@@ -348,6 +350,8 @@ export function HomePage() {
           togglePlaylistEntry={togglePlaylistEntry}
           rightsConfirmed={rightsConfirmed}
           setRightsConfirmed={setRightsConfirmed}
+          startPaused={startPaused}
+          setStartPaused={setStartPaused}
           submitting={submitting}
           addDownloads={addDownloads}
           visibleQueueRows={visibleQueueRows}
@@ -369,6 +373,9 @@ export function HomePage() {
           setSearch={setSearch}
           filteredQueue={filteredQueue}
           retryPlaylistItem={retryPlaylistItem}
+          retryAllFailedItems={retryAllFailedItems}
+          updateJobConfiguration={updateJobConfiguration}
+          bulkJobAction={bulkJobAction}
           saveFile={saveFile}
           jobAction={jobAction}
         />}

@@ -620,7 +620,7 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		fail(w, 401, "Bearer authorization required")
 		return
 	}
-	if strings.HasPrefix(r.URL.Path, "/api/jobs/") {
+	if strings.HasPrefix(r.URL.Path, "/api/jobs/") && r.URL.Path != "/api/jobs/bulk" {
 		parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/api/jobs/"), "/")
 		if len(parts) > 0 && parts[0] != "" {
 			s.mu.Lock()
@@ -752,6 +752,14 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
+	if r.URL.Path == "/api/jobs/bulk" {
+		if r.Method != http.MethodPost {
+			fail(w, http.StatusMethodNotAllowed, "Method not allowed")
+			return
+		}
+		s.handleBulkJobs(w, r)
+		return
+	}
 	parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/api/jobs/"), "/")
 	validLibraryItemRoute := len(parts) == 3 && parts[1] == "library-items" && r.Method == http.MethodDelete
 	if !strings.HasPrefix(r.URL.Path, "/api/jobs/") || (len(parts) > 2 && !validLibraryItemRoute) || parts[0] == "" {
@@ -764,6 +772,14 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if len(parts) == 2 && parts[1] == "retry-item" && r.Method == http.MethodPost {
 		s.handleRetryItem(w, r, parts[0])
+		return
+	}
+	if len(parts) == 2 && parts[1] == "retry-failed" && r.Method == http.MethodPost {
+		s.handleRetryFailed(w, r, parts[0])
+		return
+	}
+	if len(parts) == 2 && parts[1] == "configuration" && r.Method == http.MethodPut {
+		s.handleJobConfiguration(w, r, parts[0])
 		return
 	}
 	if len(parts) == 3 && parts[1] == "library-items" && r.Method == http.MethodDelete {
@@ -1316,6 +1332,7 @@ func (s *server) create(w http.ResponseWriter, r *http.Request) {
 		Category         string          `json:"category"`
 		RightsConfirmed  bool            `json:"rightsConfirmed"`
 		Items            []inspectedItem `json:"items"`
+		StartPaused      bool            `json:"startPaused"`
 	}
 	if !decodeWithLimit(w, r, &request, 8<<20, "8 MiB") {
 		return
@@ -1411,16 +1428,16 @@ func (s *server) create(w http.ResponseWriter, r *http.Request) {
 		fail(w, 400, "splitByChapter currently requires MP3 audio output")
 		return
 	}
-	s.enqueueJob(w, u, kind, request.Quality, request.VideoStrategy, request.MediaType, request.AudioFormat, request.AudioBitrate, request.SubtitleLanguage, request.SubtitleFormat, request.Category, "", request.SplitByChapter, request.Items)
+	s.enqueueJob(w, u, kind, request.Quality, request.VideoStrategy, request.MediaType, request.AudioFormat, request.AudioBitrate, request.SubtitleLanguage, request.SubtitleFormat, request.Category, "", request.SplitByChapter, request.StartPaused, request.Items)
 }
 
 // enqueueJob allocates private per-job storage, persists a queued job, and
 // returns 202 only after the job has entered the bounded worker backlog.
-func (s *server) enqueueJob(w http.ResponseWriter, u, kind, quality, requestedVideoStrategy, mediaType, audioFormat, audioBitrate, subtitleLanguage, subtitleFormat, requestedCategory, requestedStorageMode string, splitByChapter bool, inspectedItems ...[]inspectedItem) {
-	s.enqueueJobWithFallback(w, u, kind, quality, requestedVideoStrategy, mediaType, audioFormat, audioBitrate, subtitleLanguage, subtitleFormat, requestedCategory, requestedStorageMode, splitByChapter, nil, inspectedItems...)
+func (s *server) enqueueJob(w http.ResponseWriter, u, kind, quality, requestedVideoStrategy, mediaType, audioFormat, audioBitrate, subtitleLanguage, subtitleFormat, requestedCategory, requestedStorageMode string, splitByChapter, startPaused bool, inspectedItems ...[]inspectedItem) {
+	s.enqueueJobWithFallback(w, u, kind, quality, requestedVideoStrategy, mediaType, audioFormat, audioBitrate, subtitleLanguage, subtitleFormat, requestedCategory, requestedStorageMode, splitByChapter, nil, startPaused, inspectedItems...)
 }
 
-func (s *server) enqueueJobWithFallback(w http.ResponseWriter, u, kind, quality, requestedVideoStrategy, mediaType, audioFormat, audioBitrate, subtitleLanguage, subtitleFormat, requestedCategory, requestedStorageMode string, splitByChapter bool, requestedAllow360pFallback *bool, inspectedItems ...[]inspectedItem) {
+func (s *server) enqueueJobWithFallback(w http.ResponseWriter, u, kind, quality, requestedVideoStrategy, mediaType, audioFormat, audioBitrate, subtitleLanguage, subtitleFormat, requestedCategory, requestedStorageMode string, splitByChapter bool, requestedAllow360pFallback *bool, startPaused bool, inspectedItems ...[]inspectedItem) {
 	if s.engine == nil {
 		fail(w, 503, "Native download engine is not initialized")
 		return
@@ -1484,7 +1501,7 @@ func (s *server) enqueueJobWithFallback(w http.ResponseWriter, u, kind, quality,
 	j := &jobState{Job: Job{
 		ID: randomID(16), URL: u, Kind: kind, Quality: quality, VideoStrategy: videoStrategy, Allow360pFallback: mediaType == "video" && allow360pFallback, MediaType: mediaType, AudioFormat: audioFormat, AudioBitrate: audioBitrate,
 		SubtitleLanguage: subtitleLanguage, SubtitleFormat: subtitleFormat,
-		Status: "queued", Title: "YouTube " + kind, Files: []mediaFile{}, Items: items, Failures: []itemFailure{},
+		Status: map[bool]string{true: "paused", false: "queued"}[startPaused], Title: "YouTube " + kind, Files: []mediaFile{}, Items: items, Failures: []itemFailure{},
 		Note: formatNote, CreatedAt: time.Now().UTC().Format(time.RFC3339Nano), DownloadLocation: outputSettings.DownloadLocation,
 		NamingPattern: outputSettings.NamingPattern, SubfolderSorting: outputSettings.SubfolderSorting,
 		OutputFileMode: outputSettings.OutputFileMode, OutputFolderMode: outputSettings.OutputFolderMode,
@@ -1515,7 +1532,9 @@ func (s *server) enqueueJobWithFallback(w http.ResponseWriter, u, kind, quality,
 	}
 	s.jobs[j.ID], s.order = j, append(s.order, j.ID)
 	s.publishJobEventLocked("job-created", j)
-	s.notifySchedulerLocked()
+	if !startPaused {
+		s.notifySchedulerLocked()
+	}
 	reply(w, 202, snapshot(j))
 }
 
