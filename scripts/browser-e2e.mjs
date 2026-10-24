@@ -353,7 +353,8 @@ async function main() {
       "about:blank",
     ], { stdio: ["ignore", "pipe", "pipe"] });
     chromeLog = captureProcess(chrome, "chrome");
-    await waitForHTTP(`http://127.0.0.1:${debugPort}/json/version`);
+    // Cold hosted runners can take over 30 seconds to expose DevTools.
+    await waitForHTTP(`http://127.0.0.1:${debugPort}/json/version`, 60000);
 
     const targets = await (await fetch(`http://127.0.0.1:${debugPort}/json/list`)).json();
     const target = targets.find(item => item.type === "page" && item.webSocketDebuggerUrl);
