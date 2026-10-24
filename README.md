@@ -10,7 +10,7 @@ Use it only for content you own or have permission to save, and in accordance wi
 
 ## Download and run on Windows
 
-Download the Windows archive from [GitHub Releases](https://github.com/ajbergh/yt-dl-go/releases/latest), extract it, and double-click `youtube-downloader.exe`. Keep the console window open while using the app. The UI connects automatically to the Go API in that same executable; there is no service address to configure. If the browser does not open, visit the URL printed in the console (normally `http://127.0.0.1:8080`).
+When a public release is available, download the Windows archive from [GitHub Releases](https://github.com/ajbergh/yt-dl-go/releases/latest), extract it, and double-click `youtube-downloader.exe`. Until the first release is published, GitHub Actions packages are validation artifacts rather than published downloads. Keep the console window open while using the app. The UI connects automatically to the Go API in that same executable; there is no service address to configure. If the browser does not open, visit the URL printed in the console (normally `http://127.0.0.1:8080`).
 
 The executable includes the web UI and Go download engine. It does not embed a web browser. For the automatic adaptive-HD path (including 1080p where YouTube makes a compatible stream available), install Chrome, Chromium, or Microsoft Edge. Normal browser discovery is automatic. If needed, point to a specific browser:
 
@@ -19,7 +19,7 @@ $env:CHROME_PATH = 'C:\Program Files\Google\Chrome\Application\chrome.exe'
 .\youtube-downloader.exe
 ~~~
 
-Downloads are stored in `downloads` under the process's current working directory (normally beside the executable when it is launched directly). Open the UI, paste an approved YouTube URL, choose a maximum quality and video-format strategy, confirm your rights, and download. `best`, `2160`, `1440`, `1080`, `720`, and `480` are maximum heights—not upscale requests or guarantees. Video format can be **Best quality**, strict **Compatibility MP4** (H.264/AAC), **Prefer VP9**, or **Prefer AV1**. VP9/AV1 preferences fall back to the automatic best-supported format when the preferred codec is unavailable and disclose that fallback in the job note. The actual height and MIME type are shown for each completed file.
+By default, completed media is published to `Downloads/YouTube_Vault` inside your home directory, organized into channel subfolders. The private SQLite database and app-managed media copies live in the per-user `DATA_DIR` (see Configuration), not beside the executable. The default **Managed + Published** storage mode keeps both an app-managed copy and a published copy, so it may require about twice the final media size. Settings lets you change the output location and storage mode. Open the UI, paste an approved YouTube URL, choose a maximum quality and video-format strategy, confirm your rights, and download. `best`, `2160`, `1440`, `1080`, `720`, and `480` are maximum heights—not upscale requests or guarantees. Video format can be **Best quality**, strict **Compatibility MP4** (H.264/AAC), **Prefer VP9**, or **Prefer AV1**. VP9/AV1 preferences fall back to the automatic best-supported format when the preferred codec is unavailable and disclose that fallback in the job note. The actual height and MIME type are shown for each completed file.
 
 ## Linux and macOS
 
@@ -41,7 +41,7 @@ The app does not ask you to provide an account token or import cookies from your
 
 Requirements:
 
-- Go 1.26 or newer
+- Go 1.27 or newer
 - Node.js and npm to rebuild the embedded React UI
 - Internet access on the build machine to download Go and npm dependencies
 
@@ -93,7 +93,7 @@ youtube-downloader --version
 
 Release builds perform a non-blocking check of the repository's latest stable **published** GitHub Release. Development builds skip that external request entirely.
 
-Update discovery is advisory only. The app links to the validated GitHub Release when a newer stable version exists; it does **not** download or replace its own executable. Automatic self-update remains disabled until Windows Authenticode signing, macOS Developer ID/notarization, post-download verification, and rollback-safe replacement are implemented. See [Release and update policy](docs/RELEASES.md) for the draft publication, provenance, signing, and rollback gates.
+Update discovery is advisory only. The app links to the validated GitHub Release when a newer stable version exists; it does **not** download or replace its own executable. Automatic self-update remains disabled until Windows Authenticode signing, macOS Developer ID/notarization, post-download verification, and rollback-safe replacement are implemented. See [Release and update policy](docs/RELEASES.md) and the [first release verification checklist](docs/RELEASE_CHECKLIST.md) for the draft publication, artifact checks, signing, and rollback gates.
 
 ## Configuration
 

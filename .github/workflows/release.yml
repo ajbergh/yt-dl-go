@@ -4,6 +4,8 @@ on:
   push:
     tags:
       - "v*.*.*"
+    branches:
+      - "release-validation/v*.*.*"
   workflow_dispatch:
     inputs:
       version:
@@ -25,6 +27,8 @@ concurrency:
 jobs:
   validate:
     name: Validate release source
+    outputs:
+      release_version: ${{ steps.release_version.outputs.release_version }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
@@ -40,9 +44,15 @@ jobs:
           cache: npm
 
       - name: Validate release version and package version
+        id: release_version
         shell: bash
         run: |
           set -euo pipefail
+          # A validation branch is a dry run only, never a GitHub Release.
+          # The version is the suffix of release-validation/vMAJOR.MINOR.PATCH.
+          if [[ "${GITHUB_REF}" == refs/heads/release-validation/* ]]; then
+            RELEASE_VERSION="${GITHUB_REF#refs/heads/release-validation/}"
+          fi
           if [[ ! "${RELEASE_VERSION}" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
             echo "Release tags must use stable semantic version format vMAJOR.MINOR.PATCH." >&2
             exit 1
@@ -53,6 +63,7 @@ jobs:
             echo "Release version ${RELEASE_VERSION} does not match package.json version ${expected_tag}." >&2
             exit 1
           fi
+          echo "release_version=${RELEASE_VERSION}" >> "$GITHUB_OUTPUT"
 
       - name: Set up Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
@@ -98,6 +109,8 @@ jobs:
   windows:
     name: Windows release package
     needs: validate
+    env:
+      RELEASE_VERSION: ${{ needs.validate.outputs.release_version }}
     strategy:
       fail-fast: false
       matrix:
@@ -142,6 +155,23 @@ jobs:
           TARGET_ARCH: ${{ matrix.arch }}
         run: ./scripts/build-windows.ps1 -OutputPath dist/release/youtube-downloader.exe
 
+      - name: Verify Windows release build identity (native only)
+        shell: pwsh
+        run: |
+          $hostArch = (go env GOARCH).Trim()
+          if ($hostArch -ne "${{ matrix.arch }}") {
+            Write-Host "Skipping execution of cross-built Windows ${{ matrix.arch }} binary on $hostArch runner."
+            exit 0
+          }
+          $actual = & ./dist/release/youtube-downloader.exe --version
+          if ($LASTEXITCODE -ne 0) {
+            throw "Packaged Windows executable failed --version ($LASTEXITCODE)."
+          }
+          $expected = "youtube-downloader $env:RELEASE_VERSION (commit $env:COMMIT, built $env:BUILD_DATE)"
+          if ($actual -ne $expected) {
+            throw "Incorrect Windows build identity. Expected '$expected'; got '$actual'."
+          }
+
       - name: Detect Windows architecture
         id: platform
         shell: pwsh
@@ -150,6 +180,64 @@ jobs:
       - name: Package Windows executable
         shell: pwsh
         run: ./scripts/package-windows.ps1 -ExecutablePath dist/release/youtube-downloader.exe -Architecture "${{ steps.platform.outputs.arch }}" -ArchivePath "dist/release/youtube-downloader-windows-${{ steps.platform.outputs.arch }}.zip"
+
+      - name: Smoke-test extracted Windows release package (native only)
+        shell: pwsh
+        env:
+          RELEASE_ARCH: ${{ matrix.arch }}
+        run: |
+          $hostArch = (go env GOARCH).Trim()
+          if ($hostArch -ne $env:RELEASE_ARCH) {
+            Write-Host "Skipping execution of cross-built Windows $env:RELEASE_ARCH on $hostArch runner."
+            exit 0
+          }
+          $archive = "dist/release/youtube-downloader-windows-$env:RELEASE_ARCH.zip"
+          $stage = Join-Path $env:RUNNER_TEMP ("yt-dl-go-release-smoke-" + [Guid]::NewGuid().ToString('N'))
+          $privateData = Join-Path $env:RUNNER_TEMP ("yt-dl-go-private-data-" + [Guid]::NewGuid().ToString('N'))
+          try {
+            # DATA_DIR intentionally rejects Administrators-owned/shared temporary
+            # folders. Construct a directory owned by the actual runner identity
+            # with a protected DACL instead of weakening runtime validation.
+            New-Item -ItemType Directory -Path $privateData -ErrorAction Stop | Out-Null
+            $owner = [System.Security.Principal.WindowsIdentity]::GetCurrent().User
+            $privateAcl = [System.Security.AccessControl.DirectorySecurity]::new()
+            $privateAcl.SetOwner($owner)
+            $privateAcl.SetAccessRuleProtection($true, $false)
+            foreach ($sid in @(
+              $owner,
+              [System.Security.Principal.SecurityIdentifier]::new('S-1-5-18'),
+              [System.Security.Principal.SecurityIdentifier]::new('S-1-5-32-544')
+            )) {
+              $rule = [System.Security.AccessControl.FileSystemAccessRule]::new(
+                $sid,
+                [System.Security.AccessControl.FileSystemRights]::FullControl,
+                ([System.Security.AccessControl.InheritanceFlags]::ContainerInherit -bor
+                  [System.Security.AccessControl.InheritanceFlags]::ObjectInherit),
+                [System.Security.AccessControl.PropagationFlags]::None,
+                [System.Security.AccessControl.AccessControlType]::Allow
+              )
+              $privateAcl.AddAccessRule($rule)
+            }
+            Set-Acl -LiteralPath $privateData -AclObject $privateAcl -ErrorAction Stop
+            $env:YTDL_RELEASE_SMOKE_DATA_DIR = $privateData
+            Expand-Archive -LiteralPath $archive -DestinationPath $stage -ErrorAction Stop
+            $executable = Join-Path $stage "youtube-downloader-windows-$env:RELEASE_ARCH/youtube-downloader.exe"
+            if (-not (Test-Path -LiteralPath $executable -PathType Leaf)) {
+              throw "Packaged Windows executable was not found in the extracted archive."
+            }
+            & node ./scripts/release-smoke.mjs $executable
+            if ($LASTEXITCODE -ne 0) {
+              throw "Windows release smoke test failed with exit code $LASTEXITCODE."
+            }
+          } finally {
+            Remove-Item Env:\YTDL_RELEASE_SMOKE_DATA_DIR -ErrorAction SilentlyContinue
+            if (Test-Path -LiteralPath $stage) {
+              Remove-Item -LiteralPath $stage -Recurse -Force
+            }
+            if (Test-Path -LiteralPath $privateData) {
+              Remove-Item -LiteralPath $privateData -Recurse -Force
+            }
+          }
 
       - name: Attest Windows release package
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
@@ -174,6 +262,8 @@ jobs:
   unix:
     name: ${{ matrix.label }} release package
     needs: validate
+    env:
+      RELEASE_VERSION: ${{ needs.validate.outputs.release_version }}
     strategy:
       fail-fast: false
       matrix:
@@ -235,6 +325,44 @@ jobs:
           TARGET_ARCH: ${{ matrix.arch }}
         run: bash ./scripts/build-unix.sh "dist/release/youtube-downloader-${{ matrix.target }}-${{ matrix.arch }}"
 
+      - name: Verify Unix release build identity (native only)
+        shell: bash
+        run: |
+          set -euo pipefail
+          host_os="$(go env GOOS)"
+          host_arch="$(go env GOARCH)"
+          if [[ "$host_os" != "${{ matrix.target }}" || "$host_arch" != "${{ matrix.arch }}" ]]; then
+            echo "Skipping execution of cross-built ${{ matrix.target }}/${{ matrix.arch }} binary on ${host_os}/${host_arch} runner."
+            exit 0
+          fi
+          expected="youtube-downloader ${RELEASE_VERSION} (commit ${COMMIT}, built ${BUILD_DATE})"
+          actual="$(./dist/release/youtube-downloader-${{ matrix.target }}-${{ matrix.arch }} --version)"
+          if [[ "$actual" != "$expected" ]]; then
+            echo "Incorrect ${{ matrix.label }} build identity. Expected '$expected'; got '$actual'." >&2
+            exit 1
+          fi
+
+      - name: Smoke-test extracted Unix release package (native only)
+        shell: bash
+        env:
+          RELEASE_TARGET: ${{ matrix.target }}
+          RELEASE_ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          host_os="$(go env GOOS)"
+          host_arch="$(go env GOARCH)"
+          if [[ "$host_os" != "$RELEASE_TARGET" || "$host_arch" != "$RELEASE_ARCH" ]]; then
+            echo "Skipping execution of cross-built $RELEASE_TARGET/$RELEASE_ARCH on $host_os/$host_arch runner."
+            exit 0
+          fi
+          stage="$(mktemp -d)"
+          trap 'rm -rf "$stage"' EXIT
+          archive="dist/release/youtube-downloader-$RELEASE_TARGET-$RELEASE_ARCH.tar.gz"
+          tar -xzf "$archive" -C "$stage"
+          executable="$stage/youtube-downloader-$RELEASE_TARGET-$RELEASE_ARCH/youtube-downloader"
+          test -x "$executable"
+          node ./scripts/release-smoke.mjs "$executable"
+
       - name: Attest ${{ matrix.label }} release package
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
@@ -256,10 +384,13 @@ jobs:
           retention-days: 7
 
   publish:
-    name: Prepare draft GitHub Release
+    name: Assemble release artifacts
     needs:
+      - validate
       - windows
       - unix
+    env:
+      RELEASE_VERSION: ${{ needs.validate.outputs.release_version }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -316,7 +447,7 @@ jobs:
           subject-path: dist/release/SHA256SUMS.txt
 
       - name: Upload dry-run release artifacts
-        if: github.event_name == 'workflow_dispatch'
+        if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/heads/release-validation/')
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: release-dry-run-${{ env.RELEASE_VERSION }}
@@ -329,7 +460,7 @@ jobs:
           retention-days: 7
 
       - name: Create draft GitHub Release
-        if: github.event_name != 'workflow_dispatch'
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash

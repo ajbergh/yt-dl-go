@@ -2,7 +2,7 @@
 
 > Successor to [`roadmap.md`](roadmap.md). Roadmap v1 (Milestones 1–6) is complete apart from two deliberately deferred items: native tray and automatic self-update. v2 comes from a full review of the backend engine, the API/persistence/security layers, the React frontend, and build/CI/release/docs as of `63f3658`.
 >
-> **Last updated:** 2026-09-25
+> **Last updated:** 2026-10-09
 
 ## Merged fixes and source branches (2026-09-23)
 
@@ -24,7 +24,7 @@ All six jobs passed in [PR #10 CI](https://github.com/ajbergh/yt-dl-go/actions/r
 
 ## Why a v2
 
-v1 built the features for a "private local media acquisition and library application." The review found that the foundations underneath those features have not caught up:
+v1 built the features for a "private local media acquisition and library application." At the time of the original September 2026 review, the following foundational gaps were identified. **This is historical review context, not a list of currently open defects**; consult each milestone's implementation status below:
 
 1. **The Library is not durable.** Finished jobs are pruned after `RETENTION` (default 24h). With the `managed-only` storage policy that pruning **permanently deletes the only copy of the media**. `MAX_JOBS` (default 32) counts finished jobs too, so it effectively caps the Library at 32 downloads.
 2. **Leftover app-builder scaffolding ships in production.** Combined with the missing frame protection, this lets any website iframe the local UI, receive its console output, and attempt clickjacking on destructive actions.
@@ -330,7 +330,7 @@ Migrations v2–v15 are 14 near-identical copy-pasted functions and call blocks,
 
 ### M1.7 Move desktop-relevant settings into the UI
 
-**Status:** [x] Merged by PR #81 (`6a73da5`) · **P2** · **Area:** config
+**Status:** [x] Merged in [PR #81](https://github.com/ajbergh/yt-dl-go/pull/81) · **P2** · **Area:** config
 
 `RETENTION`, `MAX_JOB_BYTES`, `JOB_TIMEOUT`, and `CHROME_PATH` are environment-only (`main.go:78-148`), and the per-process transfer slot count is hard-coded at 4 (`main.go:189`). Desktop users should not need environment variables.
 
@@ -339,7 +339,7 @@ Migrations v2–v15 are 14 near-identical copy-pasted functions and call blocks,
 - Persist these settings in `app_settings` with environment-variable overrides, and show which source is in effect in Settings.
 - Optionally support a `config.toml` in the data directory for headless use.
 
-**Progress (2026-09-25):** Merged in [PR #81](https://github.com/ajbergh/yt-dl-go/pull/81) as `6a73da5`. Migration v30 persists retention, maximum job bytes, job timeout, Chrome path, and download response slots; environment variables take precedence, and Settings shows both the effective source and active value. Runtime edits take effect after service restart; `config.toml` remains deferred. A nondeterministic cancellation fixture was made deterministic by blocking its second stream acquisition. The full Go suite, Go vet, `npm run check` (20 existing ESLint warnings, no errors), CI race suite, lint, frontend integration, CodeQL, and Linux/Windows/macOS builds passed.
+**Implementation note (2026-09-24):** Persist the five runtime controls (retention, maximum job bytes, job timeout, Chrome path, and download response slots) in migration v30. Environment variables take precedence and Settings reports each effective source and active value. Runtime edits take effect on service restart because the Chrome pool and transfer semaphore are constructed at startup; `config.toml` remains optional and is deferred. PR [#81](https://github.com/ajbergh/yt-dl-go/pull/81) adds these controls and API/UI coverage. Local validation passes: repeated cancellation/length regressions, the full Go suite, Go vet, and `npm run check` (20 existing ESLint warnings, no errors). A Linux package timeout in CI traced to the cancellation fixture's nondeterministic blocking point; the fixture now blocks its second stream acquisition and keeps the single-download queue assertion. The runtime settings work merged in [PR #81](https://github.com/ajbergh/yt-dl-go/pull/81) on 2026-09-25. The Settings UI exposes all five controls, with persisted values and effective-source information. The optional `config.toml` remains explicitly deferred rather than part of the completed requirement.
 
 ---
 
@@ -1063,14 +1063,14 @@ The v1 P2.3 gates still apply: checksum plus signature/provenance verification, 
 
 ### M9.1 Community and governance docs
 
-**Status:** [~] Security/contribution guidance and templates added; changelog pending M8.7 · **P1** · **Area:** docs
+**Status:** [~] Governance documents, templates, and initial changelog added; automatic changelog/version management remains in M8.7 · **P1** · **Area:** docs
 
 #### Scope
 
 - [x] Add `LICENSE` (M0.6).
 - [x] Add `SECURITY.md` with private vulnerability reporting guidance and the local API token/ticket model.
 - [x] Add `CONTRIBUTING.md` with setup, npm/Bun roles, CI checks, and contribution guidance.
-- [ ] Add `CHANGELOG.md` with M8.7 release automation.
+- [x] Add an initial `CHANGELOG.md` for the unreleased v0.1.0 candidate; automate versioning and release-note generation separately in M8.7.
 - [x] Add bug, feature-request, and pull-request templates.
 
 **Progress (2026-09-23):** Implemented on `roadmap/m9-1-governance-docs`; the changelog remains tied to M8.7 so it can be generated from the release history.

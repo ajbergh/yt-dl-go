@@ -8,7 +8,7 @@ The CI workflow builds and verifies these package targets:
 
 | Platform | Architecture | Package |
 | --- | --- | --- |
-| Windows | amd64 on the current Windows runner | `youtube-downloader-windows-<arch>.zip` |
+| Windows | amd64 / arm64 | `youtube-downloader-windows-<arch>.zip` |
 | Linux | amd64 | `youtube-downloader-linux-amd64.tar.gz` |
 | Linux | arm64 | `youtube-downloader-linux-arm64.tar.gz` |
 | macOS | amd64 | `youtube-downloader-darwin-amd64.tar.gz` |
@@ -20,7 +20,7 @@ The Windows artifact also retains the raw `youtube-downloader.exe` for compatibi
 
 ## Local builds
 
-Install Go 1.26+, Node.js/npm, and run `npm ci` first.
+Install Go 1.27 or newer, Node.js/npm, and run `npm ci` first.
 
 ### Windows
 
@@ -100,6 +100,8 @@ The workflow:
 7. produces a canonical `SHA256SUMS.txt`;
 8. creates GitHub build-provenance attestations for each release archive and the checksum manifest using OIDC;
 9. creates a **draft** GitHub Release containing the binaries, source archive, and checksum files.
+
+Native-architecture release jobs now extract their finished archive and run a self-contained smoke test before attestation. The test starts the packaged executable against disposable private data, verifies `/api/health`, embedded UI, security headers, version metadata and SQLite initialization, stops the process and restarts it on the same database. Cross-built architectures cannot execute on a mismatched runner and are explicitly skipped; real-platform testing and Windows graceful-console shutdown remain separate release gates.
 
 The draft is the release-publication safety gate: it is not returned by GitHub's latest-release endpoint, so the app cannot advertise the release until a human publishes it after the required review/signing steps in [RELEASES.md](RELEASES.md).
 

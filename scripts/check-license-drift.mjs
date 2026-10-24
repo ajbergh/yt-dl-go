@@ -24,5 +24,11 @@ const changed = execFileSync("git", ["status", "--porcelain", "--", ...generated
 if (changed.trim()) {
   process.stderr.write("Third-party notice files are out of date. Regenerate them with `npm run licenses:generate:go` and `npm run licenses:generate`.\n");
   process.stderr.write(changed);
+  // Include a focused diff so CI logs show exactly how generated notice metadata drifted.
+  const noticeDiff = execFileSync("git", ["diff", "--", "src/server/NPM_THIRD_PARTY_NOTICES.md"], {
+    cwd: repoRoot,
+    encoding: "utf8",
+  });
+  if (noticeDiff.trim()) process.stderr.write(noticeDiff);
   process.exitCode = 1;
 }

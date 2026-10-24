@@ -3,7 +3,6 @@ package main
 import (
 	"bytes"
 	"context"
-	"encoding/base64"
 	"log"
 	"os"
 	"sync"
@@ -85,8 +84,45 @@ func (p *chromeBrowserProvider) ensureNetworkCapture() error {
 		p.networkMu.Lock()
 		p.networkSABR = make(map[network.RequestID]*networkSABRResponse)
 		p.networkMu.Unlock()
-		chromedp.ListenTarget(p.ctx, p.handleNetworkCaptureEvent)
-		p.networkErr = chromedp.Run(p.ctx, network.Enable())
+
+		// Subscribe before enabling Network so no response events are lost.
+		responseEvents := chromedp.Events(p.ctx, network.ResponseReceived)
+		dataEvents := chromedp.Events(p.ctx, network.DataReceived)
+		finishedEvents := chromedp.Events(p.ctx, network.LoadingFinished)
+		failedEvents := chromedp.Events(p.ctx, network.LoadingFailed)
+		go func() {
+			for event, err := range responseEvents {
+				if err != nil {
+					return
+				}
+				p.handleNetworkCaptureEvent(&event)
+			}
+		}()
+		go func() {
+			for event, err := range dataEvents {
+				if err != nil {
+					return
+				}
+				p.handleNetworkCaptureEvent(&event)
+			}
+		}()
+		go func() {
+			for event, err := range finishedEvents {
+				if err != nil {
+					return
+				}
+				p.handleNetworkCaptureEvent(&event)
+			}
+		}()
+		go func() {
+			for event, err := range failedEvents {
+				if err != nil {
+					return
+				}
+				p.handleNetworkCaptureEvent(&event)
+			}
+		}()
+		_, p.networkErr = chromedp.Call(p.ctx, network.Enable, network.EnableParams{})
 	})
 	return p.networkErr
 }
@@ -124,15 +160,12 @@ func (p *chromeBrowserProvider) handleNetworkCaptureEvent(event interface{}) {
 		go p.streamNetworkSABR(event.RequestID, response, capture, captureCtx, metrics)
 	case *network.EventDataReceived:
 		response := p.networkResponse(event.RequestID)
-		if response == nil || event.Data == "" {
+
+		if response == nil || len(event.Data) == 0 {
 			return
 		}
-		data, err := base64.StdEncoding.DecodeString(event.Data)
-		if err != nil {
-			response.finish(errSABR)
-			return
-		}
-		response.appendData(data)
+		// The typed CDProto API decodes base64 event payloads into bytes.
+		response.appendData(event.Data)
 	case *network.EventLoadingFinished:
 		if response := p.networkResponse(event.RequestID); response != nil {
 			response.finish(nil)
@@ -154,13 +187,16 @@ func (p *chromeBrowserProvider) streamNetworkSABR(id network.RequestID, response
 	commandCtx, cancel := context.WithTimeout(captureCtx, 30*time.Second)
 	defer cancel()
 	start := time.Now()
-	buffered, err := network.StreamResourceContent(id).Do(commandCtx)
+	streamResult, err := chromedp.Call(commandCtx, network.StreamResourceContent, network.StreamResourceContentParams{RequestID: id})
 	setupDuration := time.Since(start)
 	var body []byte
 	if err != nil {
 		// Tiny responses can finish before the stream command reaches Chrome.
 		// Network.getResponseBody is sufficient for those completed responses.
-		body, err = network.GetResponseBody(id).Do(commandCtx)
+
+		var result network.GetResponseBodyResult
+		result, err = chromedp.Call(commandCtx, network.GetResponseBody, network.GetResponseBodyParams{RequestID: id})
+		body = result.Body
 		if err != nil || len(body) == 0 || int64(len(body)) > maxNetworkSABRBytes {
 			if os.Getenv("YTDL_TRACE_PERFORMANCE") != "" {
 				log.Printf("browser network response unavailable: %v", err)
@@ -169,7 +205,7 @@ func (p *chromeBrowserProvider) streamNetworkSABR(id network.RequestID, response
 			return
 		}
 	} else {
-		response.setBuffered(buffered)
+		response.setBuffered(streamResult.BufferedData)
 		select {
 		case <-response.done:
 		case <-captureCtx.Done():

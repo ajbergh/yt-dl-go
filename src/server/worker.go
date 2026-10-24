@@ -521,7 +521,7 @@ func (s *server) start() {
 			if s.activeDownloads < limit {
 				if j := s.nextQueuedJobLocked(); j != nil {
 					s.activeDownloads++
-					requested := append([]queueItem(nil), j.Items...)
+					requested := cloneQueueItems(j.Items)
 					ctx, cancel := newJobContext(s.ctx, s.cfg.timeout)
 					j.Status, j.cancel = "downloading", cancel
 					s.persistJobLocked(j)
@@ -635,7 +635,6 @@ func (s *server) run(ctx context.Context, j *jobState, requested []queueItem) {
 			fatal = errPlaylist
 			return
 		}
-		j.playlistItemCount = len(playlist.Videos)
 		selected, selectionErr := playlistWorkItems(playlist, requested)
 		if selectionErr != nil {
 			fatal = selectionErr
@@ -643,6 +642,7 @@ func (s *server) run(ctx context.Context, j *jobState, requested []queueItem) {
 		}
 		work = selected
 		s.mu.Lock()
+		j.playlistItemCount = len(playlist.Videos)
 		total := len(work)
 		j.TotalCount = &total
 		if playlist.Title != "" {
@@ -993,7 +993,13 @@ func makeQueueItem(index, playlistIndex int, entry *youtube.PlaylistEntry) queue
 
 func (s *server) setQueueItems(j *jobState, work []playlistWorkItem, retryTargets map[int]struct{}) {
 	s.mu.Lock()
-	previous := append([]queueItem(nil), j.Items...)
+	// Initial queue setup never reuses previous item state. Avoid reading
+	// the old mutable item array during cancellation/initialization; only
+	// retries need a detached copy of the previous status and output IDs.
+	var previous []queueItem
+	if len(retryTargets) > 0 {
+		previous = cloneQueueItems(j.Items)
+	}
 	items := make([]queueItem, len(work))
 	for index, selected := range work {
 		playlistIndex := 0
