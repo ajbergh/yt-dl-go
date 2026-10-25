@@ -4,10 +4,26 @@ updates:
     directory: /src/server
     schedule:
       interval: weekly
+    groups:
+      chromedp:
+        patterns:
+          - "github.com/chromedp/*"
   - package-ecosystem: npm
     directory: /
     schedule:
       interval: weekly
+    groups:
+      eslint:
+        patterns:
+          - "eslint"
+          - "@eslint/*"
+          - "typescript-eslint"
+          - "@typescript-eslint/*"
+          - "eslint-plugin-*"
+      tailwind:
+        patterns:
+          - "tailwindcss"
+          - "@tailwindcss/*"
   - package-ecosystem: npm
     directory: /tools/license-checker
     schedule:
@@ -16,3 +32,7 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    groups:
+      codeql:
+        patterns:
+          - "github/codeql-action/*"

@@ -8,6 +8,7 @@ import (
 	"crypto/subtle"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log"
 	"mime"
@@ -337,7 +338,7 @@ func (s *server) hydrateLibraryJobLocked(jobID string) (*jobState, bool, error) 
 // evictTerminalJobLocked drops a finished job's working state without sending
 // job-deleted: the durable Library record and history still exist.
 func (s *server) evictTerminalJobLocked(job *jobState) {
-	if job == nil || !terminal(job.Status) || job.persistenceFailed || job.persistencePending > 0 || s.jobs[job.ID] != job {
+	if job == nil || !terminal(job.Status) || job.persistenceFailed || job.persistencePending > 0 || job.readers > 0 || job.deleting || s.jobs[job.ID] != job {
 		return
 	}
 	delete(s.jobs, job.ID)
@@ -617,7 +618,7 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		fail(w, 401, "Bearer authorization required")
 		return
 	}
-	if strings.HasPrefix(r.URL.Path, "/api/jobs/") {
+	if strings.HasPrefix(r.URL.Path, "/api/jobs/") && r.URL.Path != "/api/jobs/bulk" {
 		parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/api/jobs/"), "/")
 		if len(parts) > 0 && parts[0] != "" {
 			s.mu.Lock()
@@ -749,6 +750,14 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
+	if r.URL.Path == "/api/jobs/bulk" {
+		if r.Method != http.MethodPost {
+			fail(w, http.StatusMethodNotAllowed, "Method not allowed")
+			return
+		}
+		s.handleBulkJobs(w, r)
+		return
+	}
 	parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/api/jobs/"), "/")
 	validLibraryItemRoute := len(parts) == 3 && parts[1] == "library-items" && r.Method == http.MethodDelete
 	if !strings.HasPrefix(r.URL.Path, "/api/jobs/") || (len(parts) > 2 && !validLibraryItemRoute) || parts[0] == "" {
@@ -761,6 +770,14 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if len(parts) == 2 && parts[1] == "retry-item" && r.Method == http.MethodPost {
 		s.handleRetryItem(w, r, parts[0])
+		return
+	}
+	if len(parts) == 2 && parts[1] == "retry-failed" && r.Method == http.MethodPost {
+		s.handleRetryFailed(w, r, parts[0])
+		return
+	}
+	if len(parts) == 2 && parts[1] == "configuration" && r.Method == http.MethodPut {
+		s.handleJobConfiguration(w, r, parts[0])
 		return
 	}
 	if len(parts) == 3 && parts[1] == "library-items" && r.Method == http.MethodDelete {
@@ -956,74 +973,16 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.recordPersistenceSuccess()
 		s.forgetJobLocked(j)
 		w.WriteHeader(http.StatusNoContent)
-	case len(parts) == 2 && parts[1] == "pause" && r.Method == http.MethodPost:
-		if j.Status == "queued" {
-			j.Status, j.Error = "paused", ""
-			s.notifySchedulerLocked()
-		} else if j.Status == "downloading" || j.Status == "processing" {
-			j.pauseRequested = true
-			j.Error = "Pausing after the current download or conversion stops"
-			if j.cancel != nil {
-				j.cancel()
-			}
-		} else if j.Status != "paused" {
-			fail(w, 409, "Only queued or downloading jobs can be paused")
+	case len(parts) == 2 && (parts[1] == "pause" || parts[1] == "resume" || parts[1] == "cancel") && r.Method == http.MethodPost:
+		if message := validateBulkJobAction(j, parts[1]); message != "" {
+			fail(w, http.StatusConflict, message)
 			return
 		}
-		s.refreshAllQueueItemsLocked(j)
-		if err := s.persistJobLocked(j); err != nil {
-			fail(w, 500, "Could not save the pause state")
+		if err := s.applyBulkJobActionLocked(j, parts[1]); err != nil {
+			fail(w, http.StatusInternalServerError, err.Error())
 			return
 		}
-		reply(w, 200, snapshot(j))
-	case len(parts) == 2 && parts[1] == "resume" && r.Method == http.MethodPost:
-		if j.Status != "paused" {
-			fail(w, 409, "Only paused jobs can be resumed")
-			return
-		}
-		j.pauseRequested = false
-		j.cancelRequested = false
-		j.Status, j.Error, j.done = "queued", "", time.Time{}
-		j.QueuePosition = s.nextQueuePositionLocked()
-		s.refreshAllQueueItemsLocked(j)
-		if err := s.persistJobLocked(j); err != nil {
-			fail(w, 500, "Could not save the resume state")
-			return
-		}
-		s.notifySchedulerLocked()
-		reply(w, 200, snapshot(j))
-	case len(parts) == 2 && parts[1] == "cancel" && r.Method == http.MethodPost:
-		if !terminal(j.Status) {
-			if j.Status == "paused" {
-				if err := discardPausedParts(j); err != nil {
-					fail(w, 500, "Could not remove paused temporary output")
-					return
-				}
-				if err := s.persistOperationLocked("delete resumable download state", j.ID, func(store *jobStore) error {
-					return store.deletePartsForJob(j.ID)
-				}); err != nil {
-					s.recordPersistenceFailure("delete resumable download state", j.ID, err)
-					fail(w, 500, "Could not remove resumable download state")
-					return
-				}
-				s.recordPersistenceSuccess()
-			}
-			j.pauseRequested = false
-			j.cancelRequested = true
-			if j.cancel != nil {
-				j.Error = "Cancellation requested; waiting for the downloader to stop"
-				j.cancel()
-			} else {
-				j.Status, j.Error, j.done = "cancelled", "Cancelled before download started", time.Now()
-			}
-			s.refreshAllQueueItemsLocked(j)
-			s.notifySchedulerLocked()
-			if err := s.persistJobLocked(j); err != nil {
-				fail(w, 500, "Could not save the cancellation state")
-				return
-			}
-		}
-		reply(w, 200, snapshot(j))
+		reply(w, http.StatusOK, snapshot(j))
 		s.evictTerminalJobLocked(j)
 	case len(parts) == 2 && parts[1] == "ticket" && r.Method == http.MethodPost:
 		s.issueTicket(w, j, fileID, requested.FileIDs, requested.Inline)
@@ -1290,12 +1249,27 @@ func discardPausedParts(j *jobState) error {
 		return err
 	}
 	for _, entry := range entries {
-		if strings.HasSuffix(entry.Name(), ".part") {
+		if strings.HasSuffix(entry.Name(), ".part") || strings.Contains(entry.Name(), ".source.") {
 			if err := os.Remove(filepath.Join(j.dir, entry.Name())); err != nil && !errors.Is(err, os.ErrNotExist) {
 				return err
 			}
 		}
 	}
+	return nil
+}
+
+// Called only while the job has no running worker. Finalized media is retained.
+func (s *server) discardResumableOutputLocked(j *jobState) error {
+	if err := discardPausedParts(j); err != nil {
+		return fmt.Errorf("could not remove unfinished output: %w", err)
+	}
+	if err := s.persistOperationLocked("delete resumable download state", j.ID, func(store *jobStore) error {
+		return store.deletePartsForJob(j.ID)
+	}); err != nil {
+		s.recordPersistenceFailure("delete resumable download state", j.ID, err)
+		return fmt.Errorf("could not clear resumable download state: %w", err)
+	}
+	s.recordPersistenceSuccess()
 	return nil
 }
 
@@ -1313,6 +1287,7 @@ func (s *server) create(w http.ResponseWriter, r *http.Request) {
 		Category         string          `json:"category"`
 		RightsConfirmed  bool            `json:"rightsConfirmed"`
 		Items            []inspectedItem `json:"items"`
+		StartPaused      bool            `json:"startPaused"`
 	}
 	if !decodeWithLimit(w, r, &request, 8<<20, "8 MiB") {
 		return
@@ -1408,16 +1383,16 @@ func (s *server) create(w http.ResponseWriter, r *http.Request) {
 		fail(w, 400, "splitByChapter currently requires MP3 audio output")
 		return
 	}
-	s.enqueueJob(w, u, kind, request.Quality, request.VideoStrategy, request.MediaType, request.AudioFormat, request.AudioBitrate, request.SubtitleLanguage, request.SubtitleFormat, request.Category, "", request.SplitByChapter, request.Items)
+	s.enqueueJob(w, u, kind, request.Quality, request.VideoStrategy, request.MediaType, request.AudioFormat, request.AudioBitrate, request.SubtitleLanguage, request.SubtitleFormat, request.Category, "", request.SplitByChapter, request.StartPaused, request.Items)
 }
 
 // enqueueJob allocates private per-job storage, persists a queued job, and
 // returns 202 only after the job has entered the bounded worker backlog.
-func (s *server) enqueueJob(w http.ResponseWriter, u, kind, quality, requestedVideoStrategy, mediaType, audioFormat, audioBitrate, subtitleLanguage, subtitleFormat, requestedCategory, requestedStorageMode string, splitByChapter bool, inspectedItems ...[]inspectedItem) {
-	s.enqueueJobWithFallback(w, u, kind, quality, requestedVideoStrategy, mediaType, audioFormat, audioBitrate, subtitleLanguage, subtitleFormat, requestedCategory, requestedStorageMode, splitByChapter, nil, inspectedItems...)
+func (s *server) enqueueJob(w http.ResponseWriter, u, kind, quality, requestedVideoStrategy, mediaType, audioFormat, audioBitrate, subtitleLanguage, subtitleFormat, requestedCategory, requestedStorageMode string, splitByChapter, startPaused bool, inspectedItems ...[]inspectedItem) {
+	s.enqueueJobWithFallback(w, u, kind, quality, requestedVideoStrategy, mediaType, audioFormat, audioBitrate, subtitleLanguage, subtitleFormat, requestedCategory, requestedStorageMode, splitByChapter, nil, startPaused, inspectedItems...)
 }
 
-func (s *server) enqueueJobWithFallback(w http.ResponseWriter, u, kind, quality, requestedVideoStrategy, mediaType, audioFormat, audioBitrate, subtitleLanguage, subtitleFormat, requestedCategory, requestedStorageMode string, splitByChapter bool, requestedAllow360pFallback *bool, inspectedItems ...[]inspectedItem) {
+func (s *server) enqueueJobWithFallback(w http.ResponseWriter, u, kind, quality, requestedVideoStrategy, mediaType, audioFormat, audioBitrate, subtitleLanguage, subtitleFormat, requestedCategory, requestedStorageMode string, splitByChapter bool, requestedAllow360pFallback *bool, startPaused bool, inspectedItems ...[]inspectedItem) {
 	if s.engine == nil {
 		fail(w, 503, "Native download engine is not initialized")
 		return
@@ -1481,7 +1456,7 @@ func (s *server) enqueueJobWithFallback(w http.ResponseWriter, u, kind, quality,
 	j := &jobState{Job: Job{
 		ID: randomID(16), URL: u, Kind: kind, Quality: quality, VideoStrategy: videoStrategy, Allow360pFallback: mediaType == "video" && allow360pFallback, MediaType: mediaType, AudioFormat: audioFormat, AudioBitrate: audioBitrate,
 		SubtitleLanguage: subtitleLanguage, SubtitleFormat: subtitleFormat,
-		Status: "queued", Title: "YouTube " + kind, Files: []mediaFile{}, Items: items, Failures: []itemFailure{},
+		Status: map[bool]string{true: "paused", false: "queued"}[startPaused], Title: "YouTube " + kind, Files: []mediaFile{}, Items: items, Failures: []itemFailure{},
 		Note: formatNote, CreatedAt: time.Now().UTC().Format(time.RFC3339Nano), DownloadLocation: outputSettings.DownloadLocation,
 		NamingPattern: outputSettings.NamingPattern, SubfolderSorting: outputSettings.SubfolderSorting,
 		OutputFileMode: outputSettings.OutputFileMode, OutputFolderMode: outputSettings.OutputFolderMode,
@@ -1505,6 +1480,7 @@ func (s *server) enqueueJobWithFallback(w http.ResponseWriter, u, kind, quality,
 		total := 1
 		j.TotalCount = &total
 	}
+	s.refreshAllQueueItemsLocked(j)
 	if err := s.persistJobSnapshotLocked(j, "create job"); err != nil {
 		_ = os.RemoveAll(j.dir)
 		fail(w, 500, "Cannot persist download job")
@@ -1512,7 +1488,9 @@ func (s *server) enqueueJobWithFallback(w http.ResponseWriter, u, kind, quality,
 	}
 	s.jobs[j.ID], s.order = j, append(s.order, j.ID)
 	s.publishJobEventLocked("job-created", j)
-	s.notifySchedulerLocked()
+	if !startPaused {
+		s.notifySchedulerLocked()
+	}
 	reply(w, 202, snapshot(j))
 }
 

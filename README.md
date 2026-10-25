@@ -41,7 +41,7 @@ The app does not ask you to provide an account token or import cookies from your
 
 Requirements:
 
-- Go 1.27 or newer
+- Go 1.27.3 or newer
 - Node.js and npm to rebuild the embedded React UI
 - Internet access on the build machine to download Go and npm dependencies
 
@@ -82,6 +82,8 @@ Pop-Location
 On Windows the executable result remains `dist\youtube-downloader.exe`. Unix package names include the target OS and architecture. `CGO_ENABLED=0` keeps the Go program self-contained; Chrome remains an external runtime dependency only for browser-assisted adaptive HD downloads.
 
 ### Releases and update checks
+
+**First public release:** [v0.1.0 (October 10, 2026)](https://github.com/ajbergh/yt-dl-go/releases/tag/v0.1.0), with Windows, Linux, and macOS AMD64/ARM64 packages, source archive, and SHA-256 manifest. **Windows builds are unsigned; macOS builds are unsigned and not notarized.** Independent provenance verification via GitHub's attestations API was unavailable at publication; read the release notes before using packages.
 
 Tagged stable releases use `.github/workflows/release.yml`. A tag must use `vMAJOR.MINOR.PATCH` form **and exactly match `package.json`**. The workflow runs the full frontend/Go/browser validation suite, builds the Windows/Linux/macOS package matrix, verifies each archive checksum, creates a canonical `SHA256SUMS.txt`, attaches GitHub build-provenance attestations, and creates a **draft** GitHub Release. Draft releases are intentionally invisible to update discovery until a human completes the publication gate.
 

@@ -158,29 +158,27 @@ export function SortableQueueOrderRow({ id, label, detail, children, below }: { 
 }
 
 export function LibraryThumbnail({ connection, jobId, file, audio }: { connection: ServiceConnection; jobId: string; file: DownloadFile; audio: boolean }) {
-  const [source, setSource] = useState(file.thumbnailUrl ?? "");
+  const requestKey = JSON.stringify([connection.base, connection.token, jobId, file.id, file.thumbnailLocalAvailable, file.thumbnailUrl]);
+  const [localSource, setLocalSource] = useState<{ requestKey: string; url: string } | null>(null);
+  const source = localSource?.requestKey === requestKey ? localSource.url : file.thumbnailUrl ?? "";
 
   useEffect(() => {
     const controller = new AbortController();
     let objectURL = "";
-    const fallback = file.thumbnailUrl ?? "";
-    setSource(fallback);
     if (file.thumbnailLocalAvailable) {
-      void apiBlob(connection, `/api/jobs/${encodeURIComponent(jobId)}/thumbnail?fileId=${encodeURIComponent(file.id)}`, {
+      void apiBlob({ base: connection.base, token: connection.token }, `/api/jobs/${encodeURIComponent(jobId)}/thumbnail?fileId=${encodeURIComponent(file.id)}`, {
         signal: controller.signal,
       }).then(blob => {
         if (controller.signal.aborted) return;
         objectURL = URL.createObjectURL(blob);
-        setSource(objectURL);
-      }).catch(() => {
-        if (!controller.signal.aborted) setSource(fallback);
-      });
+        setLocalSource({ requestKey, url: objectURL });
+      }).catch(() => { /* Remote artwork remains the fallback. */ });
     }
     return () => {
       controller.abort();
       if (objectURL) URL.revokeObjectURL(objectURL);
     };
-  }, [connection.base, connection.token, file.id, file.thumbnailLocalAvailable, file.thumbnailUrl, jobId]);
+  }, [connection.base, connection.token, file.id, file.thumbnailLocalAvailable, jobId, requestKey]);
 
   return source
     ? <img src={source} alt="" referrerPolicy="no-referrer" data-local-thumbnail={file.thumbnailLocalAvailable ? "preferred" : undefined} className="aspect-video w-24 shrink-0 rounded-md bg-neutral-900 object-cover" />

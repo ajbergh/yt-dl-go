@@ -4,6 +4,8 @@ The project separates **release discovery**, **build provenance**, **native plat
 
 ## Current release model
 
+**First public release:** [v0.1.0](https://github.com/ajbergh/yt-dl-go/releases/tag/v0.1.0), published on October 10, 2026 from commit `e285dbec5ca3159992cbf41d905b2d28f9b9553f`. The seven archives and 15 total uploaded assets passed SHA-256 validation. Windows executables were released without Authenticode signing; macOS executables were released without Apple Developer ID signing or notarization. Although the build's attestation steps succeeded, independent GitHub attestation verification returned HTTP 404. The maintainer explicitly approved publication with these limitations disclosed; they remain future distribution-hardening tasks.
+
 The application reports build metadata through `GET /api/health`, Settings, and the packaged executable:
 
 ```text

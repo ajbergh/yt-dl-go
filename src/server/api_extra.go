@@ -206,10 +206,10 @@ func (s *server) retry(w http.ResponseWriter, r *http.Request, id string) {
 		return
 	}
 	if kind == "playlist" && len(selectedItems) > 0 {
-		s.enqueueJobWithFallback(w, canonical, kind, quality, videoStrategy, mediaType, audioFormat, audioBitrate, subtitleLanguage, subtitleFormat, category, storageMode, splitByChapter, &allow360pFallback, selectedItems)
+		s.enqueueJobWithFallback(w, canonical, kind, quality, videoStrategy, mediaType, audioFormat, audioBitrate, subtitleLanguage, subtitleFormat, category, storageMode, splitByChapter, &allow360pFallback, false, selectedItems)
 		return
 	}
-	s.enqueueJobWithFallback(w, canonical, kind, quality, videoStrategy, mediaType, audioFormat, audioBitrate, subtitleLanguage, subtitleFormat, category, storageMode, splitByChapter, &allow360pFallback)
+	s.enqueueJobWithFallback(w, canonical, kind, quality, videoStrategy, mediaType, audioFormat, audioBitrate, subtitleLanguage, subtitleFormat, category, storageMode, splitByChapter, &allow360pFallback, false)
 }
 
 // safeThumbnailURL returns the last HTTPS thumbnail hosted on an approved

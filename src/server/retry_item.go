@@ -12,7 +12,14 @@ func (s *server) handleRetryItem(w http.ResponseWriter, r *http.Request, jobID s
 	if !decode(w, r, &request) {
 		return
 	}
+	s.retryPlaylistItems(w, jobID, &request.Index)
+}
 
+func (s *server) handleRetryFailed(w http.ResponseWriter, _ *http.Request, jobID string) {
+	s.retryPlaylistItems(w, jobID, nil)
+}
+
+func (s *server) retryPlaylistItems(w http.ResponseWriter, jobID string, requestedIndex *int) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	job := s.jobs[jobID]
@@ -20,50 +27,66 @@ func (s *server) handleRetryItem(w http.ResponseWriter, r *http.Request, jobID s
 		fail(w, http.StatusNotFound, "Job not found")
 		return
 	}
-	if job.Kind != "playlist" || (job.Status != "partial" && job.Status != "failed" && job.Status != "cancelled") {
-		fail(w, http.StatusConflict, "Single-item retry is available only for stopped playlist jobs")
+	if job.deleting {
+		fail(w, http.StatusConflict, "This job is being removed or updated")
 		return
 	}
-	if request.Index < 1 || request.Index > len(job.Items) {
+	if job.Kind != "playlist" || (job.Status != "partial" && job.Status != "failed" && job.Status != "cancelled") {
+		fail(w, http.StatusConflict, "Item retry is available only for stopped playlist jobs")
+		return
+	}
+	if requestedIndex != nil && (*requestedIndex < 1 || *requestedIndex > len(job.Items)) {
 		fail(w, http.StatusBadRequest, "index must identify one playlist queue item")
 		return
 	}
-	item := job.Items[request.Index-1]
-	if item.Index != request.Index || (item.Status != "failed" && item.Status != "cancelled") {
-		fail(w, http.StatusConflict, "Only failed or cancelled playlist items can be retried")
-		return
-	}
-	if files := itemFiles(job, request.Index); len(files) > 0 {
-		valid := true
+	retry := make(map[int]struct{})
+	for itemIndex, item := range job.Items {
+		index := item.Index
+		if requestedIndex != nil && index != *requestedIndex {
+			continue
+		}
+		if index < 1 || index > len(job.Items) || item.Index != index || (item.Status != "failed" && item.Status != "cancelled") {
+			continue
+		}
+		files := itemFiles(job, index)
+		validFinalized := len(files) > 0
 		for _, file := range files {
 			if !s.validCompletedFile(job, file) {
-				valid = false
+				validFinalized = false
 				break
 			}
 		}
-		if valid {
-			fail(w, http.StatusConflict, "This playlist item already has valid finalized media")
-			return
+		if validFinalized {
+			continue
 		}
+		retry[itemIndex] = struct{}{}
+	}
+	if len(retry) == 0 {
+		if requestedIndex != nil {
+			fail(w, http.StatusConflict, "Only failed or cancelled playlist items without valid finalized media can be retried")
+		} else {
+			fail(w, http.StatusConflict, "This playlist has no failed items available to retry")
+		}
+		return
 	}
 	if s.activeJobCountLocked() >= s.cfg.maxJobs {
 		fail(w, http.StatusTooManyRequests, "Active job capacity reached; wait for a job to finish or cancel one")
 		return
 	}
 
-	oldJob := job.Job
-	oldItems := append([]queueItem(nil), job.Items...)
-	oldFailures := append([]itemFailure(nil), job.Failures...)
-	oldDone := job.done
-	oldCancelRequested, oldPauseRequested := job.cancelRequested, job.pauseRequested
-	revision := job.persistenceRevision + 1
+	previous := cloneJobStateForPersistence(job)
+	job.deleting = true
+	defer func() {
+		job.deleting = false
+		s.notifySchedulerLocked()
+	}()
 
 	for index := range job.Items {
-		job.Items[index].RetryRequested = index == request.Index-1
+		_, job.Items[index].RetryRequested = retry[index]
 	}
 	failures := job.Failures[:0]
 	for _, failure := range job.Failures {
-		if failure.Index != request.Index {
+		if _, retrying := retry[failure.Index-1]; !retrying {
 			failures = append(failures, failure)
 		}
 	}
@@ -79,13 +102,7 @@ func (s *server) handleRetryItem(w http.ResponseWriter, r *http.Request, jobID s
 	s.refreshAllQueueItemsLocked(job)
 
 	if err := s.persistJobSnapshotLocked(job, "save item retry state"); err != nil {
-		if job.persistenceRevision == revision {
-			job.Job = oldJob
-			job.Items = oldItems
-			job.Failures = oldFailures
-			job.done = oldDone
-			job.cancelRequested, job.pauseRequested = oldCancelRequested, oldPauseRequested
-		}
+		*job = *previous
 		fail(w, http.StatusInternalServerError, "Could not persist item retry state")
 		return
 	}

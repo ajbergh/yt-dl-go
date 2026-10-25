@@ -33,6 +33,7 @@ let container;
 const realFetch = globalThis.fetch;
 let requests;
 let rows;
+let rejectedBulkIDs;
 let missing;
 let healthEngine;
 let healthVersion;
@@ -69,6 +70,8 @@ beforeAll(async () => { ({ createRoot } = await import("react-dom/client")); });
 beforeEach(async () => {
   requests = [];
   rows = [];
+  rejectedBulkIDs = new Set();
+  testWindow.confirm = () => true;
   missing = [];
   healthEngine = "native-go";
   healthVersion = "dev";
@@ -121,6 +124,29 @@ beforeEach(async () => {
       const ordered = jobIds.map((id, index) => ({ ...rows.find(item => item.id === id), queuePosition: index + 1 }));
       rows = rows.map(item => ordered.find(updated => updated.id === item.id) ?? item);
       return Response.json({ jobs: ordered });
+    }
+    if (path === "/api/jobs/bulk" && init.method === "POST") {
+      const { action, jobIds } = JSON.parse(init.body);
+      if (jobIds.length > 100) return Response.json({ error: "Too many IDs" }, { status: 400 });
+      const accepted = jobIds.filter(id => !rejectedBulkIDs.has(id));
+      const deletedIds = action === "delete" ? accepted : [];
+      const updates = rows.filter(item => accepted.includes(item.id)).map(item => ({ ...item, status: action === "pause" ? "paused" : action === "resume" ? "queued" : action === "cancel" ? "cancelled" : item.status }));
+      rows = rows.filter(item => !deletedIds.includes(item.id)).map(item => updates.find(update => update.id === item.id) ?? item);
+      return Response.json({ jobs: updates.filter(() => action !== "delete"), deletedIds, failures: jobIds.filter(id => rejectedBulkIDs.has(id)).map(jobId => ({ jobId, error: "Job has an active transfer" })) });
+    }
+    if (path.endsWith("/retry-failed") && init.method === "POST") {
+      const id = path.split("/").at(-2);
+      const current = rows.find(item => item.id === id) ?? job;
+      const updated = { ...current, status: "queued", items: (current.items ?? []).map(item => ["failed", "cancelled"].includes(item.status) ? { ...item, status: "queued", error: "", retryRequested: true } : item) };
+      rows = rows.map(item => item.id === id ? updated : item);
+      return Response.json(updated, { status: 202 });
+    }
+    if (path.endsWith("/configuration") && init.method === "PUT") {
+      const id = path.split("/").at(-2);
+      const current = rows.find(item => item.id === id) ?? job;
+      const updated = { ...current, ...JSON.parse(init.body) };
+      rows = rows.map(item => item.id === id ? updated : item);
+      return Response.json(updated);
     }
     if (path.endsWith("/next") && init.method === "POST") {
       const id = path.split("/").at(-2);
@@ -642,6 +668,82 @@ describe("Downloader UI and Go API integration", () => {
     expect(container.textContent).toContain('Retrying only "Failed sibling"');
     expect(container.querySelector('button[aria-label="Retry item Failed sibling"]')).toBeFalsy();
     expect(rows[0].items[0].fileId).toBe("file-1");
+  });
+
+  test("retries every failed playlist item in one request", async () => {
+    rows = [{
+      ...job, id: "retry-all", status: "partial", kind: "playlist", title: "Retry all playlist",
+      items: [
+        { index: 1, playlistIndex: 1, videoId: "abcdefghijk", title: "Failed one", status: "failed", progress: null, downloadedBytes: 0, totalBytes: 0, speedBytesPerSec: 0, etaSeconds: 0 },
+        { index: 2, playlistIndex: 2, videoId: "lmnopqrstuv", title: "Failed two", status: "cancelled", progress: null, downloadedBytes: 0, totalBytes: 0, speedBytesPerSec: 0, etaSeconds: 0 },
+      ],
+    }];
+    await remount();
+    await connect();
+    await click(container.querySelector('button[aria-label="Retry all failed items in Retry all playlist"]'));
+    const request = requests.find(item => item.path === "/api/jobs/retry-all/retry-failed");
+    expect(request?.method).toBe("POST");
+    expect(rows[0].items.every(item => item.retryRequested)).toBe(true);
+  });
+
+  test("edits a queued job's quality and category", async () => {
+    rows = [{ ...job, id: "queued-edit", status: "queued", title: "Editable job", category: "General", kind: "video", mediaType: "video", items: [{ index: 1, videoId: "abcdefghijk", title: "Editable video", status: "queued", progress: null, downloadedBytes: 0, totalBytes: 0, speedBytesPerSec: 0, etaSeconds: 0 }] }];
+    await remount();
+    await connect();
+    await click(container.querySelector('button[aria-label="Edit queued settings for Editable job"]'));
+    await setSelect(container.querySelector('select[aria-label="Quality for Editable job"]'), "720");
+    await setSelect(container.querySelector('select[aria-label="Category for Editable job"]'), "Music");
+    await click(button("Save queue settings"));
+    const request = requests.find(item => item.path === "/api/jobs/queued-edit/configuration");
+    expect(JSON.parse(request.body)).toEqual({ quality: "720", videoStrategy: "best", category: "Music" });
+  });
+
+  test("bulk pause uses one job-ID request", async () => {
+    rows = [{ ...job, id: "bulk-pause", status: "downloading", title: "Bulk pause", kind: "video", items: [{ index: 1, videoId: "abcdefghijk", title: "Bulk pause", status: "downloading", progress: 20, downloadedBytes: 10, totalBytes: 50, speedBytesPerSec: 0, etaSeconds: 0 }] }];
+    await remount();
+    await connect();
+    await click(container.querySelector('input[aria-label="Select Bulk pause"]'));
+    await click(container.querySelector('button[aria-label="Pause selected jobs"]'));
+    const request = requests.find(item => item.path === "/api/jobs/bulk");
+    expect(JSON.parse(request.body)).toEqual({ action: "pause", jobIds: ["bulk-pause"] });
+    expect(rows[0].status).toBe("paused");
+  });
+
+  test("resumes more than 100 jobs in bounded batches", async () => {
+    rows = Array.from({ length: 101 }, (_, index) => ({ ...job, id: `bulk-${index}`, title: `Paused ${index}`, kind: "video", mediaType: "video", status: "paused" }));
+    await remount();
+    await click(button("Resume all"));
+    const batches = requests.filter(item => item.path === "/api/jobs/bulk").map(item => JSON.parse(item.body));
+    expect(batches.map(batch => batch.jobIds.length)).toEqual([100, 1]);
+    expect(new Set(batches.flatMap(batch => batch.jobIds)).size).toBe(101);
+    expect(rows.every(item => item.status === "queued")).toBe(true);
+  });
+
+  test("retains failed selections after partial and all-failed bulk deletion", async () => {
+    rows = ["removed", "retained"].map(id => ({ ...job, id, title: id, kind: "video", mediaType: "video", status: "failed" }));
+    rejectedBulkIDs.add("retained");
+    await remount();
+    await click(container.querySelector('input[aria-label="Select removed"]'));
+    await click(container.querySelector('input[aria-label="Select retained"]'));
+    await click(container.querySelector('button[aria-label="Delete selected jobs"]'));
+    expect(rows.map(item => item.id)).toEqual(["retained"]);
+    expect(container.querySelector('input[aria-label="Select retained"]').checked).toBe(true);
+    await click(container.querySelector('button[aria-label="Delete selected jobs"]'));
+    expect(container.querySelector('input[aria-label="Select retained"]').checked).toBe(true);
+    const batches = requests.filter(item => item.path === "/api/jobs/bulk").map(item => JSON.parse(item.body));
+    expect(batches[1].jobIds).toEqual(["retained"]);
+    expect(container.textContent).toContain("could not be removed");
+  });
+
+  test("submits a new job with the add-as-paused choice", async () => {
+    await connect();
+    await setInput(container.querySelector("#video-url"), "https://www.youtube.com/watch?v=abcdefghijk");
+    await click(button("Inspect qualities"));
+    await click(container.querySelector('input[aria-label="Confirm download rights"]'));
+    await click(container.querySelector('input[aria-label="Add as paused"]'));
+    await click(button("Add 1 to queue"));
+    const request = requests.find(item => item.path === "/api/jobs" && item.method === "POST");
+    expect(JSON.parse(request.body).startPaused).toBe(true);
   });
 
   test("does not regress newer SSE lifecycle state with stale action acknowledgements", () => {

@@ -260,18 +260,20 @@ function RuntimeSettingSource({ source, activeValue }: { source?: string; active
 }
 
 function CorruptionDiagnosticsPanel({ connection, serviceReady }: Pick<SettingsPageProps, "connection" | "serviceReady">) {
+  return <CorruptionDiagnosticsRequest key={JSON.stringify([connection.base, connection.token, serviceReady])} connection={connection} serviceReady={serviceReady} />;
+}
+
+function CorruptionDiagnosticsRequest({ connection, serviceReady }: Pick<SettingsPageProps, "connection" | "serviceReady">) {
   const [diagnostics, setDiagnostics] = useState<CorruptionDiagnostics | null>(null);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(serviceReady);
   const [error, setError] = useState("");
   const [refreshKey, setRefreshKey] = useState(0);
 
   useEffect(() => {
     if (!serviceReady) return;
     const controller = new AbortController();
-    setLoading(true);
-    setError("");
     void api<CorruptionDiagnostics>(connection, "/api/diagnostics", { signal: controller.signal })
-      .then(setDiagnostics)
+      .then(result => { if (!controller.signal.aborted) setDiagnostics(result); })
       .catch(reason => {
         if (!controller.signal.aborted) setError(reason instanceof Error ? reason.message : "Could not load diagnostics.");
       })
@@ -287,7 +289,7 @@ function CorruptionDiagnosticsPanel({ connection, serviceReady }: Pick<SettingsP
         <h3 id="diagnostics-heading" className="text-sm font-bold">Saved data diagnostics</h3>
         <p className="mt-1 text-xs text-neutral-400">Malformed saved fields are copied to a private quarantine record before the affected field or Library row is repaired.</p>
       </div>
-      <button type="button" className={button} onClick={() => setRefreshKey(value => value + 1)} disabled={!serviceReady || loading}>
+      <button type="button" className={button} onClick={() => { setLoading(true); setError(""); setRefreshKey(value => value + 1); }} disabled={!serviceReady || loading}>
         <RefreshCw className={`size-3.5 ${loading ? "animate-spin" : ""}`} aria-hidden="true" />
         {loading ? "Refreshing…" : "Refresh diagnostics"}
       </button>

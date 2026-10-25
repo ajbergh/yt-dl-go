@@ -4,7 +4,7 @@ Thanks for helping improve yt-dl-go. Keep changes focused, explain user-visible 
 
 ## Development setup
 
-The project uses npm 11.19.0 for frontend dependency installation and builds. Bun 1.4.2 runs the frontend test files; it does not install packages or replace npm. Install the pinned Node.js version from `.nvmrc`, Go 1.27 or newer (as specified by `src/server/go.mod`), Bun 1.4.2, and Git. Browser end-to-end checks also need Chrome or Chromium.
+The project uses npm 11.19.0 for frontend dependency installation and builds. Bun 1.4.2 runs the frontend test files; it does not install packages or replace npm. Install the pinned Node.js version from `.nvmrc`, Go 1.27.3 or newer (as specified by `src/server/go.mod`), Bun 1.4.2, and Git. Browser end-to-end checks also need Chrome or Chromium.
 
 From the repository root, install dependencies and start the frontend:
 
@@ -44,6 +44,8 @@ npm run e2e:browser
 ~~~
 
 The browser E2E checks require Go and Chrome or Chromium. The embedded frontend build writes into `src/server/dist`; do not put `DATA_DIR` under the root `dist` directory because frontend builds clear that directory.
+
+Frontend bundles and Go build caches are generated and ignored. Only the embedded `dist/.gitkeep` placeholder is tracked; Vite copies it from `public/` so builds keep the worktree clean. Build the embedded frontend before running the Go service. To inspect browser-test screenshots, set `E2E_SCREENSHOT_DIR` to a temporary output directory before running `npm run e2e:browser`.
 
 If you change dependencies or license notices, update the corresponding lockfile and generated notice files. To regenerate notices, install the pinned scanner tools as CI does, then run `npm run licenses:generate`.
 

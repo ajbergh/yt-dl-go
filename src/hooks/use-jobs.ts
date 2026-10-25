@@ -16,6 +16,7 @@ import {
 } from "../components/downloader/view-model";
 
 export type JobAction = "pause" | "resume" | "cancel" | "retry" | "remove" | "remove-library-item" | "forget-history" | "delete-managed" | "delete-published" | "delete-all";
+export type JobConfigurationPatch = Partial<Pick<DownloadJob, "quality" | "videoStrategy" | "audioFormat" | "audioBitrate" | "category">>;
 
 export function mergeJobActionResult(current: DownloadJob, result: DownloadJob, action: JobAction): DownloadJob {
   // Pause/cancel responses are acknowledgements: the worker reaches its final
@@ -135,6 +136,96 @@ export function useJobs({
       setNotice(`Retrying only "${item.title}". Successful playlist files are being preserved.`);
     } catch (error) {
       setActionError(errorMessage(error));
+    } finally {
+      setBusyAction("");
+    }
+  }
+
+  async function retryAllFailedItems(job: DownloadJob) {
+    if (!serviceReady || job.kind !== "playlist" || !["partial", "failed", "cancelled"].includes(job.status)) return;
+    if (!window.confirm("Retry every failed or cancelled playlist item? Confirm that you own the content or have permission to download it.")) return;
+    setBusyAction(`${job.id}:retry-failed`);
+    setActionError("");
+    try {
+      const updated = await api<DownloadJob>(connection, `/api/jobs/${encodeURIComponent(job.id)}/retry-failed`, {
+        method: "POST",
+        body: JSON.stringify({}),
+        signal: AbortSignal.timeout(15000),
+      });
+      setJobs(previous => previous.map(value => value.id === job.id ? updated : value));
+      void refreshLibrary().catch(error => setActionError(errorMessage(error)));
+      setNotice(`Retrying failed items in "${job.title}". Successful playlist files are preserved.`);
+    } catch (error) {
+      setActionError(errorMessage(error));
+    } finally {
+      setBusyAction("");
+    }
+  }
+
+  async function updateJobConfiguration(job: DownloadJob, patch: JobConfigurationPatch) {
+    if (!serviceReady || (job.status !== "queued" && job.status !== "paused")) return;
+    setBusyAction(`${job.id}:configuration`);
+    setActionError("");
+    try {
+      const updated = await api<DownloadJob>(connection, `/api/jobs/${encodeURIComponent(job.id)}/configuration`, {
+        method: "PUT",
+        body: JSON.stringify(patch),
+        signal: AbortSignal.timeout(15000),
+      });
+      setJobs(previous => previous.map(value => value.id === job.id ? updated : value));
+      void refreshLibrary().catch(error => setActionError(errorMessage(error)));
+      setNotice(`Updated settings for "${job.title}".`);
+    } catch (error) {
+      setActionError(errorMessage(error));
+    } finally {
+      setBusyAction("");
+    }
+  }
+
+  async function bulkJobAction(action: "pause" | "resume" | "cancel" | "delete", jobIds: string[]): Promise<string[] | null> {
+    const uniqueIDs = [...new Set(jobIds)];
+    if (!serviceReady || uniqueIDs.length === 0) return null;
+    if (action === "cancel" && !window.confirm(`Cancel ${uniqueIDs.length} selected job${uniqueIDs.length === 1 ? "" : "s"}?`)) return null;
+    if (action === "delete" && !window.confirm(`Remove ${uniqueIDs.length} selected job${uniqueIDs.length === 1 ? "" : "s"} from the Library? App-managed copies and history will be removed; published files will remain.`)) return null;
+    setBusyAction("bulk");
+    setActionError("");
+    try {
+      const deleted = new Set<string>();
+      const failures: { jobId: string; error: string }[] = [];
+      let updatedCount = 0;
+      for (let offset = 0; offset < uniqueIDs.length; offset += 100) {
+        const batch = uniqueIDs.slice(offset, offset + 100);
+        try {
+          const result = await api<{ jobs: DownloadJob[]; deletedIds?: string[]; failures?: { jobId: string; error: string }[] }>(connection, "/api/jobs/bulk", {
+            method: "POST",
+            body: JSON.stringify({ action, jobIds: batch }),
+            signal: AbortSignal.timeout(30000),
+          });
+          const batchDeleted = new Set(result.deletedIds ?? []);
+          for (const id of batchDeleted) deleted.add(id);
+          const updates = new Map(result.jobs.map(job => [job.id, job]));
+          setJobs(previous => previous.flatMap(value => {
+            if (batchDeleted.has(value.id)) return [];
+            const updated = updates.get(value.id);
+            return updated && action !== "delete" ? [mergeJobActionResult(value, updated, action)] : [value];
+          }));
+          updatedCount += result.jobs.length;
+          failures.push(...result.failures ?? []);
+        } catch (error) {
+          failures.push(...batch.map(jobId => ({ jobId, error: errorMessage(error) })));
+        }
+      }
+      setNotice(action === "delete"
+        ? `Removed ${deleted.size} job${deleted.size === 1 ? "" : "s"} from the Library${failures.length ? `; ${failures.length} could not be removed` : ""}.`
+        : failures.length
+          ? `${uniqueIDs.length - failures.length} selected jobs updated; ${failures.length} could not be changed.`
+          : `Updated ${updatedCount} selected jobs.`);
+      if (failures.length) setActionError(failures.map(failure => `${failure.jobId}: ${failure.error}`).join("; "));
+      void refreshLibrary().catch(error => setActionError(errorMessage(error)));
+      return [...deleted];
+    } catch (error) {
+      setActionError(errorMessage(error));
+      return null;
     } finally {
       setBusyAction("");
     }
@@ -299,7 +390,7 @@ export function useJobs({
     const eligible = jobs.filter(job => action === "pause"
       ? job.status === "queued" || job.status === "downloading" || job.status === "processing"
       : job.status === "paused");
-    for (const job of eligible) await jobAction(job, action);
+    await bulkJobAction(action, eligible.map(job => job.id));
   }
 
   function clearCompleted(rows: QueueRow[]) {
@@ -323,6 +414,9 @@ export function useJobs({
     clearedQueueItems,
     jobAction,
     retryPlaylistItem,
+    retryAllFailedItems,
+    updateJobConfiguration,
+    bulkJobAction,
     previewFile,
     saveFile,
     filesystemAction,
