@@ -38,8 +38,8 @@ github.com/tphakala/go-aac v0.7.0 h1:QuwkvhNXNaAS0CaGgpkrErXV8rmekGTi+nPIFNQZQ5s
 github.com/tphakala/go-aac v0.7.0/go.mod h1:zbnhFT1TNtHgFjbtJnW32vCi9yyaSC9tdhqyjAiti1c=
 github.com/tphakala/go-m4a v0.7.0 h1:XRHyluz8HHTsKgzh8DGsIZbiJX3LfCvwhBZFUgivyWE=
 github.com/tphakala/go-m4a v0.7.0/go.mod h1:gvAHt12fiA4nlJ6WymOda/AfV2j05aTFQbj5LYfOA/c=
-github.com/tphakala/go-mp3 v0.1.0 h1:3nY1WwY3E9lSK22d1AtaAvQXqMSfDQlPtqD+Ym/Yc+c=
-github.com/tphakala/go-mp3 v0.1.0/go.mod h1:h8c9IC7aD14TKrq+hnjOMd31B+0GLXtX9TJXXNItisg=
+github.com/tphakala/go-mp3 v0.2.0 h1:lioFkfigl+cJH1moF+unA/35WcfOFYvfsAnzhFQqMcM=
+github.com/tphakala/go-mp3 v0.2.0/go.mod h1:wJYpJc1F7LMD80kZtjSNtQLsRBqWb7APCDEwGcvuxR8=
 github.com/tphakala/simd v1.11.0 h1:3rtUU/6mO76R4rq3hQiEX+DC4yKc/twIGU62bkmIAYA=
 github.com/tphakala/simd v1.11.0/go.mod h1:eO53GkWg40mRbr2tzs0Xb1IMZQ5U8cMR+Aa1RlXUinE=
 github.com/yapingcat/gomedia v0.0.0-20240906162731-17feea57090c h1:xA2TJS9Hu/ivzaZIrDcwvpJ3Fnpsk5fDOJ4iSnL6J0w=
