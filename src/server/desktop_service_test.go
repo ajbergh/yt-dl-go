@@ -107,6 +107,31 @@ type failingDesktopReader struct{}
 
 func (failingDesktopReader) Read([]byte) (int, error) { return 0, errors.New("interrupted transfer") }
 
+type desktopDeadlineRecorder struct {
+	*httptest.ResponseRecorder
+	deadlines []time.Time
+}
+
+func (w *desktopDeadlineRecorder) SetWriteDeadline(deadline time.Time) error {
+	w.deadlines = append(w.deadlines, deadline)
+	return nil
+}
+
+func TestDesktopDownloadDoesNotInheritJSONTimeout(t *testing.T) {
+	s := testServer(t, fixtureClient(1), func(c *config) { c.timeout = 0 })
+	job := waitTerminal(t, s, createJob(t, s, testVideo).ID)
+	if job.Status != "completed" || len(job.Files) != 1 {
+		t.Fatalf("download fixture failed: %+v", job)
+	}
+	path := ticketPath(t, s, job.ID, `{"fileId":"`+job.Files[0].ID+`"}`)
+	req := httptest.NewRequest(http.MethodGet, "http://127.0.0.1:8080"+path, nil)
+	writer := &desktopDeadlineRecorder{ResponseRecorder: httptest.NewRecorder()}
+	s.ServeHTTP(writer, req)
+	if writer.Code != 200 || len(writer.deadlines) != 2 || !writer.deadlines[1].IsZero() {
+		t.Fatalf("unlimited media inherited the short API deadline: status=%d deadlines=%v", writer.Code, writer.deadlines)
+	}
+}
+
 func TestDesktopSaveScopesRequestsAndHandlesNativeCancellation(t *testing.T) {
 	requests := 0
 	host := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
