@@ -8,6 +8,14 @@ YouTube Downloader is a local Windows, macOS, and Linux web application for savi
 
 Use it only for content you own or have permission to save, and in accordance with YouTube's terms. The application does not support DRM, private-video credentials, browser cookies, paywall bypasses, or live/HLS/DASH recording.
 
+## Native desktop build (Wails v2)
+
+Run `npm ci` and `npm run build:desktop` on Windows, macOS, or Linux to build the
+same interface in a native desktop window. Packages and checksums are written to
+`dist/desktop/`. See [desktop build instructions](docs/DESKTOP.md) for WebView
+requirements, AMD64/ARM64 targets, and the native build workflow. The original
+browser/server builds remain available below.
+
 ## Download and run on Windows
 
 When a public release is available, download the Windows archive from [GitHub Releases](https://github.com/ajbergh/yt-dl-go/releases/latest), extract it, and double-click `youtube-downloader.exe`. Until the first release is published, GitHub Actions packages are validation artifacts rather than published downloads. Keep the console window open while using the app. The UI connects automatically to the Go API in that same executable; there is no service address to configure. If the browser does not open, visit the URL printed in the console (normally `http://127.0.0.1:8080`).

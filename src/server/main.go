@@ -347,7 +347,7 @@ func fatalStartup(err error) {
 
 // main owns listener lifetime and shutdown. The UI is opened only after the
 // configured listener is bound; `ADDR` determines the browser URL.
-func main() {
+func runBrowserApplication() {
 	options, err := parseRuntimeOptions(os.Args[1:])
 	if err != nil {
 		log.Printf("%v\n%s", err, runtimeUsage())
