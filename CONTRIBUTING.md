@@ -6,6 +6,8 @@ Thanks for helping improve yt-dl-go. Keep changes focused, explain user-visible 
 
 The project uses npm 11.19.0 for frontend dependency installation and builds. Bun 1.4.2 runs the frontend test files; it does not install packages or replace npm. Install the pinned Node.js version from `.nvmrc`, Go 1.27.3 or newer (as specified by `src/server/go.mod`), Bun 1.4.2, and Git. Browser end-to-end checks also need Chrome or Chromium.
 
+TypeScript and the ESLint parser must be upgraded together within the parser's supported peer range. The current `typescript-eslint` release supports TypeScript below 6.1; this project uses TypeScript 6.0.3. Dependabot defers TypeScript 7 until parser support is available. React and ReactDOM updates are grouped so their runtime versions stay aligned.
+
 From the repository root, install dependencies and start the frontend:
 
 ~~~sh

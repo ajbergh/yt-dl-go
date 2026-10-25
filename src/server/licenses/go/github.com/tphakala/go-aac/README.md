@@ -88,7 +88,32 @@ On the soundscape go-aac is transparent while ffmpeg shows a small penalty; on
 the owl clip ffmpeg scores higher on ViSQOL while go-aac keeps better PEAQ and
 raw fidelity. Net: comparable and material-dependent. This is a small
 directional sample, not a full benchmark; results vary with material and
-bitrate. A corpus-based regression gate is planned (#109).
+bitrate.
+
+A corpus-based quality gate guards against regressions. `task quality:gate`
+re-measures the encoder on a deterministic synthetic corpus (encode, decode
+with go-aac's own decoder, align by cross-correlation, score against the
+source) and fails when SNR, band-limited SNR, segmental SNR, log-spectral
+distance, or pre-echo drifts past a tolerance from a committed baseline, or the
+encoder's alignment delay changes; it needs no external tool and runs in CI on
+every platform. `task quality` renders
+the full go-aac-versus-ffmpeg (native `aac`, and `libfdk_aac` when the build
+has it) comparison report, per program, bitrate, and coder, with optional
+ViSQOL and PEAQ columns when those binaries are present.
+
+One case in the full report is expected to fail. Encoding the synthetic
+`bird-chirps` program at 44.1 kHz and 128 kbps with the twoloop coder makes the
+rate control stop moving: lambda pins at its floor while the frame stays at the
+buffer ceiling, so every further pass quantizes identically. FFmpeg's C encoder
+has the same loop with no exit and spins forever on that input (the pinned build
+ignores SIGTERM while it does), which is why a reference run on it needs a hard
+kill. go-aac detects the condition and returns an error (`enc: rate control
+cannot converge at 128000 bps, 44100 Hz`) instead of hanging, so `task quality`
+reports `1 failed` and exits 1 for that case. It is not a quality regression,
+and that configuration is not in the committed gate grid (64 and 192 kbps). The
+other cases in a run over both sample rates, 64 to 192 kbps and all three
+coders completed. Only this one input and configuration is known to reach the
+state; which real signals could reach it has not been characterised.
 
 ## Approach
 
@@ -205,7 +230,41 @@ The decoder never panics on malformed input (it returns wrapped
 `ErrUnsupportedPS` naming HE-AAC and HE-AACv2 specifically so a caller can hand
 those off to an external decoder) and runs at zero allocations per frame in
 steady state. Raw access units plus an `AudioSpecificConfig` are opt in via
-`aacpcm.WithRawStream(asc)`.
+`aacpcm.WithRawStream(asc)`. When the whole stream is in memory,
+`aacpcm.DecodeInterleaved(r)` returns all the PCM in one call, and
+`aacpcm.DecodeInterleavedLimit(r, maxBytes)` bounds the allocation for untrusted
+input (`aacpcm.ErrDecodeLimit` when the limit is hit).
+
+Live ingest (RTSP, HLS, HTTP or UDP) delivers access units one at a time, with
+loss and corruption, so there is a frame-level decoder that needs no reader in
+between: `aacpcm.NewADTSDecoder()` for self-describing ADTS frames, or
+`aacpcm.NewRawDecoder(asc)` for bare access units described by an
+AudioSpecificConfig that arrives out of band.
+
+```go
+fd, err := aacpcm.NewRawDecoder(asc) // or aacpcm.NewADTSDecoder()
+if err != nil {                      // ErrUnsupported, ErrUnsupportedSBR or ErrUnsupportedPS, from the ASC
+    return err
+}
+var pcm []byte
+for au := range units {
+    pcm, _, err = fd.DecodeFrame(pcm[:0], au) // samples per channel is always 1024
+    if err != nil {
+        continue // skip a corrupt unit; the next valid one still decodes correctly
+    }
+    play(pcm)
+}
+```
+
+`DecodeFrame` appends interleaved S16 PCM to a caller-owned buffer, decodes
+byte-identically to the reader `Decoder`, and allocates nothing in steady state.
+A failed unit leaves the decoder as it was before the call, so the next valid
+unit decodes exactly as if the bad one had never arrived (use `Reset` to start a
+clean session). A corrupt unit that still parses is decoded as audio and does
+advance the state, as the codec requires. An ADTS `au` must hold exactly one
+frame; the length field is not checked against the buffer. A `FrameDecoder` is
+not safe for concurrent use, but separate instances are independent.
+`aacpcm.ParseASC(asc)` reads an AudioSpecificConfig without building a decoder.
 
 ### aac: the low-level codec
 
