@@ -339,12 +339,19 @@ func newServer(c config) (*server, error) {
 	return s, nil
 }
 
+func fatalStartup(err error) {
+	log.Print(err)
+	showStartupError(err.Error())
+	os.Exit(1)
+}
+
 // main owns listener lifetime and shutdown. The UI is opened only after the
 // configured listener is bound; `ADDR` determines the browser URL.
 func main() {
 	options, err := parseRuntimeOptions(os.Args[1:])
 	if err != nil {
 		log.Printf("%v\n%s", err, runtimeUsage())
+		showStartupError(err.Error() + "\n\n" + runtimeUsage())
 		os.Exit(2)
 	}
 	if options.help {
@@ -359,11 +366,11 @@ func main() {
 
 	c, err := loadConfig()
 	if err != nil {
-		log.Fatal(err)
+		fatalStartup(err)
 	}
 	if options.migrateLegacyData {
 		if err := migrateLegacyData(c.legacyRoot, c.root); err != nil {
-			log.Fatal(err)
+			fatalStartup(err)
 		}
 		log.Printf("Legacy data copied to %s; the original directory was left in place.", c.root)
 		return
@@ -373,7 +380,7 @@ func main() {
 	}
 	s, err := newServer(c)
 	if err != nil {
-		log.Fatal(err)
+		fatalStartup(err)
 	}
 	s.start()
 	h := &http.Server{Addr: c.addr, Handler: s, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, IdleTimeout: time.Minute, MaxHeaderBytes: 16384}
@@ -381,7 +388,7 @@ func main() {
 	if err != nil {
 		s.stop()
 		s.wg.Wait()
-		log.Fatal(err)
+		fatalStartup(err)
 	}
 	stopping, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()

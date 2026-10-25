@@ -21,6 +21,18 @@ $env:CHROME_PATH = 'C:\Program Files\Google\Chrome\Application\chrome.exe'
 
 By default, completed media is published to `Downloads/YouTube_Vault` inside your home directory, organized into channel subfolders. The private SQLite database and app-managed media copies live in the per-user `DATA_DIR` (see Configuration), not beside the executable. The default **Managed + Published** storage mode keeps both an app-managed copy and a published copy, so it may require about twice the final media size. Settings lets you change the output location and storage mode. Open the UI, paste an approved YouTube URL, choose a maximum quality and video-format strategy, confirm your rights, and download. `best`, `2160`, `1440`, `1080`, `720`, and `480` are maximum heights—not upscale requests or guarantees. Video format can be **Best quality**, strict **Compatibility MP4** (H.264/AAC), **Prefer VP9**, or **Prefer AV1**. VP9/AV1 preferences fall back to the automatic best-supported format when the preferred codec is unavailable and disclose that fallback in the job note. The actual height and MIME type are shown for each completed file.
 
+### Windows startup failures
+
+If the app exits before opening the UI, run `./youtube-downloader.exe --no-browser`
+from PowerShell to read the startup error. Double-click launches also show a
+startup error dialog. The default database is
+`$env:LOCALAPPDATA\yt-dl-go\state.db`; rebuilding the executable does not replace it.
+If the error reports an incompatible database schema, preserve the entire data
+directory before restoring a known-good backup. Do not delete the database or
+manually add missing columns. To recover legacy `./downloads` data, preserve and
+move aside the incompatible destination, then run `--migrate-legacy-data` from
+the directory containing `downloads`. The original legacy data is kept intact.
+
 ## Linux and macOS
 
 The same CGO-free Go application builds for Linux and macOS. CI produces Linux `amd64`/`arm64` and macOS `amd64`/`arm64` validation packages with SHA-256 checksum files. These CI artifacts are currently unsigned; they are not yet signed/notarized public release binaries.
