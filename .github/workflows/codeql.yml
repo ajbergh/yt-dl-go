@@ -17,6 +17,8 @@ jobs:
     name: Analyze ${{ matrix.language }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    env:
+      CODEQL_EXTRACTOR_GO_BUILD_TRACING: "on"
     permissions:
       actions: read
       contents: read
@@ -24,7 +26,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        language: [go, javascript-typescript]
+        include:
+          - language: go
+            build-mode: manual
+          - language: javascript-typescript
+            build-mode: none
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -33,6 +39,7 @@ jobs:
         uses: github/codeql-action/init@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
         with:
           languages: ${{ matrix.language }}
+          build-mode: ${{ matrix.build-mode }}
 
       - name: Set up Go
         if: matrix.language == 'go'
@@ -44,7 +51,9 @@ jobs:
       - name: Build Go packages for CodeQL
         if: matrix.language == 'go'
         working-directory: src/server
-        run: go build ./...
+        # Trace the shipped module and its imports. Nested source copies under
+        # licenses/ are redistributable data, not additional application modules.
+        run: go build -a ./...
 
       - name: Analyze
         uses: github/codeql-action/analyze@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
