@@ -29,7 +29,12 @@ delete frontendEnv.VITE_CHECK_MODE;
 run(process.execPath, [path.join(root, "node_modules/vite/bin/vite.js"), "build", "--configLoader", "runner", "--outDir", path.join(server, "dist")], { cwd: root, env: frontendEnv });
 const tags = process.platform === "linux" ? "desktop,e2e,production,webkit2_41" : "desktop,e2e,production";
 const compiled = path.join(temporary, filename);
-run("go", ["build", "-tags", tags, "-o", compiled, "."]);
+const nativeEnv = { ...process.env, CGO_ENABLED: "1" };
+if (process.platform === "darwin") {
+  // Match the native frameworks added by the Wails CLI to production builds.
+  nativeEnv.CGO_LDFLAGS = `${process.env.CGO_LDFLAGS || ""} -framework UniformTypeIdentifiers -mmacosx-version-min=10.13`;
+}
+run("go", ["build", "-tags", tags, "-o", compiled, "."], { env: nativeEnv });
 let executable = compiled;
 if (process.platform === "darwin") {
   const bundle = path.join(temporary, "YouTube Vault.app");
