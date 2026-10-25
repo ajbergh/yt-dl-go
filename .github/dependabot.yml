@@ -12,9 +12,21 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    # typescript-eslint 8 currently requires TypeScript <6.1. Remove this
+    # restriction when the lint stack supports the TypeScript 7 compiler API.
+    ignore:
+      - dependency-name: typescript
+        versions: [">=7.0.0"]
     groups:
+      react:
+        patterns:
+          - "react"
+          - "react-dom"
+          - "@types/react"
+          - "@types/react-dom"
       eslint:
         patterns:
+          - "typescript"
           - "eslint"
           - "@eslint/*"
           - "typescript-eslint"
