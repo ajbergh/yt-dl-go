@@ -1,5 +1,32 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { api, formatBytes, parseYouTubeURL, serviceURL } from "./lib/downloader";
+import { desktopConnection, initializeDesktop } from "./lib/desktop";
+
+describe("desktop bootstrap", () => {
+  const originalWindow = globalThis.window;
+  afterEach(async () => {
+    globalThis.window = {};
+    await initializeDesktop();
+    if (originalWindow === undefined) delete globalThis.window;
+    else globalThis.window = originalWindow;
+  });
+  test("uses the private connection supplied by Wails before mounting the UI", async () => {
+    const connection = { base: "http://127.0.0.1:49152", token: "a".repeat(64) };
+    globalThis.window = { go: { main: { DesktopApp: { Connection: async () => connection } } } };
+    await initializeDesktop();
+    expect(desktopConnection()).toEqual(connection);
+  });
+  test("does not turn ordinary browser builds into desktop clients", async () => {
+    globalThis.window = {};
+    await initializeDesktop();
+    expect(desktopConnection()).toBeUndefined();
+  });
+  test("rejects an incomplete bridge connection without falling back to HTTP", async () => {
+    globalThis.window = { go: { main: { DesktopApp: { Connection: async () => ({ base: "http://remote.invalid", token: "" }) } } } };
+    await expect(initializeDesktop()).rejects.toThrow("private desktop service");
+    expect(desktopConnection()).toBeUndefined();
+  });
+});
 
 describe("YouTube URLs", () => {
   test.each([

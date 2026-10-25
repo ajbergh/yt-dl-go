@@ -17,3 +17,8 @@ src/server/dist/*
 !src/server/dist/.gitkeep
 
 downloads/
+.wails-generated/
+package.json.md5
+src/server/build/bin/
+src/server/build/windows/*.syso
+src/server/*.syso

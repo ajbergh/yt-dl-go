@@ -1,6 +1,7 @@
 import { useState, type Dispatch, type SetStateAction } from "react";
 import type { DragEndEvent } from "@dnd-kit/core";
 import { arrayMove } from "@dnd-kit/sortable";
+import { desktopBridge } from "../lib/desktop";
 import {
   api,
   type DownloadFile,
@@ -268,6 +269,12 @@ export function useJobs({
         signal: AbortSignal.timeout(15000),
       });
       if (!/^\/api\/downloads\/[A-Za-z0-9_-]+$/.test(ticket.path)) throw new Error("The service returned an invalid download link.");
+      const desktop = desktopBridge();
+      if (desktop) {
+        const saved = await desktop.Save(ticket.path);
+        setNotice(saved ? "Download saved." : "Save cancelled.");
+        return;
+      }
       const anchor = document.createElement("a");
       anchor.href = `${connection.base}${ticket.path}`;
       anchor.rel = "noopener noreferrer";

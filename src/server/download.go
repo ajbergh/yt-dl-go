@@ -166,9 +166,13 @@ func (s *server) download(w http.ResponseWriter, r *http.Request) {
 			_ = sidecar.Close()
 		}
 	}
+	deadline := time.Time{}
 	if s.cfg.timeout > 0 {
-		_ = http.NewResponseController(w).SetWriteDeadline(time.Now().Add(s.cfg.timeout))
+		deadline = time.Now().Add(s.cfg.timeout)
 	}
+	// Override the short JSON-route deadline even when transfers are unlimited.
+	// Native save dialogs may remain open before the client starts reading bytes.
+	_ = http.NewResponseController(w).SetWriteDeadline(deadline)
 	if t.fileID != "" {
 		f, err := openFinal(j.dir, files[0].Name)
 		if err != nil {

@@ -4,6 +4,7 @@ import {
 } from "lucide-react";
 import { api, apiBlob, type AppSettings, type BuildInfo, type CorruptionDiagnostics, type Quality, type RuntimeSettingSources, type RuntimeSettingValues, type ServiceConnection, type UpdateStatus, type VideoStrategy } from "../lib/downloader";
 import { namingTokenNames, previewFilename, sanitizeFilenameComponent, type NamingValues } from "../lib/naming";
+import { desktopBridge } from "../lib/desktop";
 import {
   button, field, notificationAPI, panel, primaryButton, qualityLabels, videoStrategyLabels,
 } from "../components/downloader/view-model";
@@ -325,6 +326,12 @@ function LibraryTransferPanel({ connection, serviceReady }: Pick<SettingsPagePro
     setMessage("");
     setError("");
     try {
+      const desktop = desktopBridge();
+      if (desktop) {
+        const saved = await desktop.Save("/api/library/export");
+        setMessage(saved ? "Library export saved." : "Export cancelled.");
+        return;
+      }
       const blob = await apiBlob(connection, "/api/library/export", { signal: AbortSignal.timeout(5 * 60 * 1000) });
       const url = URL.createObjectURL(blob);
       const anchor = document.createElement("a");

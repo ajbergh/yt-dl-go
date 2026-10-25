@@ -2,6 +2,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { Activity, Film, GripVertical } from "lucide-react";
+import { desktopConnection } from "../../lib/desktop";
 import {
   apiBlob, formatBytes,
   type DownloadFile, type DownloadJob, type Inspection, type QueueItem, type Quality,
@@ -234,6 +235,8 @@ export function etaLabel(seconds: number): string {
 }
 
 export function builtInServiceConnection(): ServiceConnection {
+  const desktop = desktopConnection();
+  if (desktop) return desktop;
   // `npm run dev` fixes Vite at port 5173 and runs Go separately at 8080.
   // The packaged executable serves both UI and API from the current origin.
   // Vite preview/custom ports are not a supported connection mode.
