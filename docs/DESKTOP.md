@@ -44,6 +44,13 @@ and pull requests. It uploads validation artifacts; it does not create a tag or
 publish a GitHub Release. Native desktop packages are separate from the existing
 CGO-free browser/server release artifacts.
 
+After building, `npm run test:desktop` compiles an isolated `desktop,e2e` smoke
+binary. Its test-only readiness binding verifies that the native WebView mounts
+React, authenticates to the private service, and shuts down cleanly. It uses
+disposable data and is never included in the distributable archives. CI runs
+the Linux window test under Xvfb; on a headless Linux host use
+`dbus-run-session -- xvfb-run -a npm run test:desktop`.
+
 ## Runtime and development
 
 The desktop window serves embedded assets through Wails. A Wails-only bootstrap

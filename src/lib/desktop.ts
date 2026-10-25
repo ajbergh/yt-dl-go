@@ -3,6 +3,7 @@ import type { ServiceConnection } from "./downloader";
 type DesktopBridge = {
   Connection(): Promise<ServiceConnection>;
   Save(path: string): Promise<boolean>;
+  UIReady?(): Promise<void>; // Available only in the e2e-tagged native smoke build.
 };
 
 declare global {

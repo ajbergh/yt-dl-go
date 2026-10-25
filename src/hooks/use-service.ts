@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { desktopBridge } from "../lib/desktop";
 import {
   api, streamServiceEvents,
   type AppSettings, type BuildInfo, type DownloadJob, type LibraryPageResponse, type LibraryQuery, type RuntimeSettingSources, type RuntimeSettingValues, type ServiceConnection, type ServiceEvent, type ServiceHealth, type UpdateStatus,
@@ -113,6 +114,9 @@ function hydratedSettings(settings: AppSettings, previous: AppSettings = default
 export function useService() {
   const [connection] = useState<ServiceConnection>(builtInServiceConnection);
   const [serviceReady, setServiceReady] = useState(false);
+  useEffect(() => {
+    if (serviceReady) void desktopBridge()?.UIReady?.();
+  }, [serviceReady]);
   const [jobs, setJobs] = useState<DownloadJob[]>([]);
   const [libraryJobs, setLibraryJobs] = useState<DownloadJob[]>([]);
   const [libraryPage, setLibraryPage] = useState<LibraryPageResponse>(emptyLibraryPage);

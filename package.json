@@ -9,6 +9,7 @@
     "dev:all": "powershell -ExecutionPolicy Bypass -File ./scripts/start-dev.ps1",
     "build": "vite build --configLoader runner",
     "build:desktop": "node scripts/build-desktop.mjs",
+    "test:desktop": "node scripts/desktop-smoke.mjs",
     "check": "npm run typecheck && npm run build:check && npm run lint",
     "typecheck": "tsc -p tsconfig.app.json --noEmit",
     "build:check": "node scripts/build-check.mjs",
