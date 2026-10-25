@@ -4,8 +4,8 @@ github.com/at-wat/ebml-go v0.19.4 h1:6F767ThzH/JqNUsF79PwRFP0pwUF5ALXWJ6pXuiolI8
 github.com/at-wat/ebml-go v0.19.4/go.mod h1:wu3fQj+DWo6SOOl9c4yDi+gFs9Oa96Z2B5qxo1OxFYY=
 github.com/bitly/go-simplejson v0.5.1 h1:xgwPbetQScXt1gh9BmoJ6j9JMr3TElvuIyjR8pgdoow=
 github.com/bitly/go-simplejson v0.5.1/go.mod h1:YOPVLzCfwK14b4Sff3oP1AmGhI9T9Vsg84etUnlyp+Q=
-github.com/chromedp/cdproto v0.158.2 h1:EIrQ/1Ns6+WEmaK23ynKbWm+kMV1IeG5hd8zyOLSMXs=
-github.com/chromedp/cdproto v0.158.2/go.mod h1:h68JaIuFr9o3yiayxEYhBdvaxgYO3shDrPSYhNlyfu0=
+github.com/chromedp/cdproto v0.158.4 h1:5t2VGQGp2OuaGPnKIpBikPplESrGMjQMQ4d+7e+eilk=
+github.com/chromedp/cdproto v0.158.4/go.mod h1:h68JaIuFr9o3yiayxEYhBdvaxgYO3shDrPSYhNlyfu0=
 github.com/chromedp/chromedp v0.21.0 h1:nVHgS2LHyhZJ1l3BWRbG2eFIFYiJMnvkJbELbd8WBoQ=
 github.com/chromedp/chromedp v0.21.0/go.mod h1:6z1Y5FdKUxRzxx2qcC5h1xjaBJrSWrZp1mjgITfNZig=
 github.com/dlclark/regexp2 v1.11.5 h1:Q/sSnsKerHeCkc/jSTNq1oCm7KiVgUMZRDUoRu0JQZQ=
