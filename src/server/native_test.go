@@ -487,6 +487,23 @@ func TestAdaptiveMP4AudioPrefersAACWhenLengthIsKnown(t *testing.T) {
 	}
 }
 
+func TestAdaptiveMP4AudioRetriesStereoBeforeProgressive(t *testing.T) {
+	preferred := &youtube.Format{ItagNo: 258, AudioChannels: 6, ContentLength: 3000}
+	stereo := &youtube.Format{ItagNo: 140, AudioChannels: 2, ContentLength: 1000}
+	progressive := &youtube.Format{ItagNo: 18, AudioChannels: 2, ContentLength: 2000}
+	var attempted []int
+	used, fallback, err := downloadAdaptiveMP4Audio(preferred, progressive, func(format *youtube.Format) error {
+		attempted = append(attempted, format.ItagNo)
+		if format == preferred {
+			return errRead
+		}
+		return nil
+	}, stereo)
+	if err != nil || !fallback || used != stereo || used.AudioChannels != 2 || !reflect.DeepEqual(attempted, []int{258, 140}) {
+		t.Fatalf("stereo fallback used=%+v fallback=%t attempts=%v error=%v", used, fallback, attempted, err)
+	}
+}
+
 func TestAdaptiveMP4AudioUsesProgressiveWhenAACLengthIsUnknown(t *testing.T) {
 	preferred := &youtube.Format{ItagNo: 140, AudioChannels: 2}
 	progressive := &youtube.Format{ItagNo: 18, AudioChannels: 2, ContentLength: 1200}
@@ -523,12 +540,21 @@ func TestAdaptiveMP4BudgetReservesLargerAACOrProgressiveSource(t *testing.T) {
 		audio:       &youtube.Format{ContentLength: 2000},
 		progressive: &youtube.Format{ContentLength: 3000},
 	}
-	if got := estimatedItemBudget(job, nil, nil, selection); got != 4000 {
-		t.Fatalf("adaptive MP4 budget = %d, want video plus the larger progressive audio source (4000)", got)
+	if got := estimatedItemBudget(job, nil, nil, selection); got != 4000+1024*1024 {
+		t.Fatalf("adaptive MP4 budget = %d, want video plus the larger progressive audio source and mux headroom", got)
 	}
 	selection.audio.ContentLength = 5000
-	if got := estimatedItemBudget(job, nil, nil, selection); got != 6000 {
-		t.Fatalf("adaptive MP4 budget = %d, want video plus the larger AAC source (6000)", got)
+	if got := estimatedItemBudget(job, nil, nil, selection); got != 6000+1024*1024 {
+		t.Fatalf("adaptive MP4 budget = %d, want video plus the larger AAC source and mux headroom", got)
+	}
+}
+
+func TestAdaptiveMP4BudgetIncludesLargerStereoFallback(t *testing.T) {
+	video := &youtube.Video{Formats: youtube.FormatList{{ItagNo: 140, MimeType: `audio/mp4; codecs="mp4a.40.2"`, AudioChannels: 2, ContentLength: 4000}}}
+	selection := streamSelection{video: &youtube.Format{ContentLength: 1000}, audio: &youtube.Format{AudioChannels: 6, ContentLength: 2000}}
+	job := &jobState{Job: Job{MediaType: "video"}}
+	if got := estimatedItemBudget(job, video, nil, selection); got < 5000+1024*1024 {
+		t.Fatalf("budget=%d, cannot acquire larger stereo fallback and mux output", got)
 	}
 }
 
@@ -776,13 +802,13 @@ func TestAdaptiveRangesResumeValidatedNativeCheckpoint(t *testing.T) {
 	serverHTTP := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requestedRange = r.Header.Get("Range")
 		start, end := int64(0), int64(0)
-		if _, err := fmt.Sscanf(r.URL.Query().Get("range"), "%d-%d", &start, &end); err != nil {
-			t.Errorf("invalid range query: %v", err)
+		if _, err := fmt.Sscanf(r.Header.Get("Range"), "bytes=%d-%d", &start, &end); err != nil {
+			t.Errorf("invalid Range header: %v", err)
 			w.WriteHeader(http.StatusBadRequest)
 			return
 		}
-		if r.Header.Get("Range") != fmt.Sprintf("bytes=%d-%d", start, end) {
-			t.Errorf("Range header = %q", r.Header.Get("Range"))
+		if r.URL.Query().Has("range") {
+			t.Errorf("duplicate range query = %q", r.URL.Query().Get("range"))
 		}
 		w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", start, end, len(payload)))
 		w.WriteHeader(http.StatusPartialContent)

@@ -79,6 +79,12 @@ func (f *fakeClient) GetStreamContext(ctx context.Context, video *youtube.Video,
 	return io.NopCloser(strings.NewReader(fixtureData)), int64(len(fixtureData)), nil
 }
 
+func disableTestThumbnailCapture(s *server) {
+	s.thumbnailFetcher = func(context.Context, string, string) (string, error) {
+		return "", errors.New("thumbnail capture disabled in generic fixture")
+	}
+}
+
 func testServer(t *testing.T, engine nativeClient, change func(*config), configureSettings ...func(*AppSettings)) *server {
 	t.Helper()
 	c := config{
@@ -112,9 +118,7 @@ func testServer(t *testing.T, engine nativeClient, change func(*config), configu
 		t.Fatal(err)
 	}
 	s.engine = engine
-	s.thumbnailFetcher = func(context.Context, string, string) (string, error) {
-		return "", errors.New("thumbnail capture disabled in generic fixture")
-	}
+	disableTestThumbnailCapture(s)
 	s.start()
 	return s
 }

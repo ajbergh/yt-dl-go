@@ -142,6 +142,7 @@ type jobState struct {
 	persistenceRevision uint64
 	persistedRevision   uint64
 	persistencePending  int
+	activeRequests      int
 	deleting            bool
 	libraryOnly         bool
 }
@@ -338,7 +339,7 @@ func (s *server) hydrateLibraryJobLocked(jobID string) (*jobState, bool, error) 
 // evictTerminalJobLocked drops a finished job's working state without sending
 // job-deleted: the durable Library record and history still exist.
 func (s *server) evictTerminalJobLocked(job *jobState) {
-	if job == nil || !terminal(job.Status) || job.persistenceFailed || job.persistencePending > 0 || job.readers > 0 || job.deleting || s.jobs[job.ID] != job {
+	if job == nil || !terminal(job.Status) || job.persistenceFailed || job.persistencePending > 0 || job.activeRequests > 0 || job.readers > 0 || job.deleting || s.jobs[job.ID] != job {
 		return
 	}
 	delete(s.jobs, job.ID)
@@ -622,11 +623,14 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/api/jobs/"), "/")
 		if len(parts) > 0 && parts[0] != "" {
 			s.mu.Lock()
-			job, hydrated, err := s.hydrateTerminalJobLocked(parts[0])
+			job, _, err := s.hydrateTerminalJobLocked(parts[0])
 			if err == nil && job == nil && libraryJobRoute(parts, r.Method) {
-				job, hydrated, err = s.hydrateLibraryJobLocked(parts[0])
+				job, _, err = s.hydrateLibraryJobLocked(parts[0])
 			}
 			deleting := job != nil && job.deleting
+			if job != nil && err == nil && !deleting {
+				job.activeRequests++
+			}
 			s.mu.Unlock()
 			if err != nil {
 				fail(w, http.StatusInternalServerError, "Could not load the saved job")
@@ -640,13 +644,15 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				fail(w, http.StatusConflict, "This job is being removed or updated")
 				return
 			}
-			if hydrated {
-				defer func() {
-					s.mu.Lock()
-					s.evictTerminalJobLocked(job)
-					s.mu.Unlock()
-				}()
-			}
+			// Keep the job resident across the unlocked dispatch boundary. A
+			// worker can finish here and otherwise evict it before the handler's
+			// lookup, yielding a spurious 404 for a successfully completed job.
+			defer func() {
+				s.mu.Lock()
+				job.activeRequests--
+				s.evictTerminalJobLocked(job)
+				s.mu.Unlock()
+			}()
 		}
 	}
 	if r.URL.Path == "/api/update" {

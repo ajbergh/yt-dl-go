@@ -6,6 +6,7 @@ require (
 	github.com/at-wat/ebml-go v0.19.4
 	github.com/chromedp/cdproto v0.158.4
 	github.com/chromedp/chromedp v0.21.0
+	github.com/dop251/goja v0.0.0-20260311135729-065cd970411c
 	github.com/kkdai/youtube/v2 v2.10.6
 	github.com/tphakala/go-m4a v0.8.0
 	github.com/tphakala/go-mp3 v0.2.0
@@ -17,7 +18,6 @@ require (
 require (
 	github.com/bitly/go-simplejson v0.5.1 // indirect
 	github.com/dlclark/regexp2 v1.11.5 // indirect
-	github.com/dop251/goja v0.0.0-20260311135729-065cd970411c // indirect
 	github.com/dustin/go-humanize v1.1.0 // indirect
 	github.com/go-json-experiment/json v0.0.0-20260213210345-44df1a37e875 // indirect
 	github.com/go-sourcemap/sourcemap v2.1.4+incompatible // indirect

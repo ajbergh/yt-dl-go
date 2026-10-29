@@ -33,7 +33,22 @@ For adaptive video, the service uses a process-wide temporary, headless Chrome-c
 
 Chrome, Chromium, or Edge must be installed for this path. Discovery is automatic, or set `CHROME_PATH` to the executable. The temporary profile is not the user's normal profile and is discarded when the pooled process shuts down; the downloader does not import or persist the user's account credentials. This is distinct from the optional Go API bearer token documented below.
 
+Browser playback requests use YouTube's representation quality names, including for cropped films whose actual height differs from the nominal label. Capture can advance playback within the contiguous media prefix already verified and saved for all requested tracks; missing fragments are never skipped. Capture deadlines allow real-time playback as well as the selected byte volume, since the requested accelerated playback rate is not guaranteed. When a preferred multichannel AAC track cannot be acquired natively, adaptive MP4 jobs try an available stereo AAC track before progressive audio and disclose that fallback in the job note.
+
 If browser capture or adaptive byte-range delivery fails, the service uses the highest verified progressive MP4 when one is available and adds a fallback explanation to the job note. A finished lower-resolution fallback is preferable to a corrupt partial HD file. Some videos cannot expose an eligible compatible track; their item fails explicitly.
+
+## Live resolution regression test
+
+The opt-in live matrix downloads three authorized videos at every supported quality ceiling (`480`, `720`, `1080`, `1440`, `2160`, and `best`). Choose samples with different durations. Each ceiling selects the best eligible source at or below that height; a source with a lower maximum resolution is still tested. A download that falls back below its selected source resolution fails the test.
+
+Run from this directory in PowerShell:
+
+~~~powershell
+$env:YTDL_LIVE_MATRIX_URLS = 'https://www.youtube.com/watch?v=HOfdboHvshg,https://www.youtube.com/watch?v=aqz-KE-bpKQ,https://www.youtube.com/watch?v=eRsGyueVLvQ'
+go test -run '^TestLiveResolutionMatrix$' -count=1 -v -timeout 6h
+~~~
+
+These Blender samples cover a 52-second trailer, approximately 10-minute film, and approximately 15-minute film. The test uses temporary managed storage, deletes each successful download after validation, and leaves the user's output directory untouched. It checks finalized sizes, reads actual container dimensions, requires audio and video tracks, and reads both tracks through their expected duration (with three seconds of endpoint tolerance). It does not decode every frame. Chrome-compatible browser installation and unrestricted YouTube access are required; upstream availability and delivery restrictions can fail a run independently of local regressions.
 
 ## Caption sidecars
 

@@ -9,6 +9,49 @@ import (
 	"testing"
 )
 
+func TestSABRPlaybackProgressNeverSkipsMissingMedia(t *testing.T) {
+	makeCapture := func(itag int) (*sabrCapture, []byte) {
+		file, err := os.CreateTemp(t.TempDir(), "track")
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = file.Close() })
+		capture := newSABRCapture(file, itag, 60000, 1024, func(int64) {})
+		format := testProtoVarintField(nil, 1, uint64(itag))
+		body := testUMPPart(nil, umpPartFormatInitializationMetadata, testProtoBytesField(nil, 2, format))
+		body = testSelectedSegment(body, 0, uint64(itag), true, 0, 0, []byte("init"), format)
+		if err := capture.consume(body); err != nil {
+			t.Fatal(err)
+		}
+		return capture, format
+	}
+	video, videoFormat := makeCapture(299)
+	audio, audioFormat := makeCapture(140)
+	consume := func(capture *sabrCapture, format []byte, itag int, sequence uint64, duration int64) {
+		body := testSelectedSegment(nil, sequence, uint64(itag), false, sequence, uint64(duration), []byte("media"), format)
+		if err := capture.consume(body); err != nil {
+			t.Fatal(err)
+		}
+	}
+	consume(video, videoFormat, 299, 1, 10000)
+	consume(video, videoFormat, 299, 3, 10000)
+	if got := video.verifiedDurationMs(); got != 10000 {
+		t.Fatalf("prefix crossed missing segment: %d", got)
+	}
+	set := newSABRCaptureSet(video, audio)
+	if got := set.verifiedDurationMs(); got != 0 {
+		t.Fatalf("prefix crossed missing audio: %d", got)
+	}
+	consume(audio, audioFormat, 140, 1, 5000)
+	consume(video, videoFormat, 299, 2, 10000)
+	if got := video.verifiedDurationMs(); got != 30000 {
+		t.Fatalf("filled prefix=%d, want 30000", got)
+	}
+	if got := set.verifiedDurationMs(); got != 5000 {
+		t.Fatalf("prefix crossed slower audio: %d", got)
+	}
+}
+
 func TestSABRCaptureAssemblesCheckedInFixture(t *testing.T) {
 	body, err := os.ReadFile(filepath.Join("testdata", "youtube", "sabr-selected-track.ump"))
 	if err != nil {

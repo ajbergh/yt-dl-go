@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
 	"log"
 	"os"
 	"sync"
@@ -16,6 +17,15 @@ import (
 // of its bytes. The browser receives the original response without Fetch
 // interception; CDP only streams a copy for verified media assembly.
 const maxNetworkSABRBytes int64 = 128 * 1024 * 1024
+
+var errNetworkResponseCanceled = errors.New("browser canceled a media response")
+
+func browserNetworkParams() network.EnableParams {
+	// Keep completed large media responses available until their body is read.
+	// Prepare must preserve these limits when it enables Network again.
+	total, resource := 2*maxNetworkSABRBytes, maxNetworkSABRBytes
+	return network.EnableParams{MaxTotalBufferSize: &total, MaxResourceBufferSize: &resource}
+}
 
 type networkSABRResponse struct {
 	mu           sync.Mutex
@@ -122,7 +132,7 @@ func (p *chromeBrowserProvider) ensureNetworkCapture() error {
 				p.handleNetworkCaptureEvent(&event)
 			}
 		}()
-		_, p.networkErr = chromedp.Call(p.ctx, network.Enable, network.EnableParams{})
+		_, p.networkErr = chromedp.Call(p.ctx, network.Enable, browserNetworkParams())
 	})
 	return p.networkErr
 }
@@ -131,6 +141,42 @@ func (p *chromeBrowserProvider) networkResponse(id network.RequestID) *networkSA
 	p.networkMu.Lock()
 	defer p.networkMu.Unlock()
 	return p.networkSABR[id]
+}
+
+func (p *chromeBrowserProvider) registerNetworkResponse(id network.RequestID) *networkSABRResponse {
+	p.networkMu.Lock()
+	defer p.networkMu.Unlock()
+	if p.networkSABR == nil {
+		p.networkSABR = make(map[network.RequestID]*networkSABRResponse)
+	}
+	response := &networkSABRResponse{done: make(chan struct{})}
+	p.networkSABR[id] = response
+	if err, finished := p.networkDone[id]; finished {
+		response.finish(err)
+		delete(p.networkDone, id)
+	}
+	return response
+}
+
+func (p *chromeBrowserProvider) finishNetworkResponse(id network.RequestID, err error) {
+	p.networkMu.Lock()
+	defer p.networkMu.Unlock()
+	if response := p.networkSABR[id]; response != nil {
+		response.finish(err)
+		return
+	}
+	// Separate typed subscriptions may deliver completion before the response
+	// consumer has registered the request. Keep a bounded replay cache.
+	if p.networkDone == nil {
+		p.networkDone = make(map[network.RequestID]error)
+	}
+	if len(p.networkDone) >= 1024 {
+		for old := range p.networkDone {
+			delete(p.networkDone, old)
+			break
+		}
+	}
+	p.networkDone[id] = err
 }
 
 func (p *chromeBrowserProvider) handleNetworkCaptureEvent(event interface{}) {
@@ -153,10 +199,7 @@ func (p *chromeBrowserProvider) handleNetworkCaptureEvent(event interface{}) {
 			capture.fail(errBrowserUnavailable)
 			return
 		}
-		response := &networkSABRResponse{done: make(chan struct{})}
-		p.networkMu.Lock()
-		p.networkSABR[event.RequestID] = response
-		p.networkMu.Unlock()
+		response := p.registerNetworkResponse(event.RequestID)
 		go p.streamNetworkSABR(event.RequestID, response, capture, captureCtx, metrics)
 	case *network.EventDataReceived:
 		response := p.networkResponse(event.RequestID)
@@ -167,12 +210,12 @@ func (p *chromeBrowserProvider) handleNetworkCaptureEvent(event interface{}) {
 		// The typed CDProto API decodes base64 event payloads into bytes.
 		response.appendData(event.Data)
 	case *network.EventLoadingFinished:
-		if response := p.networkResponse(event.RequestID); response != nil {
-			response.finish(nil)
-		}
+		p.finishNetworkResponse(event.RequestID, nil)
 	case *network.EventLoadingFailed:
-		if response := p.networkResponse(event.RequestID); response != nil {
-			response.finish(errBrowserUnavailable)
+		if event.Canceled {
+			p.finishNetworkResponse(event.RequestID, errNetworkResponseCanceled)
+		} else {
+			p.finishNetworkResponse(event.RequestID, errBrowserUnavailable)
 		}
 	}
 }
@@ -189,15 +232,32 @@ func (p *chromeBrowserProvider) streamNetworkSABR(id network.RequestID, response
 	start := time.Now()
 	streamResult, err := chromedp.Call(commandCtx, network.StreamResourceContent, network.StreamResourceContentParams{RequestID: id})
 	setupDuration := time.Since(start)
+	getCompletedBody := func() (network.GetResponseBodyResult, error) {
+		// A long response may outlive the initial stream-command deadline.
+		readCtx, cancelRead := context.WithTimeout(captureCtx, 30*time.Second)
+		defer cancelRead()
+		return chromedp.Call(readCtx, network.GetResponseBody, network.GetResponseBodyParams{RequestID: id})
+	}
 	var body []byte
 	if err != nil {
 		// Tiny responses can finish before the stream command reaches Chrome.
 		// Network.getResponseBody is sufficient for those completed responses.
 
+		select {
+		case <-response.done:
+		case <-captureCtx.Done():
+			return
+		}
+		response.mu.Lock()
+		responseErr := response.err
+		response.mu.Unlock()
+		if errors.Is(responseErr, errNetworkResponseCanceled) {
+			return
+		}
 		var result network.GetResponseBodyResult
-		result, err = chromedp.Call(commandCtx, network.GetResponseBody, network.GetResponseBodyParams{RequestID: id})
+		result, err = getCompletedBody()
 		body = result.Body
-		if err != nil || len(body) == 0 || int64(len(body)) > maxNetworkSABRBytes {
+		if err != nil || int64(len(body)) > maxNetworkSABRBytes {
 			if os.Getenv("YTDL_TRACE_PERFORMANCE") != "" {
 				log.Printf("browser network response unavailable: %v", err)
 			}
@@ -216,13 +276,39 @@ func (p *chromeBrowserProvider) streamNetworkSABR(id network.RequestID, response
 		responseErr, ready := response.err, response.ready
 		body = response.body.Bytes()
 		response.mu.Unlock()
-		if responseErr != nil || !ready || len(body) == 0 {
+		// YouTube cancels obsolete adaptive requests during a quality change.
+		// Discard that response and let verified sequence assembly wait for its
+		// replacement instead of terminating the entire capture.
+		if errors.Is(responseErr, errNetworkResponseCanceled) {
+			return
+		}
+		if responseErr != nil || !ready {
 			if responseErr == nil {
 				responseErr = errSABR
 			}
 			capture.fail(responseErr)
 			return
 		}
+		// Typed event subscriptions have independent queues. LoadingFinished
+		// can reach its consumer before the last DataReceived payload, so the
+		// streamed copy is not necessarily complete yet. Ask Chrome for the
+		// canonical completed body rather than parsing a truncated snapshot.
+		completed, bodyErr := getCompletedBody()
+		if bodyErr == nil {
+			if int64(len(completed.Body)) > maxNetworkSABRBytes {
+				capture.fail(errLimit)
+				return
+			}
+			body = completed.Body
+		} else if os.Getenv("YTDL_TRACE_PERFORMANCE") != "" {
+			log.Printf("browser completed response unavailable, validating streamed copy: %v", bodyErr)
+		}
+	}
+	// Empty successful control responses contain no media to assemble. They
+	// must not abort otherwise healthy captures; the media idle deadline still
+	// bounds sessions that never deliver another fragment.
+	if len(body) == 0 {
+		return
 	}
 	start = time.Now()
 	parseErr := capture.consumeReader(bytes.NewReader(body))

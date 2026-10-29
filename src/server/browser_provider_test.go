@@ -8,8 +8,92 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dop251/goja"
 	"github.com/kkdai/youtube/v2"
 )
+
+func TestBrowserPlaybackAdvancesOnlyThroughVerifiedBufferedMedia(t *testing.T) {
+	for _, test := range []struct {
+		name             string
+		verified         int64
+		start, end, want float64
+	}{
+		{"audio ahead of video", 250000, 0, 100, 98},
+		{"saved prefix behind video", 30000, 0, 100, 28},
+		{"missing media", 0, 0, 100, 10},
+		{"buffer gap", 30000, 50, 100, 10},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			vm := goja.New()
+			_ = vm.Set("bufferStart", test.start)
+			_ = vm.Set("bufferEnd", test.end)
+			_, err := vm.RunString(`const video = {currentTime:10, paused:false, ended:false, buffered:{length:1, start:()=>bufferStart, end:()=>bufferEnd}}; const document = {querySelector:()=>video, getElementById:()=>({seekTo:(time)=>{video.currentTime=time;}})};`)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := vm.RunString(browserCapturePlaybackScript(test.verified, 1, "")); err != nil {
+				t.Fatal(err)
+			}
+			value, err := vm.RunString("video.currentTime")
+			if err != nil || value.ToFloat() != test.want {
+				t.Fatalf("seek=%v error=%v, want %v", value, err, test.want)
+			}
+		})
+	}
+}
+
+func TestBrowserPlaybackMaintainsRequested4KQuality(t *testing.T) {
+	vm := goja.New()
+	_, err := vm.RunString(`let minimum, maximum, selected; const video = {currentTime:0, paused:false, ended:false, buffered:{length:0}}; const player = {setPlaybackQualityRange:(min,max)=>{minimum=min; maximum=max;}, setPlaybackQuality:(quality)=>{selected=quality;}}; const document = {querySelector:()=>video, getElementById:()=>player};`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := vm.RunString(browserCapturePlaybackScript(0, 1, "hd2160")); err != nil {
+		t.Fatal(err)
+	}
+	value, err := vm.RunString("JSON.stringify([minimum,maximum,selected,video.playbackRate])")
+	if err != nil || value.String() != `["hd2160","hd2160","hd2160",1]` {
+		t.Fatalf("playback policy=%v error=%v", value, err)
+	}
+}
+
+func TestBrowserPlaybackDoesNotResetAlreadySelectedSettings(t *testing.T) {
+	vm := goja.New()
+	_, err := vm.RunString(`let resets=0; const video={currentTime:0,paused:false,ended:false,buffered:{length:0},get playbackRate(){return 1;},set playbackRate(value){resets++;}}; const player={getPlaybackQuality:()=>"hd2160",setPlaybackQualityRange:()=>{resets++;},setPlaybackQuality:()=>{resets++;}}; const document={querySelector:()=>video,getElementById:()=>player};`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := vm.RunString(browserCapturePlaybackScript(0, 1, "hd2160")); err != nil {
+		t.Fatal(err)
+	}
+	value, err := vm.RunString("resets")
+	if err != nil || value.ToInteger() != 0 {
+		t.Fatalf("unchanged settings reset %v times: %v", value, err)
+	}
+}
+
+func TestBrowserPlaybackQualityUsesRepresentationName(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		format *youtube.Format
+		want   string
+	}{
+		{"cropped", &youtube.Format{Height: 816, Quality: "hd1080", QualityLabel: "1080p"}, "hd1080"},
+		{"480p", &youtube.Format{Height: 480, Quality: "large"}, "large"},
+		{"cropped label", &youtube.Format{Height: 1080, QualityLabel: "1440p60"}, "hd1440"},
+		{"360p fallback", &youtube.Format{Height: 360}, "medium"},
+		{"4K fallback", &youtube.Format{Height: 2160}, "hd2160"},
+		{"audio", &youtube.Format{Quality: "tiny"}, ""},
+		{"untrusted quality", &youtube.Format{Height: 720, Quality: "');alert(1);//"}, "hd720"},
+		{"nil", nil, ""},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if got := browserPlaybackQuality(test.format); got != test.want {
+				t.Fatalf("quality=%q, want %q", got, test.want)
+			}
+		})
+	}
+}
 
 func TestBrowserReadIdleDeadlineReturnsRetryableError(t *testing.T) {
 	started := time.Now()
@@ -125,6 +209,9 @@ func TestPlaybackPolicyTargetsRequestedCodecFamily(t *testing.T) {
 func TestBrowserCaptureTimeoutAccountsFor4KTransferBytes(t *testing.T) {
 	if got := browserCaptureTimeout(30_000, 0); got != 4*time.Minute {
 		t.Fatalf("minimum capture timeout = %s, want 4m", got)
+	}
+	if got := browserCaptureTimeout(15*60*1000, 0); got < 17*time.Minute {
+		t.Fatalf("long video timeout = %s, must allow real-time playback plus setup", got)
 	}
 	// A 2.6 GiB AV1 track needs substantially more time than accelerated
 	// playback duration alone when throughput is constrained.

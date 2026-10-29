@@ -77,6 +77,25 @@ type sabrResponseCapture interface {
 	doneHandler()
 	waitHandlers()
 	isTrace() bool
+	verifiedDurationMs() int64
+}
+
+// Only the contiguous prefix already written to disk is safe to seek past.
+func (capture *sabrCapture) verifiedDurationMs() int64 {
+	capture.mu.Lock()
+	defer capture.mu.Unlock()
+	return capture.cumulativeMs
+}
+
+func (set *sabrCaptureSet) verifiedDurationMs() int64 {
+	var duration int64
+	for index, capture := range set.captures {
+		current := capture.verifiedDurationMs()
+		if index == 0 || current < duration {
+			duration = current
+		}
+	}
+	return duration
 }
 
 // sabrCaptureSet routes one parsed UMP response to independent selected-track
@@ -311,7 +330,7 @@ func (capture *sabrCapture) consumePart(partType uint64, payload []byte) error {
 		}
 		capture.active[header.headerID] = append(segments, &sabrSegment{header: header, selected: selected})
 		if capture.trace {
-			log.Printf("SABR media header id=%d itag=%d init=%t sequence=%d length=%d", header.headerID, header.itag, header.isInit, header.sequence, header.contentLength)
+			log.Printf("SABR media header id=%d itag=%d init=%t sequence=%d length=%d selected=%t next_sequence=%d written=%d", header.headerID, header.itag, header.isInit, header.sequence, header.contentLength, selected, capture.nextSequence, capture.totalWritten)
 		}
 	case umpPartMedia:
 		headerID, offset, err := readUMPVarint(payload)

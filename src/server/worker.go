@@ -33,7 +33,7 @@ const playlistNote = "Playlist totals cover all entries exposed by YouTube, not 
 const playlistSelectionNote = "Only the selected exposed playlist items are queued; original playlist positions are preserved."
 const unknownLengthNote = "An unknown-length stream is complete only at clean EOF; its original size cannot be independently verified."
 const adaptiveFallbackNote = "The requested adaptive stream could not be completed safely; the optional verified 360p progressive MP4 fallback was downloaded instead."
-const adaptiveMP4AudioFallbackNote = "The adaptive AAC audio track could not be captured safely; the progressive MP4 AAC track was used instead."
+const adaptiveMP4AudioFallbackNote = "The preferred adaptive AAC audio track could not be captured safely; a compatible fallback AAC track was used instead."
 const extractionFallbackNote = "The default YouTube extraction profile was unavailable; a fallback profile was used."
 const browserAdaptiveNote = "Adaptive media was streamed through a temporary browser session."
 const vp9PreferenceFallbackNote = "VP9 was preferred but unavailable under the selected quality ceiling; the best supported video format was used instead."
@@ -267,6 +267,21 @@ func betterWebMVideoFormat(candidate, current *youtube.Format) bool {
 func betterAudioFormat(candidate, current *youtube.Format) bool {
 	return current == nil || candidate.Bitrate > current.Bitrate ||
 		(candidate.Bitrate == current.Bitrate && candidate.ContentLength > current.ContentLength)
+}
+
+func stereoAACFormat(video *youtube.Video) *youtube.Format {
+	var selected *youtube.Format
+	if video == nil {
+		return nil
+	}
+	for i := range video.Formats {
+		candidate := &video.Formats[i]
+		kind, codecs, ok := formatType(candidate)
+		if ok && kind == "audio/mp4" && codecFamily(codecs) == "aac" && candidate.AudioChannels > 0 && candidate.AudioChannels <= 2 && candidate.ContentLength > 0 && betterAudioFormat(candidate, selected) {
+			selected = candidate
+		}
+	}
+	return selected
 }
 
 // selectFormat preserves the automatic P2.4 policy for callers that do not
@@ -865,6 +880,11 @@ func estimatedItemBudget(j *jobState, video *youtube.Video, format *youtube.Form
 			estimated += max(int64(1024*1024), estimated/20)
 		} else {
 			audioBytes := selection.audio.ContentLength
+			if selection.audio.AudioChannels > 2 {
+				if stereo := stereoAACFormat(video); stereo != nil {
+					audioBytes = max(audioBytes, stereo.ContentLength)
+				}
+			}
 			if selection.progressive != nil && selection.progressive.ContentLength > audioBytes {
 				audioBytes = selection.progressive.ContentLength
 			}
@@ -872,6 +892,9 @@ func estimatedItemBudget(j *jobState, video *youtube.Video, format *youtube.Form
 				return 0
 			}
 			estimated = selection.video.ContentLength + audioBytes
+			// Remuxing creates sample tables and other MP4 container data.
+			// Source lengths alone are not a safe ceiling for the final file.
+			estimated += max(int64(1024*1024), estimated/20)
 		}
 	} else {
 		if format == nil || format.ContentLength <= 0 {
@@ -2062,7 +2085,7 @@ func (s *server) noteCodecPreferenceFallback(j *jobState, strategy string) {
 	s.mu.Unlock()
 }
 
-func downloadAdaptiveMP4Audio(preferred, progressive *youtube.Format, download func(*youtube.Format) error) (used *youtube.Format, usedFallback bool, err error) {
+func downloadAdaptiveMP4Audio(preferred, progressive *youtube.Format, download func(*youtube.Format) error, alternates ...*youtube.Format) (used *youtube.Format, usedFallback bool, err error) {
 	if preferred == nil || download == nil {
 		return nil, false, errNoAudio
 	}
@@ -2077,8 +2100,21 @@ func downloadAdaptiveMP4Audio(preferred, progressive *youtube.Format, download f
 	}
 	if err := download(preferred); err == nil {
 		return preferred, false, nil
-	} else if !errors.Is(err, errRead) || progressive == nil || progressive.ItagNo == preferred.ItagNo {
+	} else if !errors.Is(err, errRead) {
 		return nil, false, err
+	}
+	for _, alternate := range alternates {
+		if alternate == nil || alternate.ContentLength <= 0 || alternate.ItagNo == preferred.ItagNo {
+			continue
+		}
+		if err := download(alternate); err == nil {
+			return alternate, true, nil
+		} else if !errors.Is(err, errRead) {
+			return nil, false, err
+		}
+	}
+	if progressive == nil || progressive.ItagNo == preferred.ItagNo {
+		return nil, false, errRead
 	}
 	if err := download(progressive); err != nil {
 		return nil, false, err
@@ -2160,13 +2196,23 @@ func (s *server) transferAdaptiveMP4(ctx context.Context, j *jobState, engine na
 	// Only a retryable read failure downgrades to the progressive AAC source.
 	var audioSize int64
 	var audioBrowserUsed bool
+	var stereoAAC *youtube.Format
+	if selection.audio.AudioChannels > 2 {
+		stereoAAC = stereoAACFormat(video)
+	}
 	actualAudio, usedFallback, err := downloadAdaptiveMP4Audio(selection.audio, selection.progressive, func(format *youtube.Format) error {
-		size, usedBrowser, downloadErr := s.downloadAdaptiveRanges(ctx, j, engine, video, format, audioPart, "audio", queueIndex, budget-videoSize, progress, browserProvider)
+		audioProvider := browserProvider
+		// Browser playback negotiates stereo; a multichannel itag may never
+		// arrive. Try that source natively, then the verified stereo alternate.
+		if format.AudioChannels > 2 {
+			audioProvider = nil
+		}
+		size, usedBrowser, downloadErr := s.downloadAdaptiveRanges(ctx, j, engine, video, format, audioPart, "audio", queueIndex, budget-videoSize, progress, audioProvider)
 		if downloadErr == nil {
 			audioSize, audioBrowserUsed = size, usedBrowser
 		}
 		return downloadErr
-	})
+	}, stereoAAC)
 	if err != nil {
 		return result, err
 	}
@@ -2191,6 +2237,7 @@ func (s *server) transferAdaptiveMP4(ctx context.Context, j *jobState, engine na
 		return result, errLength
 	}
 	if info.Size() > budget {
+		log.Printf("MP4 mux exceeds item reservation: output_bytes=%d budget=%d video_bytes=%d audio_bytes=%d", info.Size(), budget, videoSize, audioSize)
 		return result, errLimit
 	}
 	if ctx.Err() != nil {
@@ -2299,9 +2346,9 @@ func (s *server) transferAdaptiveWebM(ctx context.Context, j *jobState, engine n
 				}
 			}
 			captureStarted := time.Now()
-			// A full dual capture already consumes its byte-aware deadline. Replaying
-			// the same adaptive session a second time only delays a definitive error.
-			const dualCaptureAttempts = 1
+			// Retry transient startup failures once, but do not replay a capture
+			// that has already consumed a substantial part of its media deadline.
+			const dualCaptureAttempts = 2
 			for attempt := 0; attempt < dualCaptureAttempts; attempt++ {
 				videoCandidates := browserWebMVideoCandidates(video, selection.video)
 				videoSize, audioSize, err = dualProvider.CaptureTracks(ctx, video.ID, selection.video, videoCandidates, selection.audio, videoPart, audioPart, budget, budget, dualProgress)
@@ -2324,6 +2371,9 @@ func (s *server) transferAdaptiveWebM(ctx context.Context, j *jobState, engine n
 				_ = os.Remove(audioPart)
 				_ = s.deleteDownloadPart(j, queueIndex, "video")
 				_ = s.deleteDownloadPart(j, queueIndex, "audio")
+				if !errors.Is(err, errBrowserUnavailable) || time.Since(captureStarted) >= 2*time.Minute {
+					break
+				}
 			}
 			capturePhase += time.Since(captureStarted)
 		}
@@ -2660,7 +2710,10 @@ func (s *server) downloadAdaptiveRanges(ctx context.Context, j *jobState, engine
 				continue
 			}
 			query := parsedURL.Query()
-			query.Set("range", fmt.Sprintf("%d-%d", start, end))
+			// Use one range mechanism. A range query plus a Range header makes
+			// some YouTube CDNs report Content-Range against the sliced resource
+			// (e.g. /1024), rather than against the full declared source.
+			query.Del("range")
 			parsedURL.RawQuery = query.Encode()
 			req, err := http.NewRequestWithContext(ctx, http.MethodGet, parsedURL.String(), nil)
 			if err != nil {

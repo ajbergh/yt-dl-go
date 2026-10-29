@@ -1,0 +1,47 @@
+# Live download validation — 2026-10-28
+
+Branch: `fix/live-resolution-matrix`.
+
+The opt-in `TestLiveResolutionMatrix` downloads complete videos through the real job API at every supported quality ceiling: 480, 720, 1080, 1440, 2160, and best. These are maximum actual pixel heights, so cropped films can have lower dimensions than their nominal YouTube labels. The service does not expose separate 144p, 240p, or 360p controls. The matrix does not claim to test every codec strategy or audio-only format.
+
+| Sample | Duration | YouTube source |
+| --- | --- | --- |
+| Sintel trailer | 52 seconds | https://www.youtube.com/watch?v=HOfdboHvshg |
+| Big Buck Bunny 4K / 60 fps | 10 minutes 35 seconds | https://www.youtube.com/watch?v=aqz-KE-bpKQ |
+| Sintel | 14 minutes 48 seconds | https://www.youtube.com/watch?v=eRsGyueVLvQ |
+
+Validation uses Windows, Go 1.27.3, and temporary headless Microsoft Edge sessions. Each case checks finalized file size, actual container dimensions, audio/video presence, and both tracks through their expected duration with three seconds of endpoint tolerance. It does not decode every frame. Downloads use temporary managed-only storage and successful files are deleted after validation.
+
+## Issues reproduced and corrected
+
+- Adaptive MP4 reserved only source-track bytes. The trailer produced 2,244,976 bytes against a 2,236,693-byte reservation and incorrectly failed the 10 GiB job limit. MP4 reservations now include mux headroom.
+- Live-test logging dereferenced an absent audio track for progressive selections. Logging now checks for a separate audio track.
+- Browser quality requests used cropped pixel heights, producing invalid player quality names such as `hd816` and `hd480`. Requests now use validated representation names and nominal labels.
+- Independently consumed browser event queues could process completion before response registration or the final data chunks. Completion is replayed for late registration, and Chrome's completed response body is preferred over a potentially truncated copy. Empty successful control responses and canceled obsolete requests do not abort healthy capture.
+- Accelerated playback was assumed in capture deadlines. Capture now allows real-time playback and can advance within the overlap between the browser buffer and the contiguous media prefix already verified for every requested track.
+- Multichannel AAC could be selected even though browser playback delivered stereo. MP4 acquisition now tries multichannel natively, then an available stereo AAC fallback, with a job-note disclosure.
+- API request preflight could find a completed job that was evicted before handler dispatch, causing intermittent ticket 404s. Active API requests now keep that job resident until dispatch finishes.
+- Native transfers sent both a URL `range` parameter and an HTTP `Range` header. A 1 KiB probe returned `Content-Range: bytes 0-1023/1024` instead of the full 224,463,491-byte source size and failed validation. Removing the URL range parameter returned the correct total. Transfers now use the HTTP header alone; the resume regression test rejects duplicate range parameters.
+- A timed-out matrix case could leave its job active, making subsequent cases fail with capacity errors. Every case now cancels an unfinished job during cleanup. A host pause of approximately 35 minutes invalidated one run's timeouts; affected cases were scheduled for fresh validation.
+- Chrome's default inspector cache evicted larger 1440p media responses. Network capture now requests a 128 MiB per-response cache and a 256 MiB session cache, and preserves those limits during playback preparation.
+- Two persistence/queue fixtures still used the production thumbnail fetcher. On a slow network they could exceed their 10-second job deadline and leave cleanup errors. They now disable remote thumbnail capture like the generic offline fixture server.
+
+## Results
+
+As of 2026-10-29, 4K live testing is paused at the user's request because of a slow network. Sixteen cases have verified complete files; Big Buck Bunny's `2160` and `best` cases remain pending. Partial 4K transfers are not counted as passes. No further live downloads should run until the user resumes them.
+
+The remaining 4K changes maintain the requested player quality without resetting unchanged settings, use normal playback speed while advancing only through verified buffered media, and initialize each retry from a blank page with HTTP caching disabled. These changes still require complete-file 4K validation.
+
+Results below combine successful post-fix runs and targeted reruns. Early runs exposed the failures listed above; this is not a claim that every upstream request succeeded on its first attempt. Cells show the verified actual height for the requested ceiling.
+
+| Sample | 480 | 720 | 1080 | 1440 | 2160 | best |
+| --- | --- | --- | --- | --- | --- | --- |
+| Sintel trailer | Pass: 272p | Pass: 546p | Pass: 818p | Pass: 818p | Pass: 818p | Pass: 818p |
+| Big Buck Bunny | Pass: 480p | Pass: 720p | Pass: 1080p | Pass: 1440p | Pending | Pending |
+| Sintel | Pass: 364p | Pass: 546p | Pass: 872p | Pass: 872p | Pass: 872p | Pass: 872p |
+
+Big Buck Bunny's MP4 cases disclosed the verified stereo AAC fallback. Higher ceilings on the two Sintel samples selected their highest eligible source rather than upscaling it.
+
+Offline verification on 2026-10-29: `go test ./... -count=1 -timeout 10m` passed after disabling remote thumbnail capture in the two persistence fixtures (77.234 seconds). `git diff --check` passed. Live tests remain opt-in and were not included in that offline run.
+
+The reproduction command and test behavior are documented in [the server README](../src/server/README.md#live-resolution-regression-test). Raw diagnostic logs remain in the ignored `src/server/.cache/` directory and can contain short-lived upstream media URLs; this report intentionally records source watch URLs and aggregate results only.

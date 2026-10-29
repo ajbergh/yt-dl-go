@@ -43,27 +43,30 @@ type browserDualTrackProvider interface {
 type browserProviderFactory func(context.Context) (browserMediaProvider, error)
 
 type chromeBrowserProvider struct {
-	ctx         context.Context
-	cancel      context.CancelFunc
-	allocCancel context.CancelFunc
-	release     func()
-	closeOnce   sync.Once
-	fetchOnce   sync.Once
-	fetchErr    error
-	uaOnce      sync.Once
-	uaErr       error
-	openMu      sync.Mutex
-	networkOnce sync.Once
-	networkErr  error
-	networkMu   sync.Mutex
-	networkSABR map[network.RequestID]*networkSABRResponse
-	pendingMu   sync.Mutex
-	pending     *browserRangeCapture
-	captureMu   sync.Mutex
-	capture     sabrResponseCapture
-	captureCtx  context.Context
-	captureStop context.CancelFunc
-	metrics     *browserCaptureMetrics
+	ctx             context.Context
+	cancel          context.CancelFunc
+	allocCancel     context.CancelFunc
+	release         func()
+	closeOnce       sync.Once
+	fetchOnce       sync.Once
+	fetchErr        error
+	uaOnce          sync.Once
+	uaErr           error
+	openMu          sync.Mutex
+	networkOnce     sync.Once
+	networkErr      error
+	networkMu       sync.Mutex
+	networkSABR     map[network.RequestID]*networkSABRResponse
+	networkDone     map[network.RequestID]error
+	pendingMu       sync.Mutex
+	pending         *browserRangeCapture
+	captureMu       sync.Mutex
+	capture         sabrResponseCapture
+	captureCtx      context.Context
+	captureStop     context.CancelFunc
+	metrics         *browserCaptureMetrics
+	playbackRate    int
+	playbackQuality string
 }
 
 type browserRangeCapture struct {
@@ -193,10 +196,12 @@ func (p *chromeBrowserProvider) Prepare(ctx context.Context, id string, format *
 		return errBrowserUnavailable
 	}
 	videoURL := browserWatchURL(id)
-	quality := ""
-	if format.Height > 0 {
-		quality = "hd" + strconv.Itoa(format.Height)
+	p.playbackRate = browserPlaybackRate
+	if format.Height >= 2160 {
+		p.playbackRate = 1
 	}
+	quality := browserPlaybackQuality(format)
+	p.playbackQuality = quality
 	configureQualityScript := `(() => {
   const labels = ['Accept all', 'I agree', 'Agree'];
   for (const button of document.querySelectorAll('button')) {
@@ -205,7 +210,7 @@ func (p *chromeBrowserProvider) Prepare(ctx context.Context, id string, format *
   }
   const player = document.getElementById('movie_player');
   if (player && '` + quality + `' !== '') {
-    try { player.setPlaybackQualityRange('` + quality + `'); } catch (_) {}
+    try { player.setPlaybackQualityRange('` + quality + `', '` + quality + `'); } catch (_) {}
     try { player.setPlaybackQuality('` + quality + `'); } catch (_) {}
   }
   const video = document.querySelector('video');
@@ -215,20 +220,20 @@ func (p *chromeBrowserProvider) Prepare(ctx context.Context, id string, format *
 	playScript := `(() => {
   const player = document.getElementById('movie_player');
   if (player && '` + quality + `' !== '') {
-    try { player.setPlaybackQualityRange('` + quality + `'); } catch (_) {}
+    try { player.setPlaybackQualityRange('` + quality + `', '` + quality + `'); } catch (_) {}
     try { player.setPlaybackQuality('` + quality + `'); } catch (_) {}
   }
   const video = document.querySelector('video');
   if (!video) return false;
   video.muted = true;
-  video.playbackRate = ` + strconv.Itoa(browserPlaybackRate) + `;
+  if (video.playbackRate !== ` + strconv.Itoa(p.playbackRate) + `) video.playbackRate = ` + strconv.Itoa(p.playbackRate) + `;
   try { video.play(); } catch (_) {}
   clearInterval(window.__ytdlKeepAlive);
   window.__ytdlKeepAlive = setInterval(() => {
     const current = document.querySelector('video');
     if (!current) return;
     current.muted = true;
-    current.playbackRate = ` + strconv.Itoa(browserPlaybackRate) + `;
+    if (current.playbackRate !== ` + strconv.Itoa(p.playbackRate) + `) current.playbackRate = ` + strconv.Itoa(p.playbackRate) + `;
     if (current.paused && !current.ended) current.play().catch(() => {});
   }, 1000);
   return true;
@@ -248,7 +253,7 @@ func (p *chromeBrowserProvider) Prepare(ctx context.Context, id string, format *
 	}()
 	var mediaReady, playing bool
 
-	if _, err := chromedp.Call(prepareCtx, network.Enable, network.EnableParams{}); err != nil {
+	if _, err := chromedp.Call(prepareCtx, network.Enable, browserNetworkParams()); err != nil {
 		return errBrowserUnavailable
 	}
 	if err := chromedp.Do(prepareCtx, chromedp.Navigate(videoURL)); err != nil {
@@ -277,6 +282,44 @@ func browserWatchURL(id string) string {
 	return "https://www.youtube.com/watch?" + query.Encode()
 }
 
+// Player quality names describe the representation, not its cropped pixel
+// height. A 1920x816 film can be labelled hd1080; hd816 is not a player quality.
+func browserPlaybackQuality(format *youtube.Format) string {
+	if format == nil || format.Height <= 0 {
+		return ""
+	}
+	valid := map[string]bool{"tiny": true, "small": true, "medium": true, "large": true, "hd720": true, "hd1080": true, "hd1440": true, "hd2160": true, "highres": true}
+	if valid[format.Quality] {
+		return format.Quality
+	}
+	height := format.Height
+	if label, _, ok := strings.Cut(format.QualityLabel, "p"); ok {
+		if nominal, err := strconv.Atoi(label); err == nil && nominal > 0 {
+			height = nominal
+		}
+	}
+	switch {
+	case height <= 144:
+		return "tiny"
+	case height <= 240:
+		return "small"
+	case height <= 360:
+		return "medium"
+	case height <= 480:
+		return "large"
+	case height <= 720:
+		return "hd720"
+	case height <= 1080:
+		return "hd1080"
+	case height <= 1440:
+		return "hd1440"
+	case height <= 2160:
+		return "hd2160"
+	default:
+		return "highres"
+	}
+}
+
 func (p *chromeBrowserProvider) prepareCapture(id string, format *youtube.Format, metrics *browserCaptureMetrics) error {
 	phaseStart := time.Now()
 	if err := p.ensureNetworkCapture(); err != nil {
@@ -284,6 +327,14 @@ func (p *chromeBrowserProvider) prepareCapture(id string, format *youtube.Format
 		if os.Getenv("YTDL_TRACE_SABR") != "" {
 			log.Printf("browser network capture setup failed: %v", err)
 		}
+		return errBrowserUnavailable
+	}
+	// A retry must not inherit buffered media or in-flight responses from the
+	// previous playback. Every new capture requires its own initialization.
+	if err := chromedp.Do(p.ctx, chromedp.Navigate("about:blank")); err != nil {
+		return errBrowserUnavailable
+	}
+	if _, err := chromedp.Call(p.ctx, network.SetCacheDisabled, network.SetCacheDisabledParams{CacheDisabled: true}); err != nil {
 		return errBrowserUnavailable
 	}
 	metrics.addPhase(&metrics.fetchSetup, time.Since(phaseStart))
@@ -342,19 +393,47 @@ func (p *chromeBrowserProvider) attachCapture(capture sabrResponseCapture, metri
 	return captureStop, detach, nil
 }
 
+func browserCapturePlaybackScript(verifiedMs int64, rate int, quality string) string {
+	return `(() => {
+  const video = document.querySelector('video');
+  if (!video) return false;
+  video.muted = true;
+  if (video.playbackRate !== ` + strconv.Itoa(rate) + `) video.playbackRate = ` + strconv.Itoa(rate) + `;
+  const verified = ` + strconv.FormatFloat(float64(verifiedMs)/1000, 'f', 3, 64) + `;
+  // Rendering can stall even while media is arriving. Advance only inside
+  // the prefix already verified and saved for every requested track.
+  const target = verified - 2;
+  const player = document.getElementById('movie_player');
+  const quality = ` + strconv.Quote(quality) + `;
+  if (player && quality && (typeof player.getPlaybackQuality !== 'function' || player.getPlaybackQuality() !== quality)) {
+    try { player.setPlaybackQualityRange(quality, quality); } catch (_) {}
+    try { player.setPlaybackQuality(quality); } catch (_) {}
+  }
+  if (target > video.currentTime + 5) {
+    for (let i = video.buffered.length - 1; i >= 0; i--) {
+      // An audio-only capture may run ahead of the browser's video buffer.
+      // Advance to their overlap rather than waiting for video to catch up.
+      const bufferedTarget = Math.min(target, video.buffered.end(i) - 2);
+      if (bufferedTarget > video.currentTime + 5 && video.buffered.start(i) <= bufferedTarget) {
+        if (player && typeof player.seekTo === 'function') player.seekTo(bufferedTarget, true);
+        else video.currentTime = bufferedTarget;
+        break;
+      }
+    }
+  }
+  if (video.paused && !video.ended) {
+    if (player && typeof player.playVideo === 'function') player.playVideo();
+    video.play().catch(() => {});
+  }
+  return !video.ended;
+})()`
+}
+
 func (p *chromeBrowserProvider) waitForCapture(ctx context.Context, capture sabrResponseCapture, captureDone <-chan error, detach func(), metrics *browserCaptureMetrics, maximum time.Duration, stalled func() bool, finish func() error) error {
 	timer := time.NewTimer(maximum)
 	defer timer.Stop()
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
-	keepAlive := `(() => {
-  const video = document.querySelector('video');
-  if (!video) return false;
-  video.muted = true;
-  video.playbackRate = ` + strconv.Itoa(browserPlaybackRate) + `;
-  if (video.paused && !video.ended) video.play().catch(() => {});
-  return !video.ended;
-})()`
 	waitStart := time.Now()
 	defer func() { metrics.addPhase(&metrics.wait, time.Since(waitStart)) }()
 	ticks := 0
@@ -388,7 +467,13 @@ func (p *chromeBrowserProvider) waitForCapture(ctx context.Context, capture sabr
 				}
 				return errBrowserUnavailable
 			}
-			if err := chromedp.Do(p.ctx, chromedp.Evaluate[chromedp.Void](keepAlive)); err != nil {
+			verified := capture.verifiedDurationMs()
+			rate := p.playbackRate
+			if rate < 1 {
+				rate = browserPlaybackRate
+			}
+			playbackScript := browserCapturePlaybackScript(verified, rate, p.playbackQuality)
+			if err := chromedp.Do(p.ctx, chromedp.Evaluate[chromedp.Void](playbackScript)); err != nil {
 				if os.Getenv("YTDL_TRACE_SABR") != "" {
 					log.Printf("browser keep-alive failed: %v", err)
 				}
@@ -583,11 +668,11 @@ func (p *chromeBrowserProvider) CaptureTracks(ctx context.Context, id string, vi
 	return videoResult, audioResult, nil
 }
 
-// browserCaptureTimeout allows for both accelerated playback and the selected
-// track's actual transfer volume. Long 4K streams can require more wall time
-// than duration/4 even while Chrome keeps playback at 4x.
+// browserCaptureTimeout allows for real-time playback and transfer volume.
+// The requested 4x rate is not a wall-clock guarantee: the player can buffer
+// or throttle rendering while verified fragments are still arriving.
 func browserCaptureTimeout(durationMs, contentLength int64) time.Duration {
-	maximum := time.Duration(durationMs)*time.Millisecond/4 + 2*time.Minute
+	maximum := time.Duration(durationMs)*time.Millisecond + 2*time.Minute
 	// A SABR response can be delivered as a long-lived 4K transfer rather
 	// than the short media fragments that accelerated playback suggests. Allow
 	// a verified, but modest, 2 MiB/s path before declaring that capture failed.
@@ -946,14 +1031,18 @@ func (p *chromeBrowserProvider) tracePlaybackState() {
 	}
 
 	type playbackState struct {
-		CurrentTime float64 `json:"currentTime"`
-		Duration    float64 `json:"duration"`
-		Rate        float64 `json:"rate"`
-		Paused      bool    `json:"paused"`
-		Ended       bool    `json:"ended"`
-		ReadyState  int     `json:"readyState"`
-		BufferEnd   float64 `json:"bufferEnd"`
-		PlayerState int     `json:"playerState"`
+		CurrentTime float64  `json:"currentTime"`
+		Duration    float64  `json:"duration"`
+		Rate        float64  `json:"rate"`
+		Paused      bool     `json:"paused"`
+		Ended       bool     `json:"ended"`
+		ReadyState  int      `json:"readyState"`
+		BufferEnd   float64  `json:"bufferEnd"`
+		PlayerState int      `json:"playerState"`
+		Quality     string   `json:"quality"`
+		Qualities   []string `json:"qualities"`
+		Width       int      `json:"width"`
+		Height      int      `json:"height"`
 	}
 	const script = `(() => {
   const video = document.querySelector('video');
@@ -964,6 +1053,9 @@ func (p *chromeBrowserProvider) tracePlaybackState() {
     readyState: video.readyState,
     bufferEnd: video.buffered.length ? video.buffered.end(video.buffered.length - 1) : 0,
     playerState: player && player.getPlayerState ? player.getPlayerState() : -1,
+    quality: player?.getPlaybackQuality?.() || '',
+    qualities: player?.getAvailableQualityLevels?.() || [],
+    width: video.videoWidth, height: video.videoHeight,
   } : null;
 })()`
 	stateCtx, cancel := context.WithTimeout(p.ctx, 3*time.Second)
@@ -974,7 +1066,7 @@ func (p *chromeBrowserProvider) tracePlaybackState() {
 		log.Printf("browser playback state unavailable: %v", err)
 		return
 	}
-	log.Printf("browser playback state current=%.1f duration=%.1f buffered=%.1f rate=%.1f paused=%t ended=%t ready=%d player=%d", state.CurrentTime, state.Duration, state.BufferEnd, state.Rate, state.Paused, state.Ended, state.ReadyState, state.PlayerState)
+	log.Printf("browser playback state current=%.1f duration=%.1f buffered=%.1f rate=%.1f paused=%t ended=%t ready=%d player=%d quality=%s levels=%v dimensions=%dx%d", state.CurrentTime, state.Duration, state.BufferEnd, state.Rate, state.Paused, state.Ended, state.ReadyState, state.PlayerState, state.Quality, state.Qualities, state.Width, state.Height)
 }
 
 func browserReadWithIdleDeadline(ctx context.Context, timeout time.Duration, read func(context.Context) (int, error)) (int, error) {

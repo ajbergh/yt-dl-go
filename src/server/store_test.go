@@ -80,6 +80,7 @@ func TestPersistentQueueOrderControlsSchedulerPriority(t *testing.T) {
 		return fixtureVideo(id), nil
 	}
 	s.engine = fake
+	disableTestThumbnailCapture(s)
 	s.settings.MaxConcurrentDownloads = 1
 	s.settings.StorageMode = "managed-only"
 
@@ -229,6 +230,7 @@ func TestPersistentHistoryAndQueueResume(t *testing.T) {
 		t.Fatal(err)
 	}
 	resumed.engine = fixtureClient(1)
+	disableTestThumbnailCapture(resumed)
 	resumed.start()
 	completed := waitTerminal(t, resumed, queued.ID)
 	if completed.Status != "completed" || completed.VideoStrategy != "vp9" || !completed.Allow360pFallback || len(completed.Files) != 1 || completed.Files[0].Title != "Fixture video" || completed.Files[0].Author != "Fixture channel" {
