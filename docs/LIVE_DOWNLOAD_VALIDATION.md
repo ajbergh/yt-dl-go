@@ -31,20 +31,22 @@ Validation uses Windows, Go 1.27.3, and temporary headless Microsoft Edge sessio
 
 ## Results
 
-Testing was paused on 2026-10-29 because of the user's slow network, then resumed at the user's explicit request with the additional sample above. Twenty-two cases have verified complete files, including all six settings for the user-supplied video. Big Buck Bunny's `2160` and `best` cases remain pending. Additional 4K retries did not complete successfully and were stopped; the user's restriction on 4K testing remains in effect. Partial transfers are not counted as passes.
+Testing was paused on 2026-10-29 because of the user's slow network, then resumed at the user's explicit request with the additional sample above. The user subsequently lifted the restriction, and a fresh 4K run verified Big Buck Bunny's `2160` case. Twenty-three cases now have verified complete files, including all six settings for the user-supplied video. Big Buck Bunny's `best` case failed and remains unresolved. The user requested another pause on 4K testing after this run; no retry is running. Partial transfers are not counted as passes.
 
-The remaining 4K changes maintain the requested player quality without resetting unchanged settings, use normal playback speed while advancing only through verified buffered media, and initialize each retry from a blank page with HTTP caching disabled. These changes still require complete-file 4K validation.
+The 4K changes maintain the requested player quality without resetting unchanged settings, use normal playback speed while advancing only through verified buffered media, and initialize each retry from a blank page with HTTP caching disabled. These changes have now completed a full-file `2160` validation, but `best` remains unresolved.
 
 Results below combine successful post-fix runs and targeted reruns. Early runs exposed the failures listed above; this is not a claim that every upstream request succeeded on its first attempt. Cells show the verified actual height for the requested ceiling.
 
 | Sample | 480 | 720 | 1080 | 1440 | 2160 | best |
 | --- | --- | --- | --- | --- | --- | --- |
 | Sintel trailer | Pass: 272p | Pass: 546p | Pass: 818p | Pass: 818p | Pass: 818p | Pass: 818p |
-| Big Buck Bunny | Pass: 480p | Pass: 720p | Pass: 1080p | Pass: 1440p | Pending | Pending |
+| Big Buck Bunny | Pass: 480p | Pass: 720p | Pass: 1080p | Pass: 1440p | Pass: 2160p | Failed; retry paused |
 | Sintel | Pass: 364p | Pass: 546p | Pass: 872p | Pass: 872p | Pass: 872p | Pass: 872p |
 | The Ownership Gap | Pass: 360p | Pass: 720p | Pass: 1080p | Pass: 1080p | Pass: 1080p | Pass: 1080p |
 
 Big Buck Bunny's MP4 cases disclosed the verified stereo AAC fallback. Higher ceilings on the two Sintel samples selected their highest eligible source rather than upscaling it.
+
+After the network restriction was lifted, Big Buck Bunny's `2160` case passed in 810.06 seconds, producing a 1,372,838,976-byte WebM with verified 3840x2160 video, audio, and both tracks through the expected duration. The `best` case selected the same source but failed in 248.82 seconds: browser capture stopped receiving media, its early retry failed during playback preparation, and native range fallback received repeated HTTP 403 responses at byte offset 142,606,336. The process exited with one passed and one failed case before the pause was handled. No additional retries were launched. The raw run is recorded in the ignored `.cache/unrestricted-4k-matrix.log`.
 
 The user-supplied video completed all six settings in 898.51 seconds. Its 1080p case recovered from a transient browser-capture failure through the existing retry path. It exposes no 480p representation and has a 1080p maximum, so the ceiling behavior shown above is expected. Final sizes were 13,033,381 bytes (360p), 40,122,800 bytes (720p), and 75,277,725 bytes (1080p).
 
