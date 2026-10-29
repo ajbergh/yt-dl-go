@@ -39,7 +39,7 @@ If browser capture or adaptive byte-range delivery fails, the service uses the h
 
 ## Live resolution regression test
 
-The opt-in live matrix downloads three authorized videos at every supported quality ceiling (`480`, `720`, `1080`, `1440`, `2160`, and `best`). Choose samples with different durations. Each ceiling selects the best eligible source at or below that height; a source with a lower maximum resolution is still tested. A download that falls back below its selected source resolution fails the test.
+The opt-in live matrix downloads each supplied authorized video at every supported quality ceiling (`480`, `720`, `1080`, `1440`, `2160`, and `best`). Choose samples with different durations; additional comma-separated sample URLs are supported. Each ceiling selects the best eligible source at or below that height; a source with a lower maximum resolution is still tested. A download that falls back below its selected source resolution fails the test.
 
 Run from this directory in PowerShell:
 

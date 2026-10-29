@@ -43,30 +43,31 @@ type browserDualTrackProvider interface {
 type browserProviderFactory func(context.Context) (browserMediaProvider, error)
 
 type chromeBrowserProvider struct {
-	ctx             context.Context
-	cancel          context.CancelFunc
-	allocCancel     context.CancelFunc
-	release         func()
-	closeOnce       sync.Once
-	fetchOnce       sync.Once
-	fetchErr        error
-	uaOnce          sync.Once
-	uaErr           error
-	openMu          sync.Mutex
-	networkOnce     sync.Once
-	networkErr      error
-	networkMu       sync.Mutex
-	networkSABR     map[network.RequestID]*networkSABRResponse
-	networkDone     map[network.RequestID]error
-	pendingMu       sync.Mutex
-	pending         *browserRangeCapture
-	captureMu       sync.Mutex
-	capture         sabrResponseCapture
-	captureCtx      context.Context
-	captureStop     context.CancelFunc
-	metrics         *browserCaptureMetrics
-	playbackRate    int
-	playbackQuality string
+	ctx                 context.Context
+	cancel              context.CancelFunc
+	allocCancel         context.CancelFunc
+	release             func()
+	closeOnce           sync.Once
+	fetchOnce           sync.Once
+	fetchErr            error
+	uaOnce              sync.Once
+	uaErr               error
+	openMu              sync.Mutex
+	networkOnce         sync.Once
+	networkErr          error
+	networkMu           sync.Mutex
+	networkSABR         map[network.RequestID]*networkSABRResponse
+	networkDone         map[network.RequestID]error
+	pendingMu           sync.Mutex
+	pending             *browserRangeCapture
+	captureMu           sync.Mutex
+	capture             sabrResponseCapture
+	captureCtx          context.Context
+	captureStop         context.CancelFunc
+	metrics             *browserCaptureMetrics
+	playbackRate        int
+	playbackQuality     string
+	lastNetworkProgress atomic.Int64
 }
 
 type browserRangeCapture struct {
@@ -195,6 +196,12 @@ func (p *chromeBrowserProvider) Prepare(ctx context.Context, id string, format *
 	if format == nil || format.ItagNo <= 0 || !videoID.MatchString(id) {
 		return errBrowserUnavailable
 	}
+	failPrepare := func(stage string, err error) error {
+		if os.Getenv("YTDL_TRACE_PERFORMANCE") != "" {
+			log.Printf("browser prepare failed stage=%s error=%v", stage, err)
+		}
+		return errBrowserUnavailable
+	}
 	videoURL := browserWatchURL(id)
 	p.playbackRate = browserPlaybackRate
 	if format.Height >= 2160 {
@@ -254,22 +261,22 @@ func (p *chromeBrowserProvider) Prepare(ctx context.Context, id string, format *
 	var mediaReady, playing bool
 
 	if _, err := chromedp.Call(prepareCtx, network.Enable, browserNetworkParams()); err != nil {
-		return errBrowserUnavailable
+		return failPrepare("network", err)
 	}
 	if err := chromedp.Do(prepareCtx, chromedp.Navigate(videoURL)); err != nil {
-		return errBrowserUnavailable
+		return failPrepare("navigate", err)
 	}
 	var err error
 	mediaReady, err = chromedp.Run(prepareCtx, chromedp.Poll[bool](configureQualityScript, chromedp.WithPollingInterval(100*time.Millisecond), chromedp.WithPollingTimeout(browserPrepareTimeout)))
 	if err != nil {
-		return errBrowserUnavailable
+		return failPrepare("metadata-ready", err)
 	}
 	if err := chromedp.Do(prepareCtx, chromedp.Evaluate[chromedp.Void](playScript)); err != nil {
-		return errBrowserUnavailable
+		return failPrepare("start-playback", err)
 	}
 	playing, err = chromedp.Run(prepareCtx, chromedp.Poll[bool](playingScript, chromedp.WithPollingInterval(100*time.Millisecond), chromedp.WithPollingTimeout(browserPlaybackReadyTimeout)))
 	if err != nil {
-		return errBrowserUnavailable
+		return failPrepare("playing", err)
 	}
 	if !mediaReady || !playing {
 		return errBrowserUnavailable
@@ -375,6 +382,7 @@ func (p *chromeBrowserProvider) attachCapture(capture sabrResponseCapture, metri
 	p.captureCtx = captureCtx
 	p.captureStop = captureStop
 	p.metrics = metrics
+	p.lastNetworkProgress.Store(time.Now().UnixNano())
 	p.captureMu.Unlock()
 	var detachOnce sync.Once
 	detach := func() {
@@ -460,7 +468,10 @@ func (p *chromeBrowserProvider) waitForCapture(ctx context.Context, capture sabr
 			if ticks%10 == 0 {
 				p.tracePlaybackState()
 			}
-			if stalled() {
+			// A large SABR response can still be receiving bytes before its
+			// complete fragments reach the assembler. Do not call that an idle
+			// transfer; the overall capture deadline remains the hard bound.
+			if stalled() && time.Since(time.Unix(0, p.lastNetworkProgress.Load())) >= browserStreamIdleTimeout {
 				p.tracePlaybackState()
 				if os.Getenv("YTDL_TRACE_SABR") != "" {
 					log.Printf("browser capture stalled without new media for %s", browserStreamIdleTimeout)

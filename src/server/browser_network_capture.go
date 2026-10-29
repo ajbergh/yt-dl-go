@@ -209,6 +209,7 @@ func (p *chromeBrowserProvider) handleNetworkCaptureEvent(event interface{}) {
 		}
 		// The typed CDProto API decodes base64 event payloads into bytes.
 		response.appendData(event.Data)
+		p.lastNetworkProgress.Store(time.Now().UnixNano())
 	case *network.EventLoadingFinished:
 		p.finishNetworkResponse(event.RequestID, nil)
 	case *network.EventLoadingFailed:
@@ -266,6 +267,9 @@ func (p *chromeBrowserProvider) streamNetworkSABR(id network.RequestID, response
 		}
 	} else {
 		response.setBuffered(streamResult.BufferedData)
+		if len(streamResult.BufferedData) > 0 {
+			p.lastNetworkProgress.Store(time.Now().UnixNano())
+		}
 		select {
 		case <-response.done:
 		case <-captureCtx.Done():

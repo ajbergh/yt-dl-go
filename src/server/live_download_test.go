@@ -98,17 +98,21 @@ func TestLiveDownload(t *testing.T) {
 }
 
 // TestLiveResolutionMatrix downloads complete media through the real job API.
-// Set YTDL_LIVE_MATRIX_URLS to three comma-separated authorized YouTube URLs.
+// Set YTDL_LIVE_MATRIX_URLS to comma-separated authorized YouTube URLs.
 // Every supported quality ceiling is exercised, even when ceilings select the
 // same source resolution. A progressive fallback fails the resolution check.
 func TestLiveResolutionMatrix(t *testing.T) {
 	raw := os.Getenv("YTDL_LIVE_MATRIX_URLS")
 	if raw == "" {
-		t.Skip("set YTDL_LIVE_MATRIX_URLS to three comma-separated video URLs")
+		t.Skip("set YTDL_LIVE_MATRIX_URLS to comma-separated video URLs")
 	}
 	urls := strings.Split(raw, ",")
-	if len(urls) != 3 {
-		t.Fatal("YTDL_LIVE_MATRIX_URLS must contain exactly three URLs")
+	for index, rawURL := range urls {
+		canonical, kind, err := canonicalURL(strings.TrimSpace(rawURL))
+		if err != nil || kind != "video" {
+			t.Fatalf("sample %d must be a valid YouTube video URL", index+1)
+		}
+		urls[index] = canonical
 	}
 	for index, rawURL := range urls {
 		t.Run(fmt.Sprintf("sample_%d", index+1), func(t *testing.T) {

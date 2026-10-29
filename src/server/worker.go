@@ -2562,6 +2562,9 @@ func (s *server) deleteDownloadPart(j *jobState, itemIndex int, partKey string) 
 }
 
 func (s *server) downloadAdaptiveRanges(ctx context.Context, j *jobState, engine nativeClient, video *youtube.Video, format *youtube.Format, path, partKey string, itemIndex int, budget int64, progress func(int64), browserProvider browserMediaProvider) (result int64, browserUsed bool, err error) {
+	if os.Getenv("YTDL_TRACE_PERFORMANCE") != "" {
+		log.Printf("adaptive range begin itag=%d expected_bytes=%d", format.ItagNo, format.ContentLength)
+	}
 	if budget <= 0 || format.ContentLength <= 0 || format.ContentLength > budget {
 		return 0, false, errLimit
 	}
@@ -2736,6 +2739,9 @@ func (s *server) downloadAdaptiveRanges(ctx context.Context, j *jobState, engine
 				}
 				continue
 			}
+			if os.Getenv("YTDL_TRACE_PERFORMANCE") != "" {
+				log.Printf("adaptive range response itag=%d start=%d status=%d content_length=%d content_range=%q", format.ItagNo, start, resp.StatusCode, resp.ContentLength, resp.Header.Get("Content-Range"))
+			}
 			if _, seekErr := f.Seek(start, io.SeekStart); seekErr != nil {
 				_ = resp.Body.Close()
 				s.recordPersistenceFailure("seek adaptive download part", j.ID, seekErr)
@@ -2791,6 +2797,8 @@ func (s *server) downloadAdaptiveRanges(ctx context.Context, j *jobState, engine
 }
 
 func (s *server) refreshFormat(ctx context.Context, engine nativeClient, videoID string, itag int) (*youtube.Format, error) {
+	ctx, cancel := context.WithTimeout(ctx, metadataTimeout)
+	defer cancel()
 	video, err := engine.GetVideoContext(ctx, "https://www.youtube.com/watch?v="+videoID)
 	if err != nil || video == nil {
 		return nil, errMetadata
