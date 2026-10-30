@@ -25,6 +25,7 @@ import {
 
 export function HomePage() {
   const previewMedia = useRef<HTMLMediaElement | null>(null);
+  const previewDialog = useRef<HTMLDivElement | null>(null);
   const [tab, setTab] = useState<Tab>("queue");
   const {
     connection, serviceReady, jobs, setJobs, libraryJobs, libraryPage, setLibraryQuery, loadMoreLibrary, loadingLibraryMore, refreshLibrary, settings, setSettings, runtimeSettingSources, setRuntimeSettingSources, runtimeSettingValues, setRuntimeSettingValues, mp3Supported,
@@ -72,6 +73,39 @@ export function HomePage() {
   } = useJobs({
     connection, serviceReady, jobs, setJobs, queuedJobsOrdered, setNotice, refreshLibrary,
   });
+
+  const previewOpen = Boolean(preview);
+  useEffect(() => {
+    if (!previewOpen) return;
+    const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    previewDialog.current?.querySelector<HTMLButtonElement>("button")?.focus();
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        setPreview(null);
+      } else if (event.key === "Tab") {
+        const controls = previewDialog.current?.querySelectorAll<HTMLElement>('button:not([disabled]), video[controls], audio[controls], [tabindex="0"]');
+        if (!controls?.length) return;
+        const first = controls[0];
+        const last = controls[controls.length - 1];
+        if (event.shiftKey && document.activeElement === first) {
+          event.preventDefault();
+          last.focus();
+        } else if (!event.shiftKey && document.activeElement === last) {
+          event.preventDefault();
+          first.focus();
+        }
+      }
+    }
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("keydown", handleKeyDown);
+      document.body.style.overflow = previousOverflow;
+      previousFocus?.focus();
+    };
+  }, [previewOpen, setPreview]);
 
   const queueDisplayJobs = useMemo(() => {
     const rank = (job: DownloadJob) => job.status === "downloading" || job.status === "processing" ? 0 : job.status === "queued" ? 1 : job.status === "paused" ? 2 : 3;
@@ -285,13 +319,13 @@ export function HomePage() {
     <div className="dark min-h-screen bg-[#0c0d10] text-neutral-100 selection:bg-rose-600 selection:text-white">
       <header className="sticky top-0 z-30 border-b border-neutral-800/80 bg-neutral-950/95 backdrop-blur-md">
         <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-3 px-4 py-3 sm:px-6">
-          <div className="flex items-center gap-3">
+          <div className="flex min-w-0 items-center gap-2 sm:gap-3">
             <div className="relative flex size-10 items-center justify-center rounded-xl bg-gradient-to-br from-rose-600 to-red-700 shadow-lg shadow-rose-950/40">
               <DownloadCloud className="size-5 text-white" aria-hidden="true" />
               {activeCount > 0 && <span className="absolute -right-1 -top-1 grid size-4 place-items-center rounded-full bg-emerald-500 text-[9px] font-bold text-black">{activeCount}</span>}
             </div>
             <div>
-              <h1 className="text-base font-bold tracking-tight sm:text-lg">YouTube Downloader</h1>
+              <h1 className="text-sm font-bold tracking-tight min-[360px]:text-base sm:text-lg">YouTube Downloader</h1>
               <p className="hidden text-xs text-neutral-400 sm:block">Native downloads · SQLite-backed history</p>
             </div>
           </div>
@@ -301,10 +335,10 @@ export function HomePage() {
               ["queue", Layers, "Queue"], ["library", Film, "Library"], ["settings", Settings, "Settings"],
             ] as const).map(([value, Icon, label]) => (
               <button key={value} type="button" onClick={() => setTab(value)} aria-current={tab === value ? "page" : undefined}
-                className={`flex flex-1 items-center justify-center gap-2 rounded-lg px-3 py-2 text-xs font-semibold transition-colors sm:flex-none ${tab === value ? "bg-neutral-800 text-white shadow-sm" : "text-neutral-400 hover:text-neutral-200"}`}>
-                <Icon className="size-3.5 text-rose-400" aria-hidden="true" />{label}
-                {value === "queue" && visibleQueueRows.length > 0 && <span className="rounded-full bg-rose-600 px-1.5 text-[10px] text-white">{visibleQueueRows.length}</span>}
-                {value === "library" && libraryTotalJobs > 0 && <span className="rounded-full bg-neutral-700 px-1.5 text-[10px] text-neutral-200">{libraryTotalJobs}</span>}
+                className={`flex min-w-0 flex-1 items-center justify-center gap-1.5 rounded-lg px-2 py-2 sm:px-3 text-xs font-semibold transition-colors sm:flex-none ${tab === value ? "bg-neutral-800 text-white shadow-sm" : "text-neutral-400 hover:text-neutral-200"}`}>
+                <Icon className="hidden size-3.5 shrink-0 text-rose-400 min-[360px]:block" aria-hidden="true" />{label}
+                {value === "queue" && visibleQueueRows.length > 0 && <span className="rounded-full bg-rose-600 px-1.5 text-xs text-white">{visibleQueueRows.length}</span>}
+                {value === "library" && libraryTotalJobs > 0 && <span className="rounded-full bg-neutral-700 px-1.5 text-xs text-neutral-200">{libraryTotalJobs}</span>}
               </button>
             ))}
           </nav>
@@ -314,7 +348,7 @@ export function HomePage() {
               {serviceReady ? <><Activity className="size-3.5 text-emerald-400" aria-hidden="true" /><span className="text-emerald-300">Service connected</span></>
                 : <><AlertCircle className="size-3.5 text-amber-400" aria-hidden="true" /><span className="text-neutral-300">{serviceError ? "Reconnecting…" : "Connecting…"}</span></>}
             </div>
-            <button type="button" className={primaryButton} onClick={() => { setTab("queue"); document.getElementById("new-download")?.scrollIntoView({ behavior: "smooth", block: "start" }); }}>
+            <button type="button" className={primaryButton} onClick={() => { setTab("queue"); window.requestAnimationFrame(() => { document.getElementById("new-download")?.scrollIntoView({ behavior: "smooth", block: "start" }); document.getElementById("video-url")?.focus({ preventScroll: true }); }); }}>
               <Plus className="size-4" aria-hidden="true" /><span className="hidden sm:inline">Add links</span><span className="sm:hidden">Add</span>
             </button>
           </div>
@@ -322,7 +356,7 @@ export function HomePage() {
       </header>
 
       <main className="mx-auto w-full max-w-7xl space-y-6 px-4 py-6 sm:px-6">
-        {notice && <div role="status" className="flex items-start gap-2 rounded-xl border border-emerald-800/60 bg-emerald-950/40 px-4 py-3 text-sm text-emerald-200"><Check className="mt-0.5 size-4 shrink-0" aria-hidden="true" />{notice}</div>}
+        {notice && <div role="status" className="flex items-center gap-2 rounded-xl border border-emerald-800/60 bg-emerald-950/40 px-4 py-3 text-sm text-emerald-200"><Check className="size-4 shrink-0" aria-hidden="true" /><span className="flex-1">{notice}</span><button type="button" aria-label="Dismiss notification" className="grid size-9 shrink-0 place-items-center rounded-lg hover:bg-emerald-900/50" onClick={() => setNotice("")}><X className="size-4" aria-hidden="true" /></button></div>}
         {!serviceReady && tab !== "settings" && <div role={serviceError ? "alert" : "status"} className="flex items-start gap-2 rounded-xl border border-amber-800/60 bg-amber-950/40 px-4 py-3 text-sm text-amber-200"><AlertCircle className="mt-0.5 size-4 shrink-0" aria-hidden="true" />{serviceError ? `${serviceError} The app will retry automatically.` : "Connecting to the built-in Go service…"}</div>}
         {pollError && <div role="alert" className="flex items-start gap-2 rounded-xl border border-amber-800/60 bg-amber-950/40 px-4 py-3 text-sm text-amber-200"><AlertCircle className="mt-0.5 size-4 shrink-0" aria-hidden="true" />{pollError}</div>}
         {actionError && <div role="alert" className="flex items-start gap-2 rounded-xl border border-red-900 bg-red-950/40 px-4 py-3 text-sm text-red-200"><X className="mt-0.5 size-4 shrink-0" aria-hidden="true" />{actionError}</div>}
@@ -434,9 +468,9 @@ export function HomePage() {
           toggleNotifications={toggleNotifications}
         />}
       </main>
-      {preview && <div role="dialog" aria-modal="true" aria-labelledby="media-preview-title" className="fixed inset-0 z-50 grid place-items-center bg-black/80 p-4" onMouseDown={event => { if (event.target === event.currentTarget) setPreview(null); }}>
+      {preview && <div ref={previewDialog} role="dialog" aria-modal="true" aria-labelledby="media-preview-title" className="fixed inset-0 z-50 grid place-items-center overflow-y-auto bg-black/80 p-4" onMouseDown={event => { if (event.target === event.currentTarget) setPreview(null); }}>
         <div className="w-full max-w-4xl overflow-hidden rounded-2xl border border-neutral-700 bg-neutral-950 shadow-2xl">
-          <div className="flex items-center justify-between gap-3 border-b border-neutral-800 px-4 py-3"><div className="min-w-0"><p className="text-[10px] font-bold uppercase tracking-wider text-rose-400">Local preview</p><h2 id="media-preview-title" className="truncate text-sm font-semibold text-white">{preview.title}</h2></div><button type="button" className={button} onClick={() => setPreview(null)} aria-label="Close media preview"><X className="size-4" aria-hidden="true" />Close</button></div>
+          <div className="flex items-center justify-between gap-3 border-b border-neutral-800 px-4 py-3"><div className="min-w-0"><p className="text-xs font-bold uppercase tracking-wider text-rose-400">Local preview</p><h2 id="media-preview-title" className="truncate text-sm font-semibold text-white">{preview.title}</h2></div><button type="button" className={button} onClick={() => setPreview(null)} aria-label="Close media preview"><X className="size-4" aria-hidden="true" />Close</button></div>
           <div className="bg-black p-3 sm:p-5">
             {preview.mimeType.startsWith("audio/") ? <audio ref={element => { previewMedia.current = element; }} controls preload="metadata" src={preview.url} className="w-full">Your browser cannot play this audio format.</audio>
               : <video ref={element => { previewMedia.current = element; }} controls preload="metadata" src={preview.url} className="max-h-[70vh] w-full rounded-lg bg-black">Your browser cannot play this video format.</video>}
@@ -444,16 +478,16 @@ export function HomePage() {
               <h3 className="px-2 pb-2 text-xs font-semibold text-neutral-300">Chapters</h3>
               <div className="grid gap-1 sm:grid-cols-2">
                 {preview.chapters.map(chapter => <button key={`${chapter.startMs}-${chapter.title}`} type="button" className="flex min-w-0 items-center gap-3 rounded-md px-2 py-2 text-left text-xs text-neutral-200 hover:bg-neutral-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-rose-400" onClick={() => { if (previewMedia.current) previewMedia.current.currentTime = chapter.startMs / 1000; }}>
-                  <span className="shrink-0 font-mono text-neutral-500">{Math.floor(chapter.startMs / 60000)}:{String(Math.floor(chapter.startMs / 1000) % 60).padStart(2, "0")}</span>
+                  <span className="shrink-0 font-mono text-neutral-400">{Math.floor(chapter.startMs / 60000)}:{String(Math.floor(chapter.startMs / 1000) % 60).padStart(2, "0")}</span>
                   <span className="truncate">{chapter.title}</span>
                 </button>)}
               </div>
             </div>}
-            <p className="mt-3 text-[10px] text-neutral-500">Preview uses a short-lived file-scoped ticket with HTTP Range support. Playback never starts automatically.</p>
+            <p className="mt-3 text-xs text-neutral-400">Preview uses a short-lived file-scoped ticket with HTTP Range support. Playback never starts automatically.</p>
           </div>
         </div>
       </div>}
-      <footer className="mx-auto flex max-w-7xl items-center justify-between gap-3 px-4 pb-8 text-[10px] text-neutral-600 sm:px-6"><span className="flex items-center gap-1.5"><Clock3 className="size-3" aria-hidden="true" />Live job updates from the Go service</span><span className="flex items-center gap-1.5"><HardDrive className="size-3" aria-hidden="true" />SQLite-backed history</span></footer>
+      <footer className="mx-auto flex max-w-7xl items-center justify-between gap-3 px-4 pb-8 text-xs text-neutral-400 sm:px-6"><span className="flex items-center gap-1.5"><Clock3 className="size-3" aria-hidden="true" />Live job updates from the Go service</span><span className="flex items-center gap-1.5"><HardDrive className="size-3" aria-hidden="true" />SQLite-backed history</span></footer>
     </div>
   );
 }

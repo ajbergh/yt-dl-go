@@ -276,6 +276,7 @@ describe("Downloader UI and Go API integration", () => {
     };
     await remount();
     await click(button("Settings"));
+    await click(container.querySelector('button[aria-label="Advanced settings"]'));
     await act(async () => new Promise(resolve => setTimeout(resolve, 0)));
     expect(requests.some(item => item.path === "/api/diagnostics")).toBe(true);
     expect(container.textContent).toContain("Saved data diagnostics");
@@ -455,8 +456,52 @@ describe("Downloader UI and Go API integration", () => {
     expect(container.textContent).toContain("Automatic self-replacement remains disabled");
   });
 
+  test("hides advanced tweaks initially and preserves edits when collapsed", async () => {
+    await click(button("Settings"));
+    const toggle = () => container.querySelector('button[aria-label="Advanced settings"]');
+    expect(toggle().getAttribute("aria-checked")).toBe("false");
+    expect(container.querySelector("#advanced-settings")).toBeNull();
+    expect(requests.some(item => item.path === "/api/diagnostics")).toBe(false);
+    expect(container.querySelector("#download-location")).toBeTruthy();
+    expect(container.querySelector('button[aria-label="System notifications"]')).toBeTruthy();
+    expect(container.textContent).toContain("Best available");
+    await click(toggle());
+    expect(toggle().getAttribute("aria-expanded")).toBe("true");
+    await setSelect(container.querySelector('select[aria-label="Default video format"]'), "vp9");
+    await click(toggle());
+    expect(container.querySelector("#advanced-settings")).toBeNull();
+    expect(container.textContent).toContain("Prefer VP9");
+    await click(button("Save preferences"));
+    const save = requests.find(item => item.path === "/api/settings" && item.method === "PUT");
+    expect(JSON.parse(save.body).defaultVideoStrategy).toBe("vp9");
+    await click(toggle());
+    expect(container.querySelector('select[aria-label="Default video format"]').value).toBe("vp9");
+  });
+
+  test("restores automatic video selection while preserving output and transfer preferences", async () => {
+    await click(button("Settings"));
+    await click(container.querySelector('button[aria-label="Advanced settings"]'));
+    await setSelect(container.querySelector('select[aria-label="Default maximum video quality"]'), "720");
+    await setSelect(container.querySelector('select[aria-label="Default video format"]'), "av1");
+    await click(container.querySelector('input[aria-label="Allow 360p recovery fallback"]'));
+    await setInput(container.querySelector('input[aria-label="Global bandwidth limit in MiB per second"]'), "5");
+    await click(container.querySelector('button[aria-label="Advanced settings"]'));
+    await click(button("Use automatic video defaults"));
+    await click(button("Save preferences"));
+    const save = requests.find(item => item.path === "/api/settings" && item.method === "PUT");
+    const saved = JSON.parse(save.body);
+    expect(saved.defaultQuality).toBe("best");
+    expect(saved.defaultVideoStrategy).toBe("best");
+    expect(saved.allow360pFallback).toBe(false);
+    expect(saved.bandwidthLimitBytesPerSec).toBe(5 * 1024 * 1024);
+    expect(saved.outputFileMode).toBe("0600");
+    expect(saved.outputFolderMode).toBe("0700");
+    expect(saved.storageMode).toBe("managed-published");
+  });
+
   test("persists only a supported preference through the service API", async () => {
     await click(button("Settings"));
+    await click(container.querySelector('button[aria-label="Advanced settings"]'));
     expect(container.textContent).toContain("Service runtime limits");
     expect(container.textContent).toContain("source: SQLite (active)");
     expect(container.textContent).toContain("Active value: 10737418240");
@@ -475,6 +520,7 @@ describe("Downloader UI and Go API integration", () => {
   });
   test("keeps 360p recovery disabled unless the user opts in", async () => {
     await click(button("Settings"));
+    await click(container.querySelector('button[aria-label="Advanced settings"]'));
     const fallback = container.querySelector('input[aria-label="Allow 360p recovery fallback"]');
     expect(fallback).toBeTruthy();
     expect(fallback.checked).toBe(false);
@@ -485,6 +531,7 @@ describe("Downloader UI and Go API integration", () => {
   });
   test("persists a global bandwidth limit in MiB per second", async () => {
     await click(button("Settings"));
+    await click(container.querySelector('button[aria-label="Advanced settings"]'));
     const bandwidth = container.querySelector('input[aria-label="Global bandwidth limit in MiB per second"]');
     expect(bandwidth).toBeTruthy();
     expect(bandwidth.value).toBe("0");
@@ -582,6 +629,7 @@ describe("Downloader UI and Go API integration", () => {
   });
   test("persists the selected storage policy for new jobs", async () => {
     await click(button("Settings"));
+    await click(container.querySelector('button[aria-label="Advanced settings"]'));
     const publishedOnly = container.querySelector('input[name="storage-mode"][value="published-only"]');
     await click(publishedOnly);
     await click(button("Save preferences"));
@@ -778,8 +826,8 @@ describe("Downloader UI and Go API integration", () => {
     await connect();
     await click(button("Library"));
     expect(container.textContent).toContain("2 of 2 jobs visible");
-    expect(container.textContent).toContain("Managed copies");
-    expect(container.textContent).toContain("Published copies");
+    expect(container.textContent).toContain("App storage");
+    expect(container.textContent).toContain("Output folder");
 
     await setSelect(container.querySelector('select[aria-label="Filter library by category"]'), "Music");
     expect(container.querySelectorAll('section[aria-labelledby="library-heading"] article')).toHaveLength(1);
@@ -816,12 +864,12 @@ describe("Downloader UI and Go API integration", () => {
     await connect();
     await click(button("Library"));
     expect(button("Remove")).toBeTruthy();
-    expect(button("Managed copy")).toBeTruthy();
-    expect(button("Published copy")).toBeTruthy();
+    expect(button("Delete app copy")).toBeTruthy();
+    expect(button("Delete output copy")).toBeTruthy();
     expect(button("Delete everywhere")).toBeTruthy();
     expect(button("Reveal")).toBeTruthy();
     expect(button("Folder")).toBeTruthy();
-    expect(button("Path")).toBeTruthy();
+    expect(button("Copy path")).toBeTruthy();
 
     await click(button("Reveal"));
     const filesystemRequest = requests.find(item => item.path.endsWith("/filesystem") && item.method === "POST");
@@ -830,11 +878,11 @@ describe("Downloader UI and Go API integration", () => {
     const originalConfirm = testWindow.confirm;
     testWindow.confirm = () => true;
     try {
-      await click(button("Published copy"));
+      await click(button("Delete output copy"));
       expect(requests.some(item => item.path.endsWith("/published") && item.method === "DELETE")).toBe(true);
       expect(container.textContent).toContain("Published output files deleted");
 
-      await click(button("Managed copy"));
+      await click(button("Delete app copy"));
       expect(requests.some(item => item.path.endsWith("/managed") && item.method === "DELETE")).toBe(true);
       expect(container.textContent).toContain("App-managed media copies deleted");
     } finally {
@@ -850,11 +898,15 @@ describe("Downloader UI and Go API integration", () => {
     await remount();
     await connect();
     await click(button("Library"));
-    await click(button("Preview"));
+    const previewButton = button("Preview");
+    previewButton.focus();
+    await click(previewButton);
     const ticketRequest = requests.find(item => item.path.endsWith("/ticket") && item.method === "POST");
     expect(JSON.parse(ticketRequest.body)).toEqual({ fileId: "preview-file", inline: true });
     const dialog = container.querySelector('[role="dialog"]');
     expect(dialog).toBeTruthy();
+    expect(document.activeElement.getAttribute("aria-label")).toBe("Close media preview");
+    expect(document.body.style.overflow).toBe("hidden");
     expect(dialog.textContent).toContain("Preview clip");
     const video = dialog.querySelector("video");
     expect(video).toBeTruthy();
@@ -866,6 +918,12 @@ describe("Downloader UI and Go API integration", () => {
     expect(video.currentTime).toBe(75);
     await click(button("Close"));
     expect(container.querySelector('[role="dialog"]')).toBeFalsy();
+    expect(document.activeElement).toBe(previewButton);
+    expect(document.body.style.overflow).toBe("");
+    await click(previewButton);
+    await act(async () => { document.dispatchEvent(new testWindow.KeyboardEvent("keydown", { key: "Escape", bubbles: true })); });
+    expect(container.querySelector('[role="dialog"]')).toBeFalsy();
+    expect(document.activeElement).toBe(previewButton);
   });
 
   test("requests an archive ticket and a native browser download", async () => {

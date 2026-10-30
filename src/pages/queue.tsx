@@ -94,13 +94,13 @@ export function QueuePage({
                 <form onSubmit={addDownloads} className="min-w-0 p-5 sm:p-7">
                   <div className="mb-5 flex flex-wrap items-start justify-between gap-3">
                     <div>
-                      <p className="mb-1 flex items-center gap-2 text-[11px] font-bold uppercase tracking-[0.16em] text-rose-400"><Plus className="size-3.5" aria-hidden="true" />Add links & batch process</p>
+                      <p className="mb-1 flex items-center gap-2 text-xs font-bold uppercase tracking-[0.16em] text-rose-400"><Plus className="size-3.5" aria-hidden="true" />Add links & batch process</p>
                       <h2 id="new-download-heading" className="text-2xl font-bold tracking-tight">New download</h2>
                       <p className="mt-1 text-xs text-neutral-400">Inspect real YouTube metadata and supported streams before adding jobs.</p>
                     </div>
                     <div className="flex items-center rounded-lg border border-neutral-800 bg-neutral-950 p-1 text-xs">
-                      <button type="button" onClick={() => { setBatchMode(false); setDrafts([]); }} className={`rounded-md px-3 py-1.5 font-semibold ${!batchMode ? "bg-neutral-800 text-white" : "text-neutral-400 hover:text-white"}`}>Single link</button>
-                      <button type="button" onClick={() => { setBatchMode(true); setDrafts([]); }} className={`rounded-md px-3 py-1.5 font-semibold ${batchMode ? "bg-neutral-800 text-white" : "text-neutral-400 hover:text-white"}`}>Batch URLs</button>
+                      <button type="button" aria-pressed={!batchMode} onClick={() => { setBatchMode(false); setDrafts([]); }} className={`rounded-md px-3 py-1.5 font-semibold ${!batchMode ? "bg-neutral-800 text-white" : "text-neutral-400 hover:text-white"}`}>Single link</button>
+                      <button type="button" aria-pressed={batchMode} onClick={() => { setBatchMode(true); setDrafts([]); }} className={`rounded-md px-3 py-1.5 font-semibold ${batchMode ? "bg-neutral-800 text-white" : "text-neutral-400 hover:text-white"}`}>Batch URLs</button>
                     </div>
                   </div>
 
@@ -109,23 +109,23 @@ export function QueuePage({
                       {batchMode ? <textarea id="video-url" rows={3} value={url} onChange={event => { setUrl(event.target.value); setFormError(""); }} placeholder="One HTTPS YouTube URL per line" autoComplete="off" spellCheck={false} className={`${field} mt-2 resize-y font-mono text-xs`} />
                         : <input id="video-url" type="url" value={url} onChange={event => { setUrl(event.target.value); setFormError(""); }} placeholder="https://www.youtube.com/watch?v=..." autoComplete="off" spellCheck={false} className={`${field} mt-2 min-h-12`} />}
                     </label>
-                    <button type="button" onClick={() => void inspectLinks()} disabled={!serviceReady || inspecting || !url.trim()} className={`${button} mt-5 min-h-12 px-4`}>
+                    <button type="button" onClick={() => void inspectLinks()} disabled={!serviceReady || inspecting || !url.trim()} className={`${button} min-h-12 px-4 sm:mt-5`}>
                       {inspecting ? <LoaderCircle className="size-4 animate-spin" aria-hidden="true" /> : <Search className="size-4 text-rose-400" aria-hidden="true" />}
                       {inspecting ? "Inspecting…" : "Inspect qualities"}
                     </button>
                   </div>
-                  <p className="mt-2 flex items-start gap-1.5 text-[11px] text-neutral-500"><CircleHelp className="mt-0.5 size-3 shrink-0" aria-hidden="true" />Playlists are processed in order. Hidden or inaccessible entries cannot be independently verified.</p>
+                  <p className="mt-2 flex items-start gap-1.5 text-xs text-neutral-400"><CircleHelp className="mt-0.5 size-3 shrink-0" aria-hidden="true" />Playlists are processed in order. Hidden or inaccessible entries cannot be independently verified.</p>
 
                   {!serviceReady && <div className="mt-4 rounded-xl border border-amber-800/60 bg-amber-950/30 p-3 text-xs text-amber-200">The app is connecting to its built-in Go service. You can queue downloads as soon as startup completes.</div>}
                   {formError && <p role="alert" className="mt-4 text-sm text-red-300">{formError}</p>}
 
                   {drafts.length > 0 && <div className="mt-5 space-y-3 border-t border-neutral-800 pt-4">
                     <div className="flex flex-wrap items-center justify-between gap-2">
-                      <div><h3 className="text-xs font-bold uppercase tracking-wider text-neutral-300">Inspection results</h3><p className="mt-1 text-[11px] text-neutral-500">Quality options and metadata are returned by the Go backend; no media URLs are exposed.</p></div>
-                      <span className="rounded-full bg-neutral-800 px-2 py-1 text-[10px] text-neutral-300">{drafts.length} item{drafts.length === 1 ? "" : "s"}</span>
+                      <div><h3 className="text-xs font-bold uppercase tracking-wider text-neutral-300">Inspection results</h3><p className="mt-1 text-xs text-neutral-400">Quality options and metadata are returned by the Go backend; no media URLs are exposed.</p></div>
+                      <span className="rounded-full bg-neutral-800 px-2 py-1 text-xs text-neutral-300">{drafts.length} item{drafts.length === 1 ? "" : "s"}</span>
                     </div>
                     {drafts.length > 1 && <div className="rounded-xl border border-neutral-800 bg-neutral-900/70 p-3">
-                      <div className="mb-2 flex items-center justify-between gap-2"><div><p className="text-[11px] font-bold text-neutral-200">Apply to all inspected items</p><p className="mt-0.5 text-[10px] text-neutral-500">Batch values update eligible items now; each card can still be overridden afterward.</p></div><Layers className="size-4 text-rose-400" aria-hidden="true" /></div>
+                      <div className="mb-2 flex items-center justify-between gap-2"><div><p className="text-xs font-bold text-neutral-200">Apply to all inspected items</p><p className="mt-0.5 text-xs text-neutral-400">Batch values update eligible items now; each card can still be overridden afterward.</p></div><Layers className="size-4 text-rose-400" aria-hidden="true" /></div>
                       <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-6">
                         <select aria-label="Apply media type to all" defaultValue="" onChange={event => { if (event.target.value) applyMediaTypeToAll(event.target.value as Draft["mediaType"]); event.currentTarget.value = ""; }} className={`${field} py-2 text-xs`}>
                           <option value="" disabled>Media type…</option><option value="video">All video</option><option value="audio">All eligible audio</option>
@@ -149,54 +149,54 @@ export function QueuePage({
                     </div>}
                     {drafts.map((draft, index) => <article key={`${draft.url}-${index}`} className="grid gap-3 rounded-xl border border-neutral-800 bg-neutral-950/60 p-3 sm:grid-cols-[8rem_1fr_12rem] sm:items-center">
                       {draft.thumbnailUrl ? <img src={draft.thumbnailUrl} alt="" referrerPolicy="no-referrer" className="aspect-video w-full rounded-lg bg-neutral-900 object-cover sm:w-32" />
-                        : <div className="grid aspect-video w-full place-items-center rounded-lg bg-neutral-900 text-neutral-600 sm:w-32">{draft.kind === "playlist" ? <ListVideo className="size-7" aria-hidden="true" /> : <Film className="size-7" aria-hidden="true" />}</div>}
+                        : <div className="grid aspect-video w-full place-items-center rounded-lg bg-neutral-900 text-neutral-400 sm:w-32">{draft.kind === "playlist" ? <ListVideo className="size-7" aria-hidden="true" /> : <Film className="size-7" aria-hidden="true" />}</div>}
                       <div className="min-w-0">
-                        <div className="mb-1 flex flex-wrap items-center gap-1.5 text-[10px] text-neutral-400"><span className="rounded bg-neutral-800 px-1.5 py-0.5 uppercase">{draft.kind}</span>{draft.author && <span>{draft.author}</span>}{draft.publishDate && <span>· {dateLabel(draft.publishDate)}</span>}</div>
+                        <div className="mb-1 flex flex-wrap items-center gap-1.5 text-xs text-neutral-400"><span className="rounded bg-neutral-800 px-1.5 py-0.5 uppercase">{draft.kind}</span>{draft.author && <span>{draft.author}</span>}{draft.publishDate && <span>· {dateLabel(draft.publishDate)}</span>}</div>
                         <h4 className="break-words text-sm font-semibold text-white">{draft.title || "Untitled YouTube media"}</h4>
-                        <p className="mt-1 text-[11px] text-neutral-500">{draft.kind === "playlist" ? `${draft.itemCount ?? 0} exposed entries` : durationLabel(draft.durationSeconds)}</p>
-                        {draft.note && <p className="mt-1 text-[10px] leading-relaxed text-amber-300/80">{draft.note}</p>}
+                        <p className="mt-1 text-xs text-neutral-400">{draft.kind === "playlist" ? `${draft.itemCount ?? 0} exposed entries` : durationLabel(draft.durationSeconds)}</p>
+                        {draft.note && <p className="mt-1 text-xs leading-relaxed text-amber-300/80">{draft.note}</p>}
                       </div>
                       <div className="space-y-2">
-                        <label className="block text-[11px] font-medium text-neutral-400">Download as
+                        <label className="block text-xs font-medium text-neutral-400">Download as
                           <select aria-label={`Media type for ${draft.title || `item ${index + 1}`}`} value={draft.mediaType} onChange={event => setDrafts(previous => previous.map((item, itemIndex) => itemIndex === index ? { ...item, mediaType: event.target.value as Draft["mediaType"], ...(event.target.value === "audio" && !mp3Supported ? { audioFormat: "m4a" as const } : {}) } : item))} className={`${field} mt-1.5 py-2 text-xs`}>
                             <option value="video">Video</option>
                             <option value="audio" disabled={!draft.audioOnlyAvailable}>Audio only{!draft.audioOnlyAvailable ? " (unavailable)" : ""}</option>
                           </select>
                         </label>
-                        {draft.mediaType === "audio" ? <><label className="block text-[11px] font-medium text-neutral-400">Audio format
+                        {draft.mediaType === "audio" ? <><label className="block text-xs font-medium text-neutral-400">Audio format
                           <select aria-label={`Audio format for ${draft.title || `item ${index + 1}`}`} value={draft.audioFormat} onChange={event => setDrafts(previous => previous.map((item, itemIndex) => itemIndex === index ? { ...item, audioFormat: event.target.value as Draft["audioFormat"], ...(event.target.value === "m4a" ? { splitByChapter: false } : {}) } : item))} className={`${field} mt-1.5 py-2 text-xs`}>
                             <option value="mp3" disabled={!mp3Supported}>MP3 · tagged</option><option value="m4a">M4A · original AAC</option>
                           </select>
-                        </label>{draft.audioFormat === "mp3" && <label className="block text-[11px] font-medium text-neutral-400">MP3 bitrate
+                        </label>{draft.audioFormat === "mp3" && <label className="block text-xs font-medium text-neutral-400">MP3 bitrate
                           <select aria-label={`MP3 bitrate for ${draft.title || `item ${index + 1}`}`} value={draft.audioBitrate} onChange={event => setDrafts(previous => previous.map((item, itemIndex) => itemIndex === index ? { ...item, audioBitrate: event.target.value } : item))} className={`${field} mt-1.5 py-2 text-xs`}>
                             {["128k", "192k", "256k", "320k"].map(value => <option key={value} value={value}>{value}</option>)}
                           </select>
-                        </label>}{draft.audioFormat === "mp3" && <label className="flex items-center gap-2 text-[11px] font-medium text-neutral-300"><input type="checkbox" checked={draft.splitByChapter} onChange={event => setDrafts(previous => previous.map((item, itemIndex) => itemIndex === index ? { ...item, splitByChapter: event.target.checked } : item))} className="accent-sky-500" />Split into chapter files when chapters are available</label>}</> : <><label className="block text-[11px] font-medium text-neutral-400">Maximum quality
+                        </label>}{draft.audioFormat === "mp3" && <label className="flex items-center gap-2 text-xs font-medium text-neutral-300"><input type="checkbox" checked={draft.splitByChapter} onChange={event => setDrafts(previous => previous.map((item, itemIndex) => itemIndex === index ? { ...item, splitByChapter: event.target.checked } : item))} className="accent-sky-500" />Split into chapter files when chapters are available</label>}</> : <><label className="block text-xs font-medium text-neutral-400">Maximum quality
                           <select aria-label={`Quality for ${draft.title || `item ${index + 1}`}`} value={draft.selectedQuality} onChange={event => setDrafts(previous => previous.map((item, itemIndex) => itemIndex === index ? { ...item, selectedQuality: event.target.value as Quality } : item))} className={`${field} mt-1.5 py-2 text-xs`}>
                             {(draft.availableQualities ?? (draft.kind === "playlist"
                               ? (Object.entries(qualityLabels) as [Quality, string][]).map(([value, label]) => ({ value, label, height: 0 }))
                               : [{ value: "best" as const, label: "Best available", height: 0 }])).map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
                           </select>
                         </label>
-                        <label className="block text-[11px] font-medium text-neutral-400">Video format
+                        <label className="block text-xs font-medium text-neutral-400">Video format
                           <select aria-label={`Video format for ${draft.title || `item ${index + 1}`}`} value={draft.selectedVideoStrategy} onChange={event => setDrafts(previous => previous.map((item, itemIndex) => itemIndex === index ? { ...item, selectedVideoStrategy: event.target.value as Draft["selectedVideoStrategy"] } : item))} className={`${field} mt-1.5 py-2 text-xs`}>
                             {(Object.entries(videoStrategyLabels) as [Draft["selectedVideoStrategy"], string][]).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
                           </select>
-                          <span className="mt-1 block text-[10px] leading-relaxed text-neutral-500">{draft.selectedVideoStrategy === "compatibility" ? "Strict MP4 output; may use a lower resolution when H.264/AAC is the highest compatible option." : draft.selectedVideoStrategy === "best" ? "Automatically chooses the highest-quality supported MP4 or WebM representation." : `Prefers ${draft.selectedVideoStrategy.toUpperCase()} WebM; falls back transparently when unavailable.`}</span>
+                          <span className="mt-1 block text-xs leading-relaxed text-neutral-400">{draft.selectedVideoStrategy === "compatibility" ? "Strict MP4 output; may use a lower resolution when H.264/AAC is the highest compatible option." : draft.selectedVideoStrategy === "best" ? "Automatically chooses the highest-quality supported MP4 or WebM representation." : `Prefers ${draft.selectedVideoStrategy.toUpperCase()} WebM; falls back transparently when unavailable.`}</span>
                         </label></>}
-                        <label className="block text-[11px] font-medium text-neutral-400">Captions
+                        <label className="block text-xs font-medium text-neutral-400">Captions
                           <select aria-label={`Captions for ${draft.title || `item ${index + 1}`}`} value={draft.subtitleLanguage} onChange={event => setDrafts(previous => previous.map((item, itemIndex) => itemIndex === index ? { ...item, subtitleLanguage: event.target.value } : item))} className={`${field} mt-1.5 py-2 text-xs`}>
                             <option value="">None</option>
                             {(draft.captionTracks ?? []).map(track => <option key={track.languageCode} value={track.languageCode}>{track.label}{track.autoGenerated ? " · auto" : ""}</option>)}
                           </select>
                         </label>
-                        {draft.subtitleLanguage && <label className="block text-[11px] font-medium text-neutral-400">Caption format
+                        {draft.subtitleLanguage && <label className="block text-xs font-medium text-neutral-400">Caption format
                           <select aria-label={`Caption format for ${draft.title || `item ${index + 1}`}`} value={draft.subtitleFormat} onChange={event => setDrafts(previous => previous.map((item, itemIndex) => itemIndex === index ? { ...item, subtitleFormat: event.target.value as Draft["subtitleFormat"] } : item))} className={`${field} mt-1.5 py-2 text-xs`}>
                             <option value="vtt">WebVTT (.vtt)</option>
                             <option value="srt">SubRip (.srt)</option>
                           </select>
                         </label>}
-                        <label className="block text-[11px] font-medium text-neutral-400">Category
+                        <label className="block text-xs font-medium text-neutral-400">Category
                           <select aria-label={`Category for ${draft.title || `item ${index + 1}`}`} value={draft.category} onChange={event => setDrafts(previous => previous.map((item, itemIndex) => itemIndex === index ? { ...item, category: event.target.value } : item))} className={`${field} mt-1.5 py-2 text-xs`}>
                             {settings.userCategories.map(category => <option key={category} value={category}>{category}</option>)}
                           </select>
@@ -210,8 +210,8 @@ export function QueuePage({
                           return <>
                             <div className="flex flex-wrap items-center justify-between gap-2">
                               <div>
-                                <p className="text-[11px] font-semibold text-neutral-200">{selected.length} of {selectable.length} selectable playlist items selected</p>
-                                <p className="mt-0.5 text-[10px] text-neutral-500">{draft.itemCount ?? playlistEntries(draft).length} entries exposed by YouTube{estimate > 0 ? ` · Approx. MP3 output ${formatBytes(estimate)}` : ""}</p>
+                                <p className="text-xs font-semibold text-neutral-200">{selected.length} of {selectable.length} selectable playlist items selected</p>
+                                <p className="mt-0.5 text-xs text-neutral-400">{draft.itemCount ?? playlistEntries(draft).length} entries exposed by YouTube{estimate > 0 ? ` · Approx. MP3 output ${formatBytes(estimate)}` : ""}</p>
                               </div>
                               <div className="flex flex-wrap gap-1.5">
                                 <button type="button" className={button} onClick={() => updatePlaylistSelection(index, selectable.map(item => item.index!))}>Select all</button>
@@ -226,8 +226,8 @@ export function QueuePage({
                                 const checked = selectableEntry && draft.selectedPlaylistIndexes.includes(originalIndex);
                                 return <label key={`${entry.id || "unavailable"}-${originalIndex}`} className={`flex items-center gap-3 rounded-md px-2 py-2 ${selectableEntry ? "cursor-pointer hover:bg-neutral-900" : "cursor-not-allowed opacity-50"}`}>
                                   <input type="checkbox" aria-label={`Select playlist item ${originalIndex}`} checked={checked} disabled={!selectableEntry} onChange={event => togglePlaylistEntry(index, originalIndex, event.target.checked)} className="size-4 shrink-0 accent-rose-600" />
-                                  {entry.thumbnailUrl ? <img src={entry.thumbnailUrl} alt="" referrerPolicy="no-referrer" className="aspect-video w-16 shrink-0 rounded bg-neutral-900 object-cover" /> : <div className="grid aspect-video w-16 shrink-0 place-items-center rounded bg-neutral-900 text-neutral-600"><Film className="size-3.5" aria-hidden="true" /></div>}
-                                  <span className="min-w-0 flex-1"><span className="block truncate text-[11px] font-medium text-neutral-200">#{originalIndex} · {entry.title || "Unavailable playlist item"}</span><span className="mt-0.5 block truncate text-[10px] text-neutral-500">{entry.author || (selectableEntry ? "YouTube" : "Unavailable")} {entry.durationSeconds ? `· ${durationLabel(entry.durationSeconds)}` : ""}</span></span>
+                                  {entry.thumbnailUrl ? <img src={entry.thumbnailUrl} alt="" referrerPolicy="no-referrer" className="aspect-video w-16 shrink-0 rounded bg-neutral-900 object-cover" /> : <div className="grid aspect-video w-16 shrink-0 place-items-center rounded bg-neutral-900 text-neutral-400"><Film className="size-3.5" aria-hidden="true" /></div>}
+                                  <span className="min-w-0 flex-1"><span className="block truncate text-xs font-medium text-neutral-200">#{originalIndex} · {entry.title || "Unavailable playlist item"}</span><span className="mt-0.5 block truncate text-xs text-neutral-400">{entry.author || (selectableEntry ? "YouTube" : "Unavailable")} {entry.durationSeconds ? `· ${durationLabel(entry.durationSeconds)}` : ""}</span></span>
                                 </label>;
                               })}
                             </div>}
@@ -257,7 +257,7 @@ export function QueuePage({
 
             <section aria-labelledby="queue-heading" className="space-y-3">
               <div className="flex flex-wrap items-end justify-between gap-3">
-                <div><p className="mb-1 text-[11px] font-bold uppercase tracking-[0.16em] text-neutral-500">Downloads</p><h2 id="queue-heading" className="text-xl font-bold">Active downloads & batch queue <span className="ml-1 text-sm font-medium text-neutral-500">({visibleQueueRows.length})</span></h2><p className="mt-1 text-[11px] text-neutral-500">{activeCount} / {settings.maxConcurrentDownloads} active · {formatBytes(totalCurrentSpeed)}/s combined</p></div>
+                <div><p className="mb-1 text-xs font-bold uppercase tracking-[0.16em] text-neutral-400">Downloads</p><h2 id="queue-heading" className="text-xl font-bold">Active downloads & batch queue <span className="ml-1 text-sm font-medium text-neutral-400">({visibleQueueRows.length})</span></h2><p className="mt-1 text-xs text-neutral-400">{activeCount} / {settings.maxConcurrentDownloads} active · {formatBytes(totalCurrentSpeed)}/s combined</p></div>
                 <div className="flex flex-wrap gap-2">
                   <button type="button" className={button} onClick={() => void batchAction("pause")} disabled={!serviceReady || !jobs.some(job => job.status === "queued" || job.status === "downloading" || job.status === "processing")}><Pause className="size-3.5" aria-hidden="true" />Pause all</button>
                   <button type="button" className={button} onClick={() => void batchAction("resume")} disabled={!serviceReady || !jobs.some(job => job.status === "paused")}><Play className="size-3.5" aria-hidden="true" />Resume all</button>
@@ -275,12 +275,12 @@ export function QueuePage({
               </div>}
 
               <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-rose-900/50 bg-rose-950/20 px-4 py-3 text-xs">
-                <div className="flex items-center gap-2 text-neutral-300"><span className={`size-2 rounded-full ${activeCount > 0 ? "animate-pulse bg-rose-500" : "bg-neutral-600"}`} /><span className="font-semibold">{activeCount > 0 ? "Batch in progress" : queuedCount > 0 ? "Queue ready" : "Queue idle"}</span><span className="text-neutral-500">{activeCount} active · {queuedCount} queued</span></div>
-                <div className="flex items-center gap-4 font-mono text-[11px]"><span className="text-emerald-300">{formatBytes(totalCurrentSpeed)}/s</span><span className="text-neutral-500">Max parallel: {settings.maxConcurrentDownloads}</span></div>
+                <div className="flex items-center gap-2 text-neutral-300"><span className={`size-2 rounded-full ${activeCount > 0 ? "animate-pulse bg-rose-500" : "bg-neutral-600"}`} /><span className="font-semibold">{activeCount > 0 ? "Batch in progress" : queuedCount > 0 ? "Queue ready" : "Queue idle"}</span><span className="text-neutral-400">{activeCount} active · {queuedCount} queued</span></div>
+                <div className="flex items-center gap-4 font-mono text-xs"><span className="text-emerald-300">{formatBytes(totalCurrentSpeed)}/s</span><span className="text-neutral-400">Max parallel: {settings.maxConcurrentDownloads}</span></div>
               </div>
 
               {queuedJobsOrdered.length > 0 && <div className={`${panel} space-y-3 p-3`}>
-                <div className="flex flex-wrap items-start justify-between gap-2"><div><p className="text-[11px] font-bold uppercase tracking-wider text-neutral-300">Queued work order</p><p className="mt-1 text-[10px] text-neutral-500">Drag queued jobs or playlist items. Active downloads stay in place.</p></div><span className="rounded-full bg-neutral-800 px-2 py-1 text-[10px] text-neutral-300">{queuedJobsOrdered.length} queued job{queuedJobsOrdered.length === 1 ? "" : "s"}</span></div>
+                <div className="flex flex-wrap items-start justify-between gap-2"><div><p className="text-xs font-bold uppercase tracking-wider text-neutral-300">Queued work order</p><p className="mt-1 text-xs text-neutral-400">Drag queued jobs or playlist items. Active downloads stay in place.</p></div><span className="rounded-full bg-neutral-800 px-2 py-1 text-xs text-neutral-300">{queuedJobsOrdered.length} queued job{queuedJobsOrdered.length === 1 ? "" : "s"}</span></div>
                 <DndContext sensors={queueSensors} collisionDetection={closestCenter} onDragEnd={event => void reorderQueuedJobs(event)}>
                   <SortableContext items={queuedJobsOrdered.map(job => `job:${job.id}`)} strategy={verticalListSortingStrategy}>
                     <div className="space-y-2">
@@ -305,20 +305,20 @@ export function QueuePage({
               </div>}
 
               <div className={`${panel} flex flex-wrap items-center justify-between gap-3 p-3`}>
-                <div className="flex flex-wrap gap-1 rounded-lg border border-neutral-800 bg-neutral-950 p-1">
+                <div className="grid w-full grid-cols-2 gap-1 rounded-lg border border-neutral-800 bg-neutral-950 p-1 min-[480px]:flex min-[480px]:w-auto">
                   {(["all", "active", "queued", "completed"] as const).map(value => {
                     const count = value === "all" ? visibleQueueRows.length : value === "active" ? activeCount : value === "queued" ? queuedCount : completedQueueCount;
-                    return <button key={value} type="button" aria-pressed={queueFilter === value} onClick={() => setQueueFilter(value)} className={`rounded-md px-2.5 py-1.5 text-[11px] font-semibold capitalize ${queueFilter === value ? "bg-neutral-800 text-white" : "text-neutral-400 hover:text-neutral-200"}`}>{value} ({count})</button>;
+                    return <button key={value} type="button" aria-pressed={queueFilter === value} onClick={() => setQueueFilter(value)} className={`rounded-md px-2.5 py-1.5 text-xs font-semibold capitalize ${queueFilter === value ? "bg-neutral-800 text-white" : "text-neutral-400 hover:text-neutral-200"}`}>{value} ({count})</button>;
                   })}
                 </div>
-                <label className="relative min-w-48 flex-1 sm:max-w-xs"><Search className="absolute left-3 top-1/2 size-3.5 -translate-y-1/2 text-neutral-500" aria-hidden="true" /><input aria-label="Search queue" className={`${field} py-2 pl-9 text-xs`} value={search} onChange={event => setSearch(event.target.value)} placeholder="Search queue…" /></label>
+                <label className="relative min-w-48 flex-1 sm:max-w-xs"><Search className="absolute left-3 top-1/2 size-3.5 -translate-y-1/2 text-neutral-400" aria-hidden="true" /><input aria-label="Search queue" className={`${field} py-2 pl-9 text-xs`} value={search} onChange={event => setSearch(event.target.value)} placeholder="Search queue…" /></label>
               </div>
 
               {filteredQueue.length === 0 ? <div className={`${panel} px-5 py-12 text-center`}>
-                <div className="mx-auto mb-3 grid size-12 place-items-center rounded-2xl bg-neutral-800 text-neutral-500"><Layers className="size-5" aria-hidden="true" /></div>
+                <div className="mx-auto mb-3 grid size-12 place-items-center rounded-2xl bg-neutral-800 text-neutral-400"><Layers className="size-5" aria-hidden="true" /></div>
                 <h3 className="text-sm font-semibold text-neutral-200">{jobs.length === 0 ? "No downloads yet" : visibleQueueRows.length === 0 ? "Queue is clear" : "No videos match this filter"}</h3>
-                <p className="mx-auto mt-1 max-w-md text-xs leading-relaxed text-neutral-500">{visibleQueueRows.length === 0 && jobs.length > 0 ? "Cleared downloads remain available in your library. Inspect a YouTube URL above to add another download." : serviceReady ? "Inspect a YouTube URL above to add a real download job. Progress and status are reported by the Go worker." : "The app will load your SQLite-backed history and enable downloads as soon as its built-in Go service is ready."}</p>
-                {jobs.length === 0 && <p className="mt-2 text-[10px] text-neutral-600">Video downloads, tagged MP3 conversion, and original AAC/M4A audio use the native Go service.</p>}
+                <p className="mx-auto mt-1 max-w-md text-xs leading-relaxed text-neutral-400">{visibleQueueRows.length === 0 && jobs.length > 0 ? "Cleared downloads remain available in your library. Inspect a YouTube URL above to add another download." : serviceReady ? "Inspect a YouTube URL above to add a real download job. Progress and status are reported by the Go worker." : "The app will load your SQLite-backed history and enable downloads as soon as its built-in Go service is ready."}</p>
+                {jobs.length === 0 && <p className="mt-2 text-xs text-neutral-400">Video downloads, tagged MP3 conversion, and original AAC/M4A audio use the native Go service.</p>}
               </div> : <div className="space-y-2.5">
                 {filteredQueue.map(({ job, item }) => {
                   const itemActive = item.status === "downloading" || item.status === "processing";
@@ -328,42 +328,42 @@ export function QueuePage({
                   return <article key={`${job.id}:${item.index}`} className={`rounded-2xl border bg-neutral-900/80 p-4 sm:p-5 ${itemActive ? "border-rose-800/70" : "border-neutral-800"}`}>
                     <div className="flex flex-wrap items-center gap-4">
                       {item.thumbnailUrl ? <img src={item.thumbnailUrl} alt="" referrerPolicy="no-referrer" className="hidden aspect-video w-40 shrink-0 rounded-lg bg-neutral-950 object-cover sm:block" />
-                        : <div className="hidden aspect-video w-40 shrink-0 place-items-center rounded-lg bg-neutral-950 text-neutral-600 sm:grid"><Film className="size-6" aria-hidden="true" /></div>}
-                      <div className="min-w-0 flex-1">
+                        : <div className="hidden aspect-video w-40 shrink-0 place-items-center rounded-lg bg-neutral-950 text-neutral-400 sm:grid"><Film className="size-6" aria-hidden="true" /></div>}
+                      <div className="min-w-0 basis-full sm:flex-1 sm:basis-0">
                         <div className="mb-1.5 flex flex-wrap items-center gap-2">
-                          <span className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold ${statusClass(item.status)}`}>{statusLabels[item.status]}</span>
-                          <span className="text-[10px] text-rose-300">{item.author || "YouTube"}</span>
-                          <span className="rounded bg-neutral-800 px-2 py-0.5 text-[10px] text-neutral-400">{label}</span>{job.category && <span className="rounded bg-neutral-800 px-2 py-0.5 text-[10px] text-neutral-400">{job.category}</span>}
+                          <span className={`rounded-full border px-2 py-0.5 text-xs font-semibold ${statusClass(item.status)}`}>{statusLabels[item.status]}</span>
+                          <span className="text-xs text-rose-300">{item.author || "YouTube"}</span>
+                          <span className="rounded bg-neutral-800 px-2 py-0.5 text-xs text-neutral-400">{label}</span>{job.category && <span className="rounded bg-neutral-800 px-2 py-0.5 text-xs text-neutral-400">{job.category}</span>}
                         </div>
                         <h3 className="truncate text-sm font-semibold text-white" title={item.title}>{item.title}</h3>
-                        <p className="mt-1 truncate text-[10px] text-neutral-500" title={job.url}>{job.kind === "playlist" ? `${job.title} · Playlist item ${item.playlistIndex ?? item.index}${job.totalCount ? ` · selection ${item.index} of ${job.totalCount}` : ""}` : job.url}</p>
-                        <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-[10px]">
+                        <p className="mt-1 truncate text-xs text-neutral-400" title={job.url}>{job.kind === "playlist" ? `${job.title} · Playlist item ${item.playlistIndex ?? item.index}${job.totalCount ? ` · selection ${item.index} of ${job.totalCount}` : ""}` : job.url}</p>
+                        <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-xs">
                           <span className={item.status === "failed" ? "text-red-300" : item.status === "completed" ? "text-emerald-300" : "text-rose-300"}>{item.status === "processing" ? "Converting audio to MP3" : item.status === "downloading" ? `Downloading${item.progress === null ? "" : ` ${item.progress.toFixed(0)}%`}` : statusLabels[item.status]}</span>
                           <span className="font-mono text-neutral-400">{item.speedBytesPerSec > 0 ? `${formatBytes(item.speedBytesPerSec)}/s · ETA ${etaLabel(item.etaSeconds)}` : item.downloadedBytes > 0 ? `${formatBytes(item.downloadedBytes)}${item.totalBytes ? ` / ${formatBytes(item.totalBytes)}` : ""}` : item.status === "queued" ? "Waiting for an available slot" : item.status === "completed" ? "Ready to save" : ""}</span>
                         </div>
                         {(itemActive || item.status === "paused" || item.status === "completed") && <div className="mt-2 h-2 overflow-hidden rounded-full bg-neutral-800"><div className={`h-full rounded-full transition-[width] ${item.status === "completed" ? "bg-emerald-500" : "bg-rose-500"} ${itemActive && item.progress === null ? "w-1/3 animate-pulse" : ""}`} style={itemActive && item.progress === null ? undefined : { width: `${Math.max(0, Math.min(100, item.progress ?? 0))}%` }} /></div>}
                       </div>
-                      <div className="flex shrink-0 items-center gap-1.5">
+                      <div className="flex w-full shrink-0 flex-wrap items-center gap-2 border-t border-neutral-800 pt-3 sm:w-auto sm:border-0 sm:pt-0">
                         {item.index === 1 && <input type="checkbox" aria-label={`Select ${job.title}`} checked={selectedJobIDs.includes(job.id)} onChange={event => setSelectedJobIDs(previous => event.target.checked ? [...new Set([...previous, job.id])] : previous.filter(id => id !== job.id))} className="size-4 accent-rose-600" />}
-                        {job.kind === "video" && (job.status === "downloading" || job.status === "processing" || job.status === "queued") && <button type="button" className={button} disabled={busyAction === job.id} onClick={() => void jobAction(job, "pause")} aria-label={`Pause ${item.title}`}><Pause className="size-3.5" aria-hidden="true" /><span className="hidden md:inline">Pause</span></button>}
-                        {job.kind === "video" && job.status === "paused" && <button type="button" className={button} disabled={busyAction === job.id} onClick={() => void jobAction(job, "resume")} aria-label={`Resume ${item.title}`}><Play className="size-3.5" aria-hidden="true" /><span className="hidden md:inline">Resume</span></button>}
-                        {job.kind === "video" && (isActive(job) || job.status === "paused") && <button type="button" className={button} disabled={busyAction === job.id} onClick={() => void jobAction(job, "cancel")} aria-label={`Cancel ${item.title}`}><X className="size-3.5" aria-hidden="true" /></button>}
-                        {batchControls && (isActive(job) || job.status === "queued") && <button type="button" className={button} disabled={busyAction === job.id} onClick={() => void jobAction(job, "pause")} aria-label={`Pause playlist ${job.title}`}><Pause className="size-3.5" aria-hidden="true" /><span className="hidden md:inline">Pause batch</span></button>}
-                        {batchControls && job.status === "paused" && <button type="button" className={button} disabled={busyAction === job.id} onClick={() => void jobAction(job, "resume")} aria-label={`Resume playlist ${job.title}`}><Play className="size-3.5" aria-hidden="true" /><span className="hidden md:inline">Resume batch</span></button>}
+                        {job.kind === "video" && (job.status === "downloading" || job.status === "processing" || job.status === "queued") && <button type="button" className={button} disabled={busyAction === job.id} onClick={() => void jobAction(job, "pause")} aria-label={`Pause ${item.title}`}><Pause className="size-3.5" aria-hidden="true" /><span>Pause</span></button>}
+                        {job.kind === "video" && job.status === "paused" && <button type="button" className={button} disabled={busyAction === job.id} onClick={() => void jobAction(job, "resume")} aria-label={`Resume ${item.title}`}><Play className="size-3.5" aria-hidden="true" /><span>Resume</span></button>}
+                        {job.kind === "video" && (isActive(job) || job.status === "paused") && <button type="button" className={button} disabled={busyAction === job.id} onClick={() => void jobAction(job, "cancel")} aria-label={`Cancel ${item.title}`}><X className="size-3.5" aria-hidden="true" /><span>Cancel</span></button>}
+                        {batchControls && (isActive(job) || job.status === "queued") && <button type="button" className={button} disabled={busyAction === job.id} onClick={() => void jobAction(job, "pause")} aria-label={`Pause playlist ${job.title}`}><Pause className="size-3.5" aria-hidden="true" /><span>Pause batch</span></button>}
+                        {batchControls && job.status === "paused" && <button type="button" className={button} disabled={busyAction === job.id} onClick={() => void jobAction(job, "resume")} aria-label={`Resume playlist ${job.title}`}><Play className="size-3.5" aria-hidden="true" /><span>Resume batch</span></button>}
                         {batchControls && (isActive(job) || job.status === "paused" || job.status === "queued") && <button type="button" className={button} disabled={busyAction === job.id} onClick={() => void jobAction(job, "cancel")} aria-label={`Cancel playlist ${job.title}`}><X className="size-3.5" aria-hidden="true" /></button>}
-                        {item.status === "completed" && (item.fileIds?.length ?? 0) > 1 ? <button type="button" className={button} disabled={busyAction === `${job.id}:${item.fileIds?.join(",")}`} onClick={() => void saveFile(job, item.fileIds)} aria-label={`Save chapter files for ${item.title}`}><ArrowDownToLine className="size-3.5" aria-hidden="true" /><span className="hidden md:inline">Save chapters</span></button> : item.status === "completed" && item.fileId && <button type="button" className={button} disabled={busyAction === `${job.id}:${item.fileId}`} onClick={() => void saveFile(job, item.fileId)} aria-label={`Save ${item.title}`}><ArrowDownToLine className="size-3.5" aria-hidden="true" /><span className="hidden md:inline">Save</span></button>}
+                        {item.status === "completed" && (item.fileIds?.length ?? 0) > 1 ? <button type="button" className={button} disabled={busyAction === `${job.id}:${item.fileIds?.join(",")}`} onClick={() => void saveFile(job, item.fileIds)} aria-label={`Save chapter files for ${item.title}`}><ArrowDownToLine className="size-3.5" aria-hidden="true" /><span>Save chapters</span></button> : item.status === "completed" && item.fileId && <button type="button" className={button} disabled={busyAction === `${job.id}:${item.fileId}`} onClick={() => void saveFile(job, item.fileId)} aria-label={`Save ${item.title}`}><ArrowDownToLine className="size-3.5" aria-hidden="true" /><span>Save</span></button>}
                         {job.kind === "video" && (job.status === "failed" || job.status === "cancelled") && <button type="button" className={button} disabled={busyAction === job.id} onClick={() => void jobAction(job, "retry")} aria-label={`Retry ${item.title}`}><RefreshCw className="size-3.5" aria-hidden="true" /></button>}
-                        {batchControls && (job.status === "failed" || job.status === "partial" || job.status === "cancelled") && <button type="button" className={button} disabled={busyAction === job.id} onClick={() => void jobAction(job, "retry")} aria-label={`Retry playlist ${job.title}`}><RefreshCw className="size-3.5" aria-hidden="true" /><span className="hidden md:inline">Retry batch</span></button>}
-                        {job.kind === "playlist" && (job.status === "partial" || job.status === "failed" || job.status === "cancelled") && (item.status === "failed" || item.status === "cancelled") && <button type="button" className={button} disabled={busyAction === `${job.id}:retry-item:${item.index}` || item.retryRequested === true} onClick={() => void retryPlaylistItem(job, item)} aria-label={`Retry item ${item.title}`}><RefreshCw className="size-3.5" aria-hidden="true" /><span className="hidden md:inline">{item.retryRequested ? "Retry queued" : "Retry item"}</span></button>}
-                        {batchControls && job.kind === "playlist" && ["partial", "failed", "cancelled"].includes(job.status) && (job.items ?? []).some(value => value.status === "failed" || value.status === "cancelled") && <button type="button" className={button} disabled={busyAction === `${job.id}:retry-failed`} onClick={() => void retryAllFailedItems(job)} aria-label={`Retry all failed items in ${job.title}`}><RefreshCw className="size-3.5" aria-hidden="true" /><span className="hidden md:inline">Retry failed</span></button>}
+                        {batchControls && (job.status === "failed" || job.status === "partial" || job.status === "cancelled") && <button type="button" className={button} disabled={busyAction === job.id} onClick={() => void jobAction(job, "retry")} aria-label={`Retry playlist ${job.title}`}><RefreshCw className="size-3.5" aria-hidden="true" /><span>Retry batch</span></button>}
+                        {job.kind === "playlist" && (job.status === "partial" || job.status === "failed" || job.status === "cancelled") && (item.status === "failed" || item.status === "cancelled") && <button type="button" className={button} disabled={busyAction === `${job.id}:retry-item:${item.index}` || item.retryRequested === true} onClick={() => void retryPlaylistItem(job, item)} aria-label={`Retry item ${item.title}`}><RefreshCw className="size-3.5" aria-hidden="true" /><span>{item.retryRequested ? "Retry queued" : "Retry item"}</span></button>}
+                        {batchControls && job.kind === "playlist" && ["partial", "failed", "cancelled"].includes(job.status) && (job.items ?? []).some(value => value.status === "failed" || value.status === "cancelled") && <button type="button" className={button} disabled={busyAction === `${job.id}:retry-failed`} onClick={() => void retryAllFailedItems(job)} aria-label={`Retry all failed items in ${job.title}`}><RefreshCw className="size-3.5" aria-hidden="true" /><span>Retry failed</span></button>}
                         {item.index === 1 && (job.status === "queued" || job.status === "paused") && <button type="button" className={button} onClick={() => setEditingJobID(current => current === job.id ? "" : job.id)} aria-expanded={editingJobID === job.id} aria-label={`Edit queued settings for ${job.title}`}>Edit</button>}
-                        {item.index === 1 && ["completed", "partial", "failed", "cancelled"].includes(job.status) && <button type="button" className={button} disabled={busyAction === job.id} onClick={() => void jobAction(job, "forget-history")} aria-label={`Forget history for ${job.title}`}><Trash2 className="size-3.5" aria-hidden="true" /><span className="hidden md:inline">Forget history</span></button>}
+                        {item.index === 1 && ["completed", "partial", "failed", "cancelled"].includes(job.status) && <button type="button" className={button} disabled={busyAction === job.id} onClick={() => void jobAction(job, "forget-history")} aria-label={`Forget history for ${job.title}`}><Trash2 className="size-3.5" aria-hidden="true" /><span>Forget history</span></button>}
                         {item.status === "failed" && job.kind === "video" && <button type="button" className={button} disabled={busyAction === job.id} onClick={() => void jobAction(job, "remove")} aria-label={`Remove ${item.title}`}><Trash2 className="size-3.5" aria-hidden="true" /></button>}
                       </div>
                     </div>
                     {item.index === 1 && editingJobID === job.id && <JobConfigurationEditor key={job.id} job={job} categories={settings.userCategories} busy={busyAction === `${job.id}:configuration`} onSave={patch => void updateJobConfiguration(job, patch)} />}
-                    {itemError && item.status === "failed" && <p className="mt-3 flex items-start gap-1.5 text-[11px] text-red-300"><AlertCircle className="mt-0.5 size-3 shrink-0" aria-hidden="true" />{itemError}</p>}
-                    {job.note && item.index === 1 && <p className="mt-3 text-[10px] leading-relaxed text-amber-300/80">{job.note}</p>}
+                    {itemError && item.status === "failed" && <p className="mt-3 flex items-start gap-1.5 text-xs text-red-300"><AlertCircle className="mt-0.5 size-3 shrink-0" aria-hidden="true" />{itemError}</p>}
+                    {job.note && item.index === 1 && <p className="mt-3 text-xs leading-relaxed text-amber-300/80">{job.note}</p>}
                   </article>;
                 })}
               </div>}
@@ -394,29 +394,29 @@ function JobConfigurationEditor({
       : { audioFormat, ...(audioFormat === "mp3" ? { audioBitrate } : {}), category });
   }}>
     {job.mediaType === "video" ? <>
-      <label className="text-[11px] text-neutral-400">Maximum quality
+      <label className="text-xs text-neutral-400">Maximum quality
         <select aria-label={`Quality for ${job.title}`} className={`${field} mt-1`} value={quality} onChange={event => setQuality(event.target.value as Quality)}>
           {(Object.entries(qualityLabels) as [Quality, string][]).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
         </select>
       </label>
-      <label className="text-[11px] text-neutral-400">Video format
+      <label className="text-xs text-neutral-400">Video format
         <select aria-label={`Video format for ${job.title}`} className={`${field} mt-1`} value={videoStrategy} onChange={event => setVideoStrategy(event.target.value as VideoStrategy)}>
           {(Object.entries(videoStrategyLabels) as [VideoStrategy, string][]).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
         </select>
       </label>
     </> : <>
-      <label className="text-[11px] text-neutral-400">Audio format
+      <label className="text-xs text-neutral-400">Audio format
         <select aria-label={`Audio format for ${job.title}`} className={`${field} mt-1`} value={audioFormat} onChange={event => setAudioFormat(event.target.value as "mp3" | "m4a")}>
           <option value="mp3">MP3</option><option value="m4a">M4A · original AAC</option>
         </select>
       </label>
-      {audioFormat === "mp3" && <label className="text-[11px] text-neutral-400">MP3 bitrate
+      {audioFormat === "mp3" && <label className="text-xs text-neutral-400">MP3 bitrate
         <select aria-label={`Audio bitrate for ${job.title}`} className={`${field} mt-1`} value={audioBitrate} onChange={event => setAudioBitrate(event.target.value)}>
           {(["128k", "192k", "256k", "320k"]).map(value => <option key={value} value={value}>{value}</option>)}
         </select>
       </label>}
     </>}
-    <label className="text-[11px] text-neutral-400">Category
+    <label className="text-xs text-neutral-400">Category
       <select aria-label={`Category for ${job.title}`} className={`${field} mt-1`} value={category} onChange={event => setCategory(event.target.value)}>
         {options.map(value => <option key={value} value={value}>{value}</option>)}
       </select>

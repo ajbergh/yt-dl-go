@@ -63,7 +63,7 @@ export const statusLabels: Record<DownloadJob["status"], string> = {
 export const panel = "rounded-2xl border border-neutral-800 bg-neutral-900/70";
 export const button = "inline-flex min-h-9 items-center justify-center gap-2 rounded-lg border border-neutral-700 bg-neutral-800 px-3 py-2 text-xs font-semibold text-neutral-200 transition-colors hover:border-neutral-600 hover:bg-neutral-700 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-rose-500 disabled:cursor-not-allowed disabled:opacity-50";
 export const primaryButton = "inline-flex min-h-10 items-center justify-center gap-2 rounded-lg bg-rose-600 px-4 py-2 text-xs font-bold text-white transition-colors hover:bg-rose-500 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-rose-400 disabled:cursor-not-allowed disabled:opacity-50";
-export const field = "w-full rounded-xl border border-neutral-700 bg-neutral-950 px-3.5 py-2.5 text-sm text-neutral-100 outline-none placeholder:text-neutral-500 focus:border-rose-500 focus:ring-1 focus:ring-rose-500";
+export const field = "w-full min-w-0 rounded-xl border border-neutral-700 bg-neutral-950 px-3.5 py-2.5 text-sm text-neutral-100 outline-none placeholder:text-neutral-400 focus:border-rose-500 focus:ring-1 focus:ring-rose-500";
 
 export function errorMessage(error: unknown): string {
   return error instanceof TypeError
