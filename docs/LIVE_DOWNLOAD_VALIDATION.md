@@ -55,3 +55,31 @@ A targeted live rerun against the latest idle-timer, metadata-timeout, and diagn
 Offline verification on 2026-10-29: `go test ./... -skip '^TestLive' -count=1 -timeout 10m` passed against the resumed changes (42.686 seconds), including the incomplete-response idle regression. The earlier full offline run after fixing the persistence fixtures also passed (77.234 seconds). `git diff --check` passed. Live results above were obtained separately; the latest idle-timer and metadata-timeout changes have offline coverage and the targeted live rerun, but have not completed a fresh full live matrix.
 
 The reproduction command and test behavior are documented in [the server README](../src/server/README.md#live-resolution-regression-test). Raw diagnostic logs remain in the ignored `src/server/.cache/` directory and can contain short-lived upstream media URLs; this report intentionally records source watch URLs and aggregate results only.
+
+## Packaged-app failure and recovery validation — 2026-10-30
+
+The running Windows executable at `http://127.0.0.1:8080/` reproduced the user-reported failure for The Ownership Gap at exactly 8,388,608 downloaded bytes. An isolated live test completed the same source, so that pass alone did not establish reliability in the long-running app.
+
+A controlled interruption of the app's idle browser reproduced the same failure with tracing: both browser-capture attempts failed immediately, the first native range returned HTTP 206, and the next range at offset 8,388,608 received HTTP 403 on all three attempts. The browser pool retained a disconnected process and handed subsequent downloads unusable tabs. The pool now replaces cancelled or disconnected browser sessions before issuing a lease. Late releases from the old process cannot decrement the replacement's lease count or trigger its idle shutdown.
+
+The disappearing failed rows were a separate confirmed defect. Terminal working state was evicted from memory, but HTTP queue reads and initial SSE snapshots included only resident jobs. Both now merge durable failed, partial, and cancelled history with live jobs, without retaining terminal jobs in scheduler memory. Previously hidden failures reappeared from the existing database after installing the fix; explicit history removal remains effective.
+
+Validation:
+
+- The isolated live download completed at 1080p in 112.83 seconds; container checks included video and audio through their expected duration. The single-download test now uses temporary managed-only output and reports progress periodically.
+- The packaged app completed the same video before the browser-recovery patch after restarting its browser session, producing 75,277,725 bytes.
+- With the final recovery build serving port 8080, a real download was paused after receiving media, its app-owned browser was terminated, and the same job was resumed. It automatically obtained a replacement browser and completed without enabling 360p recovery.
+- The actual published MP4 was demuxed through EOF: 1920×1080, 75,277,725 bytes, video endpoint 322,000 ms, audio endpoint 322,037 ms. This validates track presence and duration, not full frame decoding.
+- Regression tests cover browser replacement while an old lease is still outstanding, HTTP queue refreshes, SSE reconnects, explicit history removal, and large-Library memory behavior. The complete offline suite passed with `CGO_ENABLED=0`: `go test ./... -skip '^TestLive' -count=1 -timeout 10m` (35.407 seconds).
+
+This run validates the reported 1080p sample and browser-interruption recovery. It does not change the earlier unresolved 4K result. Current diagnostics and verification artifacts are in the ignored root `.vite-cache/` directory.
+
+## Additional trailer and fresh-tab retries — 2026-10-30
+
+The user reported failures for `https://www.youtube.com/watch?v=qxWGUd0VuK8` (In Command | Series Trailer, 91 seconds). Two retained Best-quality jobs had stopped at 16,777,216 bytes. A matching 1080p request in the original running process reproduced that boundary. The original process did not have tracing enabled, and its precise browser startup error could not be recovered; no claim is made that the previously fixed disconnected-process bug explains every failure.
+
+Fresh isolated runs passed Best/2160p (105,119,302-byte WebM) and the targeted 1080p matrix case. Desktop launches were then checked with tracing enabled, tracing disabled, and default options without output redirection. The rebuilt executable at its normal `dist/youtube-downloader.exe` path completed Best/2160p with no verbose tracing or quality downgrade. The saved WebM was independently read through both tracks to check 2160p video and their expected duration.
+
+Code review found an additional recovery weakness: both capture attempts reused the same provider, even though its setup errors and capture state can remain invalid. Production providers can now acquire a fresh browser lease for the retry, for both serial MP4 capture and dual-track WebM capture. Browser acquisition gets one bounded retry, and cold startup allows 60 seconds instead of 20. Startup failures are logged even when verbose diagnostics are disabled. Regression tests reproduce a permanently broken first provider, require a fresh provider to complete, check replacement cleanup, and verify cancellation and acquisition retry bounds.
+
+The full offline suite passed with CGO disabled in 31.019 seconds. The `TestLivePublishedFile` opt-in check validates a packaged app's actual output without downloading it again: set `YTDL_VERIFY_FILE`, `YTDL_VERIFY_MIME`, `YTDL_VERIFY_HEIGHT`, and `YTDL_VERIFY_DURATION`, then run `go test -run '^TestLivePublishedFile$' -count=1 -v`. File checks establish container structure, dimensions, audio/video presence, and track endpoints, not full frame decoding. Diagnostic and final-job artifacts for this trailer are in the ignored `.vite-cache/` directory.

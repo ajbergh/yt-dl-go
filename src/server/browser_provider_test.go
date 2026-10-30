@@ -223,6 +223,43 @@ func TestBrowserCaptureTimeoutAccountsFor4KTransferBytes(t *testing.T) {
 	}
 }
 
+func TestBrowserPoolReplacesDeadProcessBeforeOldLeaseCloses(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	launches := 0
+	pool := &browserPool{
+		ctx: ctx, idleTimeout: time.Hour,
+		launch: func(parent context.Context) (context.Context, context.CancelFunc, context.CancelFunc, error) {
+			launches++
+			root, closeRoot := context.WithCancel(parent)
+			return root, closeRoot, closeRoot, nil
+		},
+		newTab: func(parent context.Context) (context.Context, context.CancelFunc) { return context.WithCancel(parent) },
+	}
+	defer pool.Close()
+	oldLease, err := pool.Acquire(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pool.rootClose() // simulate a browser crash while a download owns a tab
+	replacement, err := pool.Acquire(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer replacement.Close()
+	if launches != 2 || replacement.(*chromeBrowserProvider).ctx.Err() != nil {
+		t.Fatalf("dead browser was reused: launches=%d error=%v", launches, replacement.(*chromeBrowserProvider).ctx.Err())
+	}
+	_ = oldLease.Close()
+	if pool.active != 1 || pool.idleTimer != nil {
+		t.Fatalf("old lease affected replacement: active=%d idleTimer=%v", pool.active, pool.idleTimer != nil)
+	}
+	_ = replacement.Close()
+	if pool.active != 0 || pool.idleTimer == nil {
+		t.Fatal("replacement lease was not released normally")
+	}
+}
+
 func TestBrowserPoolSharesProcessAndIsolatesLeases(t *testing.T) {
 	rootCtx, cancelRoot := context.WithCancel(context.Background())
 	defer cancelRoot()

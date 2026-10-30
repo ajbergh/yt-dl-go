@@ -34,6 +34,10 @@ type browserMediaProvider interface {
 	Close() error
 }
 
+type browserRetryProvider interface {
+	Reopen(context.Context) (browserMediaProvider, error)
+}
+
 // browserDualTrackProvider is deliberately optional so existing test and
 // alternate providers retain the serial CaptureTrack contract.
 type browserDualTrackProvider interface {
@@ -47,6 +51,7 @@ type chromeBrowserProvider struct {
 	cancel              context.CancelFunc
 	allocCancel         context.CancelFunc
 	release             func()
+	reopen              browserProviderFactory
 	closeOnce           sync.Once
 	fetchOnce           sync.Once
 	fetchErr            error
@@ -137,6 +142,7 @@ func chromeBrowserOptions(executable string) []chromedp.ExecAllocatorOption {
 }
 
 func launchChromeBrowser(parent context.Context, executable string) (context.Context, context.CancelFunc, context.CancelFunc, error) {
+	started := time.Now()
 	allocCtx, allocCancel := chromedp.NewExecAllocator(parent, chromeBrowserOptions(executable)...)
 	browserCtx, cancel := chromedp.NewContext(allocCtx)
 	// ChromeDP 0.19 ties the first Do call's context lifetime to Chrome itself.
@@ -146,11 +152,19 @@ func launchChromeBrowser(parent context.Context, executable string) (context.Con
 	err := chromedp.Do(browserCtx, chromedp.Navigate("about:blank"))
 	stopStartupTimeout.Stop()
 	if err != nil {
+		log.Printf("browser launch failed elapsed=%s error=%v", time.Since(started).Round(time.Millisecond), err)
 		cancel()
 		allocCancel()
 		return nil, nil, nil, err
 	}
 	return browserCtx, cancel, allocCancel, nil
+}
+
+func (p *chromeBrowserProvider) Reopen(ctx context.Context) (browserMediaProvider, error) {
+	if p.reopen == nil || ctx.Err() != nil {
+		return nil, errBrowserUnavailable
+	}
+	return p.reopen(ctx)
 }
 
 func (p *chromeBrowserProvider) Close() error {

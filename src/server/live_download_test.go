@@ -50,6 +50,10 @@ func TestLiveDownload(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	settings := request(s, "PUT", "/api/settings", `{"storageMode":"managed-only"}`, nil)
+	if settings.Code != 200 {
+		t.Fatalf("configure isolated output: %d %s", settings.Code, settings.Body.String())
+	}
 	s.start()
 	t.Cleanup(func() {
 		s.stop()
@@ -66,11 +70,25 @@ func TestLiveDownload(t *testing.T) {
 
 	job := createJob(t, s, raw)
 	deadline := time.Now().Add(35 * time.Minute)
+	lastLog := time.Time{}
 	for time.Now().Before(deadline) {
 		w := request(s, "GET", "/api/jobs/"+job.ID, "", nil)
 		var current Job
 		if err := json.Unmarshal(w.Body.Bytes(), &current); err != nil {
 			t.Fatal(err)
+		}
+		if time.Since(lastLog) >= 15*time.Second {
+			progress := 0.0
+			if current.Progress != nil {
+				progress = *current.Progress
+			}
+			var downloaded, total int64
+			for _, item := range current.Items {
+				downloaded += item.DownloadedBytes
+				total += item.TotalBytes
+			}
+			t.Logf("status=%s progress=%.1f downloaded_bytes=%d total_bytes=%d", current.Status, progress, downloaded, total)
+			lastLog = time.Now()
 		}
 		if terminal(current.Status) {
 			if current.Status != "completed" {
@@ -90,11 +108,40 @@ func TestLiveDownload(t *testing.T) {
 				t.Fatalf("sample completed below 1080p without an adaptive fallback note: height=%d note=%q", current.Files[0].Height, current.Note)
 			}
 			assertFinalFiles(t, s, current)
+			assertLiveContainer(t, filepath.Join(s.cfg.root, job.ID, current.Files[0].Name), current.Files[0].MimeType, current.Files[0].Height, time.Duration(current.Files[0].DurationSeconds)*time.Second)
 			return
 		}
 		time.Sleep(250 * time.Millisecond)
 	}
 	t.Fatal("live download did not reach a terminal state before the test deadline")
+}
+
+// TestLivePublishedFile validates output from the packaged app without
+// downloading it again. The expected dimensions and duration come from the
+// source, rather than trusting the completed job's metadata.
+func TestLivePublishedFile(t *testing.T) {
+	path := os.Getenv("YTDL_VERIFY_FILE")
+	if path == "" {
+		t.Skip("set YTDL_VERIFY_FILE, YTDL_VERIFY_MIME, YTDL_VERIFY_HEIGHT, and YTDL_VERIFY_DURATION")
+	}
+	height, err := strconv.Atoi(os.Getenv("YTDL_VERIFY_HEIGHT"))
+	if err != nil || height < 1 {
+		t.Fatal("YTDL_VERIFY_HEIGHT must be a positive pixel height")
+	}
+	duration, err := time.ParseDuration(os.Getenv("YTDL_VERIFY_DURATION"))
+	if err != nil || duration <= 0 {
+		t.Fatal("YTDL_VERIFY_DURATION must be a positive duration")
+	}
+	mimeType := os.Getenv("YTDL_VERIFY_MIME")
+	if mimeType != "video/mp4" && mimeType != "video/webm" {
+		t.Fatal("YTDL_VERIFY_MIME must be video/mp4 or video/webm")
+	}
+	assertLiveContainer(t, path, mimeType, height, duration)
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("verified published file height=%d bytes=%d expected_duration=%s", height, info.Size(), duration)
 }
 
 // TestLiveResolutionMatrix downloads complete media through the real job API.

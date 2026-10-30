@@ -137,11 +137,11 @@ func (s *server) serveEvents(w http.ResponseWriter, r *http.Request) {
 	defer s.events.unsubscribe(ch)
 
 	s.mu.Lock()
-	jobs := make([]Job, 0, len(s.order))
-	for i := len(s.order) - 1; i >= 0; i-- {
-		if job := s.jobs[s.order[i]]; job != nil {
-			jobs = append(jobs, snapshot(job))
-		}
+	jobs, err := s.queueSnapshotLocked()
+	if err != nil {
+		s.mu.Unlock()
+		fail(w, http.StatusInternalServerError, "Could not load download queue")
+		return
 	}
 	settings := mergeAppSettings(defaultAppSettings(), s.settings)
 	settingsSources := runtimeSettingSources(settings, s.cfg)

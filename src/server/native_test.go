@@ -796,6 +796,64 @@ func TestAdaptiveRangesRetriesBrowserCapture(t *testing.T) {
 	}
 }
 
+type freshLeaseBrowserProvider struct {
+	readyLimitBrowserProvider
+	next    browserMediaProvider
+	reopens int
+}
+
+func (p *freshLeaseBrowserProvider) Reopen(context.Context) (browserMediaProvider, error) {
+	p.reopens++
+	return p.next, nil
+}
+
+type trackedRetryBrowserProvider struct {
+	retryBrowserProvider
+	closed bool
+}
+
+func (p *trackedRetryBrowserProvider) Close() error { p.closed = true; return nil }
+
+func TestAdaptiveRangesRetriesWithFreshBrowserLease(t *testing.T) {
+	payload := []byte("complete media from replacement tab")
+	fresh := &trackedRetryBrowserProvider{retryBrowserProvider: retryBrowserProvider{calls: 1, data: payload}}
+	broken := &freshLeaseBrowserProvider{next: fresh}
+	path := filepath.Join(t.TempDir(), "video.part")
+	format := &youtube.Format{ItagNo: 137, ContentLength: int64(len(payload))}
+	s := &server{}
+	size, used, err := s.downloadAdaptiveRanges(context.Background(), &jobState{}, nil, &youtube.Video{ID: "test-video"}, format, path, "video", 1, 2048, nil, broken)
+	if err != nil || !used || size != int64(len(payload)) {
+		t.Fatalf("fresh-tab retry: size=%d browser=%t error=%v", size, used, err)
+	}
+	if broken.calls != 1 || broken.reopens != 1 || !fresh.closed {
+		t.Fatalf("broken tab reused or replacement leaked: oldCalls=%d reopens=%d closed=%t", broken.calls, broken.reopens, fresh.closed)
+	}
+	got, err := os.ReadFile(path)
+	if err != nil || !bytes.Equal(got, payload) {
+		t.Fatalf("incomplete bytes survived browser retry: %q, error=%v", got, err)
+	}
+}
+
+func TestAdaptiveBrowserRetriesTransientAcquisition(t *testing.T) {
+	calls := 0
+	ready := &retryBrowserProvider{}
+	s := &server{browserFactory: func(context.Context) (browserMediaProvider, error) {
+		calls++
+		if calls == 1 {
+			return nil, errBrowserUnavailable
+		}
+		return ready, nil
+	}}
+	if provider := s.acquireAdaptiveBrowser(context.Background()); provider != ready || calls != 2 {
+		t.Fatalf("browser startup retry returned %T after %d attempts", provider, calls)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if s.acquireAdaptiveBrowser(ctx) != nil || calls != 2 {
+		t.Fatal("cancelled acquisition launched another browser")
+	}
+}
+
 func TestAdaptiveRangesResumeValidatedNativeCheckpoint(t *testing.T) {
 	payload := []byte("resumable-native-media")
 	var requestedRange string

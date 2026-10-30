@@ -2122,6 +2122,29 @@ func downloadAdaptiveMP4Audio(preferred, progressive *youtube.Format, download f
 	return progressive, true, nil
 }
 
+func (s *server) acquireAdaptiveBrowser(ctx context.Context) browserMediaProvider {
+	if s.browserFactory == nil || s.bandwidthLimited() {
+		return nil
+	}
+	for attempt := 0; attempt < 2; attempt++ {
+		if ctx.Err() != nil {
+			return nil
+		}
+		if attempt > 0 && waitAdaptiveRangeRetry(ctx, attempt) != nil {
+			return nil
+		}
+		provider, err := s.browserFactory(ctx)
+		if err == nil && provider != nil {
+			return provider
+		}
+		if provider != nil {
+			_ = provider.Close()
+		}
+		log.Printf("browser acquisition failed attempt=%d error=%v", attempt+1, err)
+	}
+	return nil
+}
+
 func (s *server) transferAdaptiveMP4(ctx context.Context, j *jobState, engine nativeClient, video *youtube.Video, selection streamSelection, queueIndex, outputIndex int, budget int64) (result mediaFile, err error) {
 	if selection.video == nil || selection.audio == nil || budget <= 0 {
 		return result, errLimit
@@ -2151,12 +2174,9 @@ func (s *server) transferAdaptiveMP4(ctx context.Context, j *jobState, engine na
 			_ = os.Remove(path)
 		}
 	}()
-	var browserProvider browserMediaProvider
-	if s.browserFactory != nil && !s.bandwidthLimited() {
-		if provider, providerErr := s.browserFactory(ctx); providerErr == nil && provider != nil {
-			defer provider.Close()
-			browserProvider = provider
-		}
+	browserProvider := s.acquireAdaptiveBrowser(ctx)
+	if browserProvider != nil {
+		defer browserProvider.Close()
 	}
 
 	audioExpected := selection.audio.ContentLength
@@ -2297,12 +2317,9 @@ func (s *server) transferAdaptiveWebM(ctx context.Context, j *jobState, engine n
 		}
 	}()
 
-	var browserProvider browserMediaProvider
-	if s.browserFactory != nil && !s.bandwidthLimited() {
-		if provider, providerErr := s.browserFactory(ctx); providerErr == nil && provider != nil {
-			defer provider.Close()
-			browserProvider = provider
-		}
+	browserProvider := s.acquireAdaptiveBrowser(ctx)
+	if browserProvider != nil {
+		defer browserProvider.Close()
 	}
 	totalExpected := selection.video.ContentLength + selection.audio.ContentLength
 	progressTotal := int64(float64(totalExpected) * 100 / 90)
@@ -2350,6 +2367,16 @@ func (s *server) transferAdaptiveWebM(ctx context.Context, j *jobState, engine n
 			// that has already consumed a substantial part of its media deadline.
 			const dualCaptureAttempts = 2
 			for attempt := 0; attempt < dualCaptureAttempts; attempt++ {
+				if attempt > 0 {
+					if retryProvider, ok := browserProvider.(browserRetryProvider); ok {
+						if fresh, reopenErr := retryProvider.Reopen(ctx); reopenErr == nil && fresh != nil {
+							defer fresh.Close()
+							if freshDual, ok := fresh.(browserDualTrackProvider); ok {
+								dualProvider = freshDual
+							}
+						}
+					}
+				}
 				videoCandidates := browserWebMVideoCandidates(video, selection.video)
 				videoSize, audioSize, err = dualProvider.CaptureTracks(ctx, video.ID, selection.video, videoCandidates, selection.audio, videoPart, audioPart, budget, budget, dualProgress)
 				if err == nil && videoSize > 0 && audioSize > 0 && videoSize <= budget && audioSize <= budget-videoSize {
@@ -2612,12 +2639,29 @@ func (s *server) downloadAdaptiveRanges(ctx context.Context, j *jobState, engine
 	}
 	if browserProvider != nil && start == 0 {
 		const browserCaptureAttempts = 2
+		captureProvider := browserProvider
 		for attempt := 0; attempt < browserCaptureAttempts; attempt++ {
+			if ctx.Err() != nil {
+				return 0, false, ctx.Err()
+			}
+			if attempt > 0 {
+				// A failed tab caches setup errors and in-flight capture state.
+				// Retry with a new lease, rather than replaying that broken tab.
+				if retryProvider, ok := browserProvider.(browserRetryProvider); ok {
+					if fresh, reopenErr := retryProvider.Reopen(ctx); reopenErr == nil && fresh != nil {
+						defer fresh.Close()
+						captureProvider = fresh
+					}
+				}
+			}
 			if err := s.saveDownloadPart(j, video.ID, itemIndex, partKey, path, "browser-sabr", format, 0, profileID); err != nil {
 				s.recordPersistenceFailure("save browser download checkpoint", j.ID, err)
 				return 0, false, errStorage
 			}
-			captured, captureErr := browserProvider.CaptureTrack(ctx, video.ID, format, path, budget, progress)
+			captured, captureErr := captureProvider.CaptureTrack(ctx, video.ID, format, path, budget, progress)
+			if os.Getenv("YTDL_TRACE_PERFORMANCE") != "" && captureErr != nil {
+				log.Printf("browser track failed itag=%d attempt=%d error=%v", format.ItagNo, attempt+1, captureErr)
+			}
 			if captureErr == nil && captured == format.ContentLength && captured <= budget {
 				if info, statErr := os.Stat(path); statErr == nil && info.Size() == captured {
 					if err := s.deleteDownloadPart(j, itemIndex, partKey); err != nil {
