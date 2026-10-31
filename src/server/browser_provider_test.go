@@ -12,6 +12,26 @@ import (
 	"github.com/kkdai/youtube/v2"
 )
 
+func TestBrowserPrerollProgressDoesNotRequireRequestedMediaBytes(t *testing.T) {
+	var progress browserPrerollProgress
+	now := time.Now()
+	if !progress.observe(now, true, 4, 20) {
+		t.Fatal("advancing preroll was treated as idle")
+	}
+	if !progress.observe(now.Add(59*time.Second), true, 5, 20) {
+		t.Fatal("slow preroll progress was lost")
+	}
+	if progress.observe(now.Add(120*time.Second), true, 5, 20) {
+		t.Fatal("stalled preroll extended the idle deadline")
+	}
+	if progress.observe(now.Add(121*time.Second), false, 6, 216) {
+		t.Fatal("main playback substituted for verified media progress")
+	}
+	if progress.observe(now.Add(122*time.Second), true, 0, 20) {
+		t.Fatal("stale preroll state survived main playback")
+	}
+}
+
 func TestBrowserPlaybackAdvancesOnlyThroughVerifiedBufferedMedia(t *testing.T) {
 	for _, test := range []struct {
 		name             string
@@ -27,7 +47,7 @@ func TestBrowserPlaybackAdvancesOnlyThroughVerifiedBufferedMedia(t *testing.T) {
 			vm := goja.New()
 			_ = vm.Set("bufferStart", test.start)
 			_ = vm.Set("bufferEnd", test.end)
-			_, err := vm.RunString(`const video = {currentTime:10, paused:false, ended:false, buffered:{length:1, start:()=>bufferStart, end:()=>bufferEnd}}; const document = {querySelector:()=>video, getElementById:()=>({seekTo:(time)=>{video.currentTime=time;}})};`)
+			_, err := vm.RunString(`const video = {currentTime:10, paused:false, ended:false, buffered:{length:1, start:()=>bufferStart, end:()=>bufferEnd}}; const document = {querySelectorAll:()=>[],querySelector:()=>video, getElementById:()=>({seekTo:(time)=>{video.currentTime=time;}})};`)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -44,7 +64,7 @@ func TestBrowserPlaybackAdvancesOnlyThroughVerifiedBufferedMedia(t *testing.T) {
 
 func TestBrowserPlaybackMaintainsRequested4KQuality(t *testing.T) {
 	vm := goja.New()
-	_, err := vm.RunString(`let minimum, maximum, selected; const video = {currentTime:0, paused:false, ended:false, buffered:{length:0}}; const player = {setPlaybackQualityRange:(min,max)=>{minimum=min; maximum=max;}, setPlaybackQuality:(quality)=>{selected=quality;}}; const document = {querySelector:()=>video, getElementById:()=>player};`)
+	_, err := vm.RunString(`let minimum, maximum, selected; const video = {currentTime:0, paused:false, ended:false, buffered:{length:0}}; const player = {setPlaybackQualityRange:(min,max)=>{minimum=min; maximum=max;}, setPlaybackQuality:(quality)=>{selected=quality;}}; const document = {querySelectorAll:()=>[],querySelector:()=>video, getElementById:()=>player};`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -59,7 +79,7 @@ func TestBrowserPlaybackMaintainsRequested4KQuality(t *testing.T) {
 
 func TestBrowserPlaybackDoesNotResetAlreadySelectedSettings(t *testing.T) {
 	vm := goja.New()
-	_, err := vm.RunString(`let resets=0; const video={currentTime:0,paused:false,ended:false,buffered:{length:0},get playbackRate(){return 1;},set playbackRate(value){resets++;}}; const player={getPlaybackQuality:()=>"hd2160",setPlaybackQualityRange:()=>{resets++;},setPlaybackQuality:()=>{resets++;}}; const document={querySelector:()=>video,getElementById:()=>player};`)
+	_, err := vm.RunString(`let resets=0; const video={currentTime:0,paused:false,ended:false,buffered:{length:0},get playbackRate(){return 1;},set playbackRate(value){resets++;}}; const player={getPlaybackQuality:()=>"hd2160",setPlaybackQualityRange:()=>{resets++;},setPlaybackQuality:()=>{resets++;}}; const document={querySelectorAll:()=>[],querySelector:()=>video,getElementById:()=>player};`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -69,6 +89,130 @@ func TestBrowserPlaybackDoesNotResetAlreadySelectedSettings(t *testing.T) {
 	value, err := vm.RunString("resets")
 	if err != nil || value.ToInteger() != 0 {
 		t.Fatalf("unchanged settings reset %v times: %v", value, err)
+	}
+}
+
+func TestBrowserPlaybackStartsMainVideoAfterEndedPreroll(t *testing.T) {
+	for _, state := range []int{-1, 2, 5, 0} {
+		vm := goja.New()
+		_ = vm.Set("playerState", state)
+		_, err := vm.RunString(`let starts=0; const video={duration:20,currentTime:20,paused:true,ended:true,buffered:{length:0},play:()=>{throw new Error('ended media must not replay');}}; const player={getPlayerState:()=>playerState,playVideo:()=>{starts++;}}; const document={querySelectorAll:()=>[],querySelector:()=>video,getElementById:()=>player};`)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := vm.RunString(browserCapturePlaybackScript(0, 4, "", 216000)); err != nil {
+			t.Fatal(err)
+		}
+		starts, _ := vm.RunString("starts")
+		want := int64(1)
+		if state == 0 {
+			want = 0
+		}
+		if starts.ToInteger() != want {
+			t.Fatalf("player state=%d starts=%d, want %d", state, starts.ToInteger(), want)
+		}
+	}
+}
+
+func TestBrowserPlaybackDoesNotSeekOrAcceleratePreroll(t *testing.T) {
+	vm := goja.New()
+	_, err := vm.RunString(`let seeks=0, starts=0; const video={duration:20,currentTime:5,playbackRate:1,paused:false,ended:false,buffered:{length:1,start:()=>0,end:()=>20}}; const player={getPlayerState:()=>-1,seekTo:()=>{seeks++;},playVideo:()=>{starts++;}}; const document={querySelectorAll:()=>[],querySelector:()=>video,getElementById:()=>player};`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := vm.RunString(browserCapturePlaybackScript(200000, 4, "", 216000)); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := vm.RunString("JSON.stringify([video.currentTime,video.playbackRate,seeks,starts])")
+	if got.String() != "[5,1,0,0]" {
+		t.Fatalf("preroll was controlled using main-video progress: %s", got.String())
+	}
+	if _, err := vm.RunString(`video.duration=216;`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := vm.RunString(browserCapturePlaybackScript(200000, 4, "", 216000)); err != nil {
+		t.Fatal(err)
+	}
+	got, _ = vm.RunString("video.playbackRate")
+	if got.ToInteger() != 4 {
+		t.Fatal("requested video did not receive its playback policy")
+	}
+	if _, err := vm.RunString(`video.playbackRate=1; video.currentTime=5; seeks=0; player.classList={contains:(name)=>name==='ad-showing'};`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := vm.RunString(browserCapturePlaybackScript(200000, 4, "", 216000)); err != nil {
+		t.Fatal(err)
+	}
+	got, _ = vm.RunString("JSON.stringify([video.currentTime,video.playbackRate,seeks])")
+	if got.String() != "[5,1,0]" {
+		t.Fatal("active preroll with a matching duration was treated as the main video")
+	}
+}
+
+func TestBrowserPlaybackResumesPausedPrerollThroughPlayer(t *testing.T) {
+	vm := goja.New()
+	_, err := vm.RunString(`let starts=0; const video={duration:20,currentTime:5,playbackRate:1,paused:true,ended:false,buffered:{length:0},play:()=>{throw new Error('DOM playback bypasses player state');}}; const player={getPlayerState:()=>-1,playVideo:()=>{starts++;}}; const document={querySelectorAll:()=>[],querySelector:()=>video,getElementById:()=>player};`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := vm.RunString(browserCapturePlaybackScript(30000, 4, "", 216000)); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := vm.RunString("starts")
+	if got.ToInteger() != 1 {
+		t.Fatal("paused preroll was not resumed through the player")
+	}
+}
+
+func TestBrowserPlaybackUsesOnlyEnabledVisibleSkipControl(t *testing.T) {
+	for _, tc := range []struct {
+		disabled, visible bool
+		want              int64
+	}{{false, true, 1}, {true, true, 0}, {false, false, 0}} {
+		vm := goja.New()
+		_ = vm.Set("disabled", tc.disabled)
+		_ = vm.Set("visible", tc.visible)
+		_, err := vm.RunString(`let skips=0; const window={}; const getComputedStyle=()=>({visibility:'visible',pointerEvents:'auto'}); const video={duration:20,currentTime:5,playbackRate:1,paused:false,ended:false}; const skip={getAttribute:()=>null,disabled:disabled,getClientRects:()=>visible?[{}]:[],click:()=>{skips++;}}; const document={getElementById:()=>null,querySelector:()=>video,querySelectorAll:()=>[skip]};`)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := vm.RunString(browserCapturePlaybackScript(0, 4, "", 216000)); err != nil {
+			t.Fatal(err)
+		}
+		got, _ := vm.RunString("skips")
+		if got.ToInteger() != tc.want {
+			t.Fatalf("disabled=%t visible=%t skips=%d", tc.disabled, tc.visible, got.ToInteger())
+		}
+	}
+}
+
+func TestBrowserPlaybackFindsVisibleSkipAfterHiddenLegacyControl(t *testing.T) {
+	vm := goja.New()
+	_, err := vm.RunString(`let clicks=0; const window={}; const video={duration:20}; const hidden={disabled:false,getAttribute:()=>null,getClientRects:()=>[],click:()=>{throw new Error('hidden legacy control clicked');}}; const enabled={disabled:false,getAttribute:()=>null,getClientRects:()=>[{}],click:()=>{clicks++;}}; const getComputedStyle=()=>({visibility:'visible',display:'block',pointerEvents:'auto'}); const document={getElementById:()=>null,querySelector:()=>video,querySelectorAll:()=>[hidden,enabled]};`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := vm.RunString(browserCapturePlaybackScript(0, 4, "", 216000)); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := vm.RunString("clicks")
+	if got.ToInteger() != 1 {
+		t.Fatal("visible replacement Skip control was masked by a hidden control")
+	}
+}
+
+func TestBrowserPlaybackResumesAfterSkipClickLeavesPrerollPaused(t *testing.T) {
+	vm := goja.New()
+	_, err := vm.RunString(`let clicks=0, starts=0; const window={}; const video={duration:30,currentTime:6,paused:true,ended:false,playbackRate:1}; const skip={disabled:false,getAttribute:()=>null,getClientRects:()=>[{}],click:()=>{clicks++;}}; const getComputedStyle=()=>({visibility:'visible',display:'block',pointerEvents:'auto'}); const player={getPlayerState:()=>-1,playVideo:()=>{starts++;}}; const document={getElementById:()=>player,querySelector:()=>video,querySelectorAll:()=>[skip]};`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := vm.RunString(browserCapturePlaybackScript(0, 4, "", 216000)); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := vm.RunString("JSON.stringify([clicks,starts,video.playbackRate])")
+	if got.String() != "[1,1,1]" {
+		t.Fatalf("skip did not retain normal preroll resume policy: %s", got.String())
 	}
 }
 
@@ -218,8 +362,11 @@ func TestBrowserCaptureTimeoutAccountsFor4KTransferBytes(t *testing.T) {
 	if got := browserCaptureTimeout(30_000, 2_600*1024*1024); got < 24*time.Minute {
 		t.Fatalf("4K transfer timeout = %s, want at least 24m", got)
 	}
-	if got := browserCaptureTimeout(24*60*60*1000, 0); got != 45*time.Minute {
-		t.Fatalf("capture timeout cap = %s, want 45m", got)
+	if got := browserCaptureTimeout(24*60*60*1000, 0); got < 24*time.Hour {
+		t.Fatalf("capture timeout = %s, must allow long-form playback", got)
+	}
+	if got := browserCaptureTimeout(8*24*60*60*1000, 0); got != maximumItemTimeout {
+		t.Fatalf("capture timeout cap = %s, want %s", got, maximumItemTimeout)
 	}
 }
 

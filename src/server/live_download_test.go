@@ -153,6 +153,13 @@ func TestLiveResolutionMatrix(t *testing.T) {
 	if raw == "" {
 		t.Skip("set YTDL_LIVE_MATRIX_URLS to comma-separated video URLs")
 	}
+	strategy := os.Getenv("YTDL_LIVE_MATRIX_STRATEGY")
+	if strategy == "" {
+		strategy = "best"
+	}
+	if !validVideoStrategy(strategy) {
+		t.Fatalf("invalid YTDL_LIVE_MATRIX_STRATEGY %q", strategy)
+	}
 	urls := strings.Split(raw, ",")
 	for index, rawURL := range urls {
 		canonical, kind, err := canonicalURL(strings.TrimSpace(rawURL))
@@ -194,7 +201,7 @@ func TestLiveResolutionMatrix(t *testing.T) {
 			}
 			for _, quality := range []string{"480", "720", "1080", "1440", "2160", "best"} {
 				t.Run(quality, func(t *testing.T) {
-					selection, err := selectFormat(video, quality)
+					selection, err := selectFormatForStrategy(video, quality, strategy)
 					if err != nil {
 						t.Fatalf("select %s: %v", quality, err)
 					}
@@ -203,7 +210,7 @@ func TestLiveResolutionMatrix(t *testing.T) {
 					if selection.audio != nil {
 						t.Logf("selected audio itag=%d bytes=%d", selection.audio.ItagNo, selection.audio.ContentLength)
 					}
-					body, err := json.Marshal(map[string]any{"url": strings.TrimSpace(rawURL), "quality": quality, "rightsConfirmed": true})
+					body, err := json.Marshal(map[string]any{"url": strings.TrimSpace(rawURL), "quality": quality, "videoStrategy": strategy, "rightsConfirmed": true})
 					if err != nil {
 						t.Fatal(err)
 					}

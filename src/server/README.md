@@ -1,5 +1,9 @@
 # Native Go download service
 
+Live matrix runs accept `YTDL_LIVE_MATRIX_STRATEGY` (default `best`); set it to `compatibility` to exercise H.264/AAC selection independently. Preroll handling and the latest sample-specific validation limits are recorded in [the download readiness investigation](../../docs/VEVO_DOWNLOAD_FIX_2026-10-31.md).
+
+Temporary capture tabs also apply [targeted player-data ad filtering](../../docs/UBLOCK_PLAYER_FILTERING.md) before page scripts run. Captured media still requires matching source identity and complete verified tracks before publication.
+
 This directory contains the local HTTP service compiled into the `youtube-downloader` executable (`youtube-downloader.exe` on Windows). The executable serves both this API and the embedded React UI from one origin; the UI connects automatically and reads/writes its job history and preferences through the service. The server validates requests, manages download jobs, and streams finalized files. It uses `github.com/kkdai/youtube/v2` for metadata and compatible direct streams, `chromedp` for browser-assisted adaptive video delivery, and `gomedia` to remux MP4 tracks. Audio-only jobs can either preserve the source AAC-in-MP4 stream as M4A with no transcoding or decode AAC and encode tagged MP3 entirely in Go; no FFmpeg or other audio executable is required.
 
 This is a YouTube-only, local/single-user downloader. Download only content you own or are authorized to save. It does not import credentials or cookies from your normal browser profile, perform DRM decryption or paywall bypasses, or record live/HLS/DASH streams. Adaptive capture uses a temporary browser session that YouTube may authorize for that run.
@@ -35,7 +39,7 @@ Chrome, Chromium, or Edge must be installed for this path. Discovery is automati
 
 Browser playback requests use YouTube's representation quality names, including for cropped films whose actual height differs from the nominal label. Capture can advance playback within the contiguous media prefix already verified and saved for all requested tracks; missing fragments are never skipped. Capture deadlines allow real-time playback as well as the selected byte volume, since the requested accelerated playback rate is not guaranteed. When a preferred multichannel AAC track cannot be acquired natively, adaptive MP4 jobs try an available stereo AAC track before progressive audio and disclose that fallback in the job note.
 
-If browser capture or adaptive byte-range delivery fails, the service uses the highest verified progressive MP4 when one is available and adds a fallback explanation to the job note. A finished lower-resolution fallback is preferable to a corrupt partial HD file. Some videos cannot expose an eligible compatible track; their item fails explicitly.
+Transient browser capture failures receive one retry using a fresh tab, including failures after media has started arriving. Each attempt and the overall item remain deadline-bounded. If adaptive acquisition still fails, the optional 360p progressive MP4 recovery is used only when explicitly enabled for that job, and its use is disclosed in the job note. Some videos cannot expose an eligible compatible track; their item fails explicitly.
 
 ## Live resolution regression test
 

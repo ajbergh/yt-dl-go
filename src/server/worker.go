@@ -50,6 +50,7 @@ var (
 	errMux               = errors.New("video and audio streams could not be combined into a complete file")
 	errStorage           = errors.New("private media storage could not be safely written or cleaned")
 	errLimit             = errors.New("Job storage limit reached; remaining entries were not downloaded")
+	errItemReservation   = errors.New("selected media exceeded its reserved item size; retry the item")
 	errNative            = errors.New("native engine failed unexpectedly; completeness could not be verified")
 	errNoAudio           = errors.New("no compatible standalone audio stream is available")
 	errAudioConvert      = errors.New("AAC audio could not be decoded and encoded to MP3")
@@ -785,6 +786,7 @@ func (b *jobBudget) reserve(ctx context.Context, requested int64) (int64, error)
 	for {
 		b.mu.Lock()
 		if b.used > b.limit {
+			log.Printf("job quota exceeded: used_bytes=%d limit_bytes=%d", b.used, b.limit)
 			b.mu.Unlock()
 			return 0, errLimit
 		}
@@ -793,6 +795,7 @@ func (b *jobBudget) reserve(ctx context.Context, requested int64) (int64, error)
 			amount = b.limit - b.used
 		}
 		if amount <= 0 || amount > b.limit-b.used {
+			log.Printf("job quota reservation rejected: requested_bytes=%d used_bytes=%d limit_bytes=%d", amount, b.used, b.limit)
 			b.mu.Unlock()
 			return 0, errLimit
 		}
@@ -819,6 +822,7 @@ func (b *jobBudget) release(amount, completed int64) error {
 		b.reserved = 0
 	}
 	if completed > amount || completed > b.limit-b.used {
+		log.Printf("job quota commit rejected: output_bytes=%d reservation_bytes=%d used_bytes=%d limit_bytes=%d", completed, amount, b.used, b.limit)
 		close(b.changed)
 		b.changed = make(chan struct{})
 		return errLimit
@@ -1286,6 +1290,9 @@ func (s *server) processItem(ctx context.Context, j *jobState, entry *youtube.Pl
 	}
 	if requested <= 0 {
 		requested = s.cfg.maxBytes
+	}
+	if os.Getenv("YTDL_TRACE_PERFORMANCE") != "" {
+		log.Printf("item reservation job_id=%s item=%d requested_bytes=%d reserved_bytes=%d job_limit_bytes=%d", j.ID, current, requested, budget, s.cfg.maxBytes)
 	}
 	bandwidthLimit := int64(0)
 	if s.bandwidth != nil {
@@ -1809,7 +1816,7 @@ func (s *server) keepPartial(j *jobState) bool {
 
 func (s *server) recordFailure(j *jobState, index int, err error) {
 	message := "Download interrupted"
-	for _, safe := range []error{errMetadata, errPlaylist, errCombined, errManifest, errRead, errLength, errMux, errStorage, errLimit, errNative, errNoAudio, errAudioConvert, errItemTimeout} {
+	for _, safe := range []error{errMetadata, errPlaylist, errCombined, errManifest, errRead, errLength, errMux, errStorage, errLimit, errItemReservation, errNative, errNoAudio, errAudioConvert, errItemTimeout} {
 		if errors.Is(err, safe) {
 			message = safe.Error()
 			break
@@ -2090,8 +2097,8 @@ func downloadAdaptiveMP4Audio(preferred, progressive *youtube.Format, download f
 		return nil, false, errNoAudio
 	}
 	if preferred.ContentLength <= 0 {
-		if progressive == nil {
-			return nil, false, errLimit
+		if progressive == nil || progressive.ContentLength <= 0 {
+			return nil, false, errLength
 		}
 		if err := download(progressive); err != nil {
 			return nil, false, err
@@ -2113,7 +2120,7 @@ func downloadAdaptiveMP4Audio(preferred, progressive *youtube.Format, download f
 			return nil, false, err
 		}
 	}
-	if progressive == nil || progressive.ItagNo == preferred.ItagNo {
+	if progressive == nil || progressive.ContentLength <= 0 || progressive.ItagNo == preferred.ItagNo {
 		return nil, false, errRead
 	}
 	if err := download(progressive); err != nil {
@@ -2143,6 +2150,38 @@ func (s *server) acquireAdaptiveBrowser(ctx context.Context) browserMediaProvide
 		log.Printf("browser acquisition failed attempt=%d error=%v", attempt+1, err)
 	}
 	return nil
+}
+
+// Each capture has its own media deadline and the caller's item deadline bounds
+// the whole recovery. Late transport failures deserve the same single fresh-tab
+// retry as startup failures; native range URLs may be unavailable as well.
+func retryBrowserCapture(ctx context.Context, provider browserMediaProvider, capture func(browserMediaProvider) error) error {
+	for attempt := 0; attempt < 2; attempt++ {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		current := provider
+		if attempt > 0 {
+			if retry, ok := provider.(browserRetryProvider); ok {
+				fresh, err := retry.Reopen(ctx)
+				if fresh != nil {
+					defer fresh.Close()
+				}
+				if err != nil || fresh == nil {
+					return errBrowserUnavailable
+				}
+				current = fresh
+			}
+		}
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		err := capture(current)
+		if err == nil || (!errors.Is(err, errBrowserUnavailable) && !errors.Is(err, errSABRReadyLimit)) {
+			return err
+		}
+	}
+	return errBrowserUnavailable
 }
 
 func (s *server) transferAdaptiveMP4(ctx context.Context, j *jobState, engine nativeClient, video *youtube.Video, selection streamSelection, queueIndex, outputIndex int, budget int64) (result mediaFile, err error) {
@@ -2258,7 +2297,7 @@ func (s *server) transferAdaptiveMP4(ctx context.Context, j *jobState, engine na
 	}
 	if info.Size() > budget {
 		log.Printf("MP4 mux exceeds item reservation: output_bytes=%d budget=%d video_bytes=%d audio_bytes=%d", info.Size(), budget, videoSize, audioSize)
-		return result, errLimit
+		return result, errItemReservation
 	}
 	if ctx.Err() != nil {
 		return result, ctx.Err()
@@ -2346,62 +2385,62 @@ func (s *server) transferAdaptiveWebM(ctx context.Context, j *jobState, engine n
 	var videoBrowserUsed, audioBrowserUsed bool
 	dualUsed := false
 	dualAttempted := false
-	if dualProvider, ok := browserProvider.(browserDualTrackProvider); ok {
+	if _, ok := browserProvider.(browserDualTrackProvider); ok {
 		_, videoPartErr := os.Stat(videoPart)
 		_, audioPartErr := os.Stat(audioPart)
 		if errors.Is(videoPartErr, os.ErrNotExist) && errors.Is(audioPartErr, os.ErrNotExist) {
 			dualAttempted = true
-			if err := s.saveDownloadPart(j, video.ID, queueIndex, "video", videoPart, "browser-sabr", selection.video, 0, nativeProfileID(engine)); err != nil {
-				return result, errStorage
-			}
-			if err := s.saveDownloadPart(j, video.ID, queueIndex, "audio", audioPart, "browser-sabr", selection.audio, 0, nativeProfileID(engine)); err != nil {
-				return result, errStorage
-			}
 			dualProgress := func(videoCurrent, audioCurrent int64) {
 				if totalExpected > 0 {
 					s.updateProgress(j, queueIndex, videoCurrent+audioCurrent, progressTotal)
 				}
 			}
 			captureStarted := time.Now()
-			// Retry transient startup failures once, but do not replay a capture
-			// that has already consumed a substantial part of its media deadline.
-			const dualCaptureAttempts = 2
-			for attempt := 0; attempt < dualCaptureAttempts; attempt++ {
-				if attempt > 0 {
-					if retryProvider, ok := browserProvider.(browserRetryProvider); ok {
-						if fresh, reopenErr := retryProvider.Reopen(ctx); reopenErr == nil && fresh != nil {
-							defer fresh.Close()
-							if freshDual, ok := fresh.(browserDualTrackProvider); ok {
-								dualProvider = freshDual
-							}
-						}
+			err = retryBrowserCapture(ctx, browserProvider, func(provider browserMediaProvider) error {
+				dualProvider, ok := provider.(browserDualTrackProvider)
+				if !ok {
+					return errBrowserUnavailable
+				}
+				for key, part := range map[string]string{"video": videoPart, "audio": audioPart} {
+					format := selection.video
+					if key == "audio" {
+						format = selection.audio
+					}
+					if saveErr := s.saveDownloadPart(j, video.ID, queueIndex, key, part, "browser-sabr", format, 0, nativeProfileID(engine)); saveErr != nil {
+						return errStorage
 					}
 				}
 				videoCandidates := browserWebMVideoCandidates(video, selection.video)
-				videoSize, audioSize, err = dualProvider.CaptureTracks(ctx, video.ID, selection.video, videoCandidates, selection.audio, videoPart, audioPart, budget, budget, dualProgress)
-				if err == nil && videoSize > 0 && audioSize > 0 && videoSize <= budget && audioSize <= budget-videoSize {
-					videoInfo, videoStatErr := os.Stat(videoPart)
-					audioInfo, audioStatErr := os.Stat(audioPart)
-					if videoStatErr == nil && audioStatErr == nil && videoInfo.Size() == videoSize && audioInfo.Size() == audioSize {
-						if err := s.deleteDownloadPart(j, queueIndex, "video"); err != nil {
-							return result, errStorage
-						}
-						if err := s.deleteDownloadPart(j, queueIndex, "audio"); err != nil {
-							return result, errStorage
-						}
-						dualUsed = true
-						videoBrowserUsed, audioBrowserUsed = true, true
-						break
+				var captureErr error
+				videoSize, audioSize, captureErr = dualProvider.CaptureTracks(ctx, video.ID, selection.video, videoCandidates, selection.audio, videoPart, audioPart, budget, budget, dualProgress)
+				if captureErr == nil {
+					videoInfo, videoErr := os.Stat(videoPart)
+					audioInfo, audioErr := os.Stat(audioPart)
+					if videoSize <= 0 || audioSize <= 0 || videoSize > budget || audioSize > budget-videoSize || videoErr != nil || audioErr != nil || videoInfo.Size() != videoSize || audioInfo.Size() != audioSize {
+						captureErr = errLength
 					}
 				}
-				_ = os.Remove(videoPart)
-				_ = os.Remove(audioPart)
-				_ = s.deleteDownloadPart(j, queueIndex, "video")
-				_ = s.deleteDownloadPart(j, queueIndex, "audio")
-				if !errors.Is(err, errBrowserUnavailable) || time.Since(captureStarted) >= 2*time.Minute {
-					break
+				for key, part := range map[string]string{"video": videoPart, "audio": audioPart} {
+					if captureErr != nil {
+						if removeErr := os.Remove(part); removeErr != nil && !errors.Is(removeErr, os.ErrNotExist) {
+							return errStorage
+						}
+					}
+					if checkpointErr := s.deleteDownloadPart(j, queueIndex, key); checkpointErr != nil {
+						return errStorage
+					}
 				}
+				return captureErr
+			})
+			if err == nil {
+				dualUsed = true
+				videoBrowserUsed, audioBrowserUsed = true, true
+			} else if ctx.Err() != nil {
+				return result, ctx.Err()
+			} else if errors.Is(err, errStorage) {
+				return result, err
 			}
+
 			capturePhase += time.Since(captureStarted)
 		}
 	}
@@ -2475,7 +2514,8 @@ func (s *server) transferAdaptiveWebM(ctx context.Context, j *jobState, engine n
 		return result, errLength
 	}
 	if info.Size() > budget {
-		return result, errLimit
+		log.Printf("WebM mux exceeds item reservation: output_bytes=%d reservation_bytes=%d video_bytes=%d audio_bytes=%d", info.Size(), budget, videoSize, audioSize)
+		return result, errItemReservation
 	}
 	if totalExpected > 0 {
 		s.updateProgress(j, queueIndex, progressTotal, progressTotal)
@@ -2592,8 +2632,12 @@ func (s *server) downloadAdaptiveRanges(ctx context.Context, j *jobState, engine
 	if os.Getenv("YTDL_TRACE_PERFORMANCE") != "" {
 		log.Printf("adaptive range begin itag=%d expected_bytes=%d", format.ItagNo, format.ContentLength)
 	}
-	if budget <= 0 || format.ContentLength <= 0 || format.ContentLength > budget {
-		return 0, false, errLimit
+	if format.ContentLength <= 0 {
+		return 0, false, errLength
+	}
+	if budget <= 0 || format.ContentLength > budget {
+		log.Printf("adaptive item reservation exceeded: itag=%d source_bytes=%d reservation_bytes=%d", format.ItagNo, format.ContentLength, budget)
+		return 0, false, errItemReservation
 	}
 	if progress == nil {
 		progress = func(int64) {}
@@ -2676,6 +2720,9 @@ func (s *server) downloadAdaptiveRanges(ctx context.Context, j *jobState, engine
 			}
 			if ctx.Err() != nil {
 				return 0, false, ctx.Err()
+			}
+			if errors.Is(captureErr, errStorage) || errors.Is(captureErr, errItemReservation) {
+				return 0, false, captureErr
 			}
 		}
 	}

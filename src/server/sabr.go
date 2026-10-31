@@ -43,6 +43,7 @@ type sabrCapture struct {
 	selectedItag       int
 	allowedItags       map[int]struct{}
 	expectedDurationMs int64
+	expectedVideoID    string
 	budget             int64
 	progress           func(int64)
 	done               chan error
@@ -217,6 +218,7 @@ type sabrCompletedSegment struct {
 
 type sabrMediaHeader struct {
 	headerID      uint64
+	videoID       string
 	itag          int
 	isInit        bool
 	sequence      uint64
@@ -299,7 +301,12 @@ func (capture *sabrCapture) consumePart(partType uint64, payload []byte) error {
 		}
 		selected := false
 		_, allowed := capture.allowedItags[metadata.itag]
-		if allowed && (!capture.formatVerified || metadata.itag == capture.selectedItag) {
+		sourceMatches := capture.expectedVideoID == "" || metadata.videoID == capture.expectedVideoID
+		if allowed && !sourceMatches {
+			// Prerolls can reuse the requested itag. Never pin their digest or
+			// wait for their final segment before accepting the requested video.
+			capture.acceptSelected = false
+		} else if allowed && (!capture.formatVerified || metadata.itag == capture.selectedItag) {
 			if !capture.formatVerified {
 				capture.formatVerified = true
 				capture.selectedItag = metadata.itag
@@ -316,14 +323,15 @@ func (capture *sabrCapture) consumePart(partType uint64, payload []byte) error {
 			capture.acceptSelected = selected
 		}
 		if capture.trace {
-			log.Printf("SABR format init itag=%d selected=%t end_segment=%d", metadata.itag, selected, metadata.endSegment)
+			log.Printf("SABR format init video_id=%q itag=%d selected=%t end_segment=%d", metadata.videoID, metadata.itag, selected, metadata.endSegment)
 		}
 	case umpPartMediaHeader:
 		header, err := decodeSABRMediaHeader(payload)
 		if err != nil || header.headerID > math.MaxUint32 || header.itag <= 0 || header.contentLength < 0 {
 			return errSABR
 		}
-		selected := header.itag == capture.selectedItag && capture.acceptSelected && header.formatDigest == capture.formatDigest
+		sourceMatches := capture.expectedVideoID == "" || header.videoID == "" || header.videoID == capture.expectedVideoID
+		selected := sourceMatches && header.itag == capture.selectedItag && capture.acceptSelected && header.formatDigest == capture.formatDigest
 		segments := capture.active[header.headerID]
 		if len(segments) >= 8 || (selected && len(segments) > 0 && segments[len(segments)-1].selected) {
 			return errSABR
@@ -344,7 +352,7 @@ func (capture *sabrCapture) consumePart(partType uint64, payload []byte) error {
 		segment := segments[0]
 		if segment.selected {
 			if int64(len(segment.data))+int64(len(payload)-offset) > capture.budget {
-				return errLimit
+				return errItemReservation
 			}
 			segment.data = append(segment.data, payload[offset:]...)
 		}
@@ -504,7 +512,7 @@ func (capture *sabrCapture) write(data []byte) error {
 		return errSABR
 	}
 	if int64(len(data)) > capture.budget-capture.totalWritten {
-		return errLimit
+		return errItemReservation
 	}
 	written, err := capture.file.Write(data)
 	if err != nil || written != len(data) {
@@ -694,6 +702,7 @@ func (reader *protoReader) skip(wire int) error {
 }
 
 type sabrFormatInitialization struct {
+	videoID      string
 	itag         int
 	endSegment   uint64
 	formatDigest [sha256.Size]byte
@@ -712,6 +721,14 @@ func decodeSABRFormatInitialization(data []byte) (sabrFormatInitialization, erro
 				return metadata, errSABR
 			}
 			return metadata, nil
+		}
+		if field == 1 && wire == 2 {
+			value, err := reader.bytes()
+			if err != nil {
+				return metadata, err
+			}
+			metadata.videoID = string(value)
+			continue
 		}
 		if field == 2 && wire == 2 {
 			format, err := reader.bytes()
@@ -791,6 +808,10 @@ func decodeSABRMediaHeader(data []byte) (sabrMediaHeader, error) {
 		switch {
 		case field == 1 && wire == 0:
 			header.headerID, err = reader.varint()
+		case field == 2 && wire == 2:
+			var value []byte
+			value, err = reader.bytes()
+			header.videoID = string(value)
 		case field == 3 && wire == 0:
 			var value uint64
 			value, err = reader.varint()

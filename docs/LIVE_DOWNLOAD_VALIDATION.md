@@ -2,6 +2,10 @@
 
 Branch: `fix/live-resolution-matrix`.
 
+Additional preroll investigation and current blockers: [2026-10-31 sample and ad-skipper findings](VEVO_DOWNLOAD_FIX_2026-10-31.md).
+
+Latest production web UI check: [1080p UI validation on 2026-10-30](PRODUCTION_UI_1080_2026-10-30.md). Four additional sources exposed two remaining download failures; those results are separate from the earlier API-based live matrix below.
+
 The opt-in `TestLiveResolutionMatrix` downloads complete videos through the real job API at every supported quality ceiling: 480, 720, 1080, 1440, 2160, and best. These are maximum actual pixel heights, so cropped films can have lower dimensions than their nominal YouTube labels. The service does not expose separate 144p, 240p, or 360p controls. The matrix does not claim to test every codec strategy or audio-only format.
 
 | Sample | Duration | YouTube source |
@@ -83,3 +87,7 @@ Fresh isolated runs passed Best/2160p (105,119,302-byte WebM) and the targeted 1
 Code review found an additional recovery weakness: both capture attempts reused the same provider, even though its setup errors and capture state can remain invalid. Production providers can now acquire a fresh browser lease for the retry, for both serial MP4 capture and dual-track WebM capture. Browser acquisition gets one bounded retry, and cold startup allows 60 seconds instead of 20. Startup failures are logged even when verbose diagnostics are disabled. Regression tests reproduce a permanently broken first provider, require a fresh provider to complete, check replacement cleanup, and verify cancellation and acquisition retry bounds.
 
 The full offline suite passed with CGO disabled in 31.019 seconds. The `TestLivePublishedFile` opt-in check validates a packaged app's actual output without downloading it again: set `YTDL_VERIFY_FILE`, `YTDL_VERIFY_MIME`, `YTDL_VERIFY_HEIGHT`, and `YTDL_VERIFY_DURATION`, then run `go test -run '^TestLivePublishedFile$' -count=1 -v`. File checks establish container structure, dimensions, audio/video presence, and track endpoints, not full frame decoding. Diagnostic and final-job artifacts for this trailer are in the ignored `.vite-cache/` directory.
+
+## PR readiness follow-up — 2026-10-31
+
+See [the readiness work and validation report](PR_READINESS_2026-10-31.md) for the subsequent capture byte-accounting fixes, late dual-track recovery, error classification, production build fixes, and new offline and live results. Earlier failed submissions remain part of the record; subsequent passes do not establish that their original causes have all been eliminated.

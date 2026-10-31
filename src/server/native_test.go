@@ -533,6 +533,22 @@ func TestAdaptiveMP4AudioDoesNotDowngradeNonReadFailures(t *testing.T) {
 	}
 }
 
+func TestAdaptiveMP4AudioPreservesReadFailureWhenProgressiveLengthIsUnknown(t *testing.T) {
+	preferred := &youtube.Format{ItagNo: 140, ContentLength: 1000}
+	progressive := &youtube.Format{ItagNo: 18}
+	calls := 0
+	_, _, err := downloadAdaptiveMP4Audio(preferred, progressive, func(format *youtube.Format) error {
+		calls++
+		if format != preferred {
+			t.Fatal("attempted unusable unknown-length fallback")
+		}
+		return errRead
+	})
+	if !errors.Is(err, errRead) || calls != 1 {
+		t.Fatalf("original transport failure was replaced: calls=%d error=%v", calls, err)
+	}
+}
+
 func TestAdaptiveMP4BudgetReservesLargerAACOrProgressiveSource(t *testing.T) {
 	job := &jobState{Job: Job{MediaType: "video"}}
 	selection := streamSelection{
