@@ -407,6 +407,47 @@ func TestBrowserPoolReplacesDeadProcessBeforeOldLeaseCloses(t *testing.T) {
 	}
 }
 
+func TestBrowserPoolOwnsRootUntilExplicitShutdown(t *testing.T) {
+	parent, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	pool := &browserPool{ctx: parent, idleTimeout: time.Hour,
+		launch: func(parent context.Context) (context.Context, context.CancelFunc, context.CancelFunc, error) {
+			root, stop := context.WithCancel(parent)
+			return root, stop, stop, nil
+		},
+		newTab: func(parent context.Context) (context.Context, context.CancelFunc) { return context.WithCancel(parent) },
+	}
+	lease, err := pool.Acquire(parent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := pool.root
+	cancel()
+	if root.Err() != nil {
+		t.Fatal("server cancellation killed root before graceful shutdown")
+	}
+	_ = lease.Close()
+	_ = pool.Close()
+	if root.Err() == nil {
+		t.Fatal("pool close left its browser context active")
+	}
+}
+
+func TestBrowserRootShutdownDoesNotWaitIndefinitely(t *testing.T) {
+	blocked := make(chan struct{})
+	finished := make(chan struct{})
+	defer close(blocked)
+	go func() {
+		closeBrowserRoot(context.Background(), func() { <-blocked }, nil, 10*time.Millisecond)
+		close(finished)
+	}()
+	select {
+	case <-finished:
+	case <-time.After(time.Second):
+		t.Fatal("browser shutdown blocked the service")
+	}
+}
+
 func TestBrowserPoolSharesProcessAndIsolatesLeases(t *testing.T) {
 	rootCtx, cancelRoot := context.WithCancel(context.Background())
 	defer cancelRoot()

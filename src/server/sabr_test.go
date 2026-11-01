@@ -246,8 +246,25 @@ func TestSABRCaptureRejectsLengthMismatch(t *testing.T) {
 	body = testUMPPart(body, umpPartMediaHeader, testMediaHeader(1, 299, true, 0, 0, 99, format))
 	body = testUMPPart(body, umpPartMedia, append(testUMPVarint(1), []byte("short")...))
 	body = testUMPPart(body, umpPartMediaEnd, testUMPVarint(1))
-	if err := capture.consume(body); err == nil {
-		t.Fatal("expected content-length mismatch")
+	if err := capture.consume(body); err != nil {
+		t.Fatal(err)
+	}
+	if capture.totalWritten != 0 || !capture.repairPending {
+		t.Fatal("partial initialization entered the saved prefix or did not request repair")
+	}
+	if _, err := capture.finish(); err == nil {
+		t.Fatal("partial media was accepted as complete")
+	}
+	body = testSelectedSegment(nil, 1, 299, true, 0, 0, []byte("init"), format)
+	body = testSelectedSegment(body, 2, 299, false, 1, 1000, []byte("media"), format)
+	if err := capture.consume(body); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := capture.finish(); err != nil {
+		t.Fatal(err)
+	}
+	if capture.repairPending {
+		t.Fatal("repair remained pending after full media arrived")
 	}
 }
 

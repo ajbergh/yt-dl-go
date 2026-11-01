@@ -23,7 +23,11 @@ func (p *dualRetryFixture) CaptureTracks(_ context.Context, _ string, _ *youtube
 }
 
 func TestAdaptiveWebMRecoversWithFreshDualCapture(t *testing.T) {
+	var broken *dualRetryFixture
 	fresh := &dualRetryFixture{capture: func(video, audio string) (int64, int64, error) {
+		if !broken.closed {
+			t.Fatal("failed tab kept playing during recovery")
+		}
 		// Exclusive fixture writes fail if the failed attempt wasn't cleaned up.
 		writeWebMFixture(t, video, webm.TrackEntry{TrackNumber: 1, TrackUID: 1, TrackType: 1, CodecID: "V_VP9", Video: &webm.Video{PixelWidth: 1920, PixelHeight: 1080}}, []webMFrame{{data: []byte{1}, keyframe: true}})
 		writeWebMFixture(t, audio, webm.TrackEntry{TrackNumber: 1, TrackUID: 2, TrackType: 2, CodecID: "A_OPUS", CodecPrivate: []byte("OpusHead\x01\x02"), Audio: &webm.Audio{SamplingFrequency: 48000, Channels: 2}}, []webMFrame{{data: []byte{2}, keyframe: true}})
@@ -31,7 +35,7 @@ func TestAdaptiveWebMRecoversWithFreshDualCapture(t *testing.T) {
 		a, _ := os.Stat(audio)
 		return v.Size(), a.Size(), nil
 	}}
-	broken := &dualRetryFixture{capture: func(video, audio string) (int64, int64, error) {
+	broken = &dualRetryFixture{capture: func(video, audio string) (int64, int64, error) {
 		if err := os.WriteFile(video, []byte("partial"), 0600); err != nil {
 			t.Fatal(err)
 		}
@@ -76,6 +80,41 @@ func TestBrowserCaptureRetryStopsOnCancellationAndStorageError(t *testing.T) {
 		if !errors.Is(err, failure) || calls != 1 || provider.reopens != 0 {
 			t.Fatalf("failure=%v result=%v calls=%d reopens=%d", failure, err, calls, provider.reopens)
 		}
+	}
+}
+
+func TestBrowserCaptureRecoveryBudgetRequiresVerifiedProgress(t *testing.T) {
+	for _, test := range []struct {
+		name                string
+		advance             bool
+		finishAt, wantCalls int
+	}{
+		{"continued progress", true, 4, 4},
+		{"stalled session", false, 4, 2},
+		{"hard recovery cap", true, 9, 8},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			provider := &freshLeaseBrowserProvider{}
+			provider.next = provider
+			calls := 0
+			var verified int64
+			err := retryBrowserCapture(context.Background(), provider, func(browserMediaProvider) error {
+				calls++
+				if calls == test.finishAt {
+					return nil
+				}
+				if test.advance {
+					verified += 10000
+				}
+				return errBrowserUnavailable
+			}, func() int64 { return verified })
+			if calls != test.wantCalls {
+				t.Fatalf("attempts=%d want=%d", calls, test.wantCalls)
+			}
+			if (err == nil) != (test.finishAt <= test.wantCalls) {
+				t.Fatalf("unexpected completion: %v", err)
+			}
+		})
 	}
 }
 

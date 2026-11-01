@@ -23,9 +23,19 @@ import (
 )
 
 func TestNativeClientUsesAndroidProfile(t *testing.T) {
-	_ = newNativeClient(time.Second)
-	if youtube.DefaultClient.Name != youtube.AndroidClient.Name {
-		t.Fatalf("native client profile = %q, want %q", youtube.DefaultClient.Name, youtube.AndroidClient.Name)
+	page, err := os.ReadFile(filepath.Join("testdata", "youtube", "player-response.html"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := newNativeClient(time.Second)
+	client.HTTPClient.Transport = cacheTestTransport(func(request *http.Request) (*http.Response, error) {
+		if request.Header.Get("User-Agent") != youtube.AndroidClient.UserAgent {
+			t.Error("native request did not use the Android profile")
+		}
+		return (youtubeFixtureTransport{page: page}).RoundTrip(request)
+	})
+	if _, err := client.GetVideoContext(context.Background(), testVideo); err != nil {
+		t.Fatal(err)
 	}
 }
 

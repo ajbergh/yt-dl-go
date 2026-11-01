@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -266,6 +268,8 @@ func TestLiveResolutionMatrix(t *testing.T) {
 // Read the actual container rather than trusting the persisted file metadata.
 func assertLiveContainer(t *testing.T, path, mimeType string, height int, duration time.Duration) {
 	t.Helper()
+	stopWatchdog := livePhaseWatchdog("verify container")
+	defer stopWatchdog()
 	if mimeType == "video/webm" {
 		video, err := readWebMTrackEntry(path, 1)
 		if err != nil {
@@ -343,4 +347,13 @@ func assertLiveContainer(t *testing.T, path, mimeType string, height int, durati
 			t.Errorf("MP4 track %d ends at %dms, want %s", id, last[id], duration)
 		}
 	}
+}
+
+func livePhaseWatchdog(phase string) func() {
+	timer := time.AfterFunc(45*time.Second, func() {
+		stack := make([]byte, 1<<20)
+		length := runtime.Stack(stack, true)
+		log.Printf("live test phase %s exceeds 45s; goroutines:\n%s", phase, stack[:length])
+	})
+	return func() { timer.Stop() }
 }

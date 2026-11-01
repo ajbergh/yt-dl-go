@@ -76,7 +76,9 @@ type chromeBrowserProvider struct {
 	playbackRate        int
 	playbackQuality     string
 	playbackDurationMs  int64
+	playbackVideoID     string
 	lastNetworkProgress atomic.Int64
+	checkpoints         sabrCheckpointIO
 }
 
 type browserRangeCapture struct {
@@ -221,6 +223,7 @@ func (p *chromeBrowserProvider) Prepare(ctx context.Context, id string, format *
 		return errBrowserUnavailable
 	}
 	videoURL := browserWatchURL(id)
+	p.playbackVideoID = id
 	p.playbackRate = browserPlaybackRate
 	if format.Height >= 2160 {
 		p.playbackRate = 1
@@ -285,28 +288,11 @@ func (p *chromeBrowserProvider) Prepare(ctx context.Context, id string, format *
 		stopCaller()
 		cancelPrepare()
 	}()
-	var mediaReady, playing bool
-
 	if _, err := chromedp.Call(prepareCtx, network.Enable, browserNetworkParams()); err != nil {
 		return failPrepare("network", err)
 	}
-	if err := chromedp.Do(prepareCtx, chromedp.Navigate(videoURL)); err != nil {
-		return failPrepare("navigate", err)
-	}
-	var err error
-	mediaReady, err = chromedp.Run(prepareCtx, chromedp.Poll[bool](configureQualityScript, chromedp.WithPollingInterval(100*time.Millisecond), chromedp.WithPollingTimeout(browserPrepareTimeout)))
-	if err != nil {
-		return failPrepare("metadata-ready", err)
-	}
-	if err := chromedp.Do(prepareCtx, chromedp.Evaluate[chromedp.Void](playScript)); err != nil {
-		return failPrepare("start-playback", err)
-	}
-	playing, err = chromedp.Run(prepareCtx, chromedp.Poll[bool](playingScript, chromedp.WithPollingInterval(100*time.Millisecond), chromedp.WithPollingTimeout(browserPlaybackReadyTimeout)))
-	if err != nil {
-		return failPrepare("playing", err)
-	}
-	if !mediaReady || !playing {
-		return errBrowserUnavailable
+	if err := p.preparePlayback(prepareCtx, videoURL, configureQualityScript, playScript, playingScript); err != nil {
+		return failPrepare("playback", err)
 	}
 	return nil
 }
@@ -354,7 +340,7 @@ func browserPlaybackQuality(format *youtube.Format) string {
 	}
 }
 
-func (p *chromeBrowserProvider) prepareCapture(id string, format *youtube.Format, metrics *browserCaptureMetrics) error {
+func (p *chromeBrowserProvider) prepareCapture(id string, format *youtube.Format, metrics *browserCaptureMetrics, paired ...*youtube.Format) error {
 	phaseStart := time.Now()
 	if err := p.ensureNetworkCapture(); err != nil {
 		metrics.addPhase(&metrics.fetchSetup, time.Since(phaseStart))
@@ -385,7 +371,7 @@ func (p *chromeBrowserProvider) prepareCapture(id string, format *youtube.Format
 	}
 	metrics.addPhase(&metrics.identity, time.Since(phaseStart))
 	phaseStart = time.Now()
-	if err := p.configurePlaybackCodec(format); err != nil {
+	if err := p.configurePlaybackCodec(format, paired...); err != nil {
 		metrics.addPhase(&metrics.codec, time.Since(phaseStart))
 		if os.Getenv("YTDL_TRACE_SABR") != "" {
 			log.Printf("browser codec setup failed: %v", err)
@@ -482,6 +468,13 @@ func browserCapturePlaybackScript(verifiedMs int64, rate int, quality string, ex
   // the prefix already verified and saved for every requested track.
   const target = verified - 2;
   if (target > video.currentTime + 5) {
+    if (typeof window !== 'undefined' && (window.__ytdlRestoredPrefix || 0) >= target) {
+      // The prefix is verified on disk after a checkpoint restore. A seek
+      // need not wait for the browser to download that same prefix again.
+      if (player && typeof player.seekTo === 'function') player.seekTo(target, true);
+      else video.currentTime = target;
+      window.__ytdlRestoredPrefix = 0;
+    } else {
     for (let i = video.buffered.length - 1; i >= 0; i--) {
       // An audio-only capture may run ahead of the browser's video buffer.
       // Advance to their overlap rather than waiting for video to catch up.
@@ -491,6 +484,7 @@ func browserCapturePlaybackScript(verifiedMs int64, rate int, quality string, ex
         else video.currentTime = bufferedTarget;
         break;
       }
+    }
     }
   }
   // An ended preroll can still occupy the video element while the requested
@@ -538,6 +532,9 @@ func (p *chromeBrowserProvider) waitForCapture(ctx context.Context, capture sabr
 	defer func() { metrics.addPhase(&metrics.wait, time.Since(waitStart)) }()
 	ticks := 0
 	var preroll browserPrerollProgress
+	var lastRepair time.Time
+	repairCursor := int64(-1)
+	repairAttempts := 0
 	for {
 		select {
 		case captureErr := <-captureDone:
@@ -545,7 +542,7 @@ func (p *chromeBrowserProvider) waitForCapture(ctx context.Context, capture sabr
 				if os.Getenv("YTDL_TRACE_SABR") != "" {
 					log.Printf("browser capture ended with error: %v", captureErr)
 				}
-				if errors.Is(captureErr, errStorage) || errors.Is(captureErr, errItemReservation) {
+				if errors.Is(captureErr, errStorage) || errors.Is(captureErr, errItemReservation) || errors.Is(captureErr, errLength) {
 					return captureErr
 				}
 				return errBrowserUnavailable
@@ -564,6 +561,35 @@ func (p *chromeBrowserProvider) waitForCapture(ctx context.Context, capture sabr
 			return nil
 		case <-ticker.C:
 			ticks++
+			if recovery, ok := capture.(interface{ recoveryPositionMs() (int64, bool) }); ok {
+				position, needed := recovery.recoveryPositionMs()
+				if needed && (lastRepair.IsZero() || time.Since(lastRepair) >= 15*time.Second) {
+					if position != repairCursor {
+						repairCursor = position
+						repairAttempts = 0
+					}
+					if repairAttempts >= 3 {
+						return errBrowserUnavailable
+					}
+					// A seek within the player's existing buffer need not issue a
+					// request. Escalate an unsuccessful seek to a bounded reload.
+					reload := repairAttempts > 0
+					if initialization, ok := capture.(interface{ recoveryNeedsReload() bool }); ok {
+						reload = reload || initialization.recoveryNeedsReload()
+					}
+					seeked, seekErr := chromedp.Run(p.ctx, chromedp.Evaluate[bool](browserRepairPlaybackScript(position, p.playbackDurationMs, p.playbackVideoID, reload)))
+					if seekErr != nil {
+						return errBrowserUnavailable
+					}
+					if seeked {
+						repairAttempts++
+						lastRepair = time.Now()
+						if os.Getenv("YTDL_TRACE_PERFORMANCE") != "" {
+							log.Printf("browser refetching missing media from verified prefix position_ms=%d attempt=%d reload=%t", position, repairAttempts, reload)
+						}
+					}
+				}
+			}
 			if ticks%10 == 0 {
 				p.tracePlaybackState()
 			}
@@ -619,7 +645,7 @@ func (p *chromeBrowserProvider) CaptureTrack(ctx context.Context, id string, for
 	if err := p.prepareCapture(id, format, metrics); err != nil {
 		return 0, err
 	}
-	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+	file, state, err := p.openCaptureFile(path, format)
 	if err != nil {
 		return 0, errStorage
 	}
@@ -633,6 +659,10 @@ func (p *chromeBrowserProvider) CaptureTrack(ctx context.Context, id string, for
 		progress(value)
 	})
 	capture.expectedVideoID = id
+	if err := p.configureCaptureCheckpoint(capture, path, format, state); err != nil {
+		_ = file.Close()
+		return 0, err
+	}
 	_, detach, err := p.attachCapture(capture, metrics)
 	if err != nil {
 		_ = file.Close()
@@ -646,16 +676,28 @@ func (p *chromeBrowserProvider) CaptureTrack(ctx context.Context, id string, for
 		if closeErr := file.Close(); closeErr != nil && err == nil {
 			err = errStorage
 		}
-		if !completed {
+		if !completed && p.checkpoints == nil {
 			_ = os.Remove(path)
 		}
+		if !completed && p.checkpoints != nil && (errors.Is(err, errLength) || errors.Is(err, errItemReservation)) {
+			_ = p.checkpoints.Discard(path)
+		}
 	}()
+	if capture.isComplete() {
+		completed = true
+		return capture.totalWritten, nil
+	}
 	phaseStart := time.Now()
 	if err := p.Prepare(ctx, id, format); err != nil {
 		metrics.addPhase(&metrics.prepare, time.Since(phaseStart))
 		return 0, err
 	}
 	metrics.addPhase(&metrics.prepare, time.Since(phaseStart))
+	if capture.restored {
+		if err := p.seedRestoredPrefix(capture.verifiedDurationMs()); err != nil {
+			return 0, err
+		}
+	}
 	var captured int64
 	err = p.waitForCapture(ctx, capture, capture.done, detach, metrics, browserCaptureTimeout(expectedDurationMs, format.ContentLength), func() bool {
 		return time.Since(time.Unix(0, lastProgress.Load())) >= browserStreamIdleTimeout
@@ -671,7 +713,7 @@ func (p *chromeBrowserProvider) CaptureTrack(ctx context.Context, id string, for
 	return captured, nil
 }
 
-// CaptureTracks captures the selected WebM video and Opus audio from one
+// CaptureTracks captures the selected video and compatible audio from one
 // playback. Network response streaming copies each SABR response once;
 // sabrCaptureSet fans out its UMP parts to verified track assemblers.
 func (p *chromeBrowserProvider) CaptureTracks(ctx context.Context, id string, videoFormat *youtube.Format, videoCandidates []*youtube.Format, audioFormat *youtube.Format, videoPath, audioPath string, videoBudget, audioBudget int64, progress func(int64, int64)) (videoResult, audioResult int64, err error) {
@@ -688,14 +730,14 @@ func (p *chromeBrowserProvider) CaptureTracks(ctx context.Context, id string, vi
 	}
 	metrics := newBrowserCaptureMetrics()
 	defer func() { metrics.log("dual", videoResult, audioResult, err) }()
-	if err := p.prepareCapture(id, videoFormat, metrics); err != nil {
+	if err := p.prepareCapture(id, videoFormat, metrics, audioFormat); err != nil {
 		return 0, 0, err
 	}
-	videoFile, err := os.OpenFile(videoPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+	videoFile, videoState, err := p.openCaptureFile(videoPath, videoFormat)
 	if err != nil {
 		return 0, 0, errStorage
 	}
-	audioFile, err := os.OpenFile(audioPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+	audioFile, audioState, err := p.openCaptureFile(audioPath, audioFormat)
 	if err != nil {
 		_ = videoFile.Close()
 		_ = os.Remove(videoPath)
@@ -730,6 +772,16 @@ func (p *chromeBrowserProvider) CaptureTracks(ctx context.Context, id string, vi
 		progressMu.Unlock()
 	})
 	audioCapture.expectedVideoID = id
+	if err := p.configureCaptureCheckpoint(videoCapture, videoPath, videoFormat, videoState); err != nil {
+		_ = videoFile.Close()
+		_ = audioFile.Close()
+		return 0, 0, err
+	}
+	if err := p.configureCaptureCheckpoint(audioCapture, audioPath, audioFormat, audioState); err != nil {
+		_ = videoFile.Close()
+		_ = audioFile.Close()
+		return 0, 0, err
+	}
 	capture := newSABRCaptureSet(videoCapture, audioCapture)
 	_, detach, err := p.attachCapture(capture, metrics)
 	if err != nil {
@@ -749,17 +801,30 @@ func (p *chromeBrowserProvider) CaptureTracks(ctx context.Context, id string, vi
 		if closeErr := audioFile.Close(); closeErr != nil && err == nil {
 			err = errStorage
 		}
-		if !completed {
+		if !completed && p.checkpoints == nil {
 			_ = os.Remove(videoPath)
 			_ = os.Remove(audioPath)
 		}
+		if !completed && p.checkpoints != nil && (errors.Is(err, errLength) || errors.Is(err, errItemReservation)) {
+			_ = p.checkpoints.Discard(videoPath)
+			_ = p.checkpoints.Discard(audioPath)
+		}
 	}()
+	if videoCapture.isComplete() && audioCapture.isComplete() {
+		completed = true
+		return videoCapture.totalWritten, audioCapture.totalWritten, nil
+	}
 	phaseStart := time.Now()
 	if err := p.Prepare(ctx, id, videoFormat); err != nil {
 		metrics.addPhase(&metrics.prepare, time.Since(phaseStart))
 		return 0, 0, err
 	}
 	metrics.addPhase(&metrics.prepare, time.Since(phaseStart))
+	if videoCapture.restored || audioCapture.restored {
+		if err := p.seedRestoredPrefix(capture.verifiedDurationMs()); err != nil {
+			return 0, 0, err
+		}
+	}
 	maximumDuration := max(videoDuration, audioDuration)
 	videoLength := videoFormat.ContentLength
 	for _, candidate := range videoCandidates {
@@ -927,10 +992,17 @@ func playbackPolicy(format *youtube.Format) (playbackCodecPolicy, bool) {
 	}
 }
 
-func (p *chromeBrowserProvider) configurePlaybackCodec(format *youtube.Format) error {
+func (p *chromeBrowserProvider) configurePlaybackCodec(format *youtube.Format, paired ...*youtube.Format) error {
 	policy, ok := playbackPolicy(format)
 	if !ok {
 		return errBrowserUnavailable
+	}
+	for _, audio := range paired {
+		audioPolicy, valid := playbackPolicy(audio)
+		if !valid {
+			return errBrowserUnavailable
+		}
+		policy.unsupportedPattern = "(?:" + policy.unsupportedPattern + "|" + audioPolicy.unsupportedPattern + ")"
 	}
 	execCtx, err := p.targetContext()
 	if err != nil {

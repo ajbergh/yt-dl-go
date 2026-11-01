@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"log"
 	"sync"
 	"time"
 
@@ -63,7 +64,9 @@ func (p *browserPool) Acquire(ctx context.Context) (browserMediaProvider, error)
 		p.closeRootLocked()
 	}
 	if p.root == nil {
-		root, rootClose, allocClose, err := p.launch(p.ctx)
+		// The pool owns process shutdown. Job/server cancellation still stops
+		// leases, but must not kill the CDP connection before Browser.close.
+		root, rootClose, allocClose, err := p.launch(context.WithoutCancel(p.ctx))
 		if err != nil {
 			if rootClose != nil {
 				rootClose()
@@ -131,6 +134,7 @@ func (p *browserPool) release(leasedRoot context.Context) {
 }
 
 func (p *browserPool) closeRootLocked() {
+	root := p.root
 	rootClose, allocClose := p.rootClose, p.allocClose
 	p.root, p.rootClose, p.allocClose = nil, nil, nil
 	p.active = 0
@@ -138,11 +142,37 @@ func (p *browserPool) closeRootLocked() {
 		p.idleTimer.Stop()
 		p.idleTimer = nil
 	}
-	if rootClose != nil {
-		rootClose()
-	}
-	if allocClose != nil {
-		allocClose()
+	closeBrowserRoot(root, rootClose, allocClose, 10*time.Second)
+}
+
+func closeBrowserRoot(root context.Context, rootClose, allocClose context.CancelFunc, maximum time.Duration) {
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		if root != nil {
+			if session := chromedp.FromContext(root); session != nil && session.Browser != nil && browserSessionAlive(root) {
+				ctx, cancel := context.WithTimeout(context.WithoutCancel(root), 3*time.Second)
+				// Cancel marks the close as graceful before sending Browser.close,
+				// preventing connection-loss handling from killing a closing process.
+				_ = chromedp.Cancel(ctx)
+				cancel()
+			}
+		}
+		if rootClose != nil {
+			rootClose()
+		}
+		if allocClose != nil {
+			allocClose()
+		}
+	}()
+	timer := time.NewTimer(maximum)
+	defer timer.Stop()
+	select {
+	case <-done:
+	case <-timer.C:
+		// OS process teardown can stall. It may continue in the background,
+		// but must not hold the database or prevent the service restarting.
+		log.Printf("browser shutdown exceeded %s; cleanup continues in background", maximum)
 	}
 }
 

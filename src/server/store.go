@@ -430,6 +430,10 @@ func openJobStore(root string) (*jobStore, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("migrate state database: %w", err)
 	}
+	if err := runMigration(31, store.migrateV31); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("migrate state database: %w", err)
+	}
 	store.queueItemsReady = true
 	return store, nil
 }

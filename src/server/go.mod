@@ -1,5 +1,7 @@
 module youtube-downloader
 
+replace github.com/kkdai/youtube/v2 => ./third_party/youtube
+
 go 1.27.3
 
 require (

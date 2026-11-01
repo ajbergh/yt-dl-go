@@ -109,6 +109,12 @@ func TestOpenJobStoreSnapshotsEachPendingMigration(t *testing.T) {
 		_ = store.close()
 		t.Fatalf("prepare v25 migration history: %v", err)
 	}
+	if _, err := store.db.Exec(`DROP TABLE download_sabr_segments`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.Exec(`ALTER TABLE download_parts DROP COLUMN sabr_snapshot`); err != nil {
+		t.Fatal(err)
+	}
 	if err := store.close(); err != nil {
 		t.Fatal(err)
 	}
@@ -122,13 +128,19 @@ func TestOpenJobStoreSnapshotsEachPendingMigration(t *testing.T) {
 	}
 
 	snapshots := migrationSnapshots(t, root)
-	if len(snapshots) != 6 { // initial v1 plus upgrades before v26 through v30.
-		t.Fatalf("migration snapshot count = %d, want 6: %v", len(snapshots), snapshots)
+	if len(snapshots) != 7 { // initial v1 plus upgrades before v26 through v31.
+		t.Fatalf("migration snapshot count = %d, want 7: %v", len(snapshots), snapshots)
 	}
 	foundV26, foundV27, foundV28, foundV29, foundV30 := false, false, false, false, false
+	foundV31 := false
 	for _, path := range snapshots {
 		name := filepath.Base(path)
 		switch {
+		case strings.Contains(name, "v31-from-v30-"):
+			foundV31 = true
+			if version := snapshotMigrationVersion(t, path); version != 30 {
+				t.Errorf("v31 snapshot records schema version %d, want 30", version)
+			}
 		case strings.Contains(name, "v26-from-v25-"):
 			foundV26 = true
 			if version := snapshotMigrationVersion(t, path); version != 25 {
@@ -156,7 +168,7 @@ func TestOpenJobStoreSnapshotsEachPendingMigration(t *testing.T) {
 			}
 		}
 	}
-	if !foundV26 || !foundV27 || !foundV28 || !foundV29 || !foundV30 {
+	if !foundV26 || !foundV27 || !foundV28 || !foundV29 || !foundV30 || !foundV31 {
 		t.Fatalf("missing per-migration snapshots: v26=%v v27=%v v28=%v v29=%v v30=%v; paths=%v", foundV26, foundV27, foundV28, foundV29, foundV30, snapshots)
 	}
 }
@@ -234,7 +246,7 @@ func TestOpenJobStoreSnapshotsV20RepairBeforeRecreatingLibraryTable(t *testing.T
 	}
 	foundRepairSnapshot := false
 	for _, path := range snapshots {
-		if !strings.Contains(filepath.Base(path), "v20-from-v30-") {
+		if !strings.Contains(filepath.Base(path), "v20-from-v31-") {
 			continue
 		}
 		foundRepairSnapshot = true
