@@ -30,7 +30,9 @@ type DesktopApp struct {
 }
 
 func (a *DesktopApp) Connection() (desktopConnection, error) {
+	if os.Getenv("DESKTOP_SMOKE_OUTPUT") != "" { log.Print("Desktop Connection binding entered") }
 	<-a.ready
+	if os.Getenv("DESKTOP_SMOKE_OUTPUT") != "" { log.Print("Desktop Connection binding unblocked") }
 	if a.err != nil {
 		return desktopConnection{}, a.err
 	}
@@ -50,9 +52,11 @@ func (a *DesktopApp) Save(path string) (bool, error) {
 }
 
 func (a *DesktopApp) startup(ctx context.Context, c config) {
+	if os.Getenv("DESKTOP_SMOKE_OUTPUT") != "" { log.Print("Desktop service startup entered") }
 	defer close(a.ready)
 	a.ctx = ctx
 	a.service, a.err = newDesktopService(c)
+	if os.Getenv("DESKTOP_SMOKE_OUTPUT") != "" { log.Printf("Desktop service initialized: %t", a.err == nil) }
 	if a.err != nil {
 		return
 	}
@@ -106,7 +110,7 @@ func main() {
 			},
 		},
 		Menu: appMenu, Bind: []interface{}{app},
-		OnStartup: func(ctx context.Context) { app.startup(ctx, c) },
+		OnStartup:  func(ctx context.Context) { go app.startup(ctx, c) },
 		OnDomReady: func(context.Context) { log.Print("Desktop WebView DOM ready") },
 		OnShutdown: func(context.Context) {
 			<-app.ready
