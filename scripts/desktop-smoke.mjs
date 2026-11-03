@@ -57,7 +57,9 @@ try {
   while (!existsSync(output) && child.exitCode === null && Date.now() < deadline) {
     await new Promise(resolve => setTimeout(resolve, 200));
   }
-  assert.ok(existsSync(output), `Native UI did not connect to the Go service.\n${logs}`);
+  const stagesPath = `${output}.stages`;
+  const stages = existsSync(stagesPath) ? readFileSync(stagesPath, "utf8").trim() : "none (no JavaScript-to-Go stage reports)";
+  assert.ok(existsSync(output), `Native UI did not connect to the Go service.\nE2E milestones: ${stages}\n${logs}`);
   assert.equal(JSON.parse(readFileSync(output, "utf8")).ready, true);
   const closed = await Promise.race([
     new Promise(resolve => child.exitCode === null ? child.once("exit", code => resolve(code === 0)) : resolve(child.exitCode === 0)),
