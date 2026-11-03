@@ -3,7 +3,8 @@ import type { ServiceConnection } from "./downloader";
 type DesktopBridge = {
   Connection(): Promise<ServiceConnection>;
   Save(path: string): Promise<boolean>;
-  UIReady?(): Promise<void>; // Available only in the e2e-tagged native smoke build.
+  UIReady?(): Promise<void>;
+  UIStage?(stage: string): Promise<void>; // Available only in the e2e-tagged native smoke build.
 };
 
 declare global {
@@ -33,4 +34,10 @@ export function desktopConnection(): ServiceConnection | undefined {
 
 export function desktopBridge(): DesktopBridge | undefined {
   return window.go?.main?.DesktopApp;
+}
+
+// Diagnostic milestones are emitted only when the e2e-only bridge exists.
+export function reportDesktopSmokeStage(stage: string): void {
+  const report = desktopBridge()?.UIStage;
+  if (report) void report(stage).catch(() => {});
 }
