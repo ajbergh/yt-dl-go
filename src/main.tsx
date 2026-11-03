@@ -1,7 +1,7 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { App } from "./App";
-import { initializeDesktop } from "./lib/desktop";
+import { initializeDesktop, reportDesktopSmokeStage } from "./lib/desktop";
 import "./index.css";
 
 // Normalize `/index.html` to the SPA root before BrowserRouter mounts. This
@@ -18,7 +18,9 @@ if (window.location.pathname.endsWith("/index.html")) {
 async function bootstrap() {
   const container = document.getElementById("root")!;
   try {
+    reportDesktopSmokeStage("bootstrap");
     await initializeDesktop();
+    reportDesktopSmokeStage("connection");
     createRoot(container).render(<StrictMode><App /></StrictMode>);
   } catch (error) {
     const heading = document.createElement("h1");
