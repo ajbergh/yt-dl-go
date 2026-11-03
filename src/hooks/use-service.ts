@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { desktopBridge } from "../lib/desktop";
+import { desktopBridge, reportDesktopSmokeStage } from "../lib/desktop";
 import {
   api, streamServiceEvents,
   type AppSettings, type BuildInfo, type DownloadJob, type LibraryPageResponse, type LibraryQuery, type RuntimeSettingSources, type RuntimeSettingValues, type ServiceConnection, type ServiceEvent, type ServiceHealth, type UpdateStatus,
@@ -204,13 +204,16 @@ export function useService() {
 
     async function initialize() {
       try {
+        reportDesktopSmokeStage("health-request");
         const health = await api<ServiceHealth>(connection, "/api/health", {
           signal: AbortSignal.any([controller.signal, AbortSignal.timeout(10000)]),
         });
+        reportDesktopSmokeStage("health-response");
         if (health.engine !== "native-go" || health.capabilities?.externalBinariesRequired !== false) {
           throw new Error("The built-in service is an older or incompatible version.");
         }
         if (!health.ready) {
+          reportDesktopSmokeStage("health-not-ready");
           throw new Error(health.missing.length
             ? `The Go service is not ready: ${health.missing.join(", ")}.`
             : "The Go service is starting up.");
@@ -253,6 +256,7 @@ export function useService() {
         if (controller.signal.aborted) return;
         setServiceReady(false);
         setServiceError(errorMessage(error));
+        reportDesktopSmokeStage("service-error");
         retryTimer = setTimeout(() => { void initialize(); }, 2500);
       }
     }
