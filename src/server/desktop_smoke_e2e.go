@@ -42,7 +42,7 @@ func (a *DesktopApp) UIStage(stage string) error {
 	if err != nil {
 		return err
 	}
-	if _, err = file.WriteString(stage+"\n"); err != nil {
+	if _, err = file.WriteString(stage + "\n"); err != nil {
 		_ = file.Close()
 		return err
 	}
