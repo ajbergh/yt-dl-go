@@ -23,6 +23,7 @@ async function bootstrap() {
     reportDesktopSmokeStage("connection");
     createRoot(container).render(<StrictMode><App /></StrictMode>);
   } catch (error) {
+    reportDesktopSmokeStage("service-error");
     const heading = document.createElement("h1");
     heading.textContent = "YouTube Vault could not start";
     const detail = document.createElement("p");
