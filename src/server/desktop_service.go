@@ -67,23 +67,6 @@ func (d *desktopService) close() {
 	})
 }
 
-func desktopAssetMiddleware(base string) func(http.Handler) http.Handler {
-	// Wails injects its trusted bridge as inline script. All other script and
-	// connection origins stay restricted to bundled assets and this one service.
-	policy := strings.Replace(contentSecurityPolicy, "script-src 'self'", "script-src 'self' 'unsafe-inline'", 1)
-	policy = strings.Replace(policy, "media-src 'self' blob:", "media-src 'self' blob: "+base, 1)
-	policy = strings.Replace(policy, "img-src 'self'", "img-src 'self' "+base, 1)
-	policy += "; connect-src 'self' " + base
-	return func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.Header().Set("Content-Security-Policy", policy)
-			w.Header().Set("Referrer-Policy", "no-referrer")
-			w.Header().Set("X-Content-Type-Options", "nosniff")
-			next.ServeHTTP(w, r)
-		})
-	}
-}
-
 var desktopTicketPath = regexp.MustCompile(`^/api/downloads/[A-Za-z0-9_-]+$`)
 
 func desktopSavePath(path string) bool {
