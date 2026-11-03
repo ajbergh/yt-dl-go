@@ -25,3 +25,26 @@ func (a *DesktopApp) UIReady() error {
 	})
 	return err
 }
+
+ // UIStage records only known readiness milestones, never bearer values or
+ // URLs. It exists solely in e2e-tagged smoke binaries.
+ func (a *DesktopApp) UIStage(stage string) error {
+ 	switch stage {
+ 	case "bootstrap", "connection", "health-request", "health-response", "health-not-ready", "service-error":
+ 	default:
+ 		return nil
+ 	}
+ 	output := os.Getenv("DESKTOP_SMOKE_OUTPUT")
+ 	if output == "" {
+ 		return nil
+ 	}
+ 	file, err := os.OpenFile(output+".stages", os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
+ 	if err != nil {
+ 		return err
+ 	}
+ 	if _, err = file.WriteString(stage+"\n"); err != nil {
+ 		_ = file.Close()
+ 		return err
+ 	}
+ 	return file.Close()
+ }
