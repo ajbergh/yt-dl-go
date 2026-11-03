@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"io/fs"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -106,6 +107,7 @@ func main() {
 		},
 		Menu: appMenu, Bind: []interface{}{app},
 		OnStartup: func(ctx context.Context) { app.startup(ctx, c) },
+		OnDomReady: func(context.Context) { log.Print("Desktop WebView DOM ready") },
 		OnShutdown: func(context.Context) {
 			<-app.ready
 			if app.service != nil {
