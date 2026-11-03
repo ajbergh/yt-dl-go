@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/wailsapp/wails/v2"
 	"github.com/wailsapp/wails/v2/pkg/menu"
@@ -116,5 +117,24 @@ func main() {
 	})
 	if err != nil {
 		fatalStartup(fmt.Errorf("open desktop window: %w", err))
+	}
+}
+
+// desktopAssetMiddleware protects bundled UI assets and permits authenticated
+// access to the ephemeral loopback service. Only native builds use it.
+func desktopAssetMiddleware(base string) func(http.Handler) http.Handler {
+	// Wails injects its trusted bridge as inline script. All other script and
+	// connection origins stay restricted to bundled assets and this one service.
+	policy := strings.Replace(contentSecurityPolicy, "script-src 'self'", "script-src 'self' 'unsafe-inline'", 1)
+	policy = strings.Replace(policy, "media-src 'self' blob:", "media-src 'self' blob: "+base, 1)
+	policy = strings.Replace(policy, "img-src 'self'", "img-src 'self' "+base, 1)
+	policy += "; connect-src 'self' " + base
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Security-Policy", policy)
+			w.Header().Set("Referrer-Policy", "no-referrer")
+			w.Header().Set("X-Content-Type-Options", "nosniff")
+			next.ServeHTTP(w, r)
+		})
 	}
 }
