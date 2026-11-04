@@ -5,6 +5,7 @@ import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from "node
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { Resvg } from "@resvg/resvg-js";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const goos = { win32: "windows", darwin: "darwin", linux: "linux" }[process.platform];
@@ -35,12 +36,40 @@ try {
   const executable = goos === "darwin"
     ? path.join(contents, "YouTube Vault.app/Contents/MacOS/youtube-vault")
     : path.join(contents, "youtube-vault" + (goos === "windows" ? ".exe" : ""));
-  if (goos === "windows") assert.deepEqual(readFileSync(executable), readFileSync(path.join(output, name + ".exe")));
+  if (goos === "windows") {
+    const binary = readFileSync(executable);
+    assert.deepEqual(binary, readFileSync(path.join(output, name + ".exe")));
+    const ico = readFileSync(path.join(root, "src/server/build/windows/icon.ico"));
+    // Wails preserves the individual ICO images when embedding PE resources.
+    for (let i = 0; i < ico.readUInt16LE(4); i++) {
+      const entry = 6 + i * 16;
+      const start = ico.readUInt32LE(entry + 12);
+      const length = ico.readUInt32LE(entry + 8);
+      assert.ok(binary.includes(ico.subarray(start, start + length)), `Windows EXE is missing icon image ${i}`);
+    }
+  }
+  if (goos === "darwin") {
+    const icon = readFileSync(path.join(contents, "YouTube Vault.app/Contents/Resources/iconfile.icns"));
+    assert.equal(icon.toString("ascii", 0, 4), "icns");
+    let largest;
+    for (let position = 8; position < icon.length;) {
+      const length = icon.readUInt32BE(position + 4);
+      assert.ok(length > 8 && position + length <= icon.length, "Invalid ICNS image record");
+      if (icon.toString("ascii", position, position + 4) === "ic10") largest = icon.subarray(position + 8, position + length);
+      position += length;
+    }
+    assert.ok(largest, "macOS icon is missing its 1024px representation");
+    const pixels = png => new Resvg(`<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024"><image width="1024" height="1024" href="data:image/png;base64,${png.toString("base64")}"/></svg>`).render().pixels;
+    assert.deepEqual(pixels(largest), pixels(readFileSync(path.join(root, "src/server/build/appicon.png"))), "macOS bundle icon does not match the shared source");
+  }
   run(process.execPath, [path.join(root, "scripts/desktop-smoke.mjs"), "--executable", executable, ...process.argv.slice(2)]);
   if (goos === "linux") {
     const debRoot = path.join(temporary, "deb");
     run("dpkg-deb", ["-x", path.join(output, name + ".deb"), debRoot]);
     assert.deepEqual(readFileSync(path.join(debRoot, "usr/bin/youtube-vault")), readFileSync(executable));
+    const icon = readFileSync(path.join(root, "src/server/build/appicon.png"));
+    const dimensions = `${icon.readUInt32BE(16)}x${icon.readUInt32BE(20)}`;
+    assert.deepEqual(readFileSync(path.join(debRoot, "usr/share/icons/hicolor", dimensions, "apps/youtube-vault.png")), icon);
     run("desktop-file-validate", [path.join(debRoot, "usr/share/applications/youtube-vault.desktop")]);
   }
   console.log(`Verified final desktop package (${goos}/${arch}).`);

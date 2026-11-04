@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	_ "embed"
 	"fmt"
 	"io"
 	"io/fs"
@@ -21,6 +22,9 @@ import (
 	"github.com/wailsapp/wails/v2/pkg/options/windows"
 	wruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 )
+
+//go:embed build/appicon.png
+var desktopIcon []byte
 
 // DesktopApp exposes only bootstrap and user-confirmed save operations. The
 // existing authenticated HTTP API remains the shared engine control plane.
@@ -140,7 +144,7 @@ func main() {
 		},
 		SingleInstanceLock: &options.SingleInstanceLock{UniqueId: "2f732518-cd20-4a1f-b096-c26e08945283"},
 		Windows:            &windows.Options{WebviewUserDataPath: filepath.Join(c.root, "webview")},
-		Linux:              &linux.Options{ProgramName: "youtube-vault", WebviewGpuPolicy: linux.WebviewGpuPolicyNever},
+		Linux:              &linux.Options{Icon: desktopIcon, ProgramName: "youtube-vault", WebviewGpuPolicy: linux.WebviewGpuPolicyNever},
 	})
 	if err != nil {
 		fatalStartup(fmt.Errorf("open desktop window: %w", err))

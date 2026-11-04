@@ -28,6 +28,9 @@ test("Debian package preserves notices, installs desktop integration, and uses s
       assert.equal(readFileSync(path.join(deb, "usr/share/doc/youtube-vault/licenses/NOTICE"), "utf8"), "required attribution");
       assert.equal(existsSync(path.join(deb, "usr/share/doc/youtube-vault/youtube-vault")), false);
       assert.match(readFileSync(path.join(deb, "usr/share/applications/youtube-vault.desktop"), "utf8"), /Exec=youtube-vault\r?\n/);
+      const icon = readFileSync(path.join(root, "src/server/build/appicon.png"));
+      const dimensions = `${icon.readUInt32BE(16)}x${icon.readUInt32BE(20)}`;
+      assert.deepEqual(readFileSync(path.join(deb, "usr/share/icons/hicolor", dimensions, "apps/youtube-vault.png")), icon);
       built = true;
     } });
     assert.equal(built, true);

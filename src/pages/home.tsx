@@ -10,7 +10,7 @@ import { useService } from "../hooks/use-service";
 import { useSettings } from "../hooks/use-settings";
 import { useJobs } from "../hooks/use-jobs";
 import {
-  Activity, AlertCircle, Check, Clock3, DownloadCloud, Film, HardDrive, Layers, Plus, Settings, X,
+  Activity, AlertCircle, Check, Clock3, Film, HardDrive, Layers, Plus, Settings, X,
 } from "lucide-react";
 import {
   api, parseYouTubeURL,
@@ -320,8 +320,8 @@ export function HomePage() {
       <header className="sticky top-0 z-30 border-b border-neutral-800/80 bg-neutral-950/95 backdrop-blur-md">
         <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-3 px-4 py-3 sm:px-6">
           <div className="flex min-w-0 items-center gap-2 sm:gap-3">
-            <div className="relative flex size-10 items-center justify-center rounded-xl bg-gradient-to-br from-rose-600 to-red-700 shadow-lg shadow-rose-950/40">
-              <DownloadCloud className="size-5 text-white" aria-hidden="true" />
+            <div className="relative flex size-10 items-center justify-center">
+              <img src="./app-icon.svg" className="size-10" alt="" aria-hidden="true" />
               {activeCount > 0 && <span className="absolute -right-1 -top-1 grid size-4 place-items-center rounded-full bg-emerald-500 text-[9px] font-bold text-black">{activeCount}</span>}
             </div>
             <div>

@@ -24,6 +24,7 @@ function run(command, args, options = {}) {
   return result.stdout?.toString().trim();
 }
 
+run(process.execPath, [path.join(root, "scripts/generate-app-icons.mjs"), "--check"], { cwd: root });
 const goRoot = run("go", ["env", "GOROOT"], { stdio: ["ignore", "pipe", "inherit"] });
 const tools = path.join(os.tmpdir(), "yt-dl-go-desktop-tools-v2.17.1");
 mkdirSync(tools, { recursive: true });
