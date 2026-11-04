@@ -7,7 +7,7 @@ export function packageLinux({ root, stage, contents, output, name, arch, versio
   const controlDir = path.join(packageRoot, "DEBIAN");
   const bin = path.join(packageRoot, "usr/bin");
   const applications = path.join(packageRoot, "usr/share/applications");
-  const icon = path.join(root, "src/server/build/appicon.png");
+  const icon = path.join(root, "src/server/build/linux/appicon.png");
   const iconBytes = readFileSync(icon);
   const dimensions = `${iconBytes.readUInt32BE(16)}x${iconBytes.readUInt32BE(20)}`;
   const icons = path.join(packageRoot, "usr/share/icons/hicolor", dimensions, "apps");

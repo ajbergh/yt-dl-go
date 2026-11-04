@@ -76,8 +76,9 @@ example `dist/desktop-validation` when the normal Windows EXE is running.
 The application icon is defined once in `public/app-icon.svg`. After changing
 it, run `npm run icons:generate` and commit the regenerated PNG/ICO files.
 Builds run `icons:check` to reject stale assets. The 1024px PNG supplies the
-macOS ICNS bundle icon and the Linux embedded/window and installed launcher
-icons. The Windows ICO contains 16–256px images and is embedded into both
+macOS ICNS bundle icon and the Linux embedded/window icon. A generated 256px
+PNG supplies the installed Linux launcher icon. The Windows ICO contains
+16–256px images and is embedded into both
 architectures' EXEs. The same design is used by the application header and
 browser/favicon assets. Package smoke tests check the actual EXE icon images,
 macOS ICNS pixels, and Debian-installed PNG.

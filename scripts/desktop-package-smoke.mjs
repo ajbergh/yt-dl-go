@@ -81,7 +81,7 @@ try {
     const debRoot = path.join(temporary, "deb");
     run("dpkg-deb", ["-x", path.join(output, name + ".deb"), debRoot]);
     assert.deepEqual(readFileSync(path.join(debRoot, "usr/bin/youtube-vault")), readFileSync(executable));
-    const icon = readFileSync(path.join(root, "src/server/build/appicon.png"));
+    const icon = readFileSync(path.join(root, "src/server/build/linux/appicon.png"));
     const dimensions = `${icon.readUInt32BE(16)}x${icon.readUInt32BE(20)}`;
     assert.deepEqual(readFileSync(path.join(debRoot, "usr/share/icons/hicolor", dimensions, "apps/youtube-vault.png")), icon);
     run("desktop-file-validate", [path.join(debRoot, "usr/share/applications/youtube-vault.desktop")]);

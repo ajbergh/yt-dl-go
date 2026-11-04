@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { Resvg } from "@resvg/resvg-js";
@@ -25,6 +25,7 @@ for (let i = 0; i < sizes.length; i++) {
 }
 const outputs = [
   ["src/server/build/appicon.png", png(1024)],
+  ["src/server/build/linux/appicon.png", png(256)],
   ["src/server/build/windows/icon.ico", Buffer.concat([header, ...images])],
   ["public/app-icon.png", png(180)],
   ["public/favicon.ico", Buffer.concat([header, ...images])],
@@ -35,6 +36,7 @@ for (const [relative, bytes] of outputs) {
   if (check) {
     assert.ok(existsSync(destination) && readFileSync(destination).equals(bytes), `${relative} is stale; run npm run icons:generate`);
   } else {
+    mkdirSync(path.dirname(destination), { recursive: true });
     writeFileSync(destination, bytes);
   }
 }
