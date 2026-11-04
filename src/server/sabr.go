@@ -5,6 +5,7 @@ package main
 import (
 	"crypto/sha256"
 	"errors"
+	"fmt"
 	"io"
 	"log"
 	"math"
@@ -43,28 +44,79 @@ type sabrCapture struct {
 	selectedItag       int
 	allowedItags       map[int]struct{}
 	expectedDurationMs int64
+	expectedVideoID    string
 	budget             int64
 	progress           func(int64)
 	done               chan error
 	doneOnce           sync.Once
 	handlers           sync.WaitGroup
 
-	formatVerified bool
-	formatDigest   [sha256.Size]byte
-	acceptSelected bool
-	initWritten    bool
-	initDigest     [sha256.Size]byte
-	active         map[uint64][]*sabrSegment
-	ready          map[uint64]*sabrCompletedSegment
-	readyBytes     int64
-	written        map[uint64][sha256.Size]byte
-	nextSequence   uint64
-	sequenceSet    bool
-	endSegment     uint64
-	cumulativeMs   int64
-	totalWritten   int64
-	complete       bool
-	trace          bool
+	formatVerified    bool
+	formatDigest      [sha256.Size]byte
+	acceptSelected    bool
+	initWritten       bool
+	initDigest        [sha256.Size]byte
+	active            map[uint64][]*sabrSegment
+	ready             map[uint64]*sabrCompletedSegment
+	readyBytes        int64
+	written           map[uint64][sha256.Size]byte
+	nextSequence      uint64
+	sequenceSet       bool
+	endSegment        uint64
+	cumulativeMs      int64
+	totalWritten      int64
+	complete          bool
+	trace             bool
+	savedSegments     []sabrSavedSegment
+	saveCheckpoint    func(sabrCheckpoint) error
+	restored          bool
+	repairPending     bool
+	repairThrough     uint64
+	sawRequestedMedia bool
+}
+
+// A quality switch can start midway through a track, and a completed SABR
+// response can contain a deliberately partial segment. Neither authorizes a
+// hole in the saved prefix: ask playback to refetch from that verified prefix.
+func (capture *sabrCapture) recoveryPositionMs() (int64, bool) {
+	capture.mu.Lock()
+	defer capture.mu.Unlock()
+	return max(0, capture.cumulativeMs-2000), !capture.complete && (capture.repairPending || (capture.sawRequestedMedia && (!capture.formatVerified || !capture.initWritten || !capture.sequenceSet)))
+}
+func (capture *sabrCapture) recoveryNeedsReload() bool {
+	capture.mu.Lock()
+	defer capture.mu.Unlock()
+	return !capture.complete && capture.sawRequestedMedia && (!capture.formatVerified || !capture.initWritten)
+}
+func (set *sabrCaptureSet) recoveryNeedsReload() bool {
+	for _, capture := range set.captures {
+		if capture.recoveryNeedsReload() {
+			return true
+		}
+	}
+	return false
+}
+func (set *sabrCaptureSet) recoveryPositionMs() (int64, bool) {
+	needed := false
+	for _, capture := range set.captures {
+		_, repair := capture.recoveryPositionMs()
+		needed = needed || repair
+	}
+	return max(0, set.verifiedDurationMs()-2000), needed
+}
+func (capture *sabrCapture) requireRepair(sequence uint64) {
+	capture.repairPending = true
+	capture.repairThrough = max(capture.repairThrough, sequence)
+}
+func (capture *sabrCapture) discardResponseFragments() {
+	for _, segments := range capture.active {
+		for _, segment := range segments {
+			if segment.selected {
+				capture.requireRepair(segment.header.sequence)
+			}
+		}
+	}
+	capture.active = map[uint64][]*sabrSegment{}
 }
 
 // sabrResponseCapture is the lifecycle shared by one-track and multiplexed
@@ -77,6 +129,25 @@ type sabrResponseCapture interface {
 	doneHandler()
 	waitHandlers()
 	isTrace() bool
+	verifiedDurationMs() int64
+}
+
+// Only the contiguous prefix already written to disk is safe to seek past.
+func (capture *sabrCapture) verifiedDurationMs() int64 {
+	capture.mu.Lock()
+	defer capture.mu.Unlock()
+	return capture.cumulativeMs
+}
+
+func (set *sabrCaptureSet) verifiedDurationMs() int64 {
+	var duration int64
+	for index, capture := range set.captures {
+		current := capture.verifiedDurationMs()
+		if index == 0 || current < duration {
+			duration = current
+		}
+	}
+	return duration
 }
 
 // sabrCaptureSet routes one parsed UMP response to independent selected-track
@@ -144,6 +215,13 @@ func (set *sabrCaptureSet) consumeReader(reader io.Reader) error {
 func (set *sabrCaptureSet) consumeParsed(parse func(func(uint64, []byte) error) error) error {
 	set.mu.Lock()
 	defer set.mu.Unlock()
+	defer func() {
+		for _, capture := range set.captures {
+			capture.mu.Lock()
+			capture.discardResponseFragments()
+			capture.mu.Unlock()
+		}
+	}()
 	for _, capture := range set.captures {
 		capture.mu.Lock()
 		if !capture.complete {
@@ -198,6 +276,7 @@ type sabrCompletedSegment struct {
 
 type sabrMediaHeader struct {
 	headerID      uint64
+	videoID       string
 	itag          int
 	isInit        bool
 	sequence      uint64
@@ -264,6 +343,7 @@ func (capture *sabrCapture) consumeReader(reader io.Reader) error {
 func (capture *sabrCapture) consumeParsed(parse func(func(uint64, []byte) error) error) error {
 	capture.mu.Lock()
 	defer capture.mu.Unlock()
+	defer capture.discardResponseFragments()
 	if capture.complete {
 		return nil
 	}
@@ -280,7 +360,15 @@ func (capture *sabrCapture) consumePart(partType uint64, payload []byte) error {
 		}
 		selected := false
 		_, allowed := capture.allowedItags[metadata.itag]
-		if allowed && (!capture.formatVerified || metadata.itag == capture.selectedItag) {
+		sourceMatches := capture.expectedVideoID == "" || metadata.videoID == capture.expectedVideoID
+		if allowed && !sourceMatches {
+			// Prerolls can reuse the requested itag. Never pin their digest or
+			// wait for their final segment before accepting the requested video.
+			capture.acceptSelected = false
+		} else if allowed && (!capture.formatVerified || metadata.itag == capture.selectedItag) {
+			if capture.restored && capture.formatVerified && metadata.formatDigest != capture.formatDigest {
+				return errLength
+			}
 			if !capture.formatVerified {
 				capture.formatVerified = true
 				capture.selectedItag = metadata.itag
@@ -297,21 +385,25 @@ func (capture *sabrCapture) consumePart(partType uint64, payload []byte) error {
 			capture.acceptSelected = selected
 		}
 		if capture.trace {
-			log.Printf("SABR format init itag=%d selected=%t end_segment=%d", metadata.itag, selected, metadata.endSegment)
+			log.Printf("SABR format init video_id=%q itag=%d selected=%t end_segment=%d", metadata.videoID, metadata.itag, selected, metadata.endSegment)
 		}
 	case umpPartMediaHeader:
 		header, err := decodeSABRMediaHeader(payload)
 		if err != nil || header.headerID > math.MaxUint32 || header.itag <= 0 || header.contentLength < 0 {
 			return errSABR
 		}
-		selected := header.itag == capture.selectedItag && capture.acceptSelected && header.formatDigest == capture.formatDigest
+		sourceMatches := capture.expectedVideoID == "" || header.videoID == "" || header.videoID == capture.expectedVideoID
+		if _, allowed := capture.allowedItags[header.itag]; allowed && sourceMatches {
+			capture.sawRequestedMedia = true
+		}
+		selected := sourceMatches && header.itag == capture.selectedItag && capture.acceptSelected && header.formatDigest == capture.formatDigest
 		segments := capture.active[header.headerID]
 		if len(segments) >= 8 || (selected && len(segments) > 0 && segments[len(segments)-1].selected) {
-			return errSABR
+			return fmt.Errorf("%w: overlapping media header id=%d sequence=%d", errSABR, header.headerID, header.sequence)
 		}
 		capture.active[header.headerID] = append(segments, &sabrSegment{header: header, selected: selected})
 		if capture.trace {
-			log.Printf("SABR media header id=%d itag=%d init=%t sequence=%d length=%d", header.headerID, header.itag, header.isInit, header.sequence, header.contentLength)
+			log.Printf("SABR media header id=%d itag=%d init=%t sequence=%d length=%d selected=%t next_sequence=%d written=%d", header.headerID, header.itag, header.isInit, header.sequence, header.contentLength, selected, capture.nextSequence, capture.totalWritten)
 		}
 	case umpPartMedia:
 		headerID, offset, err := readUMPVarint(payload)
@@ -325,7 +417,7 @@ func (capture *sabrCapture) consumePart(partType uint64, payload []byte) error {
 		segment := segments[0]
 		if segment.selected {
 			if int64(len(segment.data))+int64(len(payload)-offset) > capture.budget {
-				return errLimit
+				return errItemReservation
 			}
 			segment.data = append(segment.data, payload[offset:]...)
 		}
@@ -348,7 +440,14 @@ func (capture *sabrCapture) consumePart(partType uint64, payload []byte) error {
 			return nil
 		}
 		if segment.header.contentLength > 0 && int64(len(segment.data)) != segment.header.contentLength {
-			return errSABR
+			if int64(len(segment.data)) > segment.header.contentLength {
+				return fmt.Errorf("%w: media exceeds declared length", errSABR)
+			}
+			if capture.trace {
+				log.Printf("SABR partial segment discarded itag=%d sequence=%d expected_bytes=%d received_bytes=%d", segment.header.itag, segment.header.sequence, segment.header.contentLength, len(segment.data))
+			}
+			capture.requireRepair(segment.header.sequence)
+			return nil
 		}
 		return capture.commitSegment(segment)
 	case umpPartStreamProtectionStatus:
@@ -374,6 +473,9 @@ func (capture *sabrCapture) commitSegment(segment *sabrSegment) error {
 	if segment.header.isInit {
 		if capture.initWritten {
 			if digest != capture.initDigest {
+				if capture.restored {
+					return errLength
+				}
 				return errSABR
 			}
 			return nil
@@ -383,10 +485,17 @@ func (capture *sabrCapture) commitSegment(segment *sabrSegment) error {
 		}
 		capture.initDigest = digest
 		capture.initWritten = true
+		capture.savedSegments = append(capture.savedSegments, sabrSavedSegment{Sequence: -1, Start: 0, End: capture.totalWritten, Hash: digest})
+		if err := capture.persistCheckpoint(); err != nil {
+			return err
+		}
 		return capture.flushReady()
 	}
 	if prior, ok := capture.written[segment.header.sequence]; ok {
 		if prior != digest {
+			if capture.restored {
+				return errLength
+			}
 			return errSABR
 		}
 		return nil
@@ -405,11 +514,10 @@ func (capture *sabrCapture) commitSegment(segment *sabrSegment) error {
 		return errSABR
 	}
 	if !capture.sequenceSet {
-		if segment.header.sequence > 1 {
-			return errSABR
+		if segment.header.sequence <= 1 {
+			capture.nextSequence = segment.header.sequence
+			capture.sequenceSet = true
 		}
-		capture.nextSequence = segment.header.sequence
-		capture.sequenceSet = true
 	}
 	segmentBytes := int64(len(segment.data))
 	immediatelyFlushable := capture.initWritten && segment.header.sequence == capture.nextSequence
@@ -422,7 +530,7 @@ func (capture *sabrCapture) commitSegment(segment *sabrSegment) error {
 }
 
 func (capture *sabrCapture) flushReady() error {
-	if !capture.initWritten {
+	if !capture.initWritten || !capture.sequenceSet {
 		return nil
 	}
 	for {
@@ -437,7 +545,12 @@ func (capture *sabrCapture) flushReady() error {
 		capture.written[capture.nextSequence] = sha256.Sum256(segment.data)
 		delete(capture.ready, capture.nextSequence)
 		capture.nextSequence++
+		if capture.repairPending && capture.nextSequence > capture.repairThrough {
+			capture.repairPending = false
+			capture.repairThrough = 0
+		}
 		capture.cumulativeMs += segment.durationMs
+		capture.savedSegments = append(capture.savedSegments, sabrSavedSegment{Sequence: int64(capture.nextSequence - 1), Start: capture.totalWritten - int64(len(segment.data)), End: capture.totalWritten, Duration: segment.durationMs, Hash: sha256.Sum256(segment.data)})
 		if capture.endSegment > 0 && capture.nextSequence > capture.endSegment &&
 			capture.expectedDurationMs > 0 && capture.cumulativeMs+1500 < capture.expectedDurationMs {
 			return capture.resetShortCandidate()
@@ -445,8 +558,14 @@ func (capture *sabrCapture) flushReady() error {
 		if (capture.endSegment > 0 && capture.nextSequence > capture.endSegment) ||
 			(capture.endSegment == 0 && capture.expectedDurationMs > 0 && capture.cumulativeMs+1500 >= capture.expectedDurationMs) {
 			capture.complete = true
+			if err := capture.persistCheckpoint(); err != nil {
+				return err
+			}
 			capture.succeed()
 			return nil
+		}
+		if err := capture.persistCheckpoint(); err != nil {
+			return err
 		}
 	}
 }
@@ -476,8 +595,12 @@ func (capture *sabrCapture) resetShortCandidate() error {
 	capture.endSegment = 0
 	capture.cumulativeMs = 0
 	capture.totalWritten = 0
+	capture.savedSegments = nil
+	capture.repairPending = false
+	capture.repairThrough = 0
+	capture.sawRequestedMedia = false
 	capture.progress(0)
-	return nil
+	return capture.persistCheckpoint()
 }
 
 func (capture *sabrCapture) write(data []byte) error {
@@ -485,7 +608,7 @@ func (capture *sabrCapture) write(data []byte) error {
 		return errSABR
 	}
 	if int64(len(data)) > capture.budget-capture.totalWritten {
-		return errLimit
+		return errItemReservation
 	}
 	written, err := capture.file.Write(data)
 	if err != nil || written != len(data) {
@@ -675,6 +798,7 @@ func (reader *protoReader) skip(wire int) error {
 }
 
 type sabrFormatInitialization struct {
+	videoID      string
 	itag         int
 	endSegment   uint64
 	formatDigest [sha256.Size]byte
@@ -693,6 +817,14 @@ func decodeSABRFormatInitialization(data []byte) (sabrFormatInitialization, erro
 				return metadata, errSABR
 			}
 			return metadata, nil
+		}
+		if field == 1 && wire == 2 {
+			value, err := reader.bytes()
+			if err != nil {
+				return metadata, err
+			}
+			metadata.videoID = string(value)
+			continue
 		}
 		if field == 2 && wire == 2 {
 			format, err := reader.bytes()
@@ -772,6 +904,10 @@ func decodeSABRMediaHeader(data []byte) (sabrMediaHeader, error) {
 		switch {
 		case field == 1 && wire == 0:
 			header.headerID, err = reader.varint()
+		case field == 2 && wire == 2:
+			var value []byte
+			value, err = reader.bytes()
+			header.videoID = string(value)
 		case field == 3 && wire == 0:
 			var value uint64
 			value, err = reader.varint()

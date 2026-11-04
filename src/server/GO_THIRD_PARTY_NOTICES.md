@@ -2,6 +2,8 @@
 
 Generated from the Go packages used by supported release targets with `go-licenses`. The CSV companion preserves package paths and license classifications; redistributed license texts and the LGPL component's source are under `licenses/go/`.
 
+The kkdai/youtube v2.10.6 entry includes a local MIT-licensed compatibility patch. See [patch provenance and changes](third_party/youtube/UPSTREAM.md); the original license is retained with the source.
+
 | Package | Version | License | Source | Included text/source |
 | --- | --- | --- | --- | --- |
 | `github.com/at-wat/ebml-go` | `v0.19.4` | Apache-2.0 | [source](https://pkg.go.dev/github.com/at-wat/ebml-go@v0.19.4) | [license files](licenses/go/github.com/at-wat/ebml-go) |

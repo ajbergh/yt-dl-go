@@ -207,6 +207,9 @@ func makeISOBox(kind string, payload []byte, forceExtended bool) ([]byte, error)
 	if useExtended {
 		headerBytes = 16
 	}
+	if len(payload) > math.MaxInt-headerBytes {
+		return nil, errMux
+	}
 	result := make([]byte, headerBytes+len(payload))
 	if useExtended {
 		binary.BigEndian.PutUint32(result[:4], 1)
@@ -221,6 +224,9 @@ func makeISOBox(kind string, payload []byte, forceExtended bool) ([]byte, error)
 }
 
 func makeMP4DataBox(kind uint32, value []byte) ([]byte, error) {
+	if len(value) > math.MaxInt-8 {
+		return nil, errMux
+	}
 	payload := make([]byte, 8+len(value))
 	binary.BigEndian.PutUint32(payload[:4], kind)
 	copy(payload[8:], value)
@@ -297,7 +303,8 @@ func makeMP4MetadataBox(metadata containerTagMetadata) ([]byte, error) {
 		if err != nil {
 			return nil, err
 		}
-		metaPayload := make([]byte, 4, 4+len(handler)+len(ilst)) // FullBox version/flags.
+		// Grow one field at a time so capacity arithmetic cannot wrap.
+		metaPayload := make([]byte, 4) // FullBox version/flags.
 		metaPayload = append(metaPayload, handler...)
 		metaPayload = append(metaPayload, ilst...)
 		meta, err := makeISOBox("meta", metaPayload, false)
@@ -324,10 +331,10 @@ func makeMP4ChapterList(chapters []mediaChapter) ([]byte, error) {
 			return nil, errMux
 		}
 		title := truncateUTF8(chapter.Title, 255)
-		entry := make([]byte, 9+len(title))
+		entry := make([]byte, 9)
 		binary.BigEndian.PutUint64(entry[:8], uint64(chapter.StartMs)*10000)
 		entry[8] = byte(len(title))
-		copy(entry[9:], title)
+		entry = append(entry, title...)
 		payload = append(payload, entry...)
 	}
 	return makeISOBox("chpl", payload, false)

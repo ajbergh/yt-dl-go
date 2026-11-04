@@ -39,17 +39,207 @@ export function SettingsPage({
   newCategoryInput, setNewCategoryInput, savePreferences, selectDownloadFolder, changeSetting,
   addCategory, removeCategory, toggleNotifications,
 }: SettingsPageProps) {
+  const [advancedSettings, setAdvancedSettings] = useState(false);
+
   return (
 <div className="mx-auto max-w-4xl space-y-5">
-          <div><p className="mb-1 text-[11px] font-bold uppercase tracking-[0.16em] text-neutral-500">Configuration</p><h2 className="text-2xl font-bold">Service & preferences</h2><p className="mt-1 text-xs text-neutral-400">The Go service is the source of truth for downloads and SQLite-backed preferences.</p></div>
+          <div><p className="mb-1 text-xs font-bold uppercase tracking-[0.16em] text-neutral-400">Configuration</p><h2 className="text-2xl font-bold">Settings</h2><p className="mt-1 text-xs text-neutral-400">Choose where downloads go and how they are organized. Changes apply to new downloads after saving.</p></div>
+          {(serviceError || !serviceReady) && <p role={serviceError ? "alert" : "status"} className="rounded-xl border border-amber-800/60 bg-amber-950/30 p-4 text-sm text-amber-200">{serviceError || "Connecting to the download service. Settings will be available shortly."}</p>}
+
+          <form onSubmit={savePreferences} className="space-y-5">
+            <section className={`${panel} space-y-4 p-5 sm:p-6`}>
+              <div className="flex flex-wrap items-start justify-between gap-3 border-b border-neutral-800 pb-4">
+                <div><h3 className="text-sm font-bold">Download preferences</h3><p className="mt-1 text-xs text-neutral-400">Choose where finished files go, how they are named, and how folders are organized.</p></div>
+                <button type="submit" className={primaryButton} disabled={!serviceReady || savingSettings}>{savingSettings && <LoaderCircle className="size-4 animate-spin" aria-hidden="true" />}{settingsSaved ? <Check className="size-4" aria-hidden="true" /> : null}{savingSettings ? "Saving…" : settingsSaved ? "Saved" : "Save preferences"}</button>
+              </div>
+
+              <div className="rounded-xl border border-neutral-800 bg-neutral-950/60 p-4">
+                <div className="mb-3 flex items-center gap-3"><span className="grid size-9 place-items-center rounded-lg border border-amber-700/40 bg-amber-950/30 text-amber-300"><Folder className="size-4" aria-hidden="true" /></span><div><h4 className="text-xs font-bold">Download folder</h4><p className="mt-0.5 text-xs text-neutral-400">Choose a local or external folder for published downloads.</p></div></div>
+                <label className="block text-xs font-medium text-neutral-300" htmlFor="download-location">Absolute folder path</label>
+                <div className="mt-1 flex gap-2"><input id="download-location" type="text" title={settings.downloadLocation} autoComplete="off" className={`${field} min-w-0 font-mono text-xs`} value={settings.downloadLocation} onChange={event => changeSetting("downloadLocation", event.target.value)} placeholder="C:\\Users\\you\\Downloads\\YouTube_Vault" /><button type="button" className={button} onClick={() => void selectDownloadFolder()} disabled={!serviceReady} title="Choose a folder with the operating system picker"><Folder className="size-3.5 text-amber-400" aria-hidden="true" />Browse</button></div>
+                <p className="mt-2 text-xs text-neutral-400">Enter an absolute path. The app creates the folder when the first download finishes. Existing files stay in their original locations.</p>
+                <div className="mt-3 flex flex-wrap items-center gap-1.5 text-xs">
+                  <span className="mr-1 text-neutral-400">Quick paths:</span>
+                  {["YouTube_Vault", "Media", "YouTube"].map(name => {
+                    const path = settings.downloadLocation;
+                    const lastSlash = Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\"));
+                    const separator = path.includes("\\") ? "\\" : "/";
+                    const parent = lastSlash >= 0 ? path.slice(0, lastSlash) : path;
+                    const preset = `${parent}${parent.endsWith(separator) || !parent ? "" : separator}${name}`;
+                    return <button key={name} type="button" onClick={() => changeSetting("downloadLocation", preset)} className="rounded-md border border-neutral-800 bg-neutral-900 px-2.5 py-1 font-mono text-neutral-300 hover:border-neutral-600">{name}</button>;
+                  })}
+                </div>
+              </div>
+
+              <div className="rounded-xl border border-neutral-800 bg-neutral-950/60 p-4">
+                <div className="mb-3 flex items-center gap-3"><span className="grid size-9 place-items-center rounded-lg border border-purple-700/40 bg-purple-950/30 text-purple-300"><FolderTree className="size-4" aria-hidden="true" /></span><div><h4 className="text-xs font-bold">Folder organization</h4><p className="mt-0.5 text-xs text-neutral-400">Organize finished downloads into structured folders.</p></div></div>
+                <div className="grid gap-2 sm:grid-cols-3">
+                  {([ ["channel", "Sort by YouTube channel"], ["category", "Sort by category"], ["flat", "No subfolders"] ] as const).map(([value, label]) => <label key={value} className={`cursor-pointer rounded-lg border p-3 ${settings.subfolderSorting === value ? "border-rose-600/70 bg-rose-950/20" : "border-neutral-800 bg-neutral-900/50"}`}><span className="flex items-center justify-between text-xs font-semibold text-neutral-200">{label}<input type="radio" name="subfolder-sorting" checked={settings.subfolderSorting === value} onChange={() => changeSetting("subfolderSorting", value)} className="accent-rose-600" /></span><span className="mt-1 block text-xs text-neutral-400">{value === "channel" ? "Files grouped by creator." : value === "category" ? "Files grouped by your selected category." : "Save directly in the destination."}</span></label>)}
+                </div>
+                <label className="mt-3 block max-w-sm text-xs font-medium text-neutral-300">Default category for new downloads
+                  <select className={`${field} mt-1.5 text-xs`} value={settings.defaultCategory} onChange={event => changeSetting("defaultCategory", event.target.value)}>{settings.userCategories.map(category => <option key={category} value={category}>{category}</option>)}</select>
+                </label>
+                <details className="mt-3 rounded-lg border border-neutral-800 bg-neutral-900/50 p-3">
+                  <summary className="cursor-pointer text-xs font-semibold text-neutral-300">Manage categories <span className="ml-2 font-normal text-neutral-400">{settings.userCategories.length} categories</span></summary>
+                  <div className="mt-2 flex flex-wrap gap-1.5">{settings.userCategories.map(category => <span key={category} className="inline-flex items-center gap-1 rounded-md border border-neutral-800 bg-neutral-950 px-2 py-1 text-xs text-neutral-200">{category}<button type="button" onClick={() => removeCategory(category)} disabled={settings.userCategories.length <= 1} aria-label={`Remove ${category}`} className="text-neutral-400 hover:text-rose-300 disabled:opacity-40"><X className="size-3" aria-hidden="true" /></button></span>)}</div>
+                  <div className="mt-2 flex gap-2"><input type="text" aria-label="New category" maxLength={40} value={newCategoryInput} onChange={event => setNewCategoryInput(event.target.value)} onKeyDown={event => { if (event.key === "Enter") { event.preventDefault(); addCategory(); } }} placeholder="Add a category" className={`${field} py-2 text-xs`} /><button type="button" onClick={addCategory} className={button}><Plus className="size-3.5" aria-hidden="true" />Add</button></div>
+                </details>
+              </div>
+
+              <section className="rounded-xl border border-neutral-800 bg-neutral-950/60 p-4" aria-labelledby="automatic-downloads-heading">
+                <h4 id="automatic-downloads-heading" className="text-xs font-bold">Download defaults</h4>
+                <p className="mt-2 text-xs leading-relaxed text-neutral-400">Quality: {qualityLabels[settings.defaultQuality]}. Format: {videoStrategyLabels[settings.defaultVideoStrategy]}.</p>
+                <p className="mt-2 text-xs leading-relaxed text-neutral-400">Automatic selects the best supported streams for each video, including playlist items, without upscaling. You can set a quality limit or preferred format in Advanced settings.</p>
+                <button type="button" className={button + " mt-3"} onClick={() => { changeSetting("defaultQuality", "best"); changeSetting("defaultVideoStrategy", "best"); changeSetting("allow360pFallback", false); }} disabled={settings.defaultQuality === "best" && settings.defaultVideoStrategy === "best" && !settings.allow360pFallback}>Use automatic video defaults</button>
+              </section>
+              <div className="rounded-xl border border-neutral-800 p-4">
+                <div className="flex items-center justify-between gap-3">
+                  <div><h4 id="advanced-settings-heading" className="text-xs font-bold">Advanced settings</h4><p id="advanced-settings-description" className="mt-1 text-xs text-neutral-400">Override formats, transfer limits, storage, naming, permissions, and service runtime settings.</p></div>
+                  <button type="button" role="switch" aria-label="Advanced settings" aria-checked={advancedSettings} aria-expanded={advancedSettings} aria-controls="advanced-settings" aria-describedby="advanced-settings-description" className={button} onClick={() => setAdvancedSettings(value => !value)}>{advancedSettings ? "On" : "Off"}</button>
+                </div>
+              </div>
+              {advancedSettings && <div id="advanced-settings" role="region" aria-labelledby="advanced-settings-heading" className="space-y-4">
+              <div className="grid gap-4 border-t border-neutral-800 pt-4 sm:grid-cols-2">
+                <label className="block text-xs font-medium text-neutral-300">Default maximum video quality
+                  <select aria-label="Default maximum video quality" className={`${field} mt-1.5`} value={settings.defaultQuality} onChange={event => changeSetting("defaultQuality", event.target.value as Quality)}>{(Object.entries(qualityLabels) as [Quality, string][]).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select>
+                </label>
+                <label className="block text-xs font-medium text-neutral-300">Default video format
+                  <select aria-label="Default video format" className={`${field} mt-1.5`} value={settings.defaultVideoStrategy} onChange={event => changeSetting("defaultVideoStrategy", event.target.value as VideoStrategy)}>{(Object.entries(videoStrategyLabels) as [VideoStrategy, string][]).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select>
+                  <span className="mt-1 block text-xs leading-relaxed text-neutral-400">Compatibility MP4 is strict H.264/AAC; VP9 and AV1 are preferences with automatic fallback when unavailable.</span>
+                </label>
+                <div className="rounded-lg border border-neutral-800 bg-neutral-950/60 p-3">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <label htmlFor="allow-360p-fallback" className="text-xs font-semibold text-neutral-200">Allow 360p recovery fallback</label>
+                      <p className="mt-1 max-w-sm text-xs leading-relaxed text-neutral-400">Off by default. When an adaptive video cannot be safely completed, retry as a verified progressive MP4 at 360p or lower. With this off, the job reports the adaptive failure without silently downgrading.</p>
+                    </div>
+                    <input id="allow-360p-fallback" aria-label="Allow 360p recovery fallback" type="checkbox" checked={settings.allow360pFallback} onChange={event => changeSetting("allow360pFallback", event.target.checked)} className="mt-0.5 size-4 shrink-0 accent-rose-600" />
+                  </div>
+                </div>
+                <label className="block text-xs font-medium text-neutral-300">Maximum concurrent downloads <span className="float-right font-mono text-rose-300">{settings.maxConcurrentDownloads}</span>
+                  <input aria-label="Maximum concurrent downloads" type="range" min="1" max="6" step="1" value={settings.maxConcurrentDownloads} onChange={event => changeSetting("maxConcurrentDownloads", Number(event.target.value))} className="mt-2 w-full accent-rose-600" />
+                  <span className="mt-1 flex justify-between text-xs text-neutral-400"><span>1 stream</span><span>6 streams</span></span>
+                </label>
+                <label className="block text-xs font-medium text-neutral-300">Global bandwidth limit <span className="float-right font-mono text-rose-300">{settings.bandwidthLimitBytesPerSec > 0 ? `${(settings.bandwidthLimitBytesPerSec / 1048576).toFixed(settings.bandwidthLimitBytesPerSec % 1048576 === 0 ? 0 : 2)} MiB/s` : "Unlimited"}</span>
+                  <input aria-label="Global bandwidth limit in MiB per second" type="number" min="0" max="1024" step="0.25" value={settings.bandwidthLimitBytesPerSec / 1048576} onChange={event => changeSetting("bandwidthLimitBytesPerSec", Math.max(0, Math.round((Number(event.target.value) || 0) * 1048576)))} className={`${field} mt-1.5`} />
+                  <span className="mt-1 block text-xs leading-relaxed text-neutral-400">0 = unlimited. The cap is shared fairly across active Go-managed transfers and applies immediately.</span>
+                </label>
+              </div>
+              <div className="rounded-xl border border-neutral-800 bg-neutral-950/60 p-4">
+                <div className="mb-3 flex items-center gap-3"><span className="grid size-9 place-items-center rounded-lg border border-emerald-700/40 bg-emerald-950/30 text-emerald-300"><HardDrive className="size-4" aria-hidden="true" /></span><div><h4 className="text-xs font-bold">Storage policy</h4><p className="mt-0.5 text-xs text-neutral-400">Choose which durable copy each newly queued job keeps after finalization.</p></div></div>
+                <div className="grid gap-2 md:grid-cols-3">
+                  {([
+                    ["managed-published", "Managed + Published", "Keep a private Library copy and a copy in your configured output folder. Uses the most disk space."],
+                    ["published-only", "Published only", "Keep only the configured output copy after publishing. Library metadata remains, but in-app Save links are unavailable."],
+                    ["managed-only", "Managed only", "Keep only the private Library copy and do not publish to the output folder. Background cleanup preserves this sole copy."],
+                  ] as const).map(([value, label, description]) => <label key={value} className={`cursor-pointer rounded-lg border p-3 ${settings.storageMode === value ? "border-rose-600/70 bg-rose-950/20" : "border-neutral-800 bg-neutral-900/50"}`}><span className="flex items-center justify-between gap-2 text-xs font-semibold text-neutral-200">{label}<input type="radio" name="storage-mode" value={value} checked={settings.storageMode === value} onChange={() => changeSetting("storageMode", value)} className="accent-rose-600" /></span><span className="mt-1 block text-xs leading-relaxed text-neutral-400">{description}</span></label>)}
+                </div>
+                <p className="mt-3 text-xs leading-relaxed text-neutral-400">The selected policy is captured when a job is queued. Changing this setting later does not alter existing jobs. By default, finished Library entries stay and failed or cancelled jobs without files are cleared after 24 hours.</p>
+              </div>
+              <div className="rounded-xl border border-neutral-800 bg-neutral-950/60 p-4">
+                <div className="mb-3 flex items-center gap-3"><span className="grid size-9 place-items-center rounded-lg border border-blue-700/40 bg-blue-950/30 text-blue-300"><FileText className="size-4" aria-hidden="true" /></span><div><h4 className="text-xs font-bold">File naming format preferences</h4><p className="mt-0.5 text-xs text-neutral-400">Use tokens to build the saved filename.</p></div></div>
+                <label className="block text-xs font-medium text-neutral-300" htmlFor="naming-pattern">Naming pattern template</label>
+                <input id="naming-pattern" type="text" className={`${field} mt-1 font-mono text-xs`} value={settings.namingPattern} onChange={event => changeSetting("namingPattern", event.target.value)} />
+                <div className="mt-2 flex flex-wrap items-center gap-1.5 text-xs"><span className="mr-1 text-neutral-400">Insert token:</span>{namingTokenNames.map(token => <button key={token} type="button" onClick={() => changeSetting("namingPattern", `${settings.namingPattern}${settings.namingPattern ? " " : ""}${token}`)} className="rounded-md border border-neutral-800 bg-neutral-900 px-2.5 py-1 font-mono text-neutral-300 hover:border-neutral-600"><Plus className="mr-1 inline size-3 text-rose-400" aria-hidden="true" />{token}</button>)}</div>
+                <div className="mt-3 rounded-lg border border-neutral-800 bg-neutral-900/70 p-3"><div className="flex items-center gap-1.5 text-xs font-semibold text-neutral-300"><Sparkles className="size-3.5 text-amber-300" aria-hidden="true" />Live file generation preview</div>
+                  {(() => {
+                    const values: NamingValues = { "{channel}": "Marques Brownlee", "{title}": "M3 Max MacBook Pro Deep Dive", "{resolution}": "1080p", "{category}": settings.defaultCategory || "General", "{id}": "dQw4w9WgXcQ", "{upload_date}": "2026-09-23", "{playlist}": "Example playlist", "{index}": "3", "{ext}": "mp4", "{fps}": "60", "{codec}": "h264" };
+                    const safePreview = previewFilename(settings.namingPattern, values, "mp4");
+                    const separator = settings.downloadLocation.includes("\\") ? "\\" : "/";
+                    const subfolderName = settings.subfolderSorting === "channel" ? "Marques Brownlee" : settings.subfolderSorting === "category" ? settings.defaultCategory : "";
+                    const subfolder = subfolderName ? sanitizeFilenameComponent(subfolderName) : "";
+                    return <><p className="mt-1 break-all font-mono text-xs text-emerald-300">{safePreview}</p><p className="mt-1 break-all font-mono text-xs text-neutral-400">{settings.downloadLocation}{subfolder ? `${separator}${subfolder}` : ""}{separator}{safePreview}</p><p className="mt-1 text-xs text-neutral-400">Sample values are shown for upload date, playlist, index, FPS, and codec when those details are available.</p></>;
+                  })()}
+                </div>
+              </div>
+              <div className="rounded-xl border border-neutral-800 bg-neutral-950/60 p-4">
+                <div className="mb-3 flex items-center gap-3"><span className="grid size-9 place-items-center rounded-lg border border-cyan-700/40 bg-cyan-950/30 text-cyan-300"><HardDrive className="size-4" aria-hidden="true" /></span><div><h4 className="text-xs font-bold">Published output permissions</h4><p className="mt-0.5 text-xs text-neutral-400">Set POSIX permissions for published files and directories on Linux and macOS.</p></div></div>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <label className="block text-xs font-medium text-neutral-300">File mode (octal)
+                    <input aria-label="Published output file mode" inputMode="numeric" maxLength={4} className={`${field} mt-1.5 font-mono`} value={settings.outputFileMode} onChange={event => changeSetting("outputFileMode", event.target.value)} />
+                  </label>
+                  <label className="block text-xs font-medium text-neutral-300">Folder mode (octal)
+                    <input aria-label="Published output folder mode" inputMode="numeric" maxLength={4} className={`${field} mt-1.5 font-mono`} value={settings.outputFolderMode} onChange={event => changeSetting("outputFolderMode", event.target.value)} />
+                  </label>
+                </div>
+                <p className="mt-2 text-xs leading-relaxed text-neutral-400">Use four octal digits from 0000 to 0777. Defaults 0600 and 0700 keep published media private to this account. Windows does not apply POSIX permission bits.</p>
+              </div>
+            <section className={`${panel} space-y-4 p-5 sm:p-6`} aria-labelledby="runtime-settings-heading">
+              <div className="border-b border-neutral-800 pb-3">
+                <h3 id="runtime-settings-heading" className="text-sm font-bold">Service runtime limits</h3>
+                <p className="mt-1 max-w-3xl text-xs leading-relaxed text-neutral-400">These values are saved to SQLite and applied when the service starts. Matching environment variables override the saved values. Restart the service after editing a saved runtime setting.</p>
+              </div>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <label className="block text-xs font-medium text-neutral-300">Finished Library retention
+                  <input aria-label="Library retention" type="text" className={`${field} mt-1.5`} value={settings.retention} onChange={event => changeSetting("retention", event.target.value)} placeholder="never or 720h" />
+                  <span className="mt-1 block text-xs leading-relaxed text-neutral-400">Use “never” to keep finished records, or a Go duration such as 720h. Minimum active retention is 5m.</span>
+                  <RuntimeSettingSource source={runtimeSettingSources.retention} activeValue={runtimeSettingValues.retention} />
+                </label>
+                <label className="block text-xs font-medium text-neutral-300">Maximum bytes per job
+                  <input aria-label="Maximum bytes per job" type="number" min="1" max="9007199254740991" step="1" className={`${field} mt-1.5`} value={settings.maxJobBytes} onChange={event => changeSetting("maxJobBytes", Number(event.target.value))} />
+                  <span className="mt-1 block text-xs leading-relaxed text-neutral-400">Default: 10 GiB. This limit applies to each new job after restart.</span>
+                  <RuntimeSettingSource source={runtimeSettingSources.maxJobBytes} activeValue={runtimeSettingValues.maxJobBytes} />
+                </label>
+                <label className="block text-xs font-medium text-neutral-300">Overall job timeout
+                  <input aria-label="Overall job timeout" type="text" className={`${field} mt-1.5`} value={settings.jobTimeout} onChange={event => changeSetting("jobTimeout", event.target.value)} placeholder="none or 2h" />
+                  <span className="mt-1 block text-xs leading-relaxed text-neutral-400">Use “none” or “0” to disable the overall deadline, or enter at least 1s. Item transfers keep their own deadlines.</span>
+                  <RuntimeSettingSource source={runtimeSettingSources.jobTimeout} activeValue={runtimeSettingValues.jobTimeout} />
+                </label>
+                <label className="block text-xs font-medium text-neutral-300">Chrome/Chromium executable path
+                  <input aria-label="Chrome executable path" type="text" className={`${field} mt-1.5 font-mono text-xs`} value={settings.chromePath} onChange={event => changeSetting("chromePath", event.target.value)} placeholder="Use platform browser discovery" />
+                  <span className="mt-1 block text-xs leading-relaxed text-neutral-400">Optional. Leave blank to use platform browser discovery. CHROME_PATH overrides this saved value.</span>
+                  <RuntimeSettingSource source={runtimeSettingSources.chromePath} activeValue={runtimeSettingValues.chromePath} />
+                </label>
+                <label className="block text-xs font-medium text-neutral-300 sm:col-span-2">Concurrent file and ZIP responses <span className="float-right font-mono text-rose-300">{settings.downloadSlots}</span>
+                  <input aria-label="Concurrent file responses" type="range" min="1" max="16" step="1" value={settings.downloadSlots} onChange={event => changeSetting("downloadSlots", Number(event.target.value))} className="mt-2 w-full accent-rose-600" />
+                  <span className="mt-1 block text-xs leading-relaxed text-neutral-400">Separate from Maximum concurrent downloads; this limits simultaneous saved-file/ZIP responses.</span>
+                  <RuntimeSettingSource source={runtimeSettingSources.downloadSlots} activeValue={runtimeSettingValues.downloadSlots} />
+                </label>
+              </div>
+            </section>
+                <CorruptionDiagnosticsPanel connection={connection} serviceReady={serviceReady} />
+              </div>}
+
+              <div className="rounded-xl border border-neutral-800 bg-neutral-950/60 p-4">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div className="min-w-0">
+                    <h4 className="text-xs font-bold text-neutral-200">System notifications</h4>
+                    <p className="mt-1 max-w-2xl text-xs leading-relaxed text-neutral-400">Optional OS/browser alerts for completed downloads, failed jobs, partially completed playlists, and storage/output errors. Permission is requested only when you turn this on.</p>
+                  </div>
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-label="System notifications"
+                    aria-checked={settings.notificationsEnabled}
+                    onClick={() => void toggleNotifications()}
+                    className={`inline-flex min-h-9 items-center rounded-full border px-3 text-xs font-semibold transition-colors ${settings.notificationsEnabled ? "border-emerald-700/60 bg-emerald-950/40 text-emerald-300" : "border-neutral-700 bg-neutral-900 text-neutral-300"}`}
+                  >
+                    {settings.notificationsEnabled ? "Enabled" : "Off"}
+                  </button>
+                </div>
+                <p className="mt-2 text-xs text-neutral-400">
+                  {notificationAPI()
+                    ? notificationAPI()?.permission === "granted"
+                      ? "Browser/OS permission is granted."
+                      : notificationAPI()?.permission === "denied"
+                        ? "Browser/OS permission is blocked; change it in notification settings before enabling."
+                        : "Permission has not been requested yet."
+                    : "This browser does not expose the system Notification API."}
+                </p>
+              </div>
+              {serviceError && <p role="alert" className="text-xs text-red-300">{serviceError}</p>}
+              <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-neutral-700 bg-neutral-900 p-4">
+                <p className="max-w-lg text-xs leading-relaxed text-neutral-400">Save changes to apply them to new downloads.</p>
+                <button type="submit" className={primaryButton} disabled={!serviceReady || savingSettings}>{savingSettings && <LoaderCircle className="size-4 animate-spin" aria-hidden="true" />}{settingsSaved ? <Check className="size-4" aria-hidden="true" /> : null}{savingSettings ? "Saving…" : settingsSaved ? "Saved to SQLite" : "Save preferences"}</button>
+              </div>
+            </section>
+          </form>
 
           <section className={`${panel} p-5 sm:p-6`} aria-labelledby="service-heading">
-            <div className="mb-4 flex items-start justify-between gap-3"><div><h3 id="service-heading" className="text-sm font-bold">Built-in Go download service</h3><p className="mt-1 max-w-2xl text-xs leading-relaxed text-neutral-400">This single-executable app connects automatically to its local Go backend at <span className="font-mono text-neutral-300">{connection.base}</span>. Downloads, history, and preferences use the same service and SQLite database.</p></div><span className={`rounded-full border px-2.5 py-1 text-[10px] font-semibold ${serviceReady ? "border-emerald-700/60 bg-emerald-950/40 text-emerald-300" : "border-amber-700/60 bg-amber-950/40 text-amber-200"}`}>{serviceReady ? "Connected" : serviceError ? "Reconnecting" : "Connecting"}</span></div>
+            <div className="mb-4 flex items-start justify-between gap-3"><div><h3 id="service-heading" className="text-sm font-bold">Built-in Go download service</h3><p className="mt-1 max-w-2xl text-xs leading-relaxed text-neutral-400">This single-executable app connects automatically to its local Go backend at <span className="font-mono text-neutral-300">{connection.base}</span>. Downloads, history, and preferences use the same service and SQLite database.</p></div><span className={`rounded-full border px-2.5 py-1 text-xs font-semibold ${serviceReady ? "border-emerald-700/60 bg-emerald-950/40 text-emerald-300" : "border-amber-700/60 bg-amber-950/40 text-amber-200"}`}>{serviceReady ? "Connected" : serviceError ? "Reconnecting" : "Connecting"}</span></div>
             {serviceError && <p role="alert" className="mt-3 text-xs text-red-300">{serviceError}</p>}
-            {!serviceReady && <p className="mt-2 text-[10px] text-neutral-500">The app retries the local service automatically while it starts.</p>}
+            {!serviceReady && <p className="mt-2 text-xs text-neutral-400">The app retries the local service automatically while it starts.</p>}
           </section>
-
-          <CorruptionDiagnosticsPanel connection={connection} serviceReady={serviceReady} />
 
           <LibraryTransferPanel connection={connection} serviceReady={serviceReady} />
 
@@ -65,198 +255,22 @@ export function SettingsPage({
               </button>
             </div>
             {updateError && <p role="alert" className="mt-3 text-xs text-amber-300">{updateError}</p>}
-            {updateStatus?.developmentBuild && <p className="mt-3 text-[11px] leading-relaxed text-neutral-400">Development build: external update checks are skipped. Tagged releases carry immutable version metadata.</p>}
+            {updateStatus?.developmentBuild && <p className="mt-3 text-xs leading-relaxed text-neutral-400">Development build: external update checks are skipped. Tagged releases carry immutable version metadata.</p>}
             {updateStatus && !updateStatus.developmentBuild && updateStatus.updateAvailable && <div className="mt-3 rounded-xl border border-blue-800/60 bg-blue-950/30 p-3 text-xs text-blue-100">
               <div className="flex flex-wrap items-center justify-between gap-3"><span><strong>{updateStatus.latestVersion}</strong> is available.</span>{updateStatus.releaseUrl && <a href={updateStatus.releaseUrl} target="_blank" rel="noreferrer noopener" className="inline-flex items-center gap-1.5 font-semibold text-blue-300 hover:text-blue-200">Open release <ExternalLink className="size-3.5" aria-hidden="true" /></a>}</div>
-              <p className="mt-2 text-[10px] leading-relaxed text-blue-200/80">{updateStatus.note}</p>
+              <p className="mt-2 text-xs leading-relaxed text-blue-200/80">{updateStatus.note}</p>
             </div>}
-            {updateStatus && !updateStatus.developmentBuild && !updateStatus.updateAvailable && updateStatus.latestVersion && <p className="mt-3 text-[11px] text-emerald-300">You are on the latest stable release ({updateStatus.latestVersion}).</p>}
-            <p className="mt-3 text-[10px] leading-relaxed text-neutral-500">Release packages include SHA-256 checksums and GitHub provenance attestations. Automatic self-replacement remains disabled until OS-native signing/notarization and rollback-safe update semantics are implemented.</p>
+            {updateStatus && !updateStatus.developmentBuild && !updateStatus.updateAvailable && updateStatus.latestVersion && <p className="mt-3 text-xs text-emerald-300">You are on the latest stable release ({updateStatus.latestVersion}).</p>}
+            <p className="mt-3 text-xs leading-relaxed text-neutral-400">Release packages include SHA-256 checksums and GitHub provenance attestations. Automatic self-replacement remains disabled until OS-native signing/notarization and rollback-safe update semantics are implemented.</p>
           </section>
 
-          <form onSubmit={savePreferences} className="space-y-5">
-            <section className={`${panel} space-y-4 p-5 sm:p-6`} aria-labelledby="runtime-settings-heading">
-              <div className="border-b border-neutral-800 pb-3">
-                <h3 id="runtime-settings-heading" className="text-sm font-bold">Service runtime limits</h3>
-                <p className="mt-1 max-w-3xl text-xs leading-relaxed text-neutral-400">These values are saved to SQLite and applied when the service starts. Matching environment variables override the saved values. Restart the service after editing a saved runtime setting.</p>
-              </div>
-              <div className="grid gap-3 sm:grid-cols-2">
-                <label className="block text-xs font-medium text-neutral-300">Finished Library retention
-                  <input aria-label="Library retention" type="text" className={`${field} mt-1.5`} value={settings.retention} onChange={event => changeSetting("retention", event.target.value)} placeholder="never or 720h" />
-                  <span className="mt-1 block text-[10px] leading-relaxed text-neutral-500">Use “never” to keep finished records, or a Go duration such as 720h. Minimum active retention is 5m.</span>
-                  <RuntimeSettingSource source={runtimeSettingSources.retention} activeValue={runtimeSettingValues.retention} />
-                </label>
-                <label className="block text-xs font-medium text-neutral-300">Maximum bytes per job
-                  <input aria-label="Maximum bytes per job" type="number" min="1" max="9007199254740991" step="1" className={`${field} mt-1.5`} value={settings.maxJobBytes} onChange={event => changeSetting("maxJobBytes", Number(event.target.value))} />
-                  <span className="mt-1 block text-[10px] leading-relaxed text-neutral-500">Default: 10 GiB. This limit applies to each new job after restart.</span>
-                  <RuntimeSettingSource source={runtimeSettingSources.maxJobBytes} activeValue={runtimeSettingValues.maxJobBytes} />
-                </label>
-                <label className="block text-xs font-medium text-neutral-300">Overall job timeout
-                  <input aria-label="Overall job timeout" type="text" className={`${field} mt-1.5`} value={settings.jobTimeout} onChange={event => changeSetting("jobTimeout", event.target.value)} placeholder="none or 2h" />
-                  <span className="mt-1 block text-[10px] leading-relaxed text-neutral-500">Use “none” or “0” to disable the overall deadline, or enter at least 1s. Item transfers keep their own deadlines.</span>
-                  <RuntimeSettingSource source={runtimeSettingSources.jobTimeout} activeValue={runtimeSettingValues.jobTimeout} />
-                </label>
-                <label className="block text-xs font-medium text-neutral-300">Chrome/Chromium executable path
-                  <input aria-label="Chrome executable path" type="text" className={`${field} mt-1.5 font-mono text-xs`} value={settings.chromePath} onChange={event => changeSetting("chromePath", event.target.value)} placeholder="Use platform browser discovery" />
-                  <span className="mt-1 block text-[10px] leading-relaxed text-neutral-500">Optional. Leave blank to use platform browser discovery. CHROME_PATH overrides this saved value.</span>
-                  <RuntimeSettingSource source={runtimeSettingSources.chromePath} activeValue={runtimeSettingValues.chromePath} />
-                </label>
-                <label className="block text-xs font-medium text-neutral-300 sm:col-span-2">Concurrent file and ZIP responses <span className="float-right font-mono text-rose-300">{settings.downloadSlots}</span>
-                  <input aria-label="Concurrent file responses" type="range" min="1" max="16" step="1" value={settings.downloadSlots} onChange={event => changeSetting("downloadSlots", Number(event.target.value))} className="mt-2 w-full accent-rose-600" />
-                  <span className="mt-1 block text-[10px] leading-relaxed text-neutral-500">Separate from Maximum concurrent downloads above; this limits simultaneous saved-file/ZIP responses.</span>
-                  <RuntimeSettingSource source={runtimeSettingSources.downloadSlots} activeValue={runtimeSettingValues.downloadSlots} />
-                </label>
-              </div>
-            </section>
-            <section className={`${panel} space-y-4 p-5 sm:p-6`}>
-              <div className="flex flex-wrap items-start justify-between gap-3 border-b border-neutral-800 pb-4">
-                <div><h3 className="text-sm font-bold">Preferences & output configuration</h3><p className="mt-1 text-xs text-neutral-400">Choose where finished files go, how they are named, and how folders are organized.</p></div>
-                <button type="submit" className={primaryButton} disabled={!serviceReady || savingSettings}>{savingSettings && <LoaderCircle className="size-4 animate-spin" aria-hidden="true" />}{settingsSaved ? <Check className="size-4" aria-hidden="true" /> : null}{savingSettings ? "Saving…" : settingsSaved ? "Saved" : "Save preferences"}</button>
-              </div>
-
-              <div className="rounded-xl border border-neutral-800 bg-neutral-950/60 p-4">
-                <div className="mb-3 flex items-center gap-3"><span className="grid size-9 place-items-center rounded-lg border border-amber-700/40 bg-amber-950/30 text-amber-300"><Folder className="size-4" aria-hidden="true" /></span><div><h4 className="text-xs font-bold">Download directory location</h4><p className="mt-0.5 text-[11px] text-neutral-400">Finished media is copied to this local or external folder.</p></div></div>
-                <label className="block text-[11px] font-medium text-neutral-300" htmlFor="download-location">Absolute folder path</label>
-                <div className="mt-1 flex gap-2"><input id="download-location" type="text" autoComplete="off" className={`${field} font-mono text-xs`} value={settings.downloadLocation} onChange={event => changeSetting("downloadLocation", event.target.value)} placeholder="C:\\Users\\you\\Downloads\\YouTube_Vault" /><button type="button" className={button} onClick={() => void selectDownloadFolder()} disabled={!serviceReady} title="Choose a folder with the operating system picker"><Folder className="size-3.5 text-amber-400" aria-hidden="true" />Browse</button></div>
-                <p className="mt-2 text-[10px] text-neutral-500">Enter an absolute path. The app creates the folder when the first download finishes. Existing files stay in their original locations.</p>
-                <div className="mt-3 flex flex-wrap items-center gap-1.5 text-[10px]">
-                  <span className="mr-1 text-neutral-500">Quick paths:</span>
-                  {["YouTube_Vault", "Media", "YouTube"].map(name => {
-                    const path = settings.downloadLocation;
-                    const lastSlash = Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\"));
-                    const separator = path.includes("\\") ? "\\" : "/";
-                    const parent = lastSlash >= 0 ? path.slice(0, lastSlash) : path;
-                    const preset = `${parent}${parent.endsWith(separator) || !parent ? "" : separator}${name}`;
-                    return <button key={name} type="button" onClick={() => changeSetting("downloadLocation", preset)} className="rounded-md border border-neutral-800 bg-neutral-900 px-2.5 py-1 font-mono text-neutral-300 hover:border-neutral-600">{name}</button>;
-                  })}
-                </div>
-              </div>
-
-              <div className="rounded-xl border border-neutral-800 bg-neutral-950/60 p-4">
-                <div className="mb-3 flex items-center gap-3"><span className="grid size-9 place-items-center rounded-lg border border-emerald-700/40 bg-emerald-950/30 text-emerald-300"><HardDrive className="size-4" aria-hidden="true" /></span><div><h4 className="text-xs font-bold">Storage policy</h4><p className="mt-0.5 text-[11px] text-neutral-400">Choose which durable copy each newly queued job keeps after finalization.</p></div></div>
-                <div className="grid gap-2 md:grid-cols-3">
-                  {([
-                    ["managed-published", "Managed + Published", "Keep a private Library copy and a copy in your configured output folder. Uses the most disk space."],
-                    ["published-only", "Published only", "Keep only the configured output copy after publishing. Library metadata remains, but in-app Save links are unavailable."],
-                    ["managed-only", "Managed only", "Keep only the private Library copy and do not publish to the output folder. Background cleanup preserves this sole copy."],
-                  ] as const).map(([value, label, description]) => <label key={value} className={`cursor-pointer rounded-lg border p-3 ${settings.storageMode === value ? "border-rose-600/70 bg-rose-950/20" : "border-neutral-800 bg-neutral-900/50"}`}><span className="flex items-center justify-between gap-2 text-[11px] font-semibold text-neutral-200">{label}<input type="radio" name="storage-mode" value={value} checked={settings.storageMode === value} onChange={() => changeSetting("storageMode", value)} className="accent-rose-600" /></span><span className="mt-1 block text-[10px] leading-relaxed text-neutral-500">{description}</span></label>)}
-                </div>
-                <p className="mt-3 text-[10px] leading-relaxed text-neutral-500">The selected policy is captured when a job is queued. Changing this setting later does not alter existing jobs. By default, finished Library entries stay and failed or cancelled jobs without files are cleared after 24 hours.</p>
-              </div>
-
-              <div className="rounded-xl border border-neutral-800 bg-neutral-950/60 p-4">
-                <div className="mb-3 flex items-center gap-3"><span className="grid size-9 place-items-center rounded-lg border border-blue-700/40 bg-blue-950/30 text-blue-300"><FileText className="size-4" aria-hidden="true" /></span><div><h4 className="text-xs font-bold">File naming format preferences</h4><p className="mt-0.5 text-[11px] text-neutral-400">Use tokens to build the saved filename.</p></div></div>
-                <label className="block text-[11px] font-medium text-neutral-300" htmlFor="naming-pattern">Naming pattern template</label>
-                <input id="naming-pattern" type="text" className={`${field} mt-1 font-mono text-xs`} value={settings.namingPattern} onChange={event => changeSetting("namingPattern", event.target.value)} />
-                <div className="mt-2 flex flex-wrap items-center gap-1.5 text-[10px]"><span className="mr-1 text-neutral-500">Insert token:</span>{namingTokenNames.map(token => <button key={token} type="button" onClick={() => changeSetting("namingPattern", `${settings.namingPattern}${settings.namingPattern ? " " : ""}${token}`)} className="rounded-md border border-neutral-800 bg-neutral-900 px-2.5 py-1 font-mono text-neutral-300 hover:border-neutral-600"><Plus className="mr-1 inline size-3 text-rose-400" aria-hidden="true" />{token}</button>)}</div>
-                <div className="mt-3 rounded-lg border border-neutral-800 bg-neutral-900/70 p-3"><div className="flex items-center gap-1.5 text-[10px] font-semibold text-neutral-300"><Sparkles className="size-3.5 text-amber-300" aria-hidden="true" />Live file generation preview</div>
-                  {(() => {
-                    const values: NamingValues = { "{channel}": "Marques Brownlee", "{title}": "M3 Max MacBook Pro Deep Dive", "{resolution}": "1080p", "{category}": settings.defaultCategory || "General", "{id}": "dQw4w9WgXcQ", "{upload_date}": "2026-09-23", "{playlist}": "Example playlist", "{index}": "3", "{ext}": "mp4", "{fps}": "60", "{codec}": "h264" };
-                    const safePreview = previewFilename(settings.namingPattern, values, "mp4");
-                    const separator = settings.downloadLocation.includes("\\") ? "\\" : "/";
-                    const subfolderName = settings.subfolderSorting === "channel" ? "Marques Brownlee" : settings.subfolderSorting === "category" ? settings.defaultCategory : "";
-                    const subfolder = subfolderName ? sanitizeFilenameComponent(subfolderName) : "";
-                    return <><p className="mt-1 break-all font-mono text-xs text-emerald-300">{safePreview}</p><p className="mt-1 break-all font-mono text-[10px] text-neutral-400">{settings.downloadLocation}{subfolder ? `${separator}${subfolder}` : ""}{separator}{safePreview}</p><p className="mt-1 text-[10px] text-neutral-500">Sample values are shown for upload date, playlist, index, FPS, and codec when those details are available.</p></>;
-                  })()}
-                </div>
-              </div>
-
-              <div className="rounded-xl border border-neutral-800 bg-neutral-950/60 p-4">
-                <div className="mb-3 flex items-center gap-3"><span className="grid size-9 place-items-center rounded-lg border border-cyan-700/40 bg-cyan-950/30 text-cyan-300"><HardDrive className="size-4" aria-hidden="true" /></span><div><h4 className="text-xs font-bold">Published output permissions</h4><p className="mt-0.5 text-[11px] text-neutral-400">Set POSIX permissions for published files and directories on Linux and macOS.</p></div></div>
-                <div className="grid gap-3 sm:grid-cols-2">
-                  <label className="block text-[11px] font-medium text-neutral-300">File mode (octal)
-                    <input aria-label="Published output file mode" inputMode="numeric" maxLength={4} className={`${field} mt-1.5 font-mono`} value={settings.outputFileMode} onChange={event => changeSetting("outputFileMode", event.target.value)} />
-                  </label>
-                  <label className="block text-[11px] font-medium text-neutral-300">Folder mode (octal)
-                    <input aria-label="Published output folder mode" inputMode="numeric" maxLength={4} className={`${field} mt-1.5 font-mono`} value={settings.outputFolderMode} onChange={event => changeSetting("outputFolderMode", event.target.value)} />
-                  </label>
-                </div>
-                <p className="mt-2 text-[10px] leading-relaxed text-neutral-500">Use four octal digits from 0000 to 0777. Defaults 0600 and 0700 keep published media private to this account. Windows does not apply POSIX permission bits.</p>
-              </div>
-
-              <div className="rounded-xl border border-neutral-800 bg-neutral-950/60 p-4">
-                <div className="mb-3 flex items-center gap-3"><span className="grid size-9 place-items-center rounded-lg border border-purple-700/40 bg-purple-950/30 text-purple-300"><FolderTree className="size-4" aria-hidden="true" /></span><div><h4 className="text-xs font-bold">Subfolder sorting organization</h4><p className="mt-0.5 text-[11px] text-neutral-400">Organize finished downloads into structured folders.</p></div></div>
-                <div className="grid gap-2 sm:grid-cols-3">
-                  {([ ["channel", "Sort by YouTube channel"], ["category", "Sort by category"], ["flat", "No subfolders"] ] as const).map(([value, label]) => <label key={value} className={`cursor-pointer rounded-lg border p-3 ${settings.subfolderSorting === value ? "border-rose-600/70 bg-rose-950/20" : "border-neutral-800 bg-neutral-900/50"}`}><span className="flex items-center justify-between text-[11px] font-semibold text-neutral-200">{label}<input type="radio" name="subfolder-sorting" checked={settings.subfolderSorting === value} onChange={() => changeSetting("subfolderSorting", value)} className="accent-rose-600" /></span><span className="mt-1 block text-[10px] text-neutral-500">{value === "channel" ? "Files grouped by creator." : value === "category" ? "Files grouped by your selected category." : "Save directly in the destination."}</span></label>)}
-                </div>
-                <label className="mt-3 block max-w-sm text-[11px] font-medium text-neutral-300">Default category for new downloads
-                  <select className={`${field} mt-1.5 text-xs`} value={settings.defaultCategory} onChange={event => changeSetting("defaultCategory", event.target.value)}>{settings.userCategories.map(category => <option key={category} value={category}>{category}</option>)}</select>
-                </label>
-                <div className="mt-3 rounded-lg border border-neutral-800 bg-neutral-900/50 p-3">
-                  <div className="flex items-center justify-between text-[11px]"><span className="font-semibold text-neutral-300">User-defined categories</span><span className="text-neutral-500">{settings.userCategories.length} active</span></div>
-                  <div className="mt-2 flex flex-wrap gap-1.5">{settings.userCategories.map(category => <span key={category} className="inline-flex items-center gap-1 rounded-md border border-neutral-800 bg-neutral-950 px-2 py-1 text-[10px] text-neutral-200">{category}<button type="button" onClick={() => removeCategory(category)} disabled={settings.userCategories.length <= 1} aria-label={`Remove ${category}`} className="text-neutral-500 hover:text-rose-300 disabled:opacity-40"><X className="size-3" aria-hidden="true" /></button></span>)}</div>
-                  <div className="mt-2 flex gap-2"><input type="text" aria-label="New category" maxLength={40} value={newCategoryInput} onChange={event => setNewCategoryInput(event.target.value)} onKeyDown={event => { if (event.key === "Enter") { event.preventDefault(); addCategory(); } }} placeholder="Add a category" className={`${field} py-2 text-xs`} /><button type="button" onClick={addCategory} className={button}><Plus className="size-3.5" aria-hidden="true" />Add</button></div>
-                </div>
-              </div>
-
-              <div className="grid gap-4 border-t border-neutral-800 pt-4 sm:grid-cols-2 lg:grid-cols-4">
-                <label className="block text-xs font-medium text-neutral-300">Default maximum video quality
-                  <select aria-label="Default maximum video quality" className={`${field} mt-1.5`} value={settings.defaultQuality} onChange={event => changeSetting("defaultQuality", event.target.value as Quality)}>{(Object.entries(qualityLabels) as [Quality, string][]).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select>
-                </label>
-                <label className="block text-xs font-medium text-neutral-300">Default video format
-                  <select aria-label="Default video format" className={`${field} mt-1.5`} value={settings.defaultVideoStrategy} onChange={event => changeSetting("defaultVideoStrategy", event.target.value as VideoStrategy)}>{(Object.entries(videoStrategyLabels) as [VideoStrategy, string][]).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select>
-                  <span className="mt-1 block text-[10px] leading-relaxed text-neutral-500">Compatibility MP4 is strict H.264/AAC; VP9 and AV1 are preferences with automatic fallback when unavailable.</span>
-                </label>
-                <div className="rounded-lg border border-neutral-800 bg-neutral-950/60 p-3">
-                  <div className="flex items-start justify-between gap-3">
-                    <div>
-                      <label htmlFor="allow-360p-fallback" className="text-xs font-semibold text-neutral-200">Allow 360p recovery fallback</label>
-                      <p className="mt-1 max-w-sm text-[10px] leading-relaxed text-neutral-500">Off by default. When an adaptive video cannot be safely completed, retry as a verified progressive MP4 at 360p or lower. With this off, the job reports the adaptive failure without silently downgrading.</p>
-                    </div>
-                    <input id="allow-360p-fallback" aria-label="Allow 360p recovery fallback" type="checkbox" checked={settings.allow360pFallback} onChange={event => changeSetting("allow360pFallback", event.target.checked)} className="mt-0.5 size-4 shrink-0 accent-rose-600" />
-                  </div>
-                </div>
-                <label className="block text-xs font-medium text-neutral-300">Maximum concurrent downloads <span className="float-right font-mono text-rose-300">{settings.maxConcurrentDownloads}</span>
-                  <input aria-label="Maximum concurrent downloads" type="range" min="1" max="6" step="1" value={settings.maxConcurrentDownloads} onChange={event => changeSetting("maxConcurrentDownloads", Number(event.target.value))} className="mt-2 w-full accent-rose-600" />
-                  <span className="mt-1 flex justify-between text-[10px] text-neutral-500"><span>1 stream</span><span>6 streams</span></span>
-                </label>
-                <label className="block text-xs font-medium text-neutral-300">Global bandwidth limit <span className="float-right font-mono text-rose-300">{settings.bandwidthLimitBytesPerSec > 0 ? `${(settings.bandwidthLimitBytesPerSec / 1048576).toFixed(settings.bandwidthLimitBytesPerSec % 1048576 === 0 ? 0 : 2)} MiB/s` : "Unlimited"}</span>
-                  <input aria-label="Global bandwidth limit in MiB per second" type="number" min="0" max="1024" step="0.25" value={settings.bandwidthLimitBytesPerSec / 1048576} onChange={event => changeSetting("bandwidthLimitBytesPerSec", Math.max(0, Math.round((Number(event.target.value) || 0) * 1048576)))} className={`${field} mt-1.5`} />
-                  <span className="mt-1 block text-[10px] leading-relaxed text-neutral-500">0 = unlimited. The cap is shared fairly across active Go-managed transfers and applies immediately.</span>
-                </label>
-              </div>
-              <div className="rounded-xl border border-neutral-800 bg-neutral-950/60 p-4">
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                  <div className="min-w-0">
-                    <h4 className="text-xs font-bold text-neutral-200">System notifications</h4>
-                    <p className="mt-1 max-w-2xl text-[10px] leading-relaxed text-neutral-500">Optional OS/browser alerts for completed downloads, failed jobs, partially completed playlists, and storage/output errors. Permission is requested only when you turn this on.</p>
-                  </div>
-                  <button
-                    type="button"
-                    role="switch"
-                    aria-label="System notifications"
-                    aria-checked={settings.notificationsEnabled}
-                    onClick={() => void toggleNotifications()}
-                    className={`inline-flex min-h-9 items-center rounded-full border px-3 text-[11px] font-semibold transition-colors ${settings.notificationsEnabled ? "border-emerald-700/60 bg-emerald-950/40 text-emerald-300" : "border-neutral-700 bg-neutral-900 text-neutral-300"}`}
-                  >
-                    {settings.notificationsEnabled ? "Enabled" : "Off"}
-                  </button>
-                </div>
-                <p className="mt-2 text-[10px] text-neutral-500">
-                  {notificationAPI()
-                    ? notificationAPI()?.permission === "granted"
-                      ? "Browser/OS permission is granted."
-                      : notificationAPI()?.permission === "denied"
-                        ? "Browser/OS permission is blocked; change it in notification settings before enabling."
-                        : "Permission has not been requested yet."
-                    : "This browser does not expose the system Notification API."}
-                </p>
-              </div>
-              {serviceError && <p role="alert" className="text-xs text-red-300">{serviceError}</p>}
-              <div className="flex flex-wrap items-center justify-between gap-3 border-t border-neutral-800 pt-4">
-                <p className="max-w-lg text-[10px] leading-relaxed text-neutral-500">Settings apply to new jobs. Each download also stays in private app storage for the library and secure save links. {mp3Supported ? "Built-in Go MP3 conversion is ready." : "This backend does not support MP3 conversion."}</p>
-                <button type="submit" className={primaryButton} disabled={!serviceReady || savingSettings}>{savingSettings && <LoaderCircle className="size-4 animate-spin" aria-hidden="true" />}{settingsSaved ? <Check className="size-4" aria-hidden="true" /> : null}{savingSettings ? "Saving…" : settingsSaved ? "Saved to SQLite" : "Save preferences"}</button>
-              </div>
-            </section>
-          </form>
-
-            <section className={`${panel} p-5`}><div className="flex items-start gap-3"><div className="grid size-9 shrink-0 place-items-center rounded-xl border border-blue-800/50 bg-blue-950/30 text-blue-300"><Gauge className="size-4" aria-hidden="true" /></div><div><h3 className="text-xs font-bold">What this backend supports</h3><ul className="mt-2 space-y-1.5 text-[11px] leading-relaxed text-neutral-400"><li>Video and playlist downloads, including adaptive H.264/AAC MP4, high-resolution VP9/AV1 + Opus WebM remuxing, and pure-Go MP3 conversion for AAC audio.</li><li>Up to six concurrent jobs, multi-routine stream transfers, fair global bandwidth limiting, pause/resume, retries, live speed/ETA, and optional system notifications.</li><li>Quality ceilings: best, 2160p (4K), 1440p, 1080p, 720p, or 480p, plus Best/Compatibility MP4/VP9/AV1 video strategies. Actual output quality and container are reported after completion.</li><li>Files are copied to the selected destination and remain available in the private SQLite-backed library.</li></ul>{!mp3Supported && <p className="mt-3 flex items-start gap-1.5 text-[10px] leading-relaxed text-amber-300"><ShieldCheck className="mt-0.5 size-3 shrink-0" aria-hidden="true" />This backend does not support MP3 conversion.</p>}</div></div></section>
+            <section className={`${panel} p-5`}><div className="flex items-start gap-3"><div className="grid size-9 shrink-0 place-items-center rounded-xl border border-blue-800/50 bg-blue-950/30 text-blue-300"><Gauge className="size-4" aria-hidden="true" /></div><div><h3 className="text-xs font-bold">What this backend supports</h3><ul className="mt-2 space-y-1.5 text-xs leading-relaxed text-neutral-400"><li>Video and playlist downloads, including adaptive H.264/AAC MP4, high-resolution VP9/AV1 + Opus WebM remuxing, and pure-Go MP3 conversion for AAC audio.</li><li>Up to six concurrent jobs, multi-routine stream transfers, fair global bandwidth limiting, pause/resume, retries, live speed/ETA, and optional system notifications.</li><li>Quality ceilings: best, 2160p (4K), 1440p, 1080p, 720p, or 480p, plus Best/Compatibility MP4/VP9/AV1 video strategies. Actual output quality and container are reported after completion.</li><li>Files are copied to the selected destination and remain available in the private SQLite-backed library.</li></ul>{!mp3Supported && <p className="mt-3 flex items-start gap-1.5 text-xs leading-relaxed text-amber-300"><ShieldCheck className="mt-0.5 size-3 shrink-0" aria-hidden="true" />This backend does not support MP3 conversion.</p>}</div></div></section>
         </div>
   );
 }
 
 function RuntimeSettingSource({ source, activeValue }: { source?: string; activeValue?: string | number }) {
-  return <span className="mt-1 block text-[10px] text-neutral-500">Active value: <span className="font-medium text-neutral-300">{activeValue ?? "Loading…"}</span> · source: <span className="font-medium text-neutral-300">{source || "Loading…"}</span></span>;
+  return <span className="mt-1 block text-xs text-neutral-400">Active value: <span className="font-medium text-neutral-300">{activeValue ?? "Loading…"}</span> · source: <span className="font-medium text-neutral-300">{source || "Loading…"}</span></span>;
 }
 
 function CorruptionDiagnosticsPanel({ connection, serviceReady }: Pick<SettingsPageProps, "connection" | "serviceReady">) {
@@ -300,16 +314,16 @@ function CorruptionDiagnosticsRequest({ connection, serviceReady }: Pick<Setting
       <p className="mt-3 text-xs text-amber-200">{diagnostics.count} saved data issue{diagnostics.count === 1 ? "" : "s"} recorded{diagnostics.count > diagnostics.issues.length ? `; showing the latest ${diagnostics.issues.length}` : ""}.</p>
       <ul className="mt-3 space-y-2">
         {diagnostics.issues.map(issue => <li key={issue.id} className="rounded-lg border border-neutral-800 bg-neutral-950/60 p-3">
-          <div className="flex flex-wrap items-center justify-between gap-2 text-[11px]">
+          <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
             <span className="font-mono text-neutral-200">{issue.sourceTable}.{issue.sourceColumn}</span>
-            <time className="text-neutral-500" dateTime={issue.detectedAt}>{new Date(issue.detectedAt).toLocaleString()}</time>
+            <time className="text-neutral-400" dateTime={issue.detectedAt}>{new Date(issue.detectedAt).toLocaleString()}</time>
           </div>
-          <p className="mt-1 break-all font-mono text-[10px] text-neutral-400">{issue.recordKey}</p>
-          <p className="mt-2 text-[11px] leading-relaxed text-neutral-300">{issue.action}</p>
+          <p className="mt-1 break-all font-mono text-xs text-neutral-400">{issue.recordKey}</p>
+          <p className="mt-2 text-xs leading-relaxed text-neutral-300">{issue.action}</p>
         </li>)}
       </ul>
     </>}
-    {!serviceReady && <p className="mt-3 text-[10px] text-neutral-500">Diagnostics will load when the local service is connected.</p>}
+    {!serviceReady && <p className="mt-3 text-xs text-neutral-400">Diagnostics will load when the local service is connected.</p>}
   </section>;
 }
 
@@ -381,6 +395,6 @@ function LibraryTransferPanel({ connection, serviceReady }: Pick<SettingsPagePro
     </div>
     {message && <p role="status" className="mt-3 text-xs text-emerald-300">{message}</p>}
     {error && <p role="alert" className="mt-3 text-xs text-amber-300">{error}</p>}
-    {!serviceReady && <p className="mt-3 text-[10px] text-neutral-500">Export will be available when the local service is connected.</p>}
+    {!serviceReady && <p className="mt-3 text-xs text-neutral-400">Export will be available when the local service is connected.</p>}
   </section>;
 }

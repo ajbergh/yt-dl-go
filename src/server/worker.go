@@ -14,7 +14,6 @@ import (
 	"math/rand/v2"
 	"mime"
 	"net/http"
-	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -33,7 +32,7 @@ const playlistNote = "Playlist totals cover all entries exposed by YouTube, not 
 const playlistSelectionNote = "Only the selected exposed playlist items are queued; original playlist positions are preserved."
 const unknownLengthNote = "An unknown-length stream is complete only at clean EOF; its original size cannot be independently verified."
 const adaptiveFallbackNote = "The requested adaptive stream could not be completed safely; the optional verified 360p progressive MP4 fallback was downloaded instead."
-const adaptiveMP4AudioFallbackNote = "The adaptive AAC audio track could not be captured safely; the progressive MP4 AAC track was used instead."
+const adaptiveMP4AudioFallbackNote = "The preferred adaptive AAC audio track could not be captured safely; a compatible fallback AAC track was used instead."
 const extractionFallbackNote = "The default YouTube extraction profile was unavailable; a fallback profile was used."
 const browserAdaptiveNote = "Adaptive media was streamed through a temporary browser session."
 const vp9PreferenceFallbackNote = "VP9 was preferred but unavailable under the selected quality ceiling; the best supported video format was used instead."
@@ -50,6 +49,7 @@ var (
 	errMux               = errors.New("video and audio streams could not be combined into a complete file")
 	errStorage           = errors.New("private media storage could not be safely written or cleaned")
 	errLimit             = errors.New("Job storage limit reached; remaining entries were not downloaded")
+	errItemReservation   = errors.New("selected media exceeded its reserved item size; retry the item")
 	errNative            = errors.New("native engine failed unexpectedly; completeness could not be verified")
 	errNoAudio           = errors.New("no compatible standalone audio stream is available")
 	errAudioConvert      = errors.New("AAC audio could not be decoded and encoded to MP3")
@@ -265,8 +265,29 @@ func betterWebMVideoFormat(candidate, current *youtube.Format) bool {
 }
 
 func betterAudioFormat(candidate, current *youtube.Format) bool {
+	if candidate == nil {
+		return false
+	}
+	if current != nil && audioTrackPreference(candidate) != audioTrackPreference(current) {
+		return audioTrackPreference(candidate) > audioTrackPreference(current)
+	}
 	return current == nil || candidate.Bitrate > current.Bitrate ||
 		(candidate.Bitrate == current.Bitrate && candidate.ContentLength > current.ContentLength)
+}
+
+func stereoAACFormat(video *youtube.Video) *youtube.Format {
+	var selected *youtube.Format
+	if video == nil {
+		return nil
+	}
+	for i := range video.Formats {
+		candidate := &video.Formats[i]
+		kind, codecs, ok := formatType(candidate)
+		if ok && kind == "audio/mp4" && codecFamily(codecs) == "aac" && candidate.AudioChannels > 0 && candidate.AudioChannels <= 2 && candidate.ContentLength > 0 && betterAudioFormat(candidate, selected) {
+			selected = candidate
+		}
+	}
+	return selected
 }
 
 // selectFormat preserves the automatic P2.4 policy for callers that do not
@@ -770,6 +791,7 @@ func (b *jobBudget) reserve(ctx context.Context, requested int64) (int64, error)
 	for {
 		b.mu.Lock()
 		if b.used > b.limit {
+			log.Printf("job quota exceeded: used_bytes=%d limit_bytes=%d", b.used, b.limit)
 			b.mu.Unlock()
 			return 0, errLimit
 		}
@@ -778,6 +800,7 @@ func (b *jobBudget) reserve(ctx context.Context, requested int64) (int64, error)
 			amount = b.limit - b.used
 		}
 		if amount <= 0 || amount > b.limit-b.used {
+			log.Printf("job quota reservation rejected: requested_bytes=%d used_bytes=%d limit_bytes=%d", amount, b.used, b.limit)
 			b.mu.Unlock()
 			return 0, errLimit
 		}
@@ -804,6 +827,7 @@ func (b *jobBudget) release(amount, completed int64) error {
 		b.reserved = 0
 	}
 	if completed > amount || completed > b.limit-b.used {
+		log.Printf("job quota commit rejected: output_bytes=%d reservation_bytes=%d used_bytes=%d limit_bytes=%d", completed, amount, b.used, b.limit)
 		close(b.changed)
 		b.changed = make(chan struct{})
 		return errLimit
@@ -865,6 +889,11 @@ func estimatedItemBudget(j *jobState, video *youtube.Video, format *youtube.Form
 			estimated += max(int64(1024*1024), estimated/20)
 		} else {
 			audioBytes := selection.audio.ContentLength
+			if selection.audio.AudioChannels > 2 {
+				if stereo := stereoAACFormat(video); stereo != nil {
+					audioBytes = max(audioBytes, stereo.ContentLength)
+				}
+			}
 			if selection.progressive != nil && selection.progressive.ContentLength > audioBytes {
 				audioBytes = selection.progressive.ContentLength
 			}
@@ -872,6 +901,9 @@ func estimatedItemBudget(j *jobState, video *youtube.Video, format *youtube.Form
 				return 0
 			}
 			estimated = selection.video.ContentLength + audioBytes
+			// Remuxing creates sample tables and other MP4 container data.
+			// Source lengths alone are not a safe ceiling for the final file.
+			estimated += max(int64(1024*1024), estimated/20)
 		}
 	} else {
 		if format == nil || format.ContentLength <= 0 {
@@ -1263,6 +1295,9 @@ func (s *server) processItem(ctx context.Context, j *jobState, entry *youtube.Pl
 	}
 	if requested <= 0 {
 		requested = s.cfg.maxBytes
+	}
+	if os.Getenv("YTDL_TRACE_PERFORMANCE") != "" {
+		log.Printf("item reservation job_id=%s item=%d requested_bytes=%d reserved_bytes=%d job_limit_bytes=%d", j.ID, current, requested, budget, s.cfg.maxBytes)
 	}
 	bandwidthLimit := int64(0)
 	if s.bandwidth != nil {
@@ -1778,7 +1813,7 @@ func (s *server) keepPartial(j *jobState) bool {
 	if paused {
 		return true
 	}
-	if s.ctx.Err() == nil {
+	if s.ctx == nil || s.ctx.Err() == nil {
 		return false
 	}
 	return !cancelled
@@ -1786,7 +1821,7 @@ func (s *server) keepPartial(j *jobState) bool {
 
 func (s *server) recordFailure(j *jobState, index int, err error) {
 	message := "Download interrupted"
-	for _, safe := range []error{errMetadata, errPlaylist, errCombined, errManifest, errRead, errLength, errMux, errStorage, errLimit, errNative, errNoAudio, errAudioConvert, errItemTimeout} {
+	for _, safe := range []error{errMetadata, errPlaylist, errCombined, errManifest, errStreamAuthorization, errStreamExpired, errStreamRateLimited, errRead, errLength, errMux, errStorage, errLimit, errItemReservation, errNative, errNoAudio, errAudioConvert, errItemTimeout} {
 		if errors.Is(err, safe) {
 			message = safe.Error()
 			break
@@ -2062,13 +2097,13 @@ func (s *server) noteCodecPreferenceFallback(j *jobState, strategy string) {
 	s.mu.Unlock()
 }
 
-func downloadAdaptiveMP4Audio(preferred, progressive *youtube.Format, download func(*youtube.Format) error) (used *youtube.Format, usedFallback bool, err error) {
+func downloadAdaptiveMP4Audio(preferred, progressive *youtube.Format, download func(*youtube.Format) error, alternates ...*youtube.Format) (used *youtube.Format, usedFallback bool, err error) {
 	if preferred == nil || download == nil {
 		return nil, false, errNoAudio
 	}
 	if preferred.ContentLength <= 0 {
-		if progressive == nil {
-			return nil, false, errLimit
+		if progressive == nil || progressive.ContentLength <= 0 {
+			return nil, false, errLength
 		}
 		if err := download(progressive); err != nil {
 			return nil, false, err
@@ -2077,13 +2112,110 @@ func downloadAdaptiveMP4Audio(preferred, progressive *youtube.Format, download f
 	}
 	if err := download(preferred); err == nil {
 		return preferred, false, nil
-	} else if !errors.Is(err, errRead) || progressive == nil || progressive.ItagNo == preferred.ItagNo {
+	} else if !errors.Is(err, errRead) {
 		return nil, false, err
+	}
+	for _, alternate := range alternates {
+		if alternate == nil || alternate.ContentLength <= 0 || alternate.ItagNo == preferred.ItagNo {
+			continue
+		}
+		if err := download(alternate); err == nil {
+			return alternate, true, nil
+		} else if !errors.Is(err, errRead) {
+			return nil, false, err
+		}
+	}
+	if progressive == nil || progressive.ContentLength <= 0 || progressive.ItagNo == preferred.ItagNo {
+		return nil, false, errRead
 	}
 	if err := download(progressive); err != nil {
 		return nil, false, err
 	}
 	return progressive, true, nil
+}
+
+func (s *server) acquireAdaptiveBrowser(ctx context.Context) browserMediaProvider {
+	if s.browserFactory == nil || s.bandwidthLimited() {
+		return nil
+	}
+	for attempt := 0; attempt < 2; attempt++ {
+		if ctx.Err() != nil {
+			return nil
+		}
+		if attempt > 0 && waitAdaptiveRangeRetry(ctx, attempt) != nil {
+			return nil
+		}
+		provider, err := s.browserFactory(ctx)
+		if err == nil && provider != nil {
+			return provider
+		}
+		if provider != nil {
+			_ = provider.Close()
+		}
+		log.Printf("browser acquisition failed attempt=%d error=%v", attempt+1, err)
+	}
+	return nil
+}
+
+// Each capture has its own media deadline and the caller's item deadline bounds
+// the whole recovery. Late transport failures deserve the same single fresh-tab
+// retry as startup failures; native range URLs may be unavailable as well.
+func retryBrowserCapture(ctx context.Context, provider browserMediaProvider, capture func(browserMediaProvider) error, verifiedProgress ...func() int64) error {
+	attemptLimit := 2
+	var progress func() int64
+	if len(verifiedProgress) > 0 && verifiedProgress[0] != nil {
+		progress = verifiedProgress[0]
+		attemptLimit = 8
+	}
+	var previous int64
+	if progress != nil {
+		previous = progress()
+	}
+	stalledAttempts := 0
+	for attempt := 0; attempt < attemptLimit; attempt++ {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		current := provider
+		if attempt > 0 {
+			if retry, ok := provider.(browserRetryProvider); ok {
+				fresh, err := retry.Reopen(ctx)
+				if fresh != nil {
+					defer fresh.Close()
+				}
+				if err != nil || fresh == nil {
+					return errBrowserUnavailable
+				}
+				current = fresh
+			}
+		}
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		err := capture(current)
+		if err == nil || (!errors.Is(err, errBrowserUnavailable) && !errors.Is(err, errSABRReadyLimit)) {
+			return err
+		}
+		if progress != nil {
+			current := progress()
+			if current > previous {
+				previous = current
+				stalledAttempts = 0
+			} else {
+				stalledAttempts++
+			}
+			if stalledAttempts >= 2 {
+				return errBrowserUnavailable
+			}
+		}
+		if _, canReopen := provider.(browserRetryProvider); canReopen {
+			// Detached capture handlers do not stop playback. Release the failed
+			// tab before opening another, so it cannot compete for media/session
+			// resources while the next attempt reuses its verified checkpoint.
+			_ = current.Close()
+		}
+	}
+	return errBrowserUnavailable
 }
 
 func (s *server) transferAdaptiveMP4(ctx context.Context, j *jobState, engine nativeClient, video *youtube.Video, selection streamSelection, queueIndex, outputIndex int, budget int64) (result mediaFile, err error) {
@@ -2101,26 +2233,31 @@ func (s *server) transferAdaptiveMP4(ctx context.Context, j *jobState, engine na
 	outputPart := path + ".part"
 	finalized := false
 	defer func() {
-		for _, temporary := range []string{audioPart, outputPart} {
+		for _, temporary := range []string{outputPart} {
 			if removeErr := os.Remove(temporary); removeErr != nil && !errors.Is(removeErr, os.ErrNotExist) && err == nil {
 				err = errStorage
 			}
 		}
 		if !s.keepPartial(j) {
+			if removeErr := os.Remove(audioPart); removeErr != nil && !errors.Is(removeErr, os.ErrNotExist) && err == nil {
+				err = errStorage
+			}
 			if removeErr := os.Remove(videoPart); removeErr != nil && !errors.Is(removeErr, os.ErrNotExist) && err == nil {
 				err = errStorage
+			}
+			for _, key := range []string{"video", "audio"} {
+				if deleteErr := s.deleteDownloadPart(j, queueIndex, key); deleteErr != nil && err == nil {
+					err = errStorage
+				}
 			}
 		}
 		if !finalized {
 			_ = os.Remove(path)
 		}
 	}()
-	var browserProvider browserMediaProvider
-	if s.browserFactory != nil && !s.bandwidthLimited() {
-		if provider, providerErr := s.browserFactory(ctx); providerErr == nil && provider != nil {
-			defer provider.Close()
-			browserProvider = provider
-		}
+	browserProvider := s.acquireAdaptiveBrowser(ctx)
+	if browserProvider != nil {
+		defer browserProvider.Close()
 	}
 
 	audioExpected := selection.audio.ContentLength
@@ -2136,45 +2273,72 @@ func (s *server) transferAdaptiveMP4(ctx context.Context, j *jobState, engine na
 		}
 		s.updateProgress(j, queueIndex, downloaded+current, progressTotal)
 	}
-	videoSize, browserUsed, err := s.downloadAdaptiveRanges(ctx, j, engine, video, selection.video, videoPart, "video", queueIndex, budget, progress, browserProvider)
-	if err != nil {
-		if ctx.Err() == nil && errors.Is(err, errRead) && adaptiveFallbackAllowed(j, selection) {
-			s.noteAdaptiveFallback(j)
-			fallback, fallbackErr := s.transferProgressive(ctx, j, engine, video, selection.progressiveFallback, "video/mp4", queueIndex, outputIndex, budget)
-			if fallbackErr == nil {
-				finalized = true
+	var videoSize, audioSize int64
+	var browserUsed, audioBrowserUsed bool
+	actualAudio := selection.audio
+	dualUsed := false
+	if selection.audio.AudioChannels > 0 && selection.audio.AudioChannels <= 2 {
+		videoSize, audioSize, dualUsed, err = s.captureAdaptivePair(ctx, j, engine, video, selection, videoPart, audioPart, queueIndex, budget, func(v, a int64) { s.updateProgress(j, queueIndex, v+a, progressTotal) }, browserProvider)
+		if ctx.Err() != nil {
+			return result, ctx.Err()
+		}
+		if errors.Is(err, errStorage) || errors.Is(err, errItemReservation) {
+			return result, err
+		}
+	}
+	if dualUsed {
+		downloaded = videoSize
+		s.noteBrowserAdaptive(j)
+	} else {
+		videoSize, browserUsed, err = s.downloadAdaptiveRanges(ctx, j, engine, video, selection.video, videoPart, "video", queueIndex, budget, progress, browserProvider)
+		if err != nil {
+			if ctx.Err() == nil && errors.Is(err, errRead) && adaptiveFallbackAllowed(j, selection) {
+				s.noteAdaptiveFallback(j)
+				fallback, fallbackErr := s.transferProgressive(ctx, j, engine, video, selection.progressiveFallback, "video/mp4", queueIndex, outputIndex, budget)
+				if fallbackErr == nil {
+					finalized = true
+				}
+				return fallback, fallbackErr
 			}
-			return fallback, fallbackErr
+			return result, err
 		}
-		return result, err
-	}
-	if browserUsed {
-		s.noteBrowserAdaptive(j)
-	}
-	downloaded = videoSize
-	if budget-videoSize <= 0 {
-		return result, errLimit
-	}
-	// Prefer the selected highest-quality adaptive AAC track. The downloader
-	// tries browser capture then native ranges and validates per-track identity.
-	// Only a retryable read failure downgrades to the progressive AAC source.
-	var audioSize int64
-	var audioBrowserUsed bool
-	actualAudio, usedFallback, err := downloadAdaptiveMP4Audio(selection.audio, selection.progressive, func(format *youtube.Format) error {
-		size, usedBrowser, downloadErr := s.downloadAdaptiveRanges(ctx, j, engine, video, format, audioPart, "audio", queueIndex, budget-videoSize, progress, browserProvider)
-		if downloadErr == nil {
-			audioSize, audioBrowserUsed = size, usedBrowser
+		if browserUsed {
+			s.noteBrowserAdaptive(j)
 		}
-		return downloadErr
-	})
-	if err != nil {
-		return result, err
-	}
-	if usedFallback {
-		s.noteAdaptiveMP4AudioFallback(j)
-	}
-	if audioBrowserUsed {
-		s.noteBrowserAdaptive(j)
+		downloaded = videoSize
+		if budget-videoSize <= 0 {
+			return result, errLimit
+		}
+		// Prefer the selected highest-quality adaptive AAC track. The downloader
+		// tries browser capture then native ranges and validates per-track identity.
+		// Only a retryable read failure downgrades to the progressive AAC source.
+		var usedFallback bool
+		var stereoAAC *youtube.Format
+		if selection.audio.AudioChannels > 2 {
+			stereoAAC = stereoAACFormat(video)
+		}
+		actualAudio, usedFallback, err = downloadAdaptiveMP4Audio(selection.audio, selection.progressive, func(format *youtube.Format) error {
+			audioProvider := browserProvider
+			// Browser playback negotiates stereo; a multichannel itag may never
+			// arrive. Try that source natively, then the verified stereo alternate.
+			if format.AudioChannels > 2 {
+				audioProvider = nil
+			}
+			size, usedBrowser, downloadErr := s.downloadAdaptiveRanges(ctx, j, engine, video, format, audioPart, "audio", queueIndex, budget-videoSize, progress, audioProvider)
+			if downloadErr == nil {
+				audioSize, audioBrowserUsed = size, usedBrowser
+			}
+			return downloadErr
+		}, stereoAAC)
+		if err != nil {
+			return result, err
+		}
+		if usedFallback {
+			s.noteAdaptiveMP4AudioFallback(j)
+		}
+		if audioBrowserUsed {
+			s.noteBrowserAdaptive(j)
+		}
 	}
 	downloaded += audioSize
 	if err := muxMP4(ctx, videoPart, audioPart, outputPart, selection.video, actualAudio); err != nil {
@@ -2191,7 +2355,8 @@ func (s *server) transferAdaptiveMP4(ctx context.Context, j *jobState, engine na
 		return result, errLength
 	}
 	if info.Size() > budget {
-		return result, errLimit
+		log.Printf("MP4 mux exceeds item reservation: output_bytes=%d budget=%d video_bytes=%d audio_bytes=%d", info.Size(), budget, videoSize, audioSize)
+		return result, errItemReservation
 	}
 	if ctx.Err() != nil {
 		return result, ctx.Err()
@@ -2250,12 +2415,9 @@ func (s *server) transferAdaptiveWebM(ctx context.Context, j *jobState, engine n
 		}
 	}()
 
-	var browserProvider browserMediaProvider
-	if s.browserFactory != nil && !s.bandwidthLimited() {
-		if provider, providerErr := s.browserFactory(ctx); providerErr == nil && provider != nil {
-			defer provider.Close()
-			browserProvider = provider
-		}
+	browserProvider := s.acquireAdaptiveBrowser(ctx)
+	if browserProvider != nil {
+		defer browserProvider.Close()
 	}
 	totalExpected := selection.video.ContentLength + selection.audio.ContentLength
 	progressTotal := int64(float64(totalExpected) * 100 / 90)
@@ -2281,52 +2443,18 @@ func (s *server) transferAdaptiveWebM(ctx context.Context, j *jobState, engine n
 	var videoSize, audioSize int64
 	var videoBrowserUsed, audioBrowserUsed bool
 	dualUsed := false
-	dualAttempted := false
-	if dualProvider, ok := browserProvider.(browserDualTrackProvider); ok {
-		_, videoPartErr := os.Stat(videoPart)
-		_, audioPartErr := os.Stat(audioPart)
-		if errors.Is(videoPartErr, os.ErrNotExist) && errors.Is(audioPartErr, os.ErrNotExist) {
-			dualAttempted = true
-			if err := s.saveDownloadPart(j, video.ID, queueIndex, "video", videoPart, "browser-sabr", selection.video, 0, nativeProfileID(engine)); err != nil {
-				return result, errStorage
-			}
-			if err := s.saveDownloadPart(j, video.ID, queueIndex, "audio", audioPart, "browser-sabr", selection.audio, 0, nativeProfileID(engine)); err != nil {
-				return result, errStorage
-			}
-			dualProgress := func(videoCurrent, audioCurrent int64) {
-				if totalExpected > 0 {
-					s.updateProgress(j, queueIndex, videoCurrent+audioCurrent, progressTotal)
-				}
-			}
-			captureStarted := time.Now()
-			// A full dual capture already consumes its byte-aware deadline. Replaying
-			// the same adaptive session a second time only delays a definitive error.
-			const dualCaptureAttempts = 1
-			for attempt := 0; attempt < dualCaptureAttempts; attempt++ {
-				videoCandidates := browserWebMVideoCandidates(video, selection.video)
-				videoSize, audioSize, err = dualProvider.CaptureTracks(ctx, video.ID, selection.video, videoCandidates, selection.audio, videoPart, audioPart, budget, budget, dualProgress)
-				if err == nil && videoSize > 0 && audioSize > 0 && videoSize <= budget && audioSize <= budget-videoSize {
-					videoInfo, videoStatErr := os.Stat(videoPart)
-					audioInfo, audioStatErr := os.Stat(audioPart)
-					if videoStatErr == nil && audioStatErr == nil && videoInfo.Size() == videoSize && audioInfo.Size() == audioSize {
-						if err := s.deleteDownloadPart(j, queueIndex, "video"); err != nil {
-							return result, errStorage
-						}
-						if err := s.deleteDownloadPart(j, queueIndex, "audio"); err != nil {
-							return result, errStorage
-						}
-						dualUsed = true
-						videoBrowserUsed, audioBrowserUsed = true, true
-						break
-					}
-				}
-				_ = os.Remove(videoPart)
-				_ = os.Remove(audioPart)
-				_ = s.deleteDownloadPart(j, queueIndex, "video")
-				_ = s.deleteDownloadPart(j, queueIndex, "audio")
-			}
-			capturePhase += time.Since(captureStarted)
-		}
+	_, dualAttempted := browserProvider.(browserDualTrackProvider)
+	captureStarted := time.Now()
+	videoSize, audioSize, dualUsed, err = s.captureAdaptivePair(ctx, j, engine, video, selection, videoPart, audioPart, queueIndex, budget, func(v, a int64) { s.updateProgress(j, queueIndex, v+a, progressTotal) }, browserProvider)
+	capturePhase += time.Since(captureStarted)
+	if ctx.Err() != nil {
+		return result, ctx.Err()
+	}
+	if errors.Is(err, errStorage) || errors.Is(err, errItemReservation) {
+		return result, err
+	}
+	if dualUsed {
+		videoBrowserUsed, audioBrowserUsed = true, true
 	}
 	if !dualUsed {
 		captureStarted := time.Now()
@@ -2398,7 +2526,8 @@ func (s *server) transferAdaptiveWebM(ctx context.Context, j *jobState, engine n
 		return result, errLength
 	}
 	if info.Size() > budget {
-		return result, errLimit
+		log.Printf("WebM mux exceeds item reservation: output_bytes=%d reservation_bytes=%d video_bytes=%d audio_bytes=%d", info.Size(), budget, videoSize, audioSize)
+		return result, errItemReservation
 	}
 	if totalExpected > 0 {
 		s.updateProgress(j, queueIndex, progressTotal, progressTotal)
@@ -2482,6 +2611,7 @@ func downloadSourceFingerprint(videoID string, format *youtube.Format, profileID
 		videoID, format.ItagNo, format.MimeType, format.Quality, format.ContentLength,
 		format.Width, format.Height, format.FPS, format.LastModified, format.Bitrate, format.AudioQuality,
 		format.AudioSampleRate, format.AudioChannels, format.ProjectionType, profileID)
+	identity += "\x00" + formatVariantKey(format)
 	digest := sha256.Sum256([]byte(identity))
 	return hex.EncodeToString(digest[:])
 }
@@ -2512,8 +2642,15 @@ func (s *server) deleteDownloadPart(j *jobState, itemIndex int, partKey string) 
 }
 
 func (s *server) downloadAdaptiveRanges(ctx context.Context, j *jobState, engine nativeClient, video *youtube.Video, format *youtube.Format, path, partKey string, itemIndex int, budget int64, progress func(int64), browserProvider browserMediaProvider) (result int64, browserUsed bool, err error) {
-	if budget <= 0 || format.ContentLength <= 0 || format.ContentLength > budget {
-		return 0, false, errLimit
+	if os.Getenv("YTDL_TRACE_PERFORMANCE") != "" {
+		log.Printf("adaptive range begin itag=%d expected_bytes=%d", format.ItagNo, format.ContentLength)
+	}
+	if format.ContentLength <= 0 {
+		return 0, false, errLength
+	}
+	if budget <= 0 || format.ContentLength > budget {
+		log.Printf("adaptive item reservation exceeded: itag=%d source_bytes=%d reservation_bytes=%d", format.ItagNo, format.ContentLength, budget)
+		return 0, false, errItemReservation
 	}
 	if progress == nil {
 		progress = func(int64) {}
@@ -2540,6 +2677,9 @@ func (s *server) downloadAdaptiveRanges(ctx context.Context, j *jobState, engine
 						valid = true
 					}
 				}
+			} else if checkpointErr == nil && checkpoint.Method == "browser-sabr" && checkpoint.Path == path && checkpoint.SourceFingerprint == fingerprint && checkpoint.ExpectedBytes == format.ContentLength && info.Mode().IsRegular() && info.Size() >= checkpoint.CompletedBytes {
+				_, supports := browserProvider.(browserCheckpointProvider)
+				valid = supports
 			} else if checkpointErr != nil && !errors.Is(checkpointErr, sql.ErrNoRows) {
 				return 0, false, errStorage
 			}
@@ -2559,26 +2699,57 @@ func (s *server) downloadAdaptiveRanges(ctx context.Context, j *jobState, engine
 	}
 	if browserProvider != nil && start == 0 {
 		const browserCaptureAttempts = 2
+		captureProvider := browserProvider
 		for attempt := 0; attempt < browserCaptureAttempts; attempt++ {
-			if err := s.saveDownloadPart(j, video.ID, itemIndex, partKey, path, "browser-sabr", format, 0, profileID); err != nil {
-				s.recordPersistenceFailure("save browser download checkpoint", j.ID, err)
-				return 0, false, errStorage
+			if ctx.Err() != nil {
+				return 0, false, ctx.Err()
 			}
-			captured, captureErr := browserProvider.CaptureTrack(ctx, video.ID, format, path, budget, progress)
+			if attempt > 0 {
+				// A failed tab caches setup errors and in-flight capture state.
+				// Retry with a new lease, rather than replaying that broken tab.
+				if retryProvider, ok := browserProvider.(browserRetryProvider); ok {
+					if fresh, reopenErr := retryProvider.Reopen(ctx); reopenErr == nil && fresh != nil {
+						defer fresh.Close()
+						captureProvider = fresh
+					}
+				}
+			}
+			checkpointed := s.bindBrowserCheckpoints(captureProvider, j, video.ID, profileID, itemIndex, map[string]string{path: partKey})
+			if !checkpointed {
+				if err := s.saveDownloadPart(j, video.ID, itemIndex, partKey, path, "browser-sabr", format, 0, profileID); err != nil {
+					s.recordPersistenceFailure("save browser download checkpoint", j.ID, err)
+					return 0, false, errStorage
+				}
+			}
+			captured, captureErr := captureProvider.CaptureTrack(ctx, video.ID, format, path, budget, progress)
+			if os.Getenv("YTDL_TRACE_PERFORMANCE") != "" && captureErr != nil {
+				log.Printf("browser track failed itag=%d attempt=%d error=%v", format.ItagNo, attempt+1, captureErr)
+			}
 			if captureErr == nil && captured == format.ContentLength && captured <= budget {
 				if info, statErr := os.Stat(path); statErr == nil && info.Size() == captured {
-					if err := s.deleteDownloadPart(j, itemIndex, partKey); err != nil {
-						return 0, false, errStorage
+					if !checkpointed {
+						if err := s.deleteDownloadPart(j, itemIndex, partKey); err != nil {
+							return 0, false, errStorage
+						}
 					}
 					return captured, true, nil
 				}
 			}
-			_ = os.Remove(path)
-			if err := s.deleteDownloadPart(j, itemIndex, partKey); err != nil {
-				return 0, false, errStorage
+			preserve := checkpointed && ((attempt+1 < browserCaptureAttempts && ctx.Err() == nil && errors.Is(captureErr, errBrowserUnavailable)) || (ctx.Err() != nil && s.keepPartial(j)))
+			if !preserve {
+				_ = os.Remove(path)
+				if err := s.deleteDownloadPart(j, itemIndex, partKey); err != nil {
+					return 0, false, errStorage
+				}
 			}
 			if ctx.Err() != nil {
 				return 0, false, ctx.Err()
+			}
+			if errors.Is(captureErr, errStorage) || errors.Is(captureErr, errItemReservation) {
+				return 0, false, captureErr
+			}
+			if _, canReopen := browserProvider.(browserRetryProvider); canReopen {
+				_ = captureProvider.Close()
 			}
 		}
 	}
@@ -2609,118 +2780,21 @@ func (s *server) downloadAdaptiveRanges(ctx context.Context, j *jobState, engine
 			}
 		}
 	}()
-	client := s.rangeHTTPClient
-	if client == nil {
-		client = nativeHTTPClient(0)
-	}
-	current := format
-	result = start
 	if start > 0 {
 		progress(start)
 	}
 	if err := s.saveDownloadPart(j, video.ID, itemIndex, partKey, path, "native-range", format, start, profileID); err != nil {
-		s.recordPersistenceFailure("save download checkpoint", j.ID, err)
 		return result, browserUsed, errStorage
 	}
-	for start < format.ContentLength {
-		if err := ctx.Err(); err != nil {
-			return result, browserUsed, err
+	result, err = s.downloadNativeRangeWindows(ctx, engine, video.ID, format, f, start, profileID, func(offset int64) error {
+		if checkpointErr := s.saveDownloadPart(j, video.ID, itemIndex, partKey, path, "native-range", format, offset, profileID); checkpointErr != nil {
+			return errStorage
 		}
-		end := min(start+adaptiveRangeChunkSize, format.ContentLength) - 1
-		chunkSize := end - start + 1
-		chunkOK := false
-		for attempt := 0; attempt < adaptiveRangeAttempts; attempt++ {
-			if attempt > 0 {
-				if retryErr := waitAdaptiveRangeRetry(ctx, attempt); retryErr != nil {
-					return result, browserUsed, retryErr
-				}
-			}
-			if attempt > 0 || current == nil || current.URL == "" {
-				if engine == nil {
-					continue
-				}
-				previousProfile := nativeProfileID(engine)
-				current, err = s.refreshFormat(ctx, engine, video.ID, format.ItagNo)
-				if err != nil {
-					if os.Getenv("YTDL_TRACE_PERFORMANCE") != "" {
-						log.Printf("adaptive range refresh failed itag=%d start=%d attempt=%d err=%v", format.ItagNo, start, attempt+1, err)
-					}
-					continue
-				}
-				profileID = nativeProfileID(engine)
-				if profileID != previousProfile {
-					return result, browserUsed, errRead
-				}
-				if downloadSourceFingerprint(video.ID, current, profileID) != fingerprint {
-					return result, browserUsed, errLength
-				}
-			}
-			parsedURL, err := url.Parse(current.URL)
-			if err != nil {
-				continue
-			}
-			query := parsedURL.Query()
-			query.Set("range", fmt.Sprintf("%d-%d", start, end))
-			parsedURL.RawQuery = query.Encode()
-			req, err := http.NewRequestWithContext(ctx, http.MethodGet, parsedURL.String(), nil)
-			if err != nil {
-				continue
-			}
-			profile := youtubeClientProfile{id: "android", client: youtube.AndroidClient, origin: "https://youtube.com"}
-			if currentProfile, ok := engine.(interface{ RequestProfile() youtubeClientProfile }); ok {
-				profile = currentProfile.RequestProfile()
-			}
-			req.Header.Set("User-Agent", profile.client.UserAgent)
-			if profile.origin != "" {
-				req.Header.Set("Origin", profile.origin)
-			}
-			req.Header.Set("Sec-Fetch-Mode", "navigate")
-			req.Header.Set("Range", fmt.Sprintf("bytes=%d-%d", start, end))
-			resp, requestErr := client.Do(req)
-			if requestErr != nil {
-				if os.Getenv("YTDL_TRACE_PERFORMANCE") != "" {
-					log.Printf("adaptive range request failed itag=%d start=%d attempt=%d err=%v", format.ItagNo, start, attempt+1, requestErr)
-				}
-				continue
-			}
-			if _, seekErr := f.Seek(start, io.SeekStart); seekErr != nil {
-				_ = resp.Body.Close()
-				s.recordPersistenceFailure("seek adaptive download part", j.ID, seekErr)
-				return result, browserUsed, errStorage
-			}
-			if truncateErr := f.Truncate(start); truncateErr != nil {
-				_ = resp.Body.Close()
-				s.recordPersistenceFailure("truncate adaptive download part", j.ID, truncateErr)
-				return result, browserUsed, errStorage
-			}
-			idleBody := idleDeadlineReader{reader: resp.Body, timeout: transferIdleTimeout, onIdle: func() { _ = resp.Body.Close() }}
-			written, copyErr := io.Copy(f, io.LimitReader(s.bandwidthReader(ctx, idleBody), chunkSize+1))
-			_ = resp.Body.Close()
-			if copyErr == nil && written == chunkSize && validRangeResponse(resp, start, end, format.ContentLength) {
-				chunkOK = true
-				break
-			}
-			if os.Getenv("YTDL_TRACE_PERFORMANCE") != "" {
-				log.Printf("adaptive range incomplete itag=%d start=%d attempt=%d status=%d bytes=%d expected=%d err=%v", format.ItagNo, start, attempt+1, resp.StatusCode, written, chunkSize, copyErr)
-			}
-		}
-		if !chunkOK {
-			if ctx.Err() != nil {
-				return result, browserUsed, ctx.Err()
-			}
-			return result, browserUsed, errRead
-		}
-		start = end + 1
-		result = start
-		progress(result)
-		if err := f.Sync(); err != nil {
-			s.recordPersistenceFailure("sync adaptive download checkpoint", j.ID, err)
-			return result, browserUsed, errStorage
-		}
-		if checkpointErr := s.saveDownloadPart(j, video.ID, itemIndex, partKey, path, "native-range", format, result, profileID); checkpointErr != nil {
-			s.recordPersistenceFailure("save download checkpoint", j.ID, checkpointErr)
-			return result, browserUsed, errStorage
-		}
+		progress(offset)
+		return nil
+	})
+	if err != nil {
+		return result, browserUsed, err
 	}
 	if err := f.Sync(); err != nil {
 		s.recordPersistenceFailure("sync adaptive download part", j.ID, err)
@@ -2737,13 +2811,23 @@ func (s *server) downloadAdaptiveRanges(ctx context.Context, j *jobState, engine
 	return result, browserUsed, nil
 }
 
-func (s *server) refreshFormat(ctx context.Context, engine nativeClient, videoID string, itag int) (*youtube.Format, error) {
-	video, err := engine.GetVideoContext(ctx, "https://www.youtube.com/watch?v="+videoID)
-	if err != nil || video == nil {
+func (s *server) refreshMatchingFormat(ctx context.Context, engine nativeClient, videoID string, selected *youtube.Format, profileID string) (*youtube.Format, error) {
+	ctx, cancel := context.WithTimeout(ctx, metadataTimeout)
+	defer cancel()
+	var video *youtube.Video
+	var err error
+	if refresh, ok := engine.(interface {
+		RefreshVideoContext(context.Context, string) (*youtube.Video, error)
+	}); ok {
+		video, err = refresh.RefreshVideoContext(ctx, "https://www.youtube.com/watch?v="+videoID)
+	} else {
+		video, err = engine.GetVideoContext(ctx, "https://www.youtube.com/watch?v="+videoID)
+	}
+	if err != nil || video == nil || video.ID != videoID || selected == nil {
 		return nil, errMetadata
 	}
 	for i := range video.Formats {
-		if video.Formats[i].ItagNo == itag && video.Formats[i].URL != "" {
+		if video.Formats[i].ItagNo == selected.ItagNo && video.Formats[i].URL != "" && downloadSourceFingerprint(videoID, &video.Formats[i], profileID) == downloadSourceFingerprint(videoID, selected, profileID) {
 			return &video.Formats[i], nil
 		}
 	}

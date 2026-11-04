@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -13,9 +13,20 @@ const ignoredPackages = ["youtube-downloader", "github.com/dop251/goja/ftoa"];
 const cacheDirectory = mkdtempSync(path.join(repoRoot, ".go-licenses-cache-"));
 const outputsDirectory = mkdtempSync(path.join(repoRoot, ".go-licenses-output-"));
 process.on("exit", () => {
-  rmSync(cacheDirectory, { recursive: true, force: true });
-  rmSync(outputsDirectory, { recursive: true, force: true });
+  rmSync(cacheDirectory, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  // go-licenses preserves read-only module-cache source files. Windows needs
+  // that attribute cleared before Node can remove these owned temporary copies.
+  if (process.platform === "win32" && existsSync(outputsDirectory)) clearTemporaryReadOnlyFiles(outputsDirectory);
+  rmSync(outputsDirectory, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 });
+
+function clearTemporaryReadOnlyFiles(directory) {
+  for (const entry of readdirSync(directory, { withFileTypes: true })) {
+    const filename = path.join(directory, entry.name);
+    if (entry.isDirectory()) clearTemporaryReadOnlyFiles(filename);
+    else if (entry.isFile()) chmodSync(filename, 0o600);
+  }
+}
 
 function run(command, args, options = {}, target = {}) {
   return execFileSync(command, args, {
@@ -154,6 +165,8 @@ writeFileSync(reportPath, [
   "# Go third-party notices",
   "",
   "Generated from the Go packages used by supported release targets with `go-licenses`. The CSV companion preserves package paths and license classifications; redistributed license texts and the LGPL component's source are under `licenses/go/`.",
+  "",
+  "The kkdai/youtube v2.10.6 entry includes a local MIT-licensed compatibility patch. See [patch provenance and changes](third_party/youtube/UPSTREAM.md); the original license is retained with the source.",
   "",
   "| Package | Version | License | Source | Included text/source |",
   "| --- | --- | --- | --- | --- |",

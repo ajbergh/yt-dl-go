@@ -10,8 +10,6 @@ import (
 	"github.com/kkdai/youtube/v2"
 )
 
-var configureYouTubeClientOnce sync.Once
-var youtubeProfileMu sync.Mutex
 var youtubeProfileProbeOnce sync.Once
 var youtubeProfileProbe profileProbeResult
 var errNoYouTubeProfiles = errors.New("no YouTube extraction profiles are configured")
@@ -48,11 +46,10 @@ func newNativeClient(timeout time.Duration) *youtube.Client {
 	// v2.10.6 defaults to AndroidVRClient, whose range requests can be rejected
 	// partway through otherwise valid progressive downloads. AndroidClient is
 	// the supported profile for these downloads and avoids that failure mode.
-	configureYouTubeClientOnce.Do(func() {
-		youtube.DefaultClient = youtube.AndroidClient
-	})
 	initializeYouTubeProfileProbe()
-	return &youtube.Client{HTTPClient: nativeHTTPClient(timeout), MaxRoutines: 4, ChunkSize: 1024 * 1024}
+	client := &youtube.Client{HTTPClient: nativeHTTPClient(timeout), MaxRoutines: 4, ChunkSize: 1024 * 1024}
+	client.SetClientProfile(youtube.AndroidClient)
+	return client
 }
 
 func initializeYouTubeProfileProbe() {
@@ -80,27 +77,18 @@ func youtubeExtractorHealth() profileProbeResult {
 }
 
 func newYouTubeExtractor(timeout time.Duration) *youtubeExtractor {
-	configureYouTubeClientOnce.Do(func() {
-		youtube.DefaultClient = youtube.AndroidClient
-	})
 	initializeYouTubeProfileProbe()
 	return &youtubeExtractor{timeout: timeout}
 }
 
 func withYouTubeProfile[T any](profile youtubeClientProfile, timeout time.Duration, call func(*youtube.Client) (T, error)) (value T, err error) {
 	client := &youtube.Client{HTTPClient: nativeHTTPClient(timeout), MaxRoutines: 4, ChunkSize: 1024 * 1024}
+	client.HTTPClient.Transport = playerAssetTransport{base: client.HTTPClient.Transport, cache: sharedPlayerAssets, profile: profile.id}
 	return withYouTubeProfileClient(profile, client, call)
 }
 
 func withYouTubeProfileClient[T any](profile youtubeClientProfile, client *youtube.Client, call func(*youtube.Client) (T, error)) (value T, err error) {
-	youtubeProfileMu.Lock()
-	defer youtubeProfileMu.Unlock()
-	configureYouTubeClientOnce.Do(func() {
-		youtube.DefaultClient = youtube.AndroidClient
-	})
-	previous := youtube.DefaultClient
-	youtube.DefaultClient = profile.client
-	defer func() { youtube.DefaultClient = previous }()
+	client.SetClientProfile(profile.client)
 	return call(client)
 }
 
@@ -214,7 +202,7 @@ func (e *youtubeExtractor) currentProfile() youtubeClientProfile {
 	return supportedYouTubeProfiles[index]
 }
 
-func (e *youtubeExtractor) GetVideoContext(ctx context.Context, raw string) (*youtube.Video, error) {
+func (e *youtubeExtractor) getVideoUncached(ctx context.Context, raw string) (*youtube.Video, error) {
 	start := e.startingProfile()
 	expectedID, idErr := youtube.ExtractVideoID(raw)
 	if idErr != nil {

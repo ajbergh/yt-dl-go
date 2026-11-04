@@ -427,3 +427,17 @@ func TestTerminalJobIsNotEvictedWhilePersistencePending(t *testing.T) {
 		t.Fatalf("committed terminal job must rehydrate: hydrated=%t err=%v", hydrated, err)
 	}
 }
+
+func TestTerminalJobIsNotEvictedDuringAPIDispatch(t *testing.T) {
+	job := &jobState{Job: Job{ID: "request-in-progress", Status: "completed"}, activeRequests: 1}
+	s := &server{jobs: map[string]*jobState{job.ID: job}, order: []string{job.ID}}
+	s.evictTerminalJobLocked(job)
+	if s.jobs[job.ID] != job {
+		t.Fatal("worker completion evicted the job between API preflight and dispatch")
+	}
+	job.activeRequests--
+	s.evictTerminalJobLocked(job)
+	if s.jobs[job.ID] != nil || len(s.order) != 0 {
+		t.Fatal("job remained resident after the last API request ended")
+	}
+}
