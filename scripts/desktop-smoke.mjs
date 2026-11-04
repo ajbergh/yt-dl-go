@@ -18,10 +18,22 @@ function run(command, args, options = {}) {
   return result;
 }
 if (process.platform === "win32") {
-  const who = run("whoami.exe", ["/user", "/fo", "csv", "/nh"], { encoding: "utf8", stdio: ["ignore", "pipe", "inherit"] });
-  const sid = who.stdout.match(/S-1-5-[\d-]+/)?.[0];
-  if (!sid) throw new Error("Cannot identify the smoke-test data owner");
-  run("icacls.exe", [data, "/inheritance:r", "/grant:r", `*${sid}:(OI)(CI)F`]);
+  // Elevated runners can create Administrators-owned temporary directories.
+  // Match the release smoke fixture: set the owner as well as a protected DACL.
+  run("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", `
+    $ErrorActionPreference = 'Stop'
+    $owner = [System.Security.Principal.WindowsIdentity]::GetCurrent().User
+    $acl = [System.Security.AccessControl.DirectorySecurity]::new()
+    $acl.SetOwner($owner)
+    $acl.SetAccessRuleProtection($true, $false)
+    foreach ($sid in @($owner,
+      [System.Security.Principal.SecurityIdentifier]::new('S-1-5-18'),
+      [System.Security.Principal.SecurityIdentifier]::new('S-1-5-32-544'))) {
+      $acl.AddAccessRule([System.Security.AccessControl.FileSystemAccessRule]::new(
+        $sid, 'FullControl', 'ContainerInherit, ObjectInherit', 'None', 'Allow'))
+    }
+    [System.IO.Directory]::SetAccessControl($env:DESKTOP_SMOKE_DATA_DIR, $acl)
+  `], { env: { ...process.env, DESKTOP_SMOKE_DATA_DIR: data } });
 }
 const filename = "youtube-vault" + (process.platform === "win32" ? ".exe" : "");
 const frontendEnv = { ...process.env };

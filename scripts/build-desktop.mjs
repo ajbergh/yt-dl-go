@@ -24,7 +24,7 @@ function run(command, args, options = {}) {
 }
 
 const goRoot = run("go", ["env", "GOROOT"], { stdio: ["ignore", "pipe", "inherit"] });
-const tools = path.join(os.tmpdir(), "yt-dl-go-desktop-tools-v2.17.0");
+const tools = path.join(os.tmpdir(), "yt-dl-go-desktop-tools-v2.17.1");
 mkdirSync(tools, { recursive: true });
 const env = {
   ...process.env, GOROOT: goRoot, GOTOOLCHAIN: "local", GOBIN: tools,
@@ -33,7 +33,7 @@ const env = {
 };
 const exe = name => path.join(tools, name + (goos === "windows" ? ".exe" : ""));
 for (const [name, module] of [
-  ["wails", "github.com/wailsapp/wails/v2/cmd/wails@v2.17.0"],
+  ["wails", "github.com/wailsapp/wails/v2/cmd/wails@v2.17.1"],
   ["go-licenses", "github.com/google/go-licenses/v2@v2.0.1"],
 ]) {
   if (!existsSync(exe(name))) run("go", ["install", module], { env });

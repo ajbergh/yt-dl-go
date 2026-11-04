@@ -9,7 +9,7 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-// An Explorer launch owns its console: it disappears as soon as startup exits.
+// An Explorer launch owns its console or has none in a GUI-subsystem build.
 // Keep the failure visible without pausing an existing shell or background job.
 func showStartupError(message string) {
 	if os.Getenv("NO_BROWSER") == "1" {
@@ -23,7 +23,7 @@ func showStartupError(message string) {
 	var processIDs [2]uint32
 	count, _, _ := windows.NewLazySystemDLL("kernel32.dll").NewProc("GetConsoleProcessList").Call(
 		uintptr(unsafe.Pointer(&processIDs[0])), uintptr(len(processIDs)))
-	if count != 1 {
+	if count > 1 {
 		return
 	}
 	text, err := windows.UTF16PtrFromString(message)

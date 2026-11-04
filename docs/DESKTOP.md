@@ -1,6 +1,6 @@
 # Wails v2 desktop builds
 
-The desktop edition uses Wails **v2.17.0** to display the existing React interface
+The desktop edition uses Wails **v2.17.1** to display the existing React interface
 in a native window. Closing the window stops the private Go service and workers.
 The existing browser/server edition remains available through the original build
 scripts; both editions use the same per-user data. Close one before starting the
