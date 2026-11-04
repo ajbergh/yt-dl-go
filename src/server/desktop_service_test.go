@@ -118,9 +118,37 @@ func (w *desktopDeadlineRecorder) SetWriteDeadline(deadline time.Time) error {
 }
 
 func TestDesktopDownloadDoesNotInheritJSONTimeout(t *testing.T) {
-	// Exercise response deadlines without racing worker completion/eviction.
+	s := testServer(t, fixtureClient(1), func(c *config) { c.timeout = 0 })
+	job := waitTerminal(t, s, createJob(t, s, testVideo).ID)
+	if job.Status != "completed" || len(job.Files) != 1 {
+		t.Fatalf("download fixture failed: %+v", job)
+	}
+	path := ticketPath(t, s, job.ID, `{"fileId":"`+job.Files[0].ID+`"}`)
+	req := httptest.NewRequest(http.MethodGet, "http://127.0.0.1:8080"+path, nil)
+	writer := &desktopDeadlineRecorder{ResponseRecorder: httptest.NewRecorder()}
+	s.ServeHTTP(writer, req)
+	if writer.Code != 200 || len(writer.deadlines) != 2 || !writer.deadlines[1].IsZero() {
+		t.Fatalf("unlimited media inherited the short API deadline: status=%d deadlines=%v", writer.Code, writer.deadlines)
+	}
+}
+
+// Decode the ticket body after route lookup, when worker completion or another
+// request could otherwise evict the terminal job before ticket dispatch.
+type desktopEvictionReader struct {
+	io.Reader
+	server *server
+	job    *jobState
+}
+
+func (r desktopEvictionReader) Read(p []byte) (int, error) {
+	r.server.mu.Lock()
+	r.server.evictTerminalJobLocked(r.job)
+	r.server.mu.Unlock()
+	return r.Reader.Read(p)
+}
+
+func TestDesktopTicketSurvivesTerminalEvictionDuringDispatch(t *testing.T) {
 	s := newPersistenceTestServer(t)
-	s.cfg.timeout = 0
 	job := bulkFixtureJob(t, s, "completed")
 	job.Files = []mediaFile{{ID: "file", Name: "000001-abcdefghijk.mp4", MimeType: "video/mp4", Size: 5, ManagedAvailable: true}}
 	if err := os.WriteFile(filepath.Join(job.dir, job.Files[0].Name), []byte("media"), 0600); err != nil {
@@ -129,12 +157,16 @@ func TestDesktopDownloadDoesNotInheritJSONTimeout(t *testing.T) {
 	if err := s.store.saveJob(job); err != nil {
 		t.Fatal(err)
 	}
-	path := ticketPath(t, s, job.ID, `{"fileId":"`+job.Files[0].ID+`"}`)
-	req := httptest.NewRequest(http.MethodGet, "http://127.0.0.1:8080"+path, nil)
-	writer := &desktopDeadlineRecorder{ResponseRecorder: httptest.NewRecorder()}
+	body := desktopEvictionReader{Reader: strings.NewReader(`{"fileId":"file"}`), server: s, job: job}
+	req := httptest.NewRequest(http.MethodPost, "http://127.0.0.1:8080/api/jobs/"+job.ID+"/ticket", body)
+	req.Header.Set("Content-Type", "application/json")
+	writer := httptest.NewRecorder()
 	s.ServeHTTP(writer, req)
-	if writer.Code != 200 || len(writer.deadlines) != 2 || !writer.deadlines[1].IsZero() {
-		t.Fatalf("unlimited media inherited the short API deadline: status=%d deadlines=%v", writer.Code, writer.deadlines)
+	if writer.Code != http.StatusOK {
+		t.Fatalf("ticket lost its terminal job during dispatch: %d %s", writer.Code, writer.Body.String())
+	}
+	if s.jobs[job.ID] != nil {
+		t.Fatal("terminal working state was retained after the request completed")
 	}
 }
 
