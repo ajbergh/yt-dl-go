@@ -40,12 +40,26 @@ try {
     const binary = readFileSync(executable);
     assert.deepEqual(binary, readFileSync(path.join(output, name + ".exe")));
     const ico = readFileSync(path.join(root, "src/server/build/windows/icon.ico"));
+    const pe = binary.readUInt32LE(0x3c);
+    assert.equal(binary.toString("ascii", pe, pe + 4), "PE\0\0");
+    const sectionCount = binary.readUInt16LE(pe + 6);
+    const sectionStart = pe + 24 + binary.readUInt16LE(pe + 20);
+    let resources;
+    for (let i = 0; i < sectionCount; i++) {
+      const section = sectionStart + i * 40;
+      if (binary.toString("ascii", section, section + 8).replace(/\0/g, "") !== ".rsrc") continue;
+      const start = binary.readUInt32LE(section + 20);
+      const size = binary.readUInt32LE(section + 16);
+      resources = binary.subarray(start, start + size);
+    }
+    assert.ok(resources, "Windows EXE is missing its resource section");
     // Wails preserves the individual ICO images when embedding PE resources.
+    // Search only resources: the frontend also embeds the matching favicon.
     for (let i = 0; i < ico.readUInt16LE(4); i++) {
       const entry = 6 + i * 16;
       const start = ico.readUInt32LE(entry + 12);
       const length = ico.readUInt32LE(entry + 8);
-      assert.ok(binary.includes(ico.subarray(start, start + length)), `Windows EXE is missing icon image ${i}`);
+      assert.ok(resources.includes(ico.subarray(start, start + length)), `Windows EXE is missing icon image ${i}`);
     }
   }
   if (goos === "darwin") {
