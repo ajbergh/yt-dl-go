@@ -245,8 +245,10 @@ async function readValue(cdp, selector) {
 }
 
 async function captureScreenshot(cdp, name, width = 1440, height = 1000) {
-  await cdp.send("Emulation.setDeviceMetricsOverride", { width, height, deviceScaleFactor: 1, mobile: false });
+  await cdp.send("Emulation.setDeviceMetricsOverride", { width, height, deviceScaleFactor: 1, mobile: width < 640 });
+  await cdp.send("Emulation.setTouchEmulationEnabled", { enabled: width < 640 });
   await cdp.evaluate("new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))");
+  assert.equal(await cdp.evaluate("document.documentElement.scrollWidth <= window.innerWidth"), true, `${name} has horizontal page overflow`);
   if (name.startsWith("library-")) {
     const clipped = await cdp.evaluate(`Array.from(document.querySelectorAll('article button[aria-label], article h4')).filter(element => {
       const bounds = element.getBoundingClientRect();
@@ -261,7 +263,8 @@ async function captureScreenshot(cdp, name, width = 1440, height = 1000) {
     const { data } = await cdp.send("Page.captureScreenshot", { format: "png", captureBeyondViewport: true, clip: { ...cssContentSize, scale: 1 } });
     await writeFile(path.join(process.env.E2E_SCREENSHOT_DIR, `${name}.png`), Buffer.from(data, "base64"));
   }
-  await cdp.send("Emulation.clearDeviceMetricsOverride");
+  await cdp.send("Emulation.setDeviceMetricsOverride", { width: 1440, height: 1000, deviceScaleFactor: 1, mobile: false });
+  await cdp.send("Emulation.setTouchEmulationEnabled", { enabled: false });
 }
 
 async function getJSON(url) {
@@ -366,15 +369,20 @@ async function main() {
     await cdp.send("Page.enable");
     await cdp.send("Log.enable");
     await cdp.send("Network.enable");
+    await cdp.send("Emulation.setDeviceMetricsOverride", { width: 1440, height: 1000, deviceScaleFactor: 1, mobile: false });
     const navigation = await cdp.send("Page.navigate", { url: `${baseURL}/` });
     if (navigation.errorText) throw new Error(`Chrome navigation failed: ${navigation.errorText}`);
     await waitFor(cdp, `document.readyState === "complete"`, "browser document load");
     await waitFor(cdp, bodyIncludes("Service connected"), "service connection in browser");
+    await captureScreenshot(cdp, "queue-empty");
+    await captureScreenshot(cdp, "queue-empty-mobile", 390, 844);
 
     // 1-3: actual service startup, URL inspection, and queue creation.
     await setValue(cdp, "#video-url", fixtureURL);
     await clickButton(cdp, "Inspect qualities");
     await waitFor(cdp, bodyIncludes("E2E Fixture Video"), "fixture inspection result");
+    await captureScreenshot(cdp, "inspection");
+    await captureScreenshot(cdp, "inspection-mobile", 390, 844);
     await clickSelector(cdp, 'input[aria-label="Confirm download rights"]');
     await clickSelector(cdp, 'input[aria-label="Add as paused"]');
     await clickButton(cdp, "Add 1 to queue");
@@ -383,6 +391,7 @@ async function main() {
     await clickSelector(cdp, '[aria-label^="Edit queued settings for "]');
     await setValue(cdp, 'select[aria-label^="Quality for "]', "480");
     await captureScreenshot(cdp, "queue-editor");
+    await captureScreenshot(cdp, "queue-editor-mobile", 390, 844);
     const configurationResponse = cdp.waitEvent("Network.responseReceived", params => params?.response?.url?.endsWith("/configuration") === true);
     await clickButton(cdp, "Save queue settings");
     assert.equal((await configurationResponse).response.status, 200);
@@ -427,6 +436,7 @@ async function main() {
     await waitFor(cdp, bodyIncludes("E2E Fixture Video"), "completed Library item");
     await captureScreenshot(cdp, "library-desktop");
     await captureScreenshot(cdp, "library-mobile", 390, 844);
+    await captureScreenshot(cdp, "library-narrow", 320, 720);
 
     const beforeRestart = await getJSON(`${baseURL}/api/library`);
     assert.equal(beforeRestart.jobs.length, 1, "completed Library item was not persisted");
@@ -434,9 +444,17 @@ async function main() {
 
     // 7: save settings through the real UI/API.
     await clickButton(cdp, "Settings");
+    assert.equal(await cdp.evaluate(`document.querySelector('button[aria-label="Advanced settings"]').getAttribute("aria-checked")`), "false");
+    assert.equal(await cdp.evaluate(`document.querySelector('#advanced-settings') === null`), true);
+    await captureScreenshot(cdp, "settings-basic");
+    await captureScreenshot(cdp, "settings-basic-mobile", 390, 844);
+    await clickSelector(cdp, 'button[aria-label="Advanced settings"]');
+    await captureScreenshot(cdp, "settings-advanced");
+    await captureScreenshot(cdp, "settings-advanced-mobile", 390, 844);
     await setValue(cdp, "#naming-pattern", "E2E {title}");
     await setValue(cdp, 'select[aria-label="Default video format"]', "av1");
     await setValue(cdp, 'input[aria-label="Maximum concurrent downloads"]', "2");
+    await clickSelector(cdp, 'button[aria-label="Advanced settings"]');
     await clickButton(cdp, "Save preferences");
     await waitFor(cdp, bodyIncludes("Saved"), "settings save acknowledgement");
 
@@ -452,6 +470,7 @@ async function main() {
     await cdp.send("Page.reload", { ignoreCache: true });
     await waitFor(cdp, bodyIncludes("Service connected"), "service reconnect after restart", 30000);
     await clickButton(cdp, "Settings");
+    await clickSelector(cdp, 'button[aria-label="Advanced settings"]');
     await waitFor(cdp, `document.querySelector("#naming-pattern")?.value === "E2E {title}"`, "persisted naming pattern");
     assert.equal(await readValue(cdp, 'select[aria-label="Default video format"]'), "av1");
     assert.equal(await readValue(cdp, 'input[aria-label="Maximum concurrent downloads"]'), "2");

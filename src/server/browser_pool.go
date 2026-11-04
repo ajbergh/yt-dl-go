@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"log"
 	"sync"
 	"time"
 
@@ -10,7 +11,7 @@ import (
 
 const (
 	browserPoolIdleTimeout  = 2 * time.Minute
-	browserPoolStartTimeout = 20 * time.Second
+	browserPoolStartTimeout = 60 * time.Second
 )
 
 type browserPoolLauncher func(context.Context) (context.Context, context.CancelFunc, context.CancelFunc, error)
@@ -57,8 +58,15 @@ func (p *browserPool) Acquire(ctx context.Context) (browserMediaProvider, error)
 		p.idleTimer.Stop()
 		p.idleTimer = nil
 	}
+	// A crashed or disconnected browser can leave its root context cached.
+	// Never hand new downloads tabs backed by that dead process.
+	if p.root != nil && !browserSessionAlive(p.root) {
+		p.closeRootLocked()
+	}
 	if p.root == nil {
-		root, rootClose, allocClose, err := p.launch(p.ctx)
+		// The pool owns process shutdown. Job/server cancellation still stops
+		// leases, but must not kill the CDP connection before Browser.close.
+		root, rootClose, allocClose, err := p.launch(context.WithoutCancel(p.ctx))
 		if err != nil {
 			if rootClose != nil {
 				rootClose()
@@ -71,6 +79,7 @@ func (p *browserPool) Acquire(ctx context.Context) (browserMediaProvider, error)
 		p.root, p.rootClose, p.allocClose = root, rootClose, allocClose
 	}
 	leaseCtx, leaseCancel := p.newTab(p.root)
+	leasedRoot := p.root
 	p.active++
 	stopCaller := context.AfterFunc(ctx, leaseCancel)
 	var releaseOnce sync.Once
@@ -78,15 +87,34 @@ func (p *browserPool) Acquire(ctx context.Context) (browserMediaProvider, error)
 		releaseOnce.Do(func() {
 			stopCaller()
 			leaseCancel()
-			p.release()
+			p.release(leasedRoot)
 		})
 	}
-	return &chromeBrowserProvider{ctx: leaseCtx, cancel: leaseCancel, release: release}, nil
+	return &chromeBrowserProvider{ctx: leaseCtx, cancel: leaseCancel, release: release, reopen: p.Acquire}, nil
 }
 
-func (p *browserPool) release() {
+func browserSessionAlive(ctx context.Context) bool {
+	if ctx == nil || ctx.Err() != nil {
+		return false
+	}
+	if session := chromedp.FromContext(ctx); session != nil && session.Browser != nil {
+		select {
+		case <-session.Browser.LostConnection:
+			return false
+		default:
+		}
+	}
+	return true
+}
+
+func (p *browserPool) release(leasedRoot context.Context) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	// A lease from a discarded process must not decrement the new browser's
+	// active count or arm an idle timer while its replacement is downloading.
+	if leasedRoot != p.root {
+		return
+	}
 	if p.active > 0 {
 		p.active--
 	}
@@ -106,17 +134,45 @@ func (p *browserPool) release() {
 }
 
 func (p *browserPool) closeRootLocked() {
+	root := p.root
 	rootClose, allocClose := p.rootClose, p.allocClose
 	p.root, p.rootClose, p.allocClose = nil, nil, nil
+	p.active = 0
 	if p.idleTimer != nil {
 		p.idleTimer.Stop()
 		p.idleTimer = nil
 	}
-	if rootClose != nil {
-		rootClose()
-	}
-	if allocClose != nil {
-		allocClose()
+	closeBrowserRoot(root, rootClose, allocClose, 10*time.Second)
+}
+
+func closeBrowserRoot(root context.Context, rootClose, allocClose context.CancelFunc, maximum time.Duration) {
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		if root != nil {
+			if session := chromedp.FromContext(root); session != nil && session.Browser != nil && browserSessionAlive(root) {
+				ctx, cancel := context.WithTimeout(context.WithoutCancel(root), 3*time.Second)
+				// Cancel marks the close as graceful before sending Browser.close,
+				// preventing connection-loss handling from killing a closing process.
+				_ = chromedp.Cancel(ctx)
+				cancel()
+			}
+		}
+		if rootClose != nil {
+			rootClose()
+		}
+		if allocClose != nil {
+			allocClose()
+		}
+	}()
+	timer := time.NewTimer(maximum)
+	defer timer.Stop()
+	select {
+	case <-done:
+	case <-timer.C:
+		// OS process teardown can stall. It may continue in the background,
+		// but must not hold the database or prevent the service restarting.
+		log.Printf("browser shutdown exceeded %s; cleanup continues in background", maximum)
 	}
 }
 

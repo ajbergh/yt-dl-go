@@ -13,7 +13,7 @@ try {
   delete env.VITE_CHECK_MODE;
   const result = spawnSync(
     process.execPath,
-    [viteCLI, "build", "--configLoader", "runner", "--outDir", outDir],
+    [viteCLI, "build", "--configLoader", "native", "--outDir", outDir],
     { env, stdio: "inherit" },
   );
   if (result.error) throw result.error;

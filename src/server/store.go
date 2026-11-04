@@ -434,6 +434,10 @@ func openJobStore(root string) (*jobStore, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("migrate state database: %w", err)
 	}
+	if err := runMigration(31, store.migrateV31); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("migrate state database: %w", err)
+	}
 	store.queueItemsReady = true
 	return store, nil
 }
@@ -2082,6 +2086,8 @@ func (s *jobStore) loadJobsFiltered(root, jobID, selection string) ([]*storedJob
 		switch selection {
 		case "active":
 			queueItemsByJob, err = s.loadQueueItemsQuery(`WHERE job_id IN (SELECT id FROM jobs WHERE status IN ('queued','downloading','processing','paused'))`, nil)
+		case "retryable":
+			queueItemsByJob, err = s.loadQueueItemsQuery(`WHERE job_id IN (SELECT id FROM jobs WHERE status IN ('failed','partial','cancelled'))`, nil)
 		case "one":
 			queueItemsByJob, err = s.loadQueueItemsQuery(`WHERE job_id=?`, []any{jobID})
 		default:
@@ -2098,6 +2104,8 @@ func (s *jobStore) loadJobsFiltered(root, jobID, selection string) ([]*storedJob
 	switch selection {
 	case "active":
 		query += ` WHERE status IN ('queued','downloading','processing','paused')`
+	case "retryable":
+		query += ` WHERE status IN ('failed','partial','cancelled')`
 	case "one":
 		query += ` WHERE id=?`
 		args = append(args, jobID)

@@ -17,6 +17,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -256,6 +257,37 @@ func snapshot(j *jobState) Job {
 		copy.Items = []queueItem{}
 	}
 	return copy
+}
+
+// queueSnapshotLocked includes retryable history after its working state has
+// been evicted. Polling and SSE reconnects must not erase failed downloads.
+// Successful history stays in the paginated Library rather than being retained
+// in the scheduler's resident job map.
+func (s *server) queueSnapshotLocked() ([]Job, error) {
+	jobs := []Job{}
+	if s.store != nil {
+		stored, err := s.store.loadJobsFiltered(s.cfg.root, "", "retryable")
+		if err != nil {
+			return nil, err
+		}
+		for _, saved := range stored {
+			if s.jobs[saved.job.ID] == nil {
+				jobs = append(jobs, saved.job)
+			}
+		}
+	}
+	for _, id := range s.order {
+		if job := s.jobs[id]; job != nil && !job.libraryOnly {
+			jobs = append(jobs, snapshot(job))
+		}
+	}
+	sort.SliceStable(jobs, func(i, j int) bool {
+		if jobs[i].CreatedAt == jobs[j].CreatedAt {
+			return jobs[i].ID > jobs[j].ID
+		}
+		return jobs[i].CreatedAt > jobs[j].CreatedAt
+	})
+	return jobs, nil
 }
 
 func (s *server) invalidateJobTicketsLocked(jobID string) {
@@ -745,11 +777,12 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			s.create(w, r)
 		case http.MethodGet:
 			s.mu.Lock()
-			jobs := []Job{}
-			for i := len(s.order) - 1; i >= 0; i-- {
-				jobs = append(jobs, snapshot(s.jobs[s.order[i]]))
-			}
+			jobs, err := s.queueSnapshotLocked()
 			s.mu.Unlock()
+			if err != nil {
+				fail(w, http.StatusInternalServerError, "Could not load download queue")
+				return
+			}
 			reply(w, 200, map[string]any{"jobs": jobs})
 		default:
 			fail(w, 405, "Method not allowed")

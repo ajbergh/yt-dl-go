@@ -3,11 +3,115 @@ package main
 import (
 	"bytes"
 	"errors"
+	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"reflect"
 	"testing"
 )
+
+func TestSABRCaptureIgnoresIncompletePrerollWithSameItag(t *testing.T) {
+	for _, itag := range []int{137, 140, 251} {
+		t.Run(fmt.Sprint(itag), func(t *testing.T) {
+			file, err := os.CreateTemp(t.TempDir(), "track")
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer file.Close()
+			capture := newSABRCapture(file, itag, 2000, 1024, nil)
+			capture.expectedVideoID = "41ZY18JqI2A"
+			format := testProtoVarintField(nil, 1, uint64(itag))
+			prerollFormat := testProtoVarintField(append([]byte(nil), format...), 2, 999)
+			initFor := func(id string, format []byte) []byte {
+				metadata := testProtoBytesField(nil, 1, []byte(id))
+				metadata = testProtoBytesField(metadata, 2, format)
+				return testUMPPart(nil, umpPartFormatInitializationMetadata, testProtoVarintField(metadata, 4, 2))
+			}
+			preroll := initFor("preroll0001", prerollFormat)
+			preroll = testSelectedSegment(preroll, 1, uint64(itag), true, 0, 0, []byte("ad-init"), prerollFormat)
+			// The preroll is interrupted before its media/final segment arrives.
+			if err := capture.consume(preroll); err != nil {
+				t.Fatal(err)
+			}
+			if capture.formatVerified || capture.totalWritten != 0 {
+				t.Fatal("preroll pinned the requested track")
+			}
+			body := initFor(capture.expectedVideoID, format)
+			body = testSelectedSegment(body, 2, uint64(itag), true, 0, 0, []byte("init"), format)
+			body = testSelectedSegment(body, 3, uint64(itag), false, 1, 1000, []byte("one"), format)
+			if err := capture.consume(body); err != nil {
+				t.Fatal(err)
+			}
+			// Even a matching format digest cannot authorize a different source.
+			wrongHeader := testMediaHeader(4, uint64(itag), false, 2, 1000, 2, format)
+			wrongHeader = testProtoBytesField(wrongHeader, 2, []byte("preroll0001"))
+			wrong := testUMPPart(nil, umpPartMediaHeader, wrongHeader)
+			wrong = testUMPPart(wrong, umpPartMedia, append(testUMPVarint(4), []byte("ad")...))
+			wrong = testUMPPart(wrong, umpPartMediaEnd, testUMPVarint(4))
+			if err := capture.consume(wrong); err != nil {
+				t.Fatal(err)
+			}
+			body = testSelectedSegment(nil, 5, uint64(itag), false, 2, 1000, []byte("two"), format)
+			if err := capture.consume(body); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := capture.finish(); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := file.Seek(0, 0); err != nil {
+				t.Fatal(err)
+			}
+			got, err := io.ReadAll(file)
+			if err != nil || string(got) != "initonetwo" {
+				t.Fatalf("wrong source in output: %q, %v", got, err)
+			}
+		})
+	}
+}
+
+func TestSABRPlaybackProgressNeverSkipsMissingMedia(t *testing.T) {
+	makeCapture := func(itag int) (*sabrCapture, []byte) {
+		file, err := os.CreateTemp(t.TempDir(), "track")
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = file.Close() })
+		capture := newSABRCapture(file, itag, 60000, 1024, func(int64) {})
+		format := testProtoVarintField(nil, 1, uint64(itag))
+		body := testUMPPart(nil, umpPartFormatInitializationMetadata, testProtoBytesField(nil, 2, format))
+		body = testSelectedSegment(body, 0, uint64(itag), true, 0, 0, []byte("init"), format)
+		if err := capture.consume(body); err != nil {
+			t.Fatal(err)
+		}
+		return capture, format
+	}
+	video, videoFormat := makeCapture(299)
+	audio, audioFormat := makeCapture(140)
+	consume := func(capture *sabrCapture, format []byte, itag int, sequence uint64, duration int64) {
+		body := testSelectedSegment(nil, sequence, uint64(itag), false, sequence, uint64(duration), []byte("media"), format)
+		if err := capture.consume(body); err != nil {
+			t.Fatal(err)
+		}
+	}
+	consume(video, videoFormat, 299, 1, 10000)
+	consume(video, videoFormat, 299, 3, 10000)
+	if got := video.verifiedDurationMs(); got != 10000 {
+		t.Fatalf("prefix crossed missing segment: %d", got)
+	}
+	set := newSABRCaptureSet(video, audio)
+	if got := set.verifiedDurationMs(); got != 0 {
+		t.Fatalf("prefix crossed missing audio: %d", got)
+	}
+	consume(audio, audioFormat, 140, 1, 5000)
+	consume(video, videoFormat, 299, 2, 10000)
+	if got := video.verifiedDurationMs(); got != 30000 {
+		t.Fatalf("filled prefix=%d, want 30000", got)
+	}
+	if got := set.verifiedDurationMs(); got != 5000 {
+		t.Fatalf("prefix crossed slower audio: %d", got)
+	}
+}
 
 func TestSABRCaptureAssemblesCheckedInFixture(t *testing.T) {
 	body, err := os.ReadFile(filepath.Join("testdata", "youtube", "sabr-selected-track.ump"))
@@ -142,8 +246,25 @@ func TestSABRCaptureRejectsLengthMismatch(t *testing.T) {
 	body = testUMPPart(body, umpPartMediaHeader, testMediaHeader(1, 299, true, 0, 0, 99, format))
 	body = testUMPPart(body, umpPartMedia, append(testUMPVarint(1), []byte("short")...))
 	body = testUMPPart(body, umpPartMediaEnd, testUMPVarint(1))
-	if err := capture.consume(body); err == nil {
-		t.Fatal("expected content-length mismatch")
+	if err := capture.consume(body); err != nil {
+		t.Fatal(err)
+	}
+	if capture.totalWritten != 0 || !capture.repairPending {
+		t.Fatal("partial initialization entered the saved prefix or did not request repair")
+	}
+	if _, err := capture.finish(); err == nil {
+		t.Fatal("partial media was accepted as complete")
+	}
+	body = testSelectedSegment(nil, 1, 299, true, 0, 0, []byte("init"), format)
+	body = testSelectedSegment(body, 2, 299, false, 1, 1000, []byte("media"), format)
+	if err := capture.consume(body); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := capture.finish(); err != nil {
+		t.Fatal(err)
+	}
+	if capture.repairPending {
+		t.Fatal("repair remained pending after full media arrived")
 	}
 }
 

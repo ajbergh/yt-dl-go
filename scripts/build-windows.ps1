@@ -72,7 +72,9 @@ try {
     }
 
     Write-Host 'Building frontend...' -ForegroundColor Cyan
-    Invoke-Native 'npm' @('run', 'build', '--', '--outDir', $serverDist)
+    # Invoke the CLI directly: npm.ps1 can consume --outDir while forwarding
+    # npm run arguments, causing Vite to rebuild the old output as its root.
+    Invoke-Native 'node' @($viteCLI, 'build', '--configLoader', 'native', '--outDir', $serverDist)
     if (-not (Test-Path -LiteralPath (Join-Path $serverDist 'index.html') -PathType Leaf)) {
         throw "Frontend build did not produce $(Join-Path $serverDist 'index.html')"
     }

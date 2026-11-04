@@ -19,6 +19,8 @@ The `dev` build tag adds `localhost:5173` and `127.0.0.1:5173` to the default CO
 
 ## Checks and production UI build
 
+Settings opens with download location, folder organization, notifications, and a summary of the saved video defaults. The Advanced settings toggle reveals format and quality overrides, transfer limits, storage policy, filename templates, permissions, runtime settings, and diagnostics. Collapsing it preserves edits; Save preferences also saves collapsed fields. Use automatic video defaults restores best quality, automatic stream selection for each video, and disabled 360p recovery without changing other preferences.
+
 ~~~
 npm run typecheck
 npm run build
