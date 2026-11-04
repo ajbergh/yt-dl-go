@@ -383,12 +383,26 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+  desktop:
+    name: Native desktop release packages
+    needs: validate
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    uses: ./.github/workflows/desktop.yml
+    with:
+      version: ${{ needs.validate.outputs.release_version }}
+      artifact_prefix: release-desktop
+      sign_macos: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/') && vars.MACOS_SIGNING_ENABLED == 'true' }}
+
   publish:
     name: Assemble release artifacts
     needs:
       - validate
       - windows
       - unix
+      - desktop
     env:
       RELEASE_VERSION: ${{ needs.validate.outputs.release_version }}
     runs-on: ubuntu-latest
@@ -426,7 +440,7 @@ jobs:
             sha256sum -c "$checksum"
           done
           expected_count="$(cat expected-*.txt | wc -l)"
-          actual_count="$(find . -maxdepth 1 -type f \( -name '*.zip' -o -name '*.tar.gz' \) | wc -l)"
+          actual_count="$(find . -maxdepth 1 -type f \( -name '*.zip' -o -name '*.tar.gz' -o -name '*.deb' -o -name '*.exe' \) | wc -l)"
           if [[ "$expected_count" -eq 0 || "$actual_count" -ne "$expected_count" ]]; then
             echo "Expected $expected_count release archives from build matrix, found $actual_count." >&2
             exit 1
@@ -439,7 +453,7 @@ jobs:
               exit 1
             fi
           done < <(cat expected-*.txt)
-          sha256sum *.zip *.tar.gz | sort > SHA256SUMS.txt
+          sha256sum *.zip *.tar.gz *.deb *.exe | sort > SHA256SUMS.txt
 
       - name: Attest release checksum manifest
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
@@ -453,6 +467,8 @@ jobs:
           name: release-dry-run-${{ env.RELEASE_VERSION }}
           path: |
             dist/release/*.zip
+            dist/release/*.deb
+            dist/release/*.exe
             dist/release/*.tar.gz
             dist/release/*.sha256
             dist/release/SHA256SUMS.txt
@@ -471,6 +487,8 @@ jobs:
             --title "${RELEASE_VERSION}" \
             --generate-notes \
             dist/release/*.zip \
+            dist/release/*.deb \
+            dist/release/*.exe \
             dist/release/*.tar.gz \
             dist/release/*.sha256 \
             dist/release/SHA256SUMS.txt

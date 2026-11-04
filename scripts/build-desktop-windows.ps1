@@ -41,7 +41,8 @@ try {
             throw "Wails desktop build for windows/$targetArch failed with exit code $LASTEXITCODE."
         }
     }
-    Write-Host "Desktop executables and SHA-256 checksums: $(Join-Path $repoRoot 'dist/desktop')" -ForegroundColor Green
+    $outputRoot = if ($env:DESKTOP_OUTPUT_ROOT) { $env:DESKTOP_OUTPUT_ROOT } else { 'dist/desktop' }
+    Write-Host "Desktop executables and SHA-256 checksums: $outputRoot" -ForegroundColor Green
 } finally {
     Set-Location $originalLocation
 }

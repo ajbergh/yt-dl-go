@@ -4,6 +4,7 @@ import { createHash } from "node:crypto";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { packageLinux } from "./package-desktop-linux.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const server = path.join(root, "src/server");
@@ -39,6 +40,8 @@ for (const [name, module] of [
   if (!existsSync(exe(name))) run("go", ["install", module], { env });
 }
 const version = process.env.VERSION || "dev";
+const productVersion = version === "dev" ? JSON.parse(readFileSync(path.join(root, "package.json"), "utf8")).version : version.replace(/^v/, "");
+if (!/^\d+\.\d+\.\d+$/.test(productVersion)) throw new Error("Desktop product version must be MAJOR.MINOR.PATCH");
 const commit = process.env.COMMIT || run("git", ["rev-parse", "HEAD"], { cwd: root, stdio: ["ignore", "pipe", "inherit"] });
 const buildDate = process.env.BUILD_DATE || new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
 for (const value of [version, commit, buildDate]) {
@@ -50,9 +53,20 @@ const frontendEnv = { ...env };
 delete frontendEnv.VITE_CHECK_MODE;
 run(process.execPath, [path.join(root, "node_modules/vite/bin/vite.js"), "build", "--configLoader", "runner", "--outDir", path.join(server, "dist")], { cwd: root, env: frontendEnv });
 if (!existsSync(path.join(server, "dist/index.html"))) throw new Error("Desktop frontend did not produce index.html");
-run(exe("wails"), ["build", "-s", "-m", "-skipbindings", "-platform", target, "-tags", tags, "-ldflags", flags], { env });
+// Wails reads productVersion from its project file. Restore the source even if
+// compilation fails; sequential architecture builds share this configuration.
+const configPath = path.join(server, "wails.json");
+const originalConfig = readFileSync(configPath);
+const config = JSON.parse(originalConfig.toString());
+config.info.productVersion = productVersion;
+try {
+  writeFileSync(configPath, JSON.stringify(config, null, 2) + "\n");
+  run(exe("wails"), ["build", "-s", "-m", "-skipbindings", "-platform", target, "-tags", tags, "-ldflags", flags], { env });
+} finally {
+  writeFileSync(configPath, originalConfig);
+}
 
-const output = path.join(root, "dist/desktop", `${goos}-${arch}`);
+const output = path.join(path.resolve(root, process.env.DESKTOP_OUTPUT_ROOT || "dist/desktop"), `${goos}-${arch}`);
 mkdirSync(output, { recursive: true });
 const stage = mkdtempSync(path.join(output, ".package-"));
 const name = `youtube-vault-${goos}-${arch}`;
@@ -64,6 +78,9 @@ try {
     const app = readdirSync(buildBin).find(name => name.endsWith(".app"));
     if (!app) throw new Error("Wails did not produce a macOS app bundle");
     cpSync(path.join(buildBin, app), path.join(contents, app), { recursive: true });
+    if (process.env.DESKTOP_MACOS_SIGN === "true") {
+      run(process.execPath, [path.join(root, "scripts/sign-desktop-macos.mjs"), path.join(contents, app)], { env });
+    }
   } else {
     const binary = "youtube-vault" + (goos === "windows" ? ".exe" : "");
     cpSync(path.join(buildBin, binary), path.join(contents, binary));
@@ -81,6 +98,7 @@ try {
   writeFileSync(path.join(contents, "DESKTOP_GO_LICENSES.csv"), report + "\n");
   run(exe("go-licenses"), ["save", ".", `--save_path=${path.join(contents, "desktop-licenses")}`, ...ignored], { env: licenseEnv });
   const archive = path.join(output, name + (goos === "windows" ? ".zip" : ".tar.gz"));
+  const artifacts = [archive];
   if (goos === "windows") {
     const quote = text => "'" + text.replaceAll("'", "''") + "'";
     const script = `$ErrorActionPreference='Stop'; $ProgressPreference='SilentlyContinue'; Compress-Archive -LiteralPath ${quote(contents)} -DestinationPath ${quote(archive)} -Force`;
@@ -92,6 +110,13 @@ try {
   writeFileSync(archive + ".sha256", `${digest}  ${path.basename(archive)}\n`);
   console.log(`Desktop package: ${archive}`);
   console.log(`SHA-256: ${digest}`);
+  if (goos === "linux") {
+    const deb = packageLinux({ root, stage, contents, output, name, arch, version: version === "dev" ? `${productVersion}~dev` : productVersion, run });
+    const debDigest = createHash("sha256").update(readFileSync(deb)).digest("hex");
+    writeFileSync(deb + ".sha256", `${debDigest}  ${path.basename(deb)}\n`);
+    console.log(`Desktop installer: ${deb}`);
+    artifacts.push(deb);
+  }
   if (goos === "windows") {
     // Preserve each architecture before the next build overwrites build/bin.
     const application = path.join(output, name + ".exe");
@@ -100,7 +125,9 @@ try {
     writeFileSync(application + ".sha256", `${applicationDigest}  ${path.basename(application)}\n`);
     console.log(`Desktop application: ${application}`);
     console.log(`EXE SHA-256: ${applicationDigest}`);
+    artifacts.push(application);
   }
+  writeFileSync(path.join(output, `expected-desktop-${goos}-${arch}.txt`), artifacts.map(file => path.basename(file)).join("\n") + "\n");
 } finally {
   const relative = path.relative(output, stage);
   if (!relative.startsWith(".package-") || relative.includes(path.sep)) throw new Error("Unexpected package staging directory");

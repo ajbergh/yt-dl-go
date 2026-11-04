@@ -85,6 +85,15 @@ On Linux, `zenity` is required only for the **Browse** button. A user can still 
 
 The command-selection semantics are covered by platform-independent Go tests.
 
+## Native Wails desktop packages
+
+The build commands above describe the browser/server edition. The Wails edition
+uses a separate native six-target runner matrix and produces Windows desktop
+EXEs, macOS `.app` bundles in tarballs, and Linux executables/tarballs plus
+Debian packages with application-menu integration. See [DESKTOP.md](DESKTOP.md)
+for runtime libraries, final-artifact verification, and protected macOS signing.
+Tagged releases and release dry runs build both editions.
+
 ## Tagged release workflow and provenance
 
 Pushing a stable semantic-version tag such as `v1.2.3` triggers `.github/workflows/release.yml`.
@@ -120,7 +129,7 @@ GitHub provenance attestations cryptographically bind release archives to the Gi
 The repository still does not possess or embed signing credentials:
 
 - **Windows:** public self-updating distribution should use an Authenticode certificate and verify the signature before replacement.
-- **macOS:** public self-updating distribution should use Apple Developer ID signing and notarization; a future `.app`/DMG path would also require bundle-level signing/stapling.
+- **macOS:** public self-updating distribution should use Apple Developer ID signing and notarization. The Wails `.app` path supports protected signing/stapling before packaging; ordinary validation builds remain unsigned.
 - **Linux:** published archives retain SHA-256 checksums plus GitHub provenance; optional GPG/Sigstore signatures can be added later if distribution requirements demand them.
 
 No signing key, Apple credential, or certificate should be committed to the repository.

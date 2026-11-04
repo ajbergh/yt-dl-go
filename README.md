@@ -13,7 +13,9 @@ Use it only for content you own or have permission to save, and in accordance wi
 Run `npm ci` and `npm run build:desktop` on Windows, macOS, or Linux to build the
 same interface in a native desktop window. Packages and checksums are written to
 `dist/desktop/`. See [desktop build instructions](docs/DESKTOP.md) for WebView
-requirements, AMD64/ARM64 targets, and the native build workflow. The original
+requirements, AMD64/ARM64 targets, Linux Debian installation, and the native
+build/release workflow. Windows outputs are standalone desktop EXEs; macOS
+outputs are `.app` bundles. The original
 browser/server builds remain available below.
 
 ## Download and run on Windows
@@ -41,7 +43,7 @@ manually add missing columns. To recover legacy `./downloads` data, preserve and
 move aside the incompatible destination, then run `--migrate-legacy-data` from
 the directory containing `downloads`. The original legacy data is kept intact.
 
-## Linux and macOS
+## Linux and macOS browser/server edition
 
 The same CGO-free Go application builds for Linux and macOS. CI produces Linux `amd64`/`arm64` and macOS `amd64`/`arm64` validation packages with SHA-256 checksum files. These CI artifacts are currently unsigned; they are not yet signed/notarized public release binaries.
 

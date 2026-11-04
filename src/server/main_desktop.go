@@ -5,6 +5,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
 	"io/fs"
 	"log"
 	"net/http"
@@ -16,6 +17,7 @@ import (
 	"github.com/wailsapp/wails/v2/pkg/menu"
 	"github.com/wailsapp/wails/v2/pkg/options"
 	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
+	"github.com/wailsapp/wails/v2/pkg/options/linux"
 	"github.com/wailsapp/wails/v2/pkg/options/windows"
 	wruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 )
@@ -84,6 +86,16 @@ func main() {
 		runBrowserApplication()
 		return
 	}
+	// GUI executables may have no usable stderr. An explicit diagnostic file
+	// keeps native startup failures inspectable without exposing the bearer.
+	if destination := os.Getenv("DESKTOP_LOG_FILE"); destination != "" {
+		file, err := os.OpenFile(destination, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0600)
+		if err != nil {
+			fatalStartup(fmt.Errorf("open desktop diagnostic log: %w", err))
+		}
+		defer file.Close()
+		log.SetOutput(io.MultiWriter(os.Stderr, file))
+	}
 	c, err := loadConfig()
 	if err != nil {
 		fatalStartup(err)
@@ -128,6 +140,7 @@ func main() {
 		},
 		SingleInstanceLock: &options.SingleInstanceLock{UniqueId: "2f732518-cd20-4a1f-b096-c26e08945283"},
 		Windows:            &windows.Options{WebviewUserDataPath: filepath.Join(c.root, "webview")},
+		Linux:              &linux.Options{ProgramName: "youtube-vault", WebviewGpuPolicy: linux.WebviewGpuPolicyNever},
 	})
 	if err != nil {
 		fatalStartup(fmt.Errorf("open desktop window: %w", err))

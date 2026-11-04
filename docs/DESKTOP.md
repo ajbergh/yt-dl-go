@@ -53,19 +53,33 @@ the EXE.
   The build automatically uses the `webkit2_41` tag. No zenity dependency is needed
   for the desktop folder picker.
 
+Linux builds also produce `youtube-vault-linux-<arch>.deb`. On Ubuntu 24.04,
+install it with `sudo apt install ./youtube-vault-linux-amd64.deb` (or the ARM64
+package). This installs `youtube-vault`, an application-menu launcher, an icon,
+and notices/source under `/usr/share/doc/youtube-vault`. Runtime dependencies
+are generated from the actual binary with `dpkg-shlibdeps`. Remove it with
+`sudo apt remove youtube-vault`; per-user application data is retained. The
+tarball remains available for other distributions with compatible system
+libraries; it does not bundle GTK/WebKit or guarantee older glibc compatibility.
+Building the Debian package additionally requires `dpkg-dev`.
+
 The executable/bundle is under `src/server/build/bin/`. Distributable archives and
 SHA-256 sidecars are under `dist/desktop/<os>-<arch>/`. Each package contains the
 project license, existing notices/LGPL source, and an additional platform-specific
-desktop dependency license report and license texts. Binaries are unsigned;
-macOS bundles are not notarized. Wails does not supply OS signing identities.
+desktop dependency license report and license texts. Ordinary CI builds are
+unsigned and macOS bundles are not notarized. Wails does not supply OS signing
+identities. Set `DESKTOP_OUTPUT_ROOT` to use another output directory, for
+example `dist/desktop-validation` when the normal Windows EXE is running.
 
 ## Build automation
 
 The **Desktop builds** workflow produces Windows AMD64/ARM64 executables and
 Windows, Linux and macOS AMD64/ARM64 archives. It is available through workflow dispatch and runs for desktop branches
 and pull requests. It uploads validation artifacts; it does not create a tag or
-publish a GitHub Release. Native desktop packages are separate from the existing
-CGO-free browser/server release artifacts.
+publish a GitHub Release. The tagged release workflow reuses this same native
+matrix and includes the desktop archives, standalone Windows EXEs, Linux Debian
+packages, checksums and provenance alongside the browser/server artifacts in a
+draft release. Release dry runs exercise the same matrix without publishing.
 
 After building, `npm run test:desktop` compiles an isolated `desktop,e2e` smoke
 binary. Its test-only readiness binding verifies that the native WebView mounts
@@ -73,6 +87,39 @@ React, authenticates to the private service, and shuts down cleanly. It uses
 disposable data and is never included in the distributable archives. CI runs
 the Linux window test under Xvfb; on a headless Linux host use
 `dbus-run-session -- xvfb-run -a npm run test:desktop`.
+
+CI also runs `node scripts/desktop-package-smoke.mjs` against the extracted
+production archive. It checks checksums and notices, verifies the packaged
+backend's health, embedded interface, identity and database restart, then
+launches the unchanged production native window and checks DOM/service-binding
+startup. This startup check terminates the window afterwards; the separate
+e2e test checks clean UI-driven shutdown. Linux CI additionally installs,
+launches and removes the `.deb` and validates its desktop entry. The window
+tests require no other copy of YouTube Vault to be running. For local backend
+checks while another copy holds the single-instance lock, use
+`node scripts/desktop-package-smoke.mjs --backend-only`.
+
+### Protected macOS signing
+
+To enable Developer ID signing and notarization for stable tag releases, create
+a protected GitHub environment named `macos-signing` with these secrets:
+
+- `APPLE_CERTIFICATE_P12_BASE64`: base64-encoded Developer ID Application P12.
+- `APPLE_CERTIFICATE_PASSWORD`: P12 import password.
+- `APPLE_SIGNING_IDENTITY`: Developer ID Application certificate identity.
+- `APPLE_ID`, `APPLE_TEAM_ID`, `APPLE_APP_PASSWORD`: notarization credentials.
+
+Set repository variable `MACOS_SIGNING_ENABLED=true` after configuring the
+environment's approval and tag restrictions. PRs and dry runs stay unsigned.
+Enabled tag builds fail if credentials are missing. The signing script imports
+the identity into a temporary keychain, signs with hardened runtime and a
+timestamp, submits to Apple's notary service, staples and validates the ticket,
+and checks Gatekeeper acceptance. Packaging, checksums and provenance happen
+after signing/stapling. The keychain and temporary certificate are removed.
+See [Apple's notarization workflow](https://developer.apple.com/documentation/security/customizing-the-notarization-workflow).
+Credentialed signing and clean-Mac acceptance must be verified before claiming
+that public packages are signed/notarized. Windows Authenticode remains a
+separate release gate.
 
 ## Runtime and development
 
@@ -97,6 +144,10 @@ static production assets rather than Wails' dynamic Vite integration. Existing
 existing diagnostic/server modes. A Chrome-compatible browser is still needed
 for browser-assisted adaptive media extraction; Wails' embedded webview does not
 replace that engine dependency.
+
+For startup diagnostics when a GUI build has no console, set `DESKTOP_LOG_FILE`
+to a writable file before launching. This records native startup logs; it does
+not log the per-launch bearer. The file is truncated on each launch.
 
 Before release, test the native window, queue events, a permitted media download,
 preview seeking, save/cancel, ZIP export, folder picker and close/restart on each
