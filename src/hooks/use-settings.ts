@@ -45,7 +45,7 @@ export function useSettings({
   async function savePreferences(event: FormEvent) {
     event.preventDefault();
     if (!serviceReady) {
-      setServiceError("The built-in Go service is still starting. It will connect automatically.");
+      setServiceError("The app is still starting. Please try again in a moment.");
       return;
     }
     setSavingSettings(true);
@@ -75,7 +75,7 @@ export function useSettings({
     }
     const NotificationAPI = notificationAPI();
     if (!NotificationAPI) {
-      setServiceError("System notifications are not supported by this browser.");
+      setServiceError("System notifications are unavailable on this device.");
       return;
     }
     let permission = NotificationAPI.permission;
@@ -87,7 +87,7 @@ export function useSettings({
       }
     }
     if (permission !== "granted") {
-      setServiceError("Notification permission was not granted. Enable it in your browser/OS settings to use system notifications.");
+      setServiceError("Notifications are blocked. Allow them in system settings to enable alerts.");
       return;
     }
     setServiceError("");

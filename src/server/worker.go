@@ -27,7 +27,7 @@ import (
 	"github.com/yapingcat/gomedia/go-mp4"
 )
 
-const formatNote = "Native Go engine: progressive MP4/WebM, adaptive H.264/AAC MP4, adaptive VP9/AV1 + Opus WebM, and MP3 audio-only downloads. Quality is a maximum, not a guarantee; HLS/DASH manifest and live sources are unsupported."
+const formatNote = "Download videos as MP4 or WebM, or save audio as MP3 or M4A. Your selected quality is a maximum; available quality depends on the video. Live streams and streaming-only sources are not supported."
 const playlistNote = "Playlist totals cover all entries exposed by YouTube, not independently verified hidden entries."
 const playlistSelectionNote = "Only the selected exposed playlist items are queued; original playlist positions are preserved."
 const unknownLengthNote = "An unknown-length stream is complete only at clean EOF; its original size cannot be independently verified."
@@ -1856,7 +1856,7 @@ func (s *server) finish(ctx context.Context, j *jobState, fatal error) {
 	case j.pauseRequested && !j.cancelRequested:
 		j.Status, j.Error, j.done = "paused", "Paused. The current playlist item may restart when resumed.", time.Time{}
 	case s.ctx.Err() != nil && !j.cancelRequested:
-		j.Status, j.Error, j.done = "queued", "Download paused; it will resume when the service restarts", time.Time{}
+		j.Status, j.Error, j.done = "queued", "Download paused; it will resume when the app restarts", time.Time{}
 	case j.cancelRequested:
 		j.Status, j.Error = "cancelled", "Download cancelled; only finalized files are available"
 		if err := s.persistOperationLocked("delete resumable download state", j.ID, func(store *jobStore) error {

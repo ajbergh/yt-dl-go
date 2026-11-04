@@ -2,6 +2,7 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { App } from "./App";
 import { initializeDesktop, reportDesktopSmokeStage } from "./lib/desktop";
+import { userFacingMessage } from "./lib/messages";
 import "./index.css";
 
 // Normalize `/index.html` to the SPA root before BrowserRouter mounts. This
@@ -23,11 +24,12 @@ async function bootstrap() {
     reportDesktopSmokeStage("connection");
     createRoot(container).render(<StrictMode><App /></StrictMode>);
   } catch (error) {
+    console.error("App startup failed", error);
     reportDesktopSmokeStage("service-error");
     const heading = document.createElement("h1");
     heading.textContent = "YouTube Vault could not start";
     const detail = document.createElement("p");
-    detail.textContent = error instanceof Error ? error.message : "Restart the application to try again.";
+    detail.textContent = error instanceof Error ? userFacingMessage(error.message) : "Restart the application to try again.";
     container.replaceChildren(heading, detail);
   }
 }

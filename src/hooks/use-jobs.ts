@@ -1,3 +1,4 @@
+import { userFacingMessage } from "../lib/messages";
 import { useState, type Dispatch, type SetStateAction } from "react";
 import type { DragEndEvent } from "@dnd-kit/core";
 import { arrayMove } from "@dnd-kit/sortable";
@@ -221,7 +222,7 @@ export function useJobs({
         : failures.length
           ? `${uniqueIDs.length - failures.length} selected jobs updated; ${failures.length} could not be changed.`
           : `Updated ${updatedCount} selected jobs.`);
-      if (failures.length) setActionError(failures.map(failure => `${failure.jobId}: ${failure.error}`).join("; "));
+      if (failures.length) setActionError(failures.map(failure => `${failure.jobId}: ${userFacingMessage(failure.error)}`).join("; "));
       void refreshLibrary().catch(error => setActionError(errorMessage(error)));
       return [...deleted];
     } catch (error) {
@@ -283,7 +284,7 @@ export function useJobs({
       document.body.appendChild(anchor);
       anchor.click();
       anchor.remove();
-      setNotice("Download requested. Your browser will save the file.");
+      setNotice("Your file is ready to save.");
     } catch (error) {
       setActionError(errorMessage(error));
     } finally {

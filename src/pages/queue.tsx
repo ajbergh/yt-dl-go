@@ -12,6 +12,7 @@ import {
   selectedPlaylistEntries, statusClass, statusLabels, videoStrategyLabels, type Draft, type QueueFilter, type QueueRow,
 } from "../components/downloader/view-model";
 import type { JobConfigurationPatch } from "../hooks/use-jobs";
+import { userFacingMessage } from "../lib/messages";
 
 type QueueJobAction = "pause" | "resume" | "cancel" | "retry" | "remove" | "forget-history";
 
@@ -94,34 +95,34 @@ export function QueuePage({
                 <form onSubmit={addDownloads} className="min-w-0 p-5 sm:p-7">
                   <div className="mb-5 flex flex-wrap items-start justify-between gap-3">
                     <div>
-                      <p className="mb-1 flex items-center gap-2 text-xs font-bold uppercase tracking-[0.16em] text-rose-400"><Plus className="size-3.5" aria-hidden="true" />Add links & batch process</p>
+                      <p className="mb-1 flex items-center gap-2 text-xs font-bold uppercase tracking-[0.16em] text-rose-400"><Plus className="size-3.5" aria-hidden="true" />Add downloads</p>
                       <h2 id="new-download-heading" className="text-2xl font-bold tracking-tight">New download</h2>
-                      <p className="mt-1 text-xs text-neutral-400">Inspect real YouTube metadata and supported streams before adding jobs.</p>
+                      <p className="mt-1 text-xs text-neutral-400">Choose a video or playlist, then pick the quality and format.</p>
                     </div>
                     <div className="flex items-center rounded-lg border border-neutral-800 bg-neutral-950 p-1 text-xs">
                       <button type="button" aria-pressed={!batchMode} onClick={() => { setBatchMode(false); setDrafts([]); }} className={`rounded-md px-3 py-1.5 font-semibold ${!batchMode ? "bg-neutral-800 text-white" : "text-neutral-400 hover:text-white"}`}>Single link</button>
-                      <button type="button" aria-pressed={batchMode} onClick={() => { setBatchMode(true); setDrafts([]); }} className={`rounded-md px-3 py-1.5 font-semibold ${batchMode ? "bg-neutral-800 text-white" : "text-neutral-400 hover:text-white"}`}>Batch URLs</button>
+                      <button type="button" aria-pressed={batchMode} onClick={() => { setBatchMode(true); setDrafts([]); }} className={`rounded-md px-3 py-1.5 font-semibold ${batchMode ? "bg-neutral-800 text-white" : "text-neutral-400 hover:text-white"}`}>Multiple links</button>
                     </div>
                   </div>
 
                   <div className="grid items-start gap-3 sm:grid-cols-[1fr_auto]">
-                    <label className="min-w-0 text-xs font-semibold text-neutral-300" htmlFor="video-url">YouTube video or playlist URL{batchMode ? "s" : ""}
-                      {batchMode ? <textarea id="video-url" rows={3} value={url} onChange={event => { setUrl(event.target.value); setFormError(""); }} placeholder="One HTTPS YouTube URL per line" autoComplete="off" spellCheck={false} className={`${field} mt-2 resize-y font-mono text-xs`} />
+                    <label className="min-w-0 text-xs font-semibold text-neutral-300" htmlFor="video-url">Video or playlist link{batchMode ? "s" : ""}
+                      {batchMode ? <textarea id="video-url" rows={3} value={url} onChange={event => { setUrl(event.target.value); setFormError(""); }} placeholder="One YouTube link per line" autoComplete="off" spellCheck={false} className={`${field} mt-2 resize-y font-mono text-xs`} />
                         : <input id="video-url" type="url" value={url} onChange={event => { setUrl(event.target.value); setFormError(""); }} placeholder="https://www.youtube.com/watch?v=..." autoComplete="off" spellCheck={false} className={`${field} mt-2 min-h-12`} />}
                     </label>
                     <button type="button" onClick={() => void inspectLinks()} disabled={!serviceReady || inspecting || !url.trim()} className={`${button} min-h-12 px-4 sm:mt-5`}>
                       {inspecting ? <LoaderCircle className="size-4 animate-spin" aria-hidden="true" /> : <Search className="size-4 text-rose-400" aria-hidden="true" />}
-                      {inspecting ? "Inspecting…" : "Inspect qualities"}
+                      {inspecting ? "Loading…" : "View options"}
                     </button>
                   </div>
-                  <p className="mt-2 flex items-start gap-1.5 text-xs text-neutral-400"><CircleHelp className="mt-0.5 size-3 shrink-0" aria-hidden="true" />Playlists are processed in order. Hidden or inaccessible entries cannot be independently verified.</p>
+                  <p className="mt-2 flex items-start gap-1.5 text-xs text-neutral-400"><CircleHelp className="mt-0.5 size-3 shrink-0" aria-hidden="true" />Playlist items download in order. Private or unavailable videos may be skipped.</p>
 
-                  {!serviceReady && <div className="mt-4 rounded-xl border border-amber-800/60 bg-amber-950/30 p-3 text-xs text-amber-200">The app is connecting to its built-in Go service. You can queue downloads as soon as startup completes.</div>}
+                  {!serviceReady && <div className="mt-4 rounded-xl border border-amber-800/60 bg-amber-950/30 p-3 text-xs text-amber-200">The app is starting. You can add downloads in a moment.</div>}
                   {formError && <p role="alert" className="mt-4 text-sm text-red-300">{formError}</p>}
 
                   {drafts.length > 0 && <div className="mt-5 space-y-3 border-t border-neutral-800 pt-4">
                     <div className="flex flex-wrap items-center justify-between gap-2">
-                      <div><h3 className="text-xs font-bold uppercase tracking-wider text-neutral-300">Inspection results</h3><p className="mt-1 text-xs text-neutral-400">Quality options and metadata are returned by the Go backend; no media URLs are exposed.</p></div>
+                      <div><h3 className="text-xs font-bold uppercase tracking-wider text-neutral-300">Download options</h3><p className="mt-1 text-xs text-neutral-400">Choose the quality, format, and items you want to download.</p></div>
                       <span className="rounded-full bg-neutral-800 px-2 py-1 text-xs text-neutral-300">{drafts.length} item{drafts.length === 1 ? "" : "s"}</span>
                     </div>
                     {drafts.length > 1 && <div className="rounded-xl border border-neutral-800 bg-neutral-900/70 p-3">
@@ -153,8 +154,8 @@ export function QueuePage({
                       <div className="min-w-0">
                         <div className="mb-1 flex flex-wrap items-center gap-1.5 text-xs text-neutral-400"><span className="rounded bg-neutral-800 px-1.5 py-0.5 uppercase">{draft.kind}</span>{draft.author && <span>{draft.author}</span>}{draft.publishDate && <span>· {dateLabel(draft.publishDate)}</span>}</div>
                         <h4 className="break-words text-sm font-semibold text-white">{draft.title || "Untitled YouTube media"}</h4>
-                        <p className="mt-1 text-xs text-neutral-400">{draft.kind === "playlist" ? `${draft.itemCount ?? 0} exposed entries` : durationLabel(draft.durationSeconds)}</p>
-                        {draft.note && <p className="mt-1 text-xs leading-relaxed text-amber-300/80">{draft.note}</p>}
+                        <p className="mt-1 text-xs text-neutral-400">{draft.kind === "playlist" ? `${draft.itemCount ?? 0} items found` : durationLabel(draft.durationSeconds)}</p>
+                        {draft.note && <p className="mt-1 text-xs leading-relaxed text-amber-300/80">{userFacingMessage(draft.note)}</p>}
                       </div>
                       <div className="space-y-2">
                         <label className="block text-xs font-medium text-neutral-400">Download as
@@ -182,7 +183,7 @@ export function QueuePage({
                           <select aria-label={`Video format for ${draft.title || `item ${index + 1}`}`} value={draft.selectedVideoStrategy} onChange={event => setDrafts(previous => previous.map((item, itemIndex) => itemIndex === index ? { ...item, selectedVideoStrategy: event.target.value as Draft["selectedVideoStrategy"] } : item))} className={`${field} mt-1.5 py-2 text-xs`}>
                             {(Object.entries(videoStrategyLabels) as [Draft["selectedVideoStrategy"], string][]).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
                           </select>
-                          <span className="mt-1 block text-xs leading-relaxed text-neutral-400">{draft.selectedVideoStrategy === "compatibility" ? "Strict MP4 output; may use a lower resolution when H.264/AAC is the highest compatible option." : draft.selectedVideoStrategy === "best" ? "Automatically chooses the highest-quality supported MP4 or WebM representation." : `Prefers ${draft.selectedVideoStrategy.toUpperCase()} WebM; falls back transparently when unavailable.`}</span>
+                          <span className="mt-1 block text-xs leading-relaxed text-neutral-400">{draft.selectedVideoStrategy === "compatibility" ? "Strict MP4 output; may use a lower resolution when H.264/AAC is the highest compatible option." : draft.selectedVideoStrategy === "best" ? "Automatically chooses the highest-quality available MP4 or WebM file." : `Prefers ${draft.selectedVideoStrategy.toUpperCase()} WebM; falls back transparently when unavailable.`}</span>
                         </label></>}
                         <label className="block text-xs font-medium text-neutral-400">Captions
                           <select aria-label={`Captions for ${draft.title || `item ${index + 1}`}`} value={draft.subtitleLanguage} onChange={event => setDrafts(previous => previous.map((item, itemIndex) => itemIndex === index ? { ...item, subtitleLanguage: event.target.value } : item))} className={`${field} mt-1.5 py-2 text-xs`}>
@@ -211,7 +212,7 @@ export function QueuePage({
                             <div className="flex flex-wrap items-center justify-between gap-2">
                               <div>
                                 <p className="text-xs font-semibold text-neutral-200">{selected.length} of {selectable.length} selectable playlist items selected</p>
-                                <p className="mt-0.5 text-xs text-neutral-400">{draft.itemCount ?? playlistEntries(draft).length} entries exposed by YouTube{estimate > 0 ? ` · Approx. MP3 output ${formatBytes(estimate)}` : ""}</p>
+                                <p className="mt-0.5 text-xs text-neutral-400">{draft.itemCount ?? playlistEntries(draft).length} items found in this playlist{estimate > 0 ? ` · Approx. MP3 output ${formatBytes(estimate)}` : ""}</p>
                               </div>
                               <div className="flex flex-wrap gap-1.5">
                                 <button type="button" className={button} onClick={() => updatePlaylistSelection(index, selectable.map(item => item.index!))}>Select all</button>
@@ -244,7 +245,7 @@ export function QueuePage({
                       <span>Add as paused. The job stays in the queue until you resume it.</span>
                     </label>
                     <div className="flex flex-wrap items-center justify-between gap-3">
-                      <button type="button" onClick={() => { setDrafts([]); setRightsConfirmed(false); }} className="px-2 py-2 text-xs text-neutral-400 hover:text-white">Clear inspection</button>
+                      <button type="button" onClick={() => { setDrafts([]); setRightsConfirmed(false); }} className="px-2 py-2 text-xs text-neutral-400 hover:text-white">Clear options</button>
                       <button type="submit" disabled={submitting || !serviceReady || !rightsConfirmed || drafts.some(draft => draft.kind === "playlist" && draft.selectedPlaylistIndexes.length === 0)} className={primaryButton}>
                         {submitting && <LoaderCircle className="size-4 animate-spin" aria-hidden="true" />}
                         {submitting ? "Adding…" : `Add ${drafts.length} to queue`}<ChevronDown className="size-3.5 -rotate-90" aria-hidden="true" />
@@ -276,7 +277,7 @@ export function QueuePage({
 
               <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-rose-900/50 bg-rose-950/20 px-4 py-3 text-xs">
                 <div className="flex items-center gap-2 text-neutral-300"><span className={`size-2 rounded-full ${activeCount > 0 ? "animate-pulse bg-rose-500" : "bg-neutral-600"}`} /><span className="font-semibold">{activeCount > 0 ? "Batch in progress" : queuedCount > 0 ? "Queue ready" : "Queue idle"}</span><span className="text-neutral-400">{activeCount} active · {queuedCount} queued</span></div>
-                <div className="flex items-center gap-4 font-mono text-xs"><span className="text-emerald-300">{formatBytes(totalCurrentSpeed)}/s</span><span className="text-neutral-400">Max parallel: {settings.maxConcurrentDownloads}</span></div>
+                <div className="flex items-center gap-4 font-mono text-xs"><span className="text-emerald-300">{formatBytes(totalCurrentSpeed)}/s</span><span className="text-neutral-400">Up to {settings.maxConcurrentDownloads} at once</span></div>
               </div>
 
               {queuedJobsOrdered.length > 0 && <div className={`${panel} space-y-3 p-3`}>
@@ -317,8 +318,8 @@ export function QueuePage({
               {filteredQueue.length === 0 ? <div className={`${panel} px-5 py-12 text-center`}>
                 <div className="mx-auto mb-3 grid size-12 place-items-center rounded-2xl bg-neutral-800 text-neutral-400"><Layers className="size-5" aria-hidden="true" /></div>
                 <h3 className="text-sm font-semibold text-neutral-200">{jobs.length === 0 ? "No downloads yet" : visibleQueueRows.length === 0 ? "Queue is clear" : "No videos match this filter"}</h3>
-                <p className="mx-auto mt-1 max-w-md text-xs leading-relaxed text-neutral-400">{visibleQueueRows.length === 0 && jobs.length > 0 ? "Cleared downloads remain available in your library. Inspect a YouTube URL above to add another download." : serviceReady ? "Inspect a YouTube URL above to add a real download job. Progress and status are reported by the Go worker." : "The app will load your SQLite-backed history and enable downloads as soon as its built-in Go service is ready."}</p>
-                {jobs.length === 0 && <p className="mt-2 text-xs text-neutral-400">Video downloads, tagged MP3 conversion, and original AAC/M4A audio use the native Go service.</p>}
+                <p className="mx-auto mt-1 max-w-md text-xs leading-relaxed text-neutral-400">{visibleQueueRows.length === 0 && jobs.length > 0 ? "Cleared downloads remain in your library. Paste another YouTube link above to start a download." : serviceReady ? "Paste a YouTube link above to add a download. Progress will appear here." : "Your saved history is loading. Downloads will be available shortly."}</p>
+                {jobs.length === 0 && <p className="mt-2 text-xs text-neutral-400">Download videos, convert to MP3, or save original M4A audio.</p>}
               </div> : <div className="space-y-2.5">
                 {filteredQueue.map(({ job, item }) => {
                   const itemActive = item.status === "downloading" || item.status === "processing";
@@ -362,8 +363,8 @@ export function QueuePage({
                       </div>
                     </div>
                     {item.index === 1 && editingJobID === job.id && <JobConfigurationEditor key={job.id} job={job} categories={settings.userCategories} busy={busyAction === `${job.id}:configuration`} onSave={patch => void updateJobConfiguration(job, patch)} />}
-                    {itemError && item.status === "failed" && <p className="mt-3 flex items-start gap-1.5 text-xs text-red-300"><AlertCircle className="mt-0.5 size-3 shrink-0" aria-hidden="true" />{itemError}</p>}
-                    {job.note && item.index === 1 && <p className="mt-3 text-xs leading-relaxed text-amber-300/80">{job.note}</p>}
+                    {itemError && item.status === "failed" && <p className="mt-3 flex items-start gap-1.5 text-xs text-red-300"><AlertCircle className="mt-0.5 size-3 shrink-0" aria-hidden="true" />{userFacingMessage(itemError)}</p>}
+                    {job.note && item.index === 1 && <p className="mt-3 text-xs leading-relaxed text-amber-300/80">{userFacingMessage(job.note)}</p>}
                   </article>;
                 })}
               </div>}

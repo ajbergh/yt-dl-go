@@ -23,7 +23,7 @@ describe("desktop bootstrap", () => {
   });
   test("rejects an incomplete bridge connection without falling back to HTTP", async () => {
     globalThis.window = { go: { main: { DesktopApp: { Connection: async () => ({ base: "http://remote.invalid", token: "" }) } } } };
-    await expect(initializeDesktop()).rejects.toThrow("private desktop service");
+    await expect(initializeDesktop()).rejects.toThrow("Please close it and try again");
     expect(desktopConnection()).toBeUndefined();
   });
 });
@@ -89,7 +89,7 @@ describe("Download service", () => {
   });
   test("rejects non-JSON success", async () => {
     globalThis.fetch = async () => new Response("<html>Wrong server</html>");
-    await expect(api({ base: "https://service.example.invalid", token: "" }, "/api/jobs")).rejects.toThrow("unexpected response");
+    await expect(api({ base: "https://service.example.invalid", token: "" }, "/api/jobs")).rejects.toThrow("Please try again");
   });
 });
 

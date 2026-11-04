@@ -16,6 +16,10 @@ export class ErrorBoundary extends Component<Props, State> {
     return { hasError: true, error };
   }
 
+  componentDidCatch(error: Error) {
+    console.error("Unable to display this screen", error);
+  }
+
   render() {
     if (this.state.hasError) {
       return (
@@ -24,8 +28,8 @@ export class ErrorBoundary extends Component<Props, State> {
             <h2 className="mb-2 text-lg font-semibold text-destructive">
               Something went wrong
             </h2>
-            <p className="font-mono text-sm text-destructive/80">
-              {this.state.error?.message}
+            <p className="text-sm text-destructive/80">
+              This screen could not be displayed. Try again, or restart the app if the problem continues.
             </p>
             <button
               type="button"

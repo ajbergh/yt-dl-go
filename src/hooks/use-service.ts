@@ -210,13 +210,13 @@ export function useService() {
         });
         reportDesktopSmokeStage("health-response");
         if (health.engine !== "native-go" || health.capabilities?.externalBinariesRequired !== false) {
-          throw new Error("The built-in service is an older or incompatible version.");
+          throw new Error("This app version is incompatible. Please reinstall the latest version.");
         }
         if (!health.ready) {
           reportDesktopSmokeStage("health-not-ready");
           throw new Error(health.missing.length
-            ? `The Go service is not ready: ${health.missing.join(", ")}.`
-            : "The Go service is starting up.");
+            ? `The app needs attention: ${health.missing.join(", ")}.`
+            : "The app is starting up.");
         }
         setMp3Supported(health.capabilities?.mp3AudioSupported === true);
         setBuildInfo({

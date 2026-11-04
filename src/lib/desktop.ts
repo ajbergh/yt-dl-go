@@ -23,7 +23,7 @@ export async function initializeDesktop(): Promise<void> {
   // Fail closed if bootstrap is incomplete. Never fall back to an unauthenticated
   // HTTP service or persist the per-launch capability in browser storage.
   if (!/^http:\/\/127\.0\.0\.1:\d+$/.test(result.base) || !/^[a-f0-9]{64}$/.test(result.token)) {
-    throw new Error("Could not connect to the private desktop service.");
+    throw new Error("The app could not finish starting. Please close it and try again.");
   }
   connection = result;
 }

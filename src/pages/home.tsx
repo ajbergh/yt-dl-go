@@ -165,7 +165,7 @@ export function HomePage() {
     setNotice("");
     setDrafts([]);
     if (!serviceReady) {
-      setFormError("The built-in Go service is still starting. It will connect automatically.");
+      setFormError("The app is still starting. Please try again in a moment.");
       return;
     }
     const lines = (batchMode ? url.split(/\r?\n/) : [url]).map(value => value.trim()).filter(Boolean);
@@ -199,7 +199,7 @@ export function HomePage() {
         };
       }));
       setDrafts(results);
-      if (results.length === 1 && results[0].kind === "video") setNotice("Video metadata and supported qualities loaded from YouTube.");
+      if (results.length === 1 && results[0].kind === "video") setNotice("Video details and available qualities are ready.");
     } catch (error) { setFormError(errorMessage(error)); }
     finally { setInspecting(false); }
   }
@@ -262,7 +262,7 @@ export function HomePage() {
     event.preventDefault();
     setFormError("");
     setNotice("");
-    if (!serviceReady) { setFormError("The built-in Go service is still starting. It will connect automatically."); return; }
+    if (!serviceReady) { setFormError("The app is still starting. Please try again in a moment."); return; }
     if (!rightsConfirmed) { setFormError("Confirm you have permission to download this content."); return; }
     if (drafts.length === 0) { setFormError("Inspect at least one link before adding it to the queue."); return; }
     if (drafts.some(draft => draft.kind === "playlist" && draft.selectedPlaylistIndexes.length === 0)) {
@@ -325,8 +325,8 @@ export function HomePage() {
               {activeCount > 0 && <span className="absolute -right-1 -top-1 grid size-4 place-items-center rounded-full bg-emerald-500 text-[9px] font-bold text-black">{activeCount}</span>}
             </div>
             <div>
-              <h1 className="text-sm font-bold tracking-tight min-[360px]:text-base sm:text-lg">YouTube Downloader</h1>
-              <p className="hidden text-xs text-neutral-400 sm:block">Native downloads · SQLite-backed history</p>
+              <h1 className="text-sm font-bold tracking-tight min-[360px]:text-base sm:text-lg">YouTube Vault</h1>
+              <p className="hidden text-xs text-neutral-400 sm:block">Video and playlist downloads</p>
             </div>
           </div>
 
@@ -345,8 +345,8 @@ export function HomePage() {
 
           <div className="flex items-center gap-2">
             <div className="hidden items-center gap-2 rounded-lg border border-neutral-800 bg-neutral-900/70 px-2.5 py-2 text-xs sm:flex">
-              {serviceReady ? <><Activity className="size-3.5 text-emerald-400" aria-hidden="true" /><span className="text-emerald-300">Service connected</span></>
-                : <><AlertCircle className="size-3.5 text-amber-400" aria-hidden="true" /><span className="text-neutral-300">{serviceError ? "Reconnecting…" : "Connecting…"}</span></>}
+              {serviceReady ? <><Activity className="size-3.5 text-emerald-400" aria-hidden="true" /><span className="text-emerald-300">Ready</span></>
+                : <><AlertCircle className="size-3.5 text-amber-400" aria-hidden="true" /><span className="text-neutral-300">{serviceError ? "Retrying…" : "Starting…"}</span></>}
             </div>
             <button type="button" className={primaryButton} onClick={() => { setTab("queue"); window.requestAnimationFrame(() => { document.getElementById("new-download")?.scrollIntoView({ behavior: "smooth", block: "start" }); document.getElementById("video-url")?.focus({ preventScroll: true }); }); }}>
               <Plus className="size-4" aria-hidden="true" /><span className="hidden sm:inline">Add links</span><span className="sm:hidden">Add</span>
@@ -357,7 +357,7 @@ export function HomePage() {
 
       <main className="mx-auto w-full max-w-7xl space-y-6 px-4 py-6 sm:px-6">
         {notice && <div role="status" className="flex items-center gap-2 rounded-xl border border-emerald-800/60 bg-emerald-950/40 px-4 py-3 text-sm text-emerald-200"><Check className="size-4 shrink-0" aria-hidden="true" /><span className="flex-1">{notice}</span><button type="button" aria-label="Dismiss notification" className="grid size-9 shrink-0 place-items-center rounded-lg hover:bg-emerald-900/50" onClick={() => setNotice("")}><X className="size-4" aria-hidden="true" /></button></div>}
-        {!serviceReady && tab !== "settings" && <div role={serviceError ? "alert" : "status"} className="flex items-start gap-2 rounded-xl border border-amber-800/60 bg-amber-950/40 px-4 py-3 text-sm text-amber-200"><AlertCircle className="mt-0.5 size-4 shrink-0" aria-hidden="true" />{serviceError ? `${serviceError} The app will retry automatically.` : "Connecting to the built-in Go service…"}</div>}
+        {!serviceReady && tab !== "settings" && <div role={serviceError ? "alert" : "status"} className="flex items-start gap-2 rounded-xl border border-amber-800/60 bg-amber-950/40 px-4 py-3 text-sm text-amber-200"><AlertCircle className="mt-0.5 size-4 shrink-0" aria-hidden="true" />{serviceError ? `${serviceError} The app will retry automatically.` : "Starting the app…"}</div>}
         {pollError && <div role="alert" className="flex items-start gap-2 rounded-xl border border-amber-800/60 bg-amber-950/40 px-4 py-3 text-sm text-amber-200"><AlertCircle className="mt-0.5 size-4 shrink-0" aria-hidden="true" />{pollError}</div>}
         {actionError && <div role="alert" className="flex items-start gap-2 rounded-xl border border-red-900 bg-red-950/40 px-4 py-3 text-sm text-red-200"><X className="mt-0.5 size-4 shrink-0" aria-hidden="true" />{actionError}</div>}
 
@@ -472,8 +472,8 @@ export function HomePage() {
         <div className="w-full max-w-4xl overflow-hidden rounded-2xl border border-neutral-700 bg-neutral-950 shadow-2xl">
           <div className="flex items-center justify-between gap-3 border-b border-neutral-800 px-4 py-3"><div className="min-w-0"><p className="text-xs font-bold uppercase tracking-wider text-rose-400">Local preview</p><h2 id="media-preview-title" className="truncate text-sm font-semibold text-white">{preview.title}</h2></div><button type="button" className={button} onClick={() => setPreview(null)} aria-label="Close media preview"><X className="size-4" aria-hidden="true" />Close</button></div>
           <div className="bg-black p-3 sm:p-5">
-            {preview.mimeType.startsWith("audio/") ? <audio ref={element => { previewMedia.current = element; }} controls preload="metadata" src={preview.url} className="w-full">Your browser cannot play this audio format.</audio>
-              : <video ref={element => { previewMedia.current = element; }} controls preload="metadata" src={preview.url} className="max-h-[70vh] w-full rounded-lg bg-black">Your browser cannot play this video format.</video>}
+            {preview.mimeType.startsWith("audio/") ? <audio ref={element => { previewMedia.current = element; }} controls preload="metadata" src={preview.url} className="w-full">This audio format cannot be played here.</audio>
+              : <video ref={element => { previewMedia.current = element; }} controls preload="metadata" src={preview.url} className="max-h-[70vh] w-full rounded-lg bg-black">This video format cannot be played here.</video>}
             {preview.chapters.length > 0 && <div className="mt-4 max-h-48 overflow-y-auto rounded-lg border border-neutral-800 p-2">
               <h3 className="px-2 pb-2 text-xs font-semibold text-neutral-300">Chapters</h3>
               <div className="grid gap-1 sm:grid-cols-2">
@@ -483,11 +483,11 @@ export function HomePage() {
                 </button>)}
               </div>
             </div>}
-            <p className="mt-3 text-xs text-neutral-400">Preview uses a short-lived file-scoped ticket with HTTP Range support. Playback never starts automatically.</p>
+            <p className="mt-3 text-xs text-neutral-400">Preview your saved media. Playback starts only when you choose it.</p>
           </div>
         </div>
       </div>}
-      <footer className="mx-auto flex max-w-7xl items-center justify-between gap-3 px-4 pb-8 text-xs text-neutral-400 sm:px-6"><span className="flex items-center gap-1.5"><Clock3 className="size-3" aria-hidden="true" />Live job updates from the Go service</span><span className="flex items-center gap-1.5"><HardDrive className="size-3" aria-hidden="true" />SQLite-backed history</span></footer>
+      <footer className="mx-auto flex max-w-7xl items-center justify-between gap-3 px-4 pb-8 text-xs text-neutral-400 sm:px-6"><span className="flex items-center gap-1.5"><Clock3 className="size-3" aria-hidden="true" />Live download updates</span><span className="flex items-center gap-1.5"><HardDrive className="size-3" aria-hidden="true" />Saved history</span></footer>
     </div>
   );
 }
