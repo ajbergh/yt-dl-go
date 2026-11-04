@@ -20,6 +20,29 @@ An explicit target can be supplied with `npm run build:desktop -- windows/arm64`
 `darwin/arm64`, or `linux/amd64`. Windows supports both architectures from a Windows
 host. Linux and macOS builds require matching native OS/architecture runners.
 
+On Windows, build standalone desktop executables for both architectures with
+the PowerShell helper:
+
+```powershell
+./scripts/build-desktop-windows.ps1
+# Or build just one architecture:
+./scripts/build-desktop-windows.ps1 -Architecture amd64
+./scripts/build-desktop-windows.ps1 -Architecture arm64
+```
+
+The helper can be invoked from any working directory. Run `npm ci` in the
+repository root first. It uses the same pinned tools and packaging as
+`npm run build:desktop` and stops if a build fails. The applications are:
+
+- `dist/desktop/windows-amd64/youtube-vault-windows-amd64.exe`
+- `dist/desktop/windows-arm64/youtube-vault-windows-arm64.exe`
+
+Each EXE embeds the interface and Go backend and runs directly in a native
+desktop window without an adjacent assets folder or application DLLs. Each has
+a SHA-256 sidecar. A companion ZIP retains the notices, license texts and LGPL
+source/relinking materials for distribution; these files are not needed to run
+the EXE.
+
 - **Windows 10/11:** WebView2 Runtime is required. Wails uses its runtime-download
   bootstrap strategy if it is missing. The output is a native `youtube-vault.exe`.
 - **macOS:** install Xcode command-line tools (`xcode-select --install`). The
@@ -38,8 +61,8 @@ macOS bundles are not notarized. Wails does not supply OS signing identities.
 
 ## Build automation
 
-The **Desktop builds** workflow produces Windows, Linux and macOS AMD64/ARM64
-archives. It is available through workflow dispatch and runs for desktop branches
+The **Desktop builds** workflow produces Windows AMD64/ARM64 executables and
+Windows, Linux and macOS AMD64/ARM64 archives. It is available through workflow dispatch and runs for desktop branches
 and pull requests. It uploads validation artifacts; it does not create a tag or
 publish a GitHub Release. Native desktop packages are separate from the existing
 CGO-free browser/server release artifacts.

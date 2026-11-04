@@ -92,6 +92,15 @@ try {
   writeFileSync(archive + ".sha256", `${digest}  ${path.basename(archive)}\n`);
   console.log(`Desktop package: ${archive}`);
   console.log(`SHA-256: ${digest}`);
+  if (goos === "windows") {
+    // Preserve each architecture before the next build overwrites build/bin.
+    const application = path.join(output, name + ".exe");
+    cpSync(path.join(contents, "youtube-vault.exe"), application);
+    const applicationDigest = createHash("sha256").update(readFileSync(application)).digest("hex");
+    writeFileSync(application + ".sha256", `${applicationDigest}  ${path.basename(application)}\n`);
+    console.log(`Desktop application: ${application}`);
+    console.log(`EXE SHA-256: ${applicationDigest}`);
+  }
 } finally {
   const relative = path.relative(output, stage);
   if (!relative.startsWith(".package-") || relative.includes(path.sep)) throw new Error("Unexpected package staging directory");
