@@ -118,10 +118,16 @@ func (w *desktopDeadlineRecorder) SetWriteDeadline(deadline time.Time) error {
 }
 
 func TestDesktopDownloadDoesNotInheritJSONTimeout(t *testing.T) {
-	s := testServer(t, fixtureClient(1), func(c *config) { c.timeout = 0 })
-	job := waitTerminal(t, s, createJob(t, s, testVideo).ID)
-	if job.Status != "completed" || len(job.Files) != 1 {
-		t.Fatalf("download fixture failed: %+v", job)
+	// Exercise response deadlines without racing worker completion/eviction.
+	s := newPersistenceTestServer(t)
+	s.cfg.timeout = 0
+	job := bulkFixtureJob(t, s, "completed")
+	job.Files = []mediaFile{{ID: "file", Name: "000001-abcdefghijk.mp4", MimeType: "video/mp4", Size: 5, ManagedAvailable: true}}
+	if err := os.WriteFile(filepath.Join(job.dir, job.Files[0].Name), []byte("media"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.store.saveJob(job); err != nil {
+		t.Fatal(err)
 	}
 	path := ticketPath(t, s, job.ID, `{"fileId":"`+job.Files[0].ID+`"}`)
 	req := httptest.NewRequest(http.MethodGet, "http://127.0.0.1:8080"+path, nil)
