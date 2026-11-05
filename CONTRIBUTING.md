@@ -22,7 +22,19 @@ cd src/server
 go run -tags=dev .
 ~~~
 
-The frontend at `http://127.0.0.1:5173` connects to the Go service at `http://127.0.0.1:8080`. Leave `API_TOKEN` unset when using the bundled UI; it does not send bearer tokens.
+This browser development workflow connects `http://127.0.0.1:5173` to `http://127.0.0.1:8080`; leave `API_TOKEN` unset for it. Native desktop builds use Wails bootstrap authentication instead.
+
+## Desktop builds
+
+For native work, install the platform dependencies in [DESKTOP.md](docs/DESKTOP.md),
+then run `npm run build:desktop` and `npm run test:desktop`. Build on the target OS;
+macOS/Linux need matching architecture. Windows packaging requires NSIS 3.11.
+Use `node --test scripts/desktop-packaging.test.mjs` for packaging regressions.
+The six-target Desktop builds workflow tests final portable files and installer
+integration. Manual platform acceptance is tracked in the [release checklist](docs/RELEASE_CHECKLIST.md).
+
+The icon source is `public/app-icon.svg`. Run `npm run icons:generate` after edits;
+commit all generated assets and run `npm run icons:check`.
 
 ## Checks
 
@@ -53,6 +65,21 @@ If you change dependencies or license notices, update the corresponding lockfile
 
 ## Pull requests and commits
 
-Use a short subject that describes the change, such as `docs: clarify release downloads` or `Fix retry queue ordering`. Conventional Commit prefixes are welcome; release automation and enforced commit conventions are tracked separately in the roadmap.
+Use a short subject that describes the change, such as `docs: clarify release downloads` or `Fix retry queue ordering`. Conventional Commit prefixes are welcome; release automation and enforced commit conventions are tracked in the [roadmap](roadmap.md).
 
 In the pull request, summarize the behavior change, list the checks you ran and their results, and note any documentation, security, or licensing impact. Include screenshots for meaningful UI changes. Do not attach credentials, ticket URLs, signed media URLs, or private media to public issues or pull requests; see [SECURITY.md](SECURITY.md) for vulnerability reports.
+
+## Documentation
+
+Keep the root README focused on installation and everyday use. Put build/runtime
+instructions in `docs/DESKTOP.md`, artifact naming in `docs/PACKAGING.md`, publication
+gates in the release policy/checklist, and implementation details in the frontend
+and engine guides. Consolidate useful investigation conclusions into those guides;
+Git history retains dated experiment logs. Preserve legal notices, dependency
+license/source files, and fixture/upstream provenance.
+
+For desktop screenshots, use a disposable library and commit reviewed images under
+`docs/assets/screenshots/`; identify the platform and whether the image captures the embedded WebView or the
+whole native window.
+Do not publish private library content, personal paths, credentials, or ticket URLs.
+Check relative links and images after moving or deleting a document.

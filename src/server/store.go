@@ -326,6 +326,10 @@ func openJobStore(root string) (*jobStore, error) {
 		_ = db.Close()
 		return nil, err
 	}
+	if err := checkJobSchema(db); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("state database %s: %w", filepath.Join(root, "state.db"), err)
+	}
 	for _, statement := range versionOneSchema {
 		if _, err := db.Exec(statement); err != nil {
 			_ = db.Close()

@@ -1,6 +1,8 @@
+import { userFacingMessage } from "../lib/messages";
 import { useState, type Dispatch, type SetStateAction } from "react";
 import type { DragEndEvent } from "@dnd-kit/core";
 import { arrayMove } from "@dnd-kit/sortable";
+import { desktopBridge } from "../lib/desktop";
 import {
   api,
   type DownloadFile,
@@ -220,7 +222,7 @@ export function useJobs({
         : failures.length
           ? `${uniqueIDs.length - failures.length} selected jobs updated; ${failures.length} could not be changed.`
           : `Updated ${updatedCount} selected jobs.`);
-      if (failures.length) setActionError(failures.map(failure => `${failure.jobId}: ${failure.error}`).join("; "));
+      if (failures.length) setActionError(failures.map(failure => `${failure.jobId}: ${userFacingMessage(failure.error)}`).join("; "));
       void refreshLibrary().catch(error => setActionError(errorMessage(error)));
       return [...deleted];
     } catch (error) {
@@ -268,6 +270,12 @@ export function useJobs({
         signal: AbortSignal.timeout(15000),
       });
       if (!/^\/api\/downloads\/[A-Za-z0-9_-]+$/.test(ticket.path)) throw new Error("The service returned an invalid download link.");
+      const desktop = desktopBridge();
+      if (desktop) {
+        const saved = await desktop.Save(ticket.path);
+        setNotice(saved ? "Download saved." : "Save cancelled.");
+        return;
+      }
       const anchor = document.createElement("a");
       anchor.href = `${connection.base}${ticket.path}`;
       anchor.rel = "noopener noreferrer";
@@ -276,7 +284,7 @@ export function useJobs({
       document.body.appendChild(anchor);
       anchor.click();
       anchor.remove();
-      setNotice("Download requested. Your browser will save the file.");
+      setNotice("Your file is ready to save.");
     } catch (error) {
       setActionError(errorMessage(error));
     } finally {

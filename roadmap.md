@@ -1,34 +1,29 @@
-# yt-dl-go Product Roadmap
+# Product roadmap
 
-> Durable roadmap for the `yt-dl-go` product. This file is the source of truth for roadmap scope, sequencing, implementation status, acceptance criteria, and follow-up work.
->
-> **Status:** Superseded by [`roadmap_v2.md`](roadmap_v2.md); retained as the completed v1 history.
->
-> **Last updated:** 2026-09-23
+Updated 2026-11-05. This is the maintained planning catalog for YouTube Vault
+(`yt-dl-go`). Completed implementation history belongs in Git and the
+[changelog](CHANGELOG.md); dated investigation journals have been retired.
 
-## Product direction
+## Desktop release status
 
-`yt-dl-go` is evolving from a local YouTube downloader into a private local media acquisition, batch-processing, organization, and library application.
+- Wails native desktop builds, icons, native dialogs, and per-launch authentication
+  are implemented on the current branch.
+- Windows, macOS, and Linux have AMD64/ARM64 portable and installer artifacts.
+  All six native CI targets and the full release dry run passed on `7563843`.
+- Windows manual acceptance passed, reported by the maintainer on 2026-11-05.
+  macOS/Linux manual acceptance remains pending.
+- macOS protected app/PKG signing is implemented but needs credentialed verification.
+  Windows Authenticode, automatic self-update, and native tray integration remain pending.
 
-The target workflow is:
-
-```text
-YouTube URL / Playlist
-        ↓
-Inspect metadata and formats
-        ↓
-Choose video/audio, quality, category, and batch options
-        ↓
-Persistent queue and resumable processing
-        ↓
-Publish to user-selected output structure
-        ↓
-Searchable local media library
-```
-
-The roadmap deliberately preserves the existing strengths of the project: a single Go executable, an embedded React UI, a pure-Go media path where practical, SQLite-backed durability, loopback-first security, restart recovery, adaptive-download support, and no mandatory FFmpeg dependency.
+The milestone catalog below preserves existing scope and acceptance criteria.
+Its earlier status labels are planning history, not a fresh audit of every feature;
+consult the maintained guides and current code before starting an item. Desktop
+authentication and packaging now supersede older browser-only proposals. The
+[release checklist](docs/RELEASE_CHECKLIST.md) owns publication gates.
 
 ## Status legend
+
+Same as v1:
 
 - [ ] Planned
 - [~] In progress
@@ -36,678 +31,1119 @@ The roadmap deliberately preserves the existing strengths of the project: a sing
 - [!] Blocked or needs a design decision
 - [T] Implemented but runtime/test validation still required
 
-A roadmap item is marked **Implemented** only when the product code, persistence/API changes, tests, and this roadmap have been updated together. If source changes are complete but runtime or test execution has not yet been verified, use **[T]**.
+Priority tags: **P0** = correctness/safety/legal, do first Â· **P1** = high value Â· **P2** = valuable, schedule when convenient Â· **P3** = exploratory.
 
-## Engineering guardrails
+Evidence references are `file:line` at commit `63f3658` and will drift as code changes.
 
-1. Keep the application local-first and single-user by default.
-2. Preserve the single-executable distribution model.
-3. Prefer pure Go and avoid CGO where practical.
-4. Do not regress restart recovery, partial-download cleanup, or final-file validation.
-5. Treat files published into the user's chosen output directory as user-owned media, not disposable cache.
-6. Keep the SQLite schema forward-migratable and backward-compatible with existing databases.
-7. Avoid exposing signed YouTube media URLs to the frontend.
-8. Keep destructive operations explicit and narrowly scoped.
-9. Prefer small, reviewable commits. Update this roadmap in the same implementation sequence.
-10. Add tests for behavioral changes before marking work complete.
+## Engineering guardrails (carried forward, with additions)
+
+v1 guardrails 1â€“10 still apply. v2 adds:
+
+11. **User media is never deleted by a background process.** Only an explicit user action may delete media, and only when at least one other copy remains or the user has confirmed.
+12. **Every persisted-state change is observable on failure.** A DB write error must not be silently discarded.
+13. **Production bundles contain only product code.** No preview-host, builder, or dev-telemetry code ships.
+14. **Security headers are part of the contract.** CSP and frame protection are covered by regression tests like any other API behavior.
+15. **Every linked dependency is attributed.** Notices are generated and CI fails if they drift from the actual dependencies.
 
 ---
 
-# Milestone 1 — Media Library & Batch Workflow v1
+# Milestone 0 â€” Stabilization, safety, and legal (all P0)
 
-Goal: make the frontend and output-management experience catch up with the existing downloader engine.
+Goal: remove data-loss paths, close the framing/console exposure, and make the project legally distributable. These are small, targeted changes, and none should wait for the larger refactors.
 
-## P0 — Product consistency and safe file management
+### M0.1 Retention must never delete the only copy of user media
 
-### P0.1 Per-download category selection
+**Status:** [x] Â· **P0** Â· **Area:** backend
 
-**Status:** [x] Complete
-
-Users can already create categories and use `{category}` in naming patterns and category-based subfolders, but new jobs currently capture only the global default category.
+`prune()` (`src/server/worker.go:2329-2354`) removes every terminal job older than `RETENTION` (default `24h`, `main.go:143`). It calls `removeManagedCopies` (`output.go:325`, `os.RemoveAll(j.dir)`) and then `store.deleteJob`, with no check on storage mode. Under `managed-only`, published output does not exist, so the media is gone for good.
 
 #### Scope
 
-- Add a category selector to every inspected download card.
-- Capture the selected category when a job is queued.
-- Validate the category against the persisted user category list.
-- Persist the selected category with the job.
-- Use the selected category in filename expansion and category subfolder routing.
-- Preserve the category across restart/recovery.
-- Add frontend and backend tests.
+- Immediate fix: skip pruning any job whose files have no available published copy.
+- Change the default `RETENTION` to "never" for Library records. Keep time-based cleanup only for failed/cancelled job scratch data.
+- Add regression tests for pruning under all three storage modes.
 
 #### Acceptance criteria
 
-- A user can inspect two URLs and assign different categories before queuing them.
-- The selected category is visible in the created job/file metadata.
-- Category-based output routing uses the selected category rather than the global default.
-- Invalid or unknown categories are rejected by the server.
-- Older clients that omit `category` continue to use the configured default category.
+- A `managed-only` completed job survives any number of prune cycles.
+- A `managed-published` job's Library record survives pruning unless retention was explicitly enabled.
+- The README and Settings text explain exactly what retention removes.
 
-### P0.2 Batch “apply to all” controls
+`RETENTION` now defaults to `never` for Library records. Empty failed/cancelled jobs retain the previous 24-hour scratch cleanup by default. An explicit duration can prune a Library record only after every finalized media file and managed caption sidecar has a verified published copy. Regression cases cover all three storage modes, missing published media, scratch jobs, and configuration parsing on `fix/safe-retention`.
 
-**Status:** [x] Complete
+### M0.2 Stop `MAX_JOBS` from capping the Library
 
-For multi-URL inspection and playlist workflows, add batch controls that can apply common settings without editing every card individually.
+**Status:** [x] Â· **P0** Â· **Area:** backend
+
+`server.go:846` rejects new jobs when `len(s.jobs) >= s.cfg.maxJobs`, and `s.jobs` includes finished jobs. The error message even says "wait for retained jobs to expire".
 
 #### Scope
 
-- Apply media type to all inspected items.
-- Apply video quality to all applicable inspected items.
-- Apply MP3 bitrate to all applicable inspected items.
-- Apply category to all inspected items.
-- Preserve per-item overrides after a batch value is applied.
+- Count only queued, active, and paused jobs against `MAX_JOBS`, and rename or document it as a concurrency/backlog cap.
+- Size the scheduler queue channel independently of the Library size (`main.go:189`).
+- Add a test showing that 100 finished jobs do not block a new job.
+
+`MAX_JOBS` now counts queued, downloading, processing, and paused jobs. Terminal Library records no longer consume capacity. The scheduler uses its existing change signal instead of a size-limited token channel; single-item playlist retries obey the same cap. Tests cover 100 finished records, full-cap rejection, recovery after cancellation, paused jobs, and retry admission on `fix/active-job-cap`.
+
+### M0.3 Remove preview-host / app-builder scaffolding from production
+
+**Status:** [x] Â· **P0** Â· **Area:** frontend / security
+
+The production bundle contains the following:
+
+- `src/lib/cowork-parent-transport.ts:35-43`: hard-coded Microsoft preview-host origins.
+- `src/lib/console-capture.ts`:
+  - `:141-154` globally replaces `console.log/warn/error`.
+  - `:32-42` posts the output to `window.location.ancestorOrigins[0]`, which is whatever page frames the app.
+  - `:66-94` POSTs errors to `./__dev/console`.
+- The 511-line `app-view-serializer.ts`, kept alive by the runtime `isPreviewMount()` call.
+- `aether:*` performance marks.
+
+#### Scope
+
+- Delete `console-capture.ts`, `cowork-parent-transport.ts`, `app-mounted-transport.ts`, `app-view-transport.ts`, `app-view-signal.tsx`, `app-view-serializer.ts`, and `types/app-message.ts`.
+- Remove their call sites in `main.tsx`, `App.tsx:6-7,30,48`, and `error-boundary.tsx`.
+- Fix `getRouterBasename` (`App.tsx:14-26`) so unknown paths reach the not-found route.
+- Add a build check that fails if `dist/assets/*.js` contains `ancestorOrigins`, `m365.cloud.microsoft`, or `__dev/console`.
+
+The seven preview transport/serializer modules and their production call sites are removed on `fix/remove-preview-scaffolding`. Unknown paths now use the root router basename and reach the not-found route. `npm run build:check` builds into a temporary directory and scans every JavaScript asset for the three forbidden strings; CI runs it on pull requests. Frontend typecheck and lint pass.
+
+### M0.4 Security headers: CSP and frame protection
+
+**Status:** [x] Â· **P0** Â· **Area:** backend / security
+
+Only `Cache-Control`, `Referrer-Policy`, `X-Content-Type-Options`, and `Vary` are set (`server.go:309-312`). Any site can iframe `http://127.0.0.1:8080`. Requests from inside the frame are same-origin, so they pass the Host/Origin checks and destructive buttons can be clickjacked.
+
+#### Scope
+
+- On every response, send a same-origin CSP with `script-src 'self'`, `frame-ancestors 'none'`, `base-uri 'none'`, and `form-action 'self'`, plus `X-Frame-Options: DENY`. `style-src 'unsafe-inline'` preserves the app's current dynamic React styles; `img-src` includes the specific YouTube image hosts already accepted by thumbnail validation.
+- Add header regression tests for static, API, and ticket responses.
+
+### M0.5 Allow the dev-server origins only in development builds
+
+**Status:** [x] Â· **P0** Â· **Area:** backend / security
+
+The default `ALLOWED_ORIGINS` includes `http://localhost:5173` and `http://127.0.0.1:5173` (`main.go:97`) in release builds. Any local process serving port 5173 therefore becomes a trusted origin.
+
+#### Scope
+
+Move the Vite origins behind a `dev` build tag or an explicit `--dev` flag. Release builds trust only their own listener origin.
+
+The default Vite origins now compile only with `-tags=dev`; release builds allow their own configured loopback listener origin by default. `ALLOWED_ORIGINS` remains an explicit override. The documented manual development command and `dev:all` use the dev build tag. Release and dev origin checks run in CI on `fix/dev-only-origins`.
+
+### M0.6 Add a project LICENSE and complete third-party notices
+
+**Status:** [T] Implemented and dispatch-validated; tagged source-package validation pending Â· **P0** Â· **Area:** legal
+
+- The root `LICENSE` now applies MIT to the project.
+- Go notices cover the application dependency packages and Go runtime; npm notices cover production dependencies, including the Geist font (OFL-1.1) and lucide (ISC).
+- Complete license texts are packaged under `src/server/licenses/`; the LGPL decoder source and local replacement build instructions are included.
+- Tagged releases now prepare a source archive so users can rebuild against a modified LGPL decoder.
+
+#### Scope
+
+- [x] Choose MIT and add the root project license.
+- [x] Document the LGPL relink path and include a source archive with each release.
+- [x] Generate notices with pinned `go-licenses` and `license-checker` tools in CI; fail when generated files drift.
+- [x] Ship the dependency license texts and LGPL source in release packages.
+
+**Progress (2026-09-23):** Merged by [PR #14](https://github.com/ajbergh/yt-dl-go/pull/14). All six CI jobs passed, including reproducible license checks and Linux, Windows, and macOS package builds. Notices cover 33 Go/runtime entries and 15 npm production packages. Dry run [35925902083](https://github.com/ajbergh/yt-dl-go/actions/runs/35925902083) successfully created and checksummed the LGPL source/relink archive; the tag-triggered release path remains to be exercised when a release is cut.
+
+### M0.7 A fresh clone must build and test
+
+**Status:** [x] Â· **P0** Â· **Area:** DX
+
+`//go:embed dist` (`src/server/static.go:13`) needs `src/server/dist`, which is gitignored. A tracked `.gitkeep` plus `//go:embed all:dist` keeps the Go embed target available in a fresh checkout; the `all:` prefix is needed because Go otherwise ignores dotfiles. If `index.html` is absent, the server returns a clear 503 build hint.
+
+#### Scope
+
+Track `src/server/dist/.gitkeep` with a `.gitignore` exception, embed all files under `dist`, and serve a clear "UI not built" page with the frontend build command when assets are missing.
+
+### M0.8 Surface swallowed persistence errors
+
+**Status:** [x] Â· **P0** Â· **Area:** backend
+
+- `persistJobLocked` ignores `saveJob` errors (`server.go:203`).
+- `savePart`/`deletePart` ignore theirs (`store.go:739, 749`).
+- `f.Seek`/`f.Truncate` in the range loop are unchecked (`worker.go:2095-2096`).
+- `muxMP4` ignores its `Close` error (`worker.go:2229`).
+
+#### Scope
+
+Log these failures and fail the job or item where state is lost. Job, checkpoint, settings, queue, and finalization persistence failures contribute to a consecutive failure count; a successful persistence operation resets it. `/api/health` reports degraded persistence after three consecutive failures. Failed job-state saves stop the job and expose a failure to the API/UI.
+
+### M0.9 Gate CI on lint
+
+**Status:** [x] Â· **P0** Â· **Area:** CI
+
+Before this branch, `npm run lint` reported 49 production errors, mostly unused imports in `home.tsx:15-30`. CI did not run lint, and the command also scanned `dev_mock_new_ui`.
+
+#### Scope
+
+- Add `dev_mock_new_ui` to the ESLint ignores.
+- Fix the existing errors.
+- Enable `noUnusedLocals`/`noUnusedParameters` (`tsconfig.app.json:17-18`).
+- Add `npm run lint` to `ci.yml`.
+
+The production lint gate now excludes the separate `dev_mock_new_ui` prototype, removes unused production imports and locals, and enables TypeScript's unused checks. Lint passes with 21 existing warnings; typecheck passes.
+
+---
+
+# Milestone 1 â€” Durable library and persistence
+
+Goal: make the "searchable local media library" durable over months and thousands of items instead of about a day.
+
+### M1.1 Separate Library records from download jobs
+
+**Status:** [x] Durable Library storage, independent lifecycles, and 10,000-item acceptance complete Â· **P1** Â· **Area:** backend / data model
+
+The durable Library read path is decoupled from live job state. This milestone separates Library item lifecycle from job history and checks the 10,000-item boundary.
+
+#### Scope
+
+- Introduce a durable `library_items` model (one row per finalized media file) with job provenance.
+- Jobs become transient work units. Library items outlive them.
+- Migrate existing completed jobs into Library items.
+- Removing a job from the queue does not remove its Library item, and vice versa, with explicit, documented actions for each.
 
 #### Acceptance criteria
 
-- Batch changes update all eligible cards immediately.
-- Unsupported audio/video combinations remain disabled.
-- Individual cards can still be changed afterward.
+- The Library can hold 10,000+ items with no in-memory job state kept for finished work.
+- All v1 deletion scopes (P0.3) still behave as documented.
 
-### P0.3 Separate Library removal from disk deletion
+**Progress (2026-09-24):**
 
-**Status:** [x] Complete
+The durable storage foundation merged in [PR #51](https://github.com/ajbergh/yt-dl-go/pull/51) (`64c501b`): `library_items` stores one row per finalized file, including migration backfill and transactional mirroring. [PR #53](https://github.com/ajbergh/yt-dl-go/pull/53) (`7d3fce5`) added the direct Library read API and UI. Library reads no longer depend on the in-memory job map, but their lifecycle still depended on job history. [PR #62](https://github.com/ajbergh/yt-dl-go/pull/62) (`87b4965`) added compact, transactionally maintained `library_sources` metadata for facets, filtering, and pagination.
 
-Current job deletion can remove both managed app files and files published to the user's chosen output directory. That is too destructive for a media-library workflow.
+[PR #67](https://github.com/ajbergh/yt-dl-go/pull/67) merged as `0760f83`. Startup loads active jobs only; finished jobs leave memory after their final event and hydrate on demand for existing actions. Retention looks up candidate IDs and loads each record individually. The final check set passed Go and race validation, frontend integration and browser E2E, lint/vet, CodeQL, and Linux, Windows, and macOS builds. CI found and fixed compatibility assumptions in old history assertions, missing M4A media-type restoration during hydration, and an unused queue-loader wrapper.
 
-#### Target actions
+`feat/library-items-outlive-jobs` merged as [PR #68](https://github.com/ajbergh/yt-dl-go/pull/68) (`d86a8a0`). Migration v26 retains the published-output root with durable Library source metadata; a history-only DELETE API and Queue action, Library-backed file actions and tickets, and retention that persists managed-copy state before deleting history make the lifecycles independent. The existing retention fixture now expects Library rows to survive. The original `DELETE /api/jobs/{id}` and managed/published/all scopes remain intact. All PR checks passed, including Go/race/source validation, frontend integration and browser E2E, lint/vet, CodeQL, and Linux, Windows, and macOS builds.
 
-- **Remove from Library** — remove app history/reference while preserving user-published output.
-- **Delete managed copy** — remove the private app-managed copy only.
-- **Delete published media** — explicitly remove the output copy.
-- **Delete everything** — remove history plus all tracked copies, with a strong confirmation.
+`feat/library-item-removal` merged as [PR #69](https://github.com/ajbergh/yt-dl-go/pull/69) (`7e1b47a`). Migration v27 and durable per-file exclusions, a source-qualified item DELETE route, and a Library file action remove one app-managed file while preserving its job history, grouped siblings, and published output. The exclusion prevents later job saves from restoring the Library row. All PR checks passed, including Go/race/source validation, frontend integration and browser E2E, lint/vet, CodeQL, and Linux, Windows, and macOS builds.
 
-#### Acceptance criteria
+`feat/library-10k-validation` merged in [PR #70](https://github.com/ajbergh/yt-dl-go/pull/70) as `53850fa`. Its `TestLibraryPaginationHandlesMoreThanTenThousandFilesWithoutRetainingFinishedJobs` seeds 10,100 durable files across 101 source groups, restarts with a persisted terminal sentinel, and exercises the public paginated API for stable two-page grouping, global facets/stats, and a filtered full-group result. The focused test passed locally in 4.3s; all PR checks passed, including Go/race/source validation, frontend integration and browser E2E, lint/vet, CodeQL, and Linux, Windows, and macOS builds.
 
-- Removing an item from Library never silently deletes media in the configured output directory.
-- Destructive actions state exactly which copies will be removed.
-- Output path validation remains in place for all delete operations.
+### M1.2 Normalize queue items and write incrementally
 
-### P0.4 Storage policy and duplicate-copy control
+**Status:** [x] Â· **P1** Â· **Area:** persistence / performance
 
-**Status:** [x] Complete
+`queue_items` is a JSON blob of up to 10,000 items (`store.go:485, 639, 798`). Every `saveJob`:
 
-The application currently retains a managed copy under `DATA_DIR` and publishes another copy to the configured output location. Large files may therefore consume approximately twice their final size.
-
-#### Proposed policy modes
-
-- **Managed + Published** — current behavior.
-- **Published only** — finalize to the user output path and retain metadata/history only.
-- **Managed only** — keep media private to the application library.
-
-#### Acceptance criteria
-
-- Storage mode is a persisted setting.
-- Existing jobs retain the storage policy captured when queued.
-- The UI explains the durability tradeoffs for each mode.
-- Ticket/download behavior remains safe for files that still exist.
-
-### P0.5 Native folder selection and filesystem actions
-
-**Status:** [x] Complete
-
-Typing an absolute path manually is not sufficient desktop UX.
+- rewrites the job row;
+- deletes and reinserts all `job_files` and `job_failures` rows, with an O(nÂ²) file loop (`store.go:669-676`);
+- re-marshals the queue JSON;
+- does all of this under the global `s.mu` on every item metadata update, finalize, and failure (`worker.go:859, 1215, 1546`).
 
 #### Scope
 
-- Native folder-picker integration for output location.
-- Reveal output file in Finder/Explorer/file manager.
-- Open containing folder.
-- Copy absolute path.
-- Graceful fallback to the existing text field when native integration is unavailable.
+- Add a `queue_items` table with a migration from the JSON column.
+- Update only the changed item rows.
+- Move persistence out of the global lock via a single writer goroutine or a per-job lock.
 
-#### Design note
+**Progress (2026-09-24):** Merged by [PR #55](https://github.com/ajbergh/yt-dl-go/pull/55) as `3a8e4b0`. Adds a transactional migration from the legacy queue JSON to normalized `queue_items`, updates queue/file/failure rows only when stored fields change, and routes job snapshots, settings, queue order, and deletion writes through a FIFO persistence writer that releases the global job mutex while SQLite runs. Shutdown drains the writer after HTTP handlers and workers stop. Follow-up fixes ensure retries are not schedulable before their save completes, repair a missing Library table even when the schema version advanced, and cache persisted queue/file/failure/Library signatures so no-op child-row writes are skipped. All nine final CI checks passed, including Go tests and race tests, golangci-lint, Go and JavaScript analysis, CodeQL, and Linux, Windows, and macOS builds.
 
-The current browser-hosted SPA cannot directly expose arbitrary local filesystem actions. Evaluate a minimal localhost API capability with strict path validation, or a desktop shell only if necessary. Do not weaken server path controls.
+### M1.3 Pagination, filtering, and indexes
 
----
+**Status:** [x] Search, facets, whole-group pagination, and 10,000-item API characterization complete Â· **P1** Â· **Area:** API / persistence
 
-# Milestone 2 — Library quality and metadata
-
-## P1.1 Preserve thumbnails locally
-
-**Status:** [x] Complete
-
-Remote thumbnail URLs are not durable library metadata.
+The original unpaged `GET /api/jobs` and SSE snapshot return full active-job state and remain unchanged. The Library now has an opt-in cursor-paginated API with server-side search and facets; this milestone also records representative search and page costs at 10,000+ files.
 
 #### Scope
 
-- Download and validate the selected YouTube thumbnail.
-- Store a managed thumbnail with the media record.
-- Optionally publish sidecar artwork next to output media.
-- Serve local thumbnails to the UI when available.
-- Keep remote URLs as fallback metadata only.
+- Cursor-paginated `GET /api/library` with server-side search, sort, and category/channel/type facets.
+- Indexes on `created_at`, `status`, category, and channel.
+- Move the search index from the frontend (`home.tsx:147`) to SQLite, e.g. FTS5 (supported by `modernc.org/sqlite`).
 
-### P1.2 MP3 ID3 metadata and artwork
+**Implementation note (2026-09-24):** Repository review confirmed that `/api/jobs` and SSE payloads feed the complete active queue and should remain unchanged in this slice. At the time, `/api/library` loaded the full durable result set and computed facets/search in the browser. Its result rows are grouped by source job, so pagination must select job groups first and then load every file for each selected job. Preserve newest-source-job ordering with a stable cursor and define global totals/facets separately from page contents. Existing indexes are `queue_items(job_id, position)` and `library_items(source_job_id, source_item_index)`; category/channel search fields were stored inside JSON and needed indexed columns or a search table. Free-text substring matching is not equivalent to FTS token search, so keep that behavior explicit when designing the migration/API.
 
-**Status:** [x] Complete
+**Progress (2026-09-24):** The first backend pagination slice merged in [PR #57](https://github.com/ajbergh/yt-dl-go/pull/57) as `53212c4`. It adds opt-in `limit`/opaque cursor pagination to `GET /api/library`, with stable `(created_at, job_id)` ordering and page selection at the job-group level so chapter/multi-file downloads stay whole. The response includes `totalJobs` and `nextCursor`; the existing no-parameter `{jobs:[...]}` response remains unchanged. Migration v22 adds indexes for Library page order, category, and channel. Equal-timestamp cursor progression, complete multi-file groups, and invalid pagination input are covered. [PR #58](https://github.com/ajbergh/yt-dl-go/pull/58) merged the server-side substring search, type/category/channel filters, global facet and storage-stat metadata, and migration v23 predicate indexes. Frontend integration merged in [PR #59](https://github.com/ajbergh/yt-dl-go/pull/59) as `21ce328`: the Library requests filtered cursor pages, uses server-provided global facets and statistics, and offers a load-more control. Search/category/channel/type changes reset to the first server page; local filtering responds immediately while the server query loads and supports legacy `{jobs}` responses. Search-index evaluation: SQLite FTS5's trigram tokenizer supports substring candidates instead of token-only matching, but full-text queries shorter than three Unicode characters produce no matches. A compatible index can use trigram matches only to narrow candidates for queries of at least three Unicode characters, retain the current `instr(lower(...), ?)>0` predicate as the final compatibility check, and keep that exact predicate as a fallback for shorter queries. Do not enable diacritic removal or use tokenizer matches as the result semantics. The pinned `modernc.org/sqlite` v1.59.0 source includes the FTS5 trigram tokenizer. [PR #63](https://github.com/ajbergh/yt-dl-go/pull/63) merged as `1300464`: migration v25 adds trigger-maintained FTS5 trigram indexes for source metadata and file JSON; matches narrow candidates only, while the existing substring predicate remains authoritative and searches shorter than three Unicode characters use the scan path.
 
-The pure-Go MP3 path currently emits audio without ID3 tags.
+`perf/library-10k-measurement` merged in [PR #71](https://github.com/ajbergh/yt-dl-go/pull/71) as `6239dc2`. `BenchmarkLibraryAPIAt10100Files` in `src/server/library_scale_test.go` characterizes the public API over 10,100 durable files (101 source groups Ã— 100 files) with no finished jobs loaded in memory. Command: `go test -run '^$' -bench '^BenchmarkLibraryAPIAt10100Files$' -benchmem -benchtime=20x`. On Windows/amd64, Go 1.26.8, AMD Ryzen 5 3600 6-Core Processor, the run reported first page of 100 groups (10,000 files): 626,683,115 ns/op, 52,657,444 B/op, 512,885 allocs/op; substring search returning one full group (100 files): 240,416,005 ns/op, 830,235 B/op, 12,384 allocs/op. This is a single local characterization, not an SLA. All PR checks passed, including Go/race/source validation, frontend integration and browser E2E, lint/vet, CodeQL, and Linux, Windows, and macOS builds.
 
-#### Proposed fields
+### M1.4 Stable default data directory
 
-- Title
-- Artist/channel
-- Album/playlist title when available
-- Track number for playlist position
-- Publish date
-- Source URL
-- Cover artwork
+**Status:** [x] Merged by PR #65 as `28dd800` Â· **P1** Â· **Area:** backend / UX
 
-#### Acceptance criteria
-
-- Common players display title and artist without filename parsing.
-- Playlist audio carries track numbering where known.
-- Metadata writing remains pure Go where practical.
-
-### P1.3 M4A “original audio” mode
-
-**Status:** [x] Complete
-
-When YouTube exposes AAC-in-MP4 audio, users should be able to preserve it without transcoding.
-
-#### Proposed options
-
-- M4A — source AAC, no MP3 transcode
-- MP3 — 128 / 192 / 256 / 320 kbps
-
-Benefits: lower CPU use, faster completion, and no additional lossy generation.
-
-### P1.4 Library folder/category navigation
-
-**Status:** [x] Complete
-
-Promote the Library from a job-results list to a true local media browser.
+`DATA_DIR` defaults to `./downloads` relative to the current working directory (`main.go:80`). Launching from a different folder, a shortcut, or a terminal gives an empty library.
 
 #### Scope
 
-- Category/channel sidebar or filter panel.
-- File count and storage-size summaries.
-- Grid/list views with equivalent capabilities.
-- Search title, creator, category, filename, and playlist.
-- Open/reveal/copy-path actions.
-- Persistent user layout preference.
+- Default to a per-user application directory: `%LOCALAPPDATA%\yt-dl-go`, `~/Library/Application Support/yt-dl-go`, or `$XDG_DATA_HOME/yt-dl-go`.
+- Keep `DATA_DIR` as an override.
+- Detect a legacy `./downloads/state.db` and offer a one-time migration.
 
-### P1.5 Local media preview
+**Progress (2026-09-24):** Merged in [PR #65](https://github.com/ajbergh/yt-dl-go/pull/65) as `28dd800`. The per-user default and `DATA_DIR` override are now documented at repository and server level. The explicit copy-based migration snapshots SQLite, copies managed data to staging, rebases job/resume paths (including the original pre-v16 schema), resolves existing parent symlinks before checking source/destination overlap, preserves the original legacy tree, and refuses to overwrite a destination containing user data. All PR CI checks passed, including race validation and platform builds.
 
-**Status:** [x] Complete
+### M1.5 Startup resilience, integrity, and backup
 
-Provide lightweight playback from finalized local media.
+**Status:** [x] Complete in PRs #72â€“#80 Â· **P1** Â· **Area:** persistence
+
+One malformed JSON row in `queue_items` or `subtitle_json` makes startup fail fatally with "cannot load download history" (`store.go:798-800, 887-890`; `main.go:208-211`). There is no integrity check or backup.
 
 #### Scope
 
-- Video playback for supported browser codecs.
-- Audio playback.
-- Seek/range support through scoped local URLs.
-- No auto-play.
-- Do not expose arbitrary filesystem paths.
+- Run `PRAGMA quick_check` at startup.
+- Quarantine unparseable rows instead of aborting, and surface them in diagnostics.
+- Automatically back up the database before each migration using `VACUUM INTO`.
+- Add a user-triggered **Export library** (DB plus a metadata JSON/CSV) and an **Import**.
+- Set the pragmas through DSN `_pragma=` parameters so they survive connection recycling (`store.go:55-61`).
+- Check `DATA_DIR` ACLs on Windows; today it is skipped (`main.go:169`).
+
+**Progress (2026-09-24):** M1.1 and M1.3 are complete. Repository review found that legacy migration v21 and current queue/file loaders abort on malformed JSON, while silently skipping rows could let later saves erase evidence. The startup integrity preflight merged in [PR #72](https://github.com/ajbergh/yt-dl-go/pull/72) as `f0e79fc`: SQLite pragmas now live in the encoded DSN and run on recycled connections; `PRAGMA quick_check` runs before schema initialization/migrations and returns a typed error for detected integrity failures. Regression coverage checks connection recycling, a damaged table constraint, and Windows extended-length database paths. All PR checks passed, including Go/race/source validation, frontend integration and browser E2E, lint/vet, CodeQL, and Linux, Windows, and macOS builds.
+
+The startup integrity preflight merged in [PR #72](https://github.com/ajbergh/yt-dl-go/pull/72) as `f0e79fc`. Per-migration backups merged in [PR #73](https://github.com/ajbergh/yt-dl-go/pull/73) as `c79b6c3`: fresh installs keep one v1 snapshot; existing databases snapshot before each pending migration via `VACUUM INTO`; snapshot failures block migration; and v20 repair restores the version-appropriate Library indexes and FTS triggers. Snapshot/integrity tests and `go test ./... -count=1` passed locally. CI passed on the updated PR head, including race tests and Linux, Windows, and macOS builds; the test-specific 45-second timeout allowance stabilizes `TestCancellationQueueAndTimeout` under race instrumentation.
+
+`feat/corruption-quarantine` merged in [PR #74](https://github.com/ajbergh/yt-dl-go/pull/74) as `3ffb9fb`. Migration v28 adds private diagnostics storage. Malformed legacy queues are quarantined in both v20 Library backfill and v21 queue migration; saved queue IDs, app categories, active-job caption/chapter/additional-file JSON, and malformed Library file JSON are repaired independently after a pre-repair snapshot. The authenticated diagnostics API and Settings panel expose source, record key, timestamp, and repair action without returning raw payloads. Regression coverage exercises those paths and snapshot preservation. Local Go tests, Go vet, and `npm run check` passed; full PR checks also passed, including race tests, frontend integration, and Linux, Windows, and macOS builds.
+
+`feat/windows-data-dir-acl` merged in [PR #75](https://github.com/ajbergh/yt-dl-go/pull/75) as `ef0b07c`. Startup now reads the Windows DATA_DIR owner and DACL, requires ownership by the current user, and rejects grants to common shared logon groups and package-wide application principals; SYSTEM and Administrators remain allowed. The existing POSIX 0700 check remains in place. PR #75's final CI and CodeQL checks passed across Windows, Linux, and macOS after its fixtures set owner plus a private DACL, the scoped `TestCancellationQueueAndTimeout` wait increased to 90 seconds, and the retention test began waiting for the durable terminal row before aging it and advancing the prune clock. The affected test passed 20 consecutive local runs, followed by the full Go suite and `go vet ./...` locally. Library export/import remains open.
+
+`feat/library-export` merged in [PR #76](https://github.com/ajbergh/yt-dl-go/pull/76) as `9f61221`. It creates a consistent `VACUUM INTO` database snapshot and bundles that database with a versioned manifest and Library-only JSON/CSV metadata. Portable metadata omits absolute output paths and quarantined raw values; the database snapshot itself contains private application state and is labeled accordingly. Media files are not included. The authenticated Settings export action passed the frontend integration test; the test intercepts the blob download to prevent Happy DOM from navigating the shared window. Full CI and CodeQL passed across Windows, Linux, and macOS.
+
+**Progress (2026-09-24):** `feat/library-import` merged in [PR #80](https://github.com/ajbergh/yt-dl-go/pull/80) as `bfd18de`. Import is a metadata-only merge: it reads the versioned manifest and `library.json`, leaves private database state/settings/history/queues untouched, marks imported media and subtitles unavailable, generates stable namespaced IDs, rejects collisions, and applies rows transactionally. ZIP/API limits and the Settings file picker are implemented; imported Library sources hydrate and can be removed without a local download root. Regression coverage includes importing an actual export, repeat-import idempotency, collision rollback, invalid paths/versions/trailing JSON, authorization, and metadata-only behavior. Local Go tests, vet, and `npm run check` passed; all PR CI and CodeQL checks passed, including the Bun-driven Settings upload test.
+
+### M1.6 Table-driven migrations with fixture tests
+
+**Status:** [x] Complete in PR #78 Â· **P2** Â· **Area:** maintainability
+
+Migrations v2â€“v15 are 14 near-identical copy-pasted functions and call blocks, about 375 lines (`store.go:123-557`). v1 runs outside a transaction.
+
+#### Scope
+
+- Replace them with a `[]migration{version, stmts}` table run in transactions.
+- Add golden fixture DBs at v1, v6, v10, and v14, each tested to migrate to head.
+- Remove the write-only `config` table with a compatibility migration. Keep `download_parts`: native and browser-SABR resume paths use it to persist transfer checkpoints.
+
+**Progress (2026-09-24):** M1.6 merged in [PR #78](https://github.com/ajbergh/yt-dl-go/pull/78) as `5f0c649`. Schema-only migrations v2â€“v15 now use a versioned descriptor table and a shared transaction helper; v1 bootstrap and custom v16+ data/table-rebuild migrations remain separate. Historical SQLite fixtures at v1, v6, v10, and v14 migrate through the current schema with representative job, file, Library-backfill, and legacy queue assertions. Migration v29 removes the write-only `config` table from existing databases and runtime no longer writes effective configuration to SQLite. `download_parts` remains because resume paths use it. Focused fixture/backup tests, full Go tests, frontend integration/E2E, race, vet/lint/security scans, CodeQL, and Windows/Linux/macOS builds all passed in CI.
+
+### M1.7 Move desktop-relevant settings into the UI
+
+**Status:** [x] Merged in [PR #81](https://github.com/ajbergh/yt-dl-go/pull/81) Â· **P2** Â· **Area:** config
+
+`RETENTION`, `MAX_JOB_BYTES`, `JOB_TIMEOUT`, and `CHROME_PATH` are environment-only (`main.go:78-148`), and the per-process transfer slot count is hard-coded at 4 (`main.go:189`). Desktop users should not need environment variables.
+
+#### Scope
+
+- Persist these settings in `app_settings` with environment-variable overrides, and show which source is in effect in Settings.
+- Optionally support a `config.toml` in the data directory for headless use.
+
+**Implementation note (2026-09-24):** Persist the five runtime controls (retention, maximum job bytes, job timeout, Chrome path, and download response slots) in migration v30. Environment variables take precedence and Settings reports each effective source and active value. Runtime edits take effect on service restart because the Chrome pool and transfer semaphore are constructed at startup; `config.toml` remains optional and is deferred. PR [#81](https://github.com/ajbergh/yt-dl-go/pull/81) adds these controls and API/UI coverage. Local validation passes: repeated cancellation/length regressions, the full Go suite, Go vet, and `npm run check` (20 existing ESLint warnings, no errors). A Linux package timeout in CI traced to the cancellation fixture's nondeterministic blocking point; the fixture now blocks its second stream acquisition and keeps the single-download queue assertion. The runtime settings work merged in [PR #81](https://github.com/ajbergh/yt-dl-go/pull/81) on 2026-09-25. The Settings UI exposes all five controls, with persisted values and effective-source information. The optional `config.toml` remains explicitly deferred rather than part of the completed requirement.
 
 ---
 
-# Milestone 3 — Playlist and queue controls
+# Milestone 2 â€” Download engine reliability
 
-## P1.6 Playlist item selection before queueing
+Goal: no hung slots, no silent corruption, no avoidable restarts from zero.
 
-**Status:** [x] Complete
+### M2.1 Stall detection and per-item timeouts
 
-Playlist inspection now allows users to choose which exposed items are queued.
+**Status:** [x] Merged by PR #35 Â· **P0** Â· **Area:** engine
 
-#### Implemented
+- `JOB_TIMEOUT` is now an optional overall job cap and defaults to disabled. Playlist and item metadata retain bounded lookup deadlines.
+- Native progressive/audio reads and adaptive range bodies close after 60 seconds without data and return retryable `errRead`; the watchdog runs before bandwidth throttling.
+- Each media transfer has a size-, duration-, and bandwidth-aware deadline (15-minute minimum, seven-day cap). Long playlists are not limited by one shared six-hour deadline unless an overall cap is configured.
 
-- Expandable playlist inspection with all valid exposed entries selected by default.
-- Select all / clear all controls and per-item checkboxes.
-- Selected-item counts and disabled queue submission when a playlist selection is empty.
-- Approximate aggregate MP3 output size when selected durations and bitrate make an estimate meaningful.
-- Selected entries are submitted with their original one-based playlist index and video ID.
-- The worker re-fetches playlist metadata and rejects stale/tampered selections before media transfer.
-- Scheduler queue indexes remain contiguous while `playlistIndex` preserves original position.
-- Original playlist position is retained in managed filenames and MP3 track numbers; MP3 track totals retain the full exposed playlist count.
-- Selection state persists through SQLite/restart using the existing queue-item JSON and is preserved by whole-job Retry.
-- Queue labels distinguish selection order from original playlist position.
-- Backend coverage includes input validation, subset processing, original-position naming, stale-selection rejection, retry preservation, and SQLite persistence.
-- Frontend coverage includes Select all/Clear all, per-item selection, request shaping, selected count, and MP3 aggregate estimates.
-- Validation: CI run `35551454898` passed frontend type-check/build, Bun integration tests, Go tests, Go vet, and Windows production build.
+#### Scope
 
-### P1.7 Queue reordering and priority
+- [x] Add a per-read idle deadline; 60 seconds without data closes the reader and returns retryable `errRead`.
+- [x] Add per-item metadata and transfer deadlines, with transfer time derived from expected bytes, media duration, and the configured bandwidth limit.
+- [x] Turn `JOB_TIMEOUT` into an optional overall cap; `none` and `0` disable it.
+- [x] Add bounded exponential backoff with jitter between adaptive range retries; retain retries at three attempts.
 
-**Status:** [x] Complete
+**Progress (2026-09-23):** Merged by [PR #35](https://github.com/ajbergh/yt-dl-go/pull/35) (`58679fd`) after the Go test/lint/vet checks, frontend browser end-to-end tests, CodeQL, and Linux, Windows, and macOS builds passed. Native read watchdogs cover progressive video/audio sources and adaptive HTTP ranges, item deadlines bound transfers, and adaptive range attempts back off with jitter. `JOB_TIMEOUT` is optional and defaults to `none`.
 
-Implemented explicit, durable queue ordering using the repository's existing `@dnd-kit` dependencies.
+### M2.2 Atomic, durable finalization everywhere
 
-#### Implemented
+**Status:** [x] Merged by PR #36 Â· **P0** Â· **Area:** engine / file safety
 
-- Added persisted per-job `queuePosition` with SQLite migration v10.
-- Converted the queue channel into a scheduler wake signal; the scheduler now starts the lowest-position queued job.
-- Added atomic `PUT /api/queue/order` exact-set reordering for queued jobs.
-- Added `POST /api/jobs/{id}/next` for an explicit “Download next” priority action.
-- Added `PUT /api/jobs/{id}/items` for exact-set playlist item reordering using durable original playlist indexes.
-- Reordered playlist items keep contiguous runtime queue indexes while original playlist indexes continue to drive filenames and MP3 track metadata.
-- Queue order and playlist item order persist across restart.
-- Resumed paused jobs join the end of the queued-job order.
-- Reorder APIs reject active/non-queued work, so already-active downloads are never moved unexpectedly.
-- Added nested `@dnd-kit` sortable surfaces for queued jobs and queued playlist items, with keyboard-accessible drag handles.
-- Added backend regression coverage for scheduler priority, “Download next,” queue persistence, and playlist item-order persistence.
-- Added frontend coverage for persisted queue rendering, drag handles, and “Download next.”
-- Validation: CI run `35551920569` passed frontend type-check/build, Bun integration tests, Go tests, Go vet, and Windows production build.
+Before M2.2, adaptive MP4/WebM outputs were renamed without `Sync`, `publishOutput` wrote directly to final user-visible names, and several paths reused existing files without verifying their size.
 
-### P1.8 Retry one playlist item
+#### Scope
 
-**Status:** [x] Complete
+- Write every output as `.part`, then `fsync` â†’ `close` (error checked) â†’ `rename` â†’ `fsync` the directory.
+- Publish through a temporary name in the destination folder.
+- Always verify the expected size before reusing an existing final file.
+- `published-only` should `rename` when source and destination are on the same volume instead of copying then deleting multi-GB files (`output.go:209`, `worker.go:1160`).
 
-A single failed or cancelled playlist entry can now be retried without re-running the successful playlist entries.
+**Progress (2026-09-23):** Merged by [PR #36](https://github.com/ajbergh/yt-dl-go/pull/36) (`a1bc45c`) after the Go tests, race tests, browser end-to-end checks, CodeQL, and Linux, Windows, and macOS builds passed. Media and caption outputs now finalize from temporary names with checked sync/close and durable rename/publication. Existing transfer files are reused only when a known expected size matches; adaptive mux outputs are rebuilt because their final size is unknown until muxing completes. `published-only` moves the managed file into the destination directory when possible, with a synced copy fallback for cross-volume moves. POSIX directory entries are synced; Windows uses `MoveFileExW` with `MOVEFILE_WRITE_THROUGH` because directory handles cannot be synced there.
 
-#### Implemented
+### M2.3 Resume on every transfer path
 
-- Added durable `POST /api/jobs/{id}/retry-item` with a one-based queue `index`.
-- Endpoint is limited to stopped playlist jobs and failed/cancelled queue rows.
-- Retry intent is persisted on the queue item through existing `queue_items` JSON.
-- Worker detects retry mode and executes only the marked playlist item.
-- Valid finalized sibling files remain intact, including their existing file IDs.
-- Successful sibling items are skipped rather than re-downloaded.
-- Non-target failed/cancelled sibling state is preserved during a targeted retry.
-- Original `playlistIndex` still drives output naming and MP3 track metadata.
-- Targeted retry state survives restart and resumes as a targeted retry.
-- Retry intent is cleared after the job reaches a terminal state.
-- Queue UI exposes a per-row **Retry item** action only where the backend contract allows it.
-- Backend regression coverage verifies isolated retry execution, sibling-file preservation, invalid completed-item rejection, and restart persistence.
-- Frontend regression coverage verifies the row-level action and request payload.
-- Validation: CI run `35552251892` passed frontend type-check/build, Bun integration tests, Go tests, Go vet, and Windows production build.
+**Status:** [x] Merged by PR #37 Â· **P1** Â· **Area:** engine
 
-### P1.9 Bandwidth limiting
+Before this work, only native adaptive ranges resumed. Progressive video, M4A, and MP3 source streams restarted from zero, and `download_parts` was write-only. Adaptive resume trusted `.part` size without validating source identity or acquisition method.
 
-**Status:** [x] Complete
+#### Scope
 
-Optional application-level bandwidth control is now available for long-running batch jobs.
+- [x] Use HTTP Range resume for progressive and audio streams when the source has a known length and a resolvable media URL.
+- [x] Use per-track `download_parts` checkpoints to validate itag, expected length, source fingerprint, path, and acquisition method before appending.
+- [x] Confirm and prevent the browser SABR crash-recovery hazard: tag browser parts and discard incomplete browser-acquired bytes instead of appending native ranges.
 
-#### Implemented
+**Progress (2026-09-23):** Merged by [PR #37](https://github.com/ajbergh/yt-dl-go/pull/37) (`29b745f`) after the full source-validation rerun, Go and frontend analysis, CodeQL, and Linux, Windows, and macOS package builds passed. The first race-test run hit a timeout in the existing cancellation-queue test; a second full source-validation run and the rerun both passed, and the focused test passed locally.
 
-- Added persisted `bandwidthLimitBytesPerSec` application setting with SQLite migration v11.
-- `0` remains the backward-compatible and UI-default unlimited mode.
-- Added a 1 GiB/s validation ceiling and rejects negative limits.
-- Added one shared FIFO token bucket for all active Go-managed media transfers.
-- Each transfer receives a bounded grant and re-enters at the back of the queue, providing round-robin fairness under contention.
-- Progressive video, original M4A, MP3 source downloads, adaptive range downloads, and adaptive audio-source downloads all use the shared limiter.
-- Local transcoding/muxing and local published-file copies are not throttled because the setting represents inbound download bandwidth.
-- Browser-assisted adaptive capture is bypassed while limited because Chrome network traffic cannot be accurately accounted by the Go limiter; the existing Go range path is used instead.
-- Settings changes update the live limiter immediately, including active transfers.
-- Added Settings UI in MiB/s with `0 = Unlimited`.
-- Added deterministic limiter tests for FIFO fairness, cancellation, and switching to unlimited without timing-dependent throughput assertions.
-- Added API validation, SQLite restart-persistence, and frontend preference coverage.
-- Validation: CI run `35553564877` passed frontend type-check/build, Bun integration tests, Go tests, Go vet, and Windows production build.
+### M2.4 Deterministic output naming and richer tokens
 
----
+**Status:** [x] Merged by PR #38 Â· **P1** Â· **Area:** engine / output
 
-# Milestone 4 — Real-time UX and desktop polish
+Naming tokens are replaced by iterating a Go map (`output.go:165-169`), and map order is random. A title containing `{channel}` or `{resolution}` can therefore produce different filenames from run to run.
 
-## P1.10 Server-Sent Events for job updates
+#### Scope
 
-**Status:** [x] Complete
+- Do a single-pass tokenizer with a fixed order that never re-expands substituted values.
+- Add tokens: `{id}`, `{upload_date}`, `{playlist}`, `{index}`, `{ext}`, `{fps}`, `{codec}`.
+- Show a live filename preview in Settings.
+- Make output file and folder permissions configurable. Today they are `0600`/`0700` (`output.go:187, 202`), which can hide media from Plex, Jellyfin, or other users on Linux/macOS.
 
-The UI now uses authenticated Server-Sent Events for near-real-time job/settings updates instead of polling the full job list approximately every 1.8 seconds.
+**Progress (2026-09-23):** Merged by [PR #38](https://github.com/ajbergh/yt-dl-go/pull/38) (`3029525`) after two full source-validation runs, Go/frontend analysis, CodeQL, and Linux, Windows, and macOS builds passed. The backend uses a single-pass tokenizer for all 11 tokens; substituted title/channel text is never re-expanded. The Settings preview uses matching token expansion, sanitizing, and extension behavior. Schema migration v17 persists published file/folder modes in both settings and queued jobs; defaults remain private (`0600`/`0700`), and the modes apply to published media, captions, and destination directories. Local browser E2E and Bun unit execution were unavailable because Chrome/Chromium and Bun are not installed; CI ran both.
 
-#### Implemented
+### M2.5 Bound SABR capture memory
 
-- Added a bounded in-process event broker with monotonically increasing event IDs.
-- Added authenticated `GET /api/events` using `text/event-stream`.
-- Every connection receives an initial `snapshot` with current jobs and persisted settings.
-- Emits `job-created`, throttled `job-progress`, `job-status`, `job-file-finalized`, `job-error`, `job-deleted`, and `settings-changed`.
-- Progress events are throttled per active item to avoid turning transfer callbacks into an event flood.
-- Added 20-second heartbeat comments for idle connections.
-- Slow clients use a bounded buffer; an overloaded client drops older state rather than blocking download workers.
-- Frontend consumes SSE through authenticated `fetch`, preserving bearer-header support that native `EventSource` cannot provide.
-- The previous 1.8-second polling loop is removed; a 30-second full-job reconciliation remains as repair/fallback for dropped events.
-- Stream closure/protocol failure triggers automatic reconnect with visible degraded-state messaging.
-- SSE streams are exempt from the normal 30-second response write deadline; a regression test protects long-lived connections.
-- Added backend coverage for authentication, framing, initial snapshot, job-created delivery, and streaming lifetime.
-- Added frontend coverage proving live progress is applied without repeated full-list polling.
-- Validation: CI run `35555097968` passed frontend type-check/build, Bun integration tests, Go tests, Go vet, and Windows production build.
+**Status:** [x] Merged by PR #39 Â· **P1** Â· **Area:** engine
 
-### P2.1 System notifications
+Out-of-order SABR segments accumulate in `capture.ready` with no aggregate limit (`sabr.go:385`). The budget is checked per segment (`sabr.go:298`) and at write time (`sabr.go:450`), not across the buffer, so a missing first sequence can hold a whole track in RAM.
 
-**Status:** [x] Implemented
+#### Scope
 
-The browser UI already contained the full notification path; this roadmap item was stale documentation/status rather than missing product behavior.
+- Cap the ready-buffer size in bytes, spilling to disk or failing over to the range path.
+- Re-evaluate `maxSABRParts = 10000` (`sabr.go:25`) for multi-hour 4K responses.
 
-Implemented behavior:
+**Progress (2026-09-23):** Merged by [PR #39](https://github.com/ajbergh/yt-dl-go/pull/39) (`ee6f120`) after two complete source-validation runs, Go/frontend analysis, CodeQL, and Linux, Windows, and macOS package builds passed. Out-of-order `capture.ready` bytes are capped at 64 MiB; overflow fails browser capture so existing cleanup can fall through to native HTTP ranges. Byte accounting is released on ordered flush and reset with short-candidate state. The UMP part-count guard is 100,000; the 32 MiB per-part and 128 MiB browser response limits remain. Tests cover cap rejection, flush/reset accounting, range fallback, and parser boundaries. This limit covers `capture.ready`, not all process memory used by the browser response buffer or a fragment currently being assembled.
 
-- persisted `notificationsEnabled` preference in SQLite-backed application settings
-- explicit opt-in toggle in Settings
-- notification permission is requested only when the user enables the feature
-- permission denied/unavailable states are surfaced in the UI without breaking download behavior
-- live SSE job transitions are compared against the prior known job status so initial hydration/snapshots do not emit duplicate alerts
-- completed single downloads emit **Download completed**
-- completed playlists/batches emit **Batch completed**
-- failed jobs emit **Download failed**
-- partially completed playlists emit **Playlist partially completed** with completed/total counts
-- storage/output/disk/filesystem failures receive the higher-priority **Download storage error** notification
-- notification tags include job ID + terminal status to keep OS/browser deduplication scoped to the transition
+### M2.6 Higher-quality audio for adaptive MP4
 
-Scope note: these are browser/OS Notification API alerts and therefore require the UI/browser session to remain open. Native background notification delivery is intentionally not part of P2.1; that concern belongs with P2.2 tray/background mode.
+**Status:** [x] Merged by PR #40 Â· **P1** Â· **Area:** engine / quality
 
-Validation coverage includes permission gating/persistence, suppression of initial snapshot notifications, live terminal-transition delivery, and direct assertions for all four roadmap notification classes.
+Adaptive H.264 MP4 output takes its AAC track from the progressive itag-18 stream, about 96 kbps (`worker.go:1811-1814`). That is a documented workaround for mid-range rejection of adaptive AAC URLs. Meanwhile, the channel count is taken from `selection.audio` (`worker.go:2235`).
 
-### P2.2 Background mode / native tray investigation
+#### Scope
 
-**Status:** [x] Investigation complete; background mode implemented, native tray deferred
+- Try itag 140 (or the best AAC) through the browser/range path first, and fall back to itag 18 with a job note.
+- Take the audio metadata from the track actually muxed.
+- Add a test for channel-count consistency.
+**Progress (2026-09-24):** Merged by [PR #40](https://github.com/ajbergh/yt-dl-go/pull/40) (`0d637bb`). The selected adaptive AAC is tried through browser capture/native ranges first; only retryable read failures (or unknown AAC length) select the verified H.264/AAC progressive fallback, with a job note. Mux metadata follows the source actually downloaded, and the budget reserves the larger known source. Selection, preferred/fallback acquisition, non-read error handling, mux metadata, budget, and browser AAC policy are covered. Go tests, race tests, vet (including E2E tag), frontend checks, CodeQL, browser E2E, and Linux/Windows/macOS package builds passed. One initial race run hit the existing 15-second cancellation-test timeout; the repeated full validation passed.
 
-The existing service already supported headless startup through the internal `NO_BROWSER=1` environment switch. This work promotes that capability into a documented end-user runtime mode without changing the single-executable architecture.
+### M2.7 Browser session pooling and event-driven readiness
 
-#### Implemented
+**Status:** [x] Merged by PR #41 Â· **P1** Â· **Area:** engine / performance
 
-- Added supported `--background` and `--no-browser` runtime arguments.
-- Both modes suppress automatic browser launch while leaving the local HTTP service, scheduler, and download workers running normally.
-- The process remains foreground-owned rather than silently daemonizing; Ctrl+C / normal process signals retain the existing graceful shutdown and resumable-job behavior.
-- The service logs the browser UI URL so the user can open it manually at any time.
-- `NO_BROWSER=1` remains supported for CI and existing automation.
-- Unknown command-line arguments are rejected instead of being silently ignored.
-- Added platform-independent regression coverage for default browser launch behavior, both runtime aliases, legacy environment compatibility, and unknown-argument rejection.
-- Updated root/backend/packaging documentation.
+- `browserFactory` is called per adaptive item (`worker.go:1971, 2106`). Each item owns a Chrome process. `Prepare` has 8 seconds of fixed sleeps plus nested JavaScript timers (`browser_provider.go:195-238`), so up to 6 items can each start a Chrome and wait serially.
+- A capture has a byte-aware deadline capped at 45 minutes and may be retried twice per track; serial MP4 video/audio can repeat that path for each track before native fallback.
 
-#### Native tray decision
+#### Scope
 
-A native tray was investigated rather than adopted blindly. The strongest current zero-CGO candidate is `github.com/gogpu/systray` v0.3.0 (released August 30, 2026), which supports Windows, macOS, and Linux and builds with `CGO_ENABLED=0`. That makes it architecturally compatible with the project's single-binary packaging model.
+- Keep one long-lived headless browser per process with one tab per item, shut down after idle.
+- Replace sleeps with player-state/CDP events.
+- Cap browser-path time per item (e.g. a few minutes of no progress means fall back).
+- Deduplicate `CaptureTrack`/`CaptureTracks` (about 150 duplicated lines, `browser_provider.go:229-531`).
 
-It is **not** being added to production yet. As of September 21, 2026, the upstream project still has open correctness work around menu dispatch while a menu is being rebuilt and macOS double-click dispatch, with fixes pending review. A tray integration would also need real desktop-session validation beyond ordinary headless package builds.
+**Progress (2026-09-24):** Merged by [PR #41](https://github.com/ajbergh/yt-dl-go/pull/41) (`4a1134d`). The service now owns one pooled Chrome process with independent per-item tab leases, two-minute idle shutdown, and service-shutdown cleanup. Preparation's fixed sleeps and nested timers are replaced by bounded metadata and playing-state waits. Single- and dual-track capture share setup, attachment, progress/stall monitoring, keep-alive, completion, and cleanup logic. The one-minute no-progress timeout remains enforced per browser attempt (two attempts maximum per track); byte-aware transfer deadlines remain for active captures. Six-way lease isolation, idle restart/shutdown, Go/race tests, vet, browser E2E, CodeQL, and Linux/Windows/macOS package builds passed. An initial lint run identified an obsolete constructor, which was removed before the green reruns.
 
-Revisit native tray UI when:
+### M2.8 Extraction resilience against YouTube changes
 
-1. the relevant upstream fixes are released and stable;
-2. Windows/macOS/Linux tray creation + menu actions can be exercised on real desktop runners or hardware;
-3. adding the dependency does not regress P2.6 CGO-free packaging;
-4. background notifications can be designed coherently with P2.1 rather than duplicating browser notifications.
+**Status:** [!] Core and synthetic drift tests merged; captured samples await verified redistribution rights Â· **P1** Â· **Area:** engine / resilience
 
-Until then, the supported background/no-browser mode provides long-running batch operation without introducing a fragile desktop shell dependency.
+- Native extraction uses `kkdai/youtube/v2`; before M2.8 it was forced to `AndroidClient`, and range requests hard-coded that profile's User-Agent and Origin. One upstream break could stop every download.
+- Browser preparation now uses player API calls and no longer depends on the Settings/Quality DOM text; consent dismissal still checks English labels (`browser_provider.go:199-208`).
+- SABR/UMP decoding uses hand-coded protobuf field numbers (`sabr.go:16-20, 736-767`).
 
-### P2.3 Release metadata, update notification, and automatic updater
+#### Scope
 
-**Status:** [~] Safe release foundation implemented; automatic self-update deferred
+- Put an `extractor` interface in front of kkdai with ordered supported client profiles (Android â†’ iOS â†’ embedded-player â†’ web) and automatic fallback. The pinned dependency exports no TV client profile; do not invent one without a verified implementation.
+- Run a startup/self-test capability probe and report it in `/api/health`.
+- Make browser automation locale-independent (use `hl=en` or player API calls instead of DOM text).
+- Build a recorded-fixture corpus of player responses and UMP streams, with drift tests that fail loudly when the format changes.
+- Keep kkdai upstream releases monitored through Dependabot (weekly Go-module updates are already configured).
 
-#### Implemented
+**Progress (2026-09-25):** The extractor profiles, serialized profile selection, profile-matched stream/range requests, safe resume validation, local health probe, and `hl=en` browser locale merged as [PR #42](https://github.com/ajbergh/yt-dl-go/pull/42) (`79c4405`). [PR #43](https://github.com/ajbergh/yt-dl-go/pull/43) added synthetic parser/assembly fixtures with provenance; synthetic drift coverage merged in [PR #50](https://github.com/ajbergh/yt-dl-go/pull/50) (`8f805c1`). The implementation and synthetic matrix are complete. The only remaining gate is captured player/UMP fixtures whose redistribution rights are documented. Repository and source review found no verified, redistributable captures, so none were added. Existing fixtures remain explicitly synthetic in `src/server/testdata/youtube/PROVENANCE.md`. M2.8 stays open; M3.5 is being taken next while this external sample-rights dependency is unresolved. Weekly Go Dependabot already covers the dependency.
 
-- immutable build metadata (`version`, source `commit`, `buildDate`) exposed through `/api/health`
-- release metadata injected by both Windows and Unix build scripts; local/branch builds remain `dev`
-- bounded authenticated `GET /api/update` latest-release discovery
-- development builds skip external update checks entirely
-- stable semantic-version comparison and draft/prerelease rejection
-- strict release-link allowlist for this repository's GitHub Releases
-- Settings UI showing current build metadata, latest stable version, and update-available link
-- update discovery is non-blocking and never affects downloader/service readiness
-- tag-driven `vMAJOR.MINOR.PATCH` release workflow that requires the tag to exactly match `package.json`
-- release workflow stops at a draft GitHub Release so update discovery cannot advertise packages before human publication review
-- packaged `--version` command reports embedded version, source commit, and build timestamp without starting the service
-- durable `docs/RELEASES.md` runbook covering provenance verification, native signing/notarization gates, publication, and rollback
-- full source/test/browser validation before release packaging
-- Windows, Linux amd64/arm64, and macOS amd64/arm64 release packages
-- individual SHA-256 files plus canonical `SHA256SUMS.txt`
-- GitHub OIDC build-provenance attestations for release archives and checksum manifest
-- unit coverage for semantic versions, development-build network suppression, response-size limits, stable-release validation, unsafe URL rejection, and development API metadata
-- frontend integration coverage for build metadata and update-available UI
+### M2.9 Bandwidth limiter improvements
 
-#### Intentionally deferred
+**Status:** [~] Â· **P2** Â· **Area:** engine
 
-Automatic download/replacement is **not** implemented. GitHub provenance attestations are signed supply-chain evidence but are not substitutes for Windows Authenticode or Apple Developer ID/notarization.
+- Any bandwidth limit turns off browser HD capture entirely (`worker.go:1773, 1891`).
+- The limiter polls every 5 ms (`bandwidth.go:281`).
+- Changing from unlimited to limited mid-transfer is ignored, because the reader is chosen when the transfer starts (`bandwidth.go:342`).
 
-Before self-update can be enabled, require:
+#### Scope
 
-1. OS-native signing/notarization credentials and verification;
-2. checksum plus signature/provenance verification of the downloaded platform artifact;
-3. atomic replacement semantics for Windows/Linux/macOS;
-4. preservation of the known-good previous executable;
-5. restart health verification and automatic rollback;
-6. explicit user update policy/opt-in and actionable recovery errors.
+- [x] Always wrap readers so limit changes apply live.
+- [x] Replace polling with timer-based waits.
+- [x] Investigate CDP `Network.emulateNetworkConditions` so browser capture can stay on under a limit.
 
-Until those conditions are satisfied, an available update opens the validated GitHub Release for manual installation rather than modifying the running executable.
+**Progress (2026-09-23):** Live native reader wrapping and timer-based FIFO waits merged in [PR #44](https://github.com/ajbergh/yt-dl-go/pull/44) (`22f4634`). Limit changes wake queued transfers immediately; wait timers target a useful chunk rather than polling, and context cancellation still removes waiters. Regression coverage exercises a reader created while unlimited, immediate release when switched back to unlimited, and sub-nanosecond delay progress. CDP network emulation is available through the leased target's scoped CDP context, but its download limit is per target. Applying the configured server-wide cap independently to multiple browser targets would permit aggregate throughput above the setting, and native transfers would remain outside that CDP accounting. Browser capture therefore remains disabled while a cap is active until a shared arbiter can account for browser and native traffic together. The full Go suite, lint, vet, race suite, CodeQL, and Linux/Windows/macOS builds all passed in PR #44 CI; the local Windows race run requires cgo, which is disabled in this environment.
 
-#### Validation
+### M2.10 Outbound proxy support
 
-CI run `35659497292` passed frontend type-check/build, Bun integration tests, Go tests, Go vet, real-browser E2E, Windows production build/package/upload, Linux amd64 + arm64 packages, and macOS amd64 + arm64 packages. This run includes the release-metadata linker injection path on every platform build script.
+**Status:** [~] Â· **P2** Â· **Area:** network
 
-The tag-only `.github/workflows/release.yml` is intentionally not executed by branch CI; it reuses the same validated build scripts and adds exact tag/package-version validation, package checksum verification, GitHub OIDC provenance attestations, canonical `SHA256SUMS.txt`, and **draft** GitHub Release creation. A human publication step is required before update discovery can surface the release.
+The media transport sets `Proxy: nil` (`network.go:137`), so users behind a corporate or HTTPS proxy cannot download at all. The update client, by contrast, uses the default proxy-aware transport.
 
-Follow-up release-publication hardening adds regression coverage for the `--version` runtime option; ordinary branch CI validates the Go/frontend behavior while the tag-only publication path remains gated to release tags.
+#### Scope
+
+- [x] Add opt-in `HTTPS_PROXY` support for native YouTube metadata, media, thumbnail, and caption requests. Accept HTTP or HTTPS CONNECT proxies from the environment; do not persist proxy credentials in Settings or SSE payloads.
+- [x] Resolve and validate all target addresses before CONNECT, send CONNECT to a checked public IP, and retain the original hostname for TLS SNI and certificate validation.
+- [ ] Decide whether browser-assisted Chrome downloads also need proxy support; Chrome currently follows its own direct networking path.
+
+**Progress (2026-09-23):** Native `HTTPS_PROXY` support merged in [PR #45](https://github.com/ajbergh/yt-dl-go/pull/45) (`1c1afa8`). `HTTPS_PROXY` and lowercase `https_proxy` accept HTTP or HTTPS proxy URLs. Native requests resolve every target address and reject private, reserved, or mixed answers before contacting the proxy; CONNECT targets a checked public IP, then TLS validates the original hostname. Proxy credentials remain only in the environment and CONNECT header. The README documents coverage and the current Chrome limitation. The strict pre-CONNECT validation avoids letting the proxy resolve an unchecked target, while the explicit proxy endpoint itself is trusted configuration and may be private. Proxy/guard regression tests, the full Go suite, `go vet`, `golangci-lint`, race checks, CodeQL, and Linux/Windows/macOS builds passed. Chrome-assisted traffic still follows its direct networking path; decide whether to include it before marking M2.10 complete.
 
 ---
 
-# Milestone 5 — Format expansion
+# Milestone 3 â€” Media and metadata features
 
-## P1.11 Subtitle/caption extraction
+### M3.1 Metadata for MP4, M4A, and WebM
 
-**Status:** [x] Implemented
+**Status:** [x] Merged by PR #46 (`17f0bb0`) Â· **P1** Â· **Area:** engine / media
 
-Add opt-in subtitle/caption download for owned/authorized content.
+MP3, MP4/M4A, and WebM outputs now receive supported metadata and cover art.
 
-#### Implemented scope
+#### Scope
 
-- Video inspection enumerates validated YouTube caption tracks and exposes language labels plus auto-generated/manual status to the UI.
-- Download drafts can opt into one caption language and choose WebVTT or SubRip (SRT); no caption is downloaded unless explicitly selected.
-- Manual captions are preferred over auto-generated ASR when YouTube exposes both for the same language.
-- WebVTT is fetched through the guarded native HTTP path with a strict HTTPS YouTube timed-text allowlist, redirect rejection, a 5 MiB response ceiling, and no signed caption URL persistence.
-- SRT conversion is implemented in-process in Go; no FFmpeg or other caption binary is required.
-- Caption sidecars are stored beside the managed media name and, when output publishing is enabled, beside the published media using the same resolved output basename.
-- Managed job ZIP downloads include finalized caption sidecars.
-- Playlist inspection samples an accessible item for caption language choices; the worker resolves the selected language independently for each item. Missing or failed captions are recorded as per-file warnings and do not discard otherwise valid media.
-- Caption configuration and finalized sidecar metadata persist through SQLite schema migration v13 and are retained by retry/restart flows.
-- Managed/published deletion semantics, storage accounting, restart byte-budget accounting, Library search/stats/status badges, and health capability reporting include caption sidecars.
-- Backend tests cover language/URL validation, manual-vs-ASR selection, WebVTT-to-SRT conversion, publishing, ZIP inclusion, and unsafe language rejection. Frontend integration coverage verifies caption selection and job payloads.
+- [x] MP4/M4A `moov/udta/meta/ilst`: title, artist, album, date, comment/source URL, and JPEG/PNG `covr`.
+- [x] WebM `Tags` plus a cover attachment.
+- [x] Pure Go only.
 
-#### Validation
+**Progress (2026-09-24):** Merged by [PR #46](https://github.com/ajbergh/yt-dl-go/pull/46) (`17f0bb0`). CI passed on Linux, Windows, and macOS, including race tests, CodeQL, and production builds. MP4/M4A metadata and WebM tags/attachments are rewritten atomically with pure Go; unsupported fragmented MP4 and over-budget rewrites preserve the original media.
 
-- CI run `35559277729` passed frontend type-check/build, Bun integration tests, Go tests, Go vet, the Windows production build, and Windows artifact upload.
+### M3.2 Chapters
 
-## P2.4 1440p and 2160p support
+**Status:** [~] MP3 chapter splitting merged; M4A/caption handling remains Â· **P1** Â· **Area:** engine / media
 
-**Status:** [x] Implemented
+The current metadata pipeline has no chapter model. YouTube chapter timestamps are available in the description, but parsing, Library persistence, container writing, and preview navigation need to be added.
 
-This is an engineering project, not merely a quality-dropdown change. YouTube commonly uses VP9/AV1 video and Opus audio for higher resolutions, so the implementation adds an explicit codec/container strategy instead of pretending every quality can remain H.264/AAC MP4.
+#### Scope
 
-#### Implemented
+- [x] Parse chapters from video metadata and store them with the Library item.
+- [x] Write MP4 Nero `chpl` atoms and WebM `Chapters`.
+- [x] Show chapters in the preview player.
+- [~] Offer opt-in MP3 chapter splitting; M4A splitting and chapter-clipped caption sidecars remain open.
 
-1. Added `1440` and `2160` quality ceilings across the API, persisted settings, inspection metadata, TypeScript quality model, and UI labels. Quality remains a ceiling rather than an upscale guarantee.
-2. Preserved the existing compatibility-oriented H.264 + AAC adaptive MP4 path through 1080p.
-3. Added adaptive WebM selection for VP9 and AV1 video with Opus audio. At equal height/frame rate VP9 is preferred for broader native decoder compatibility; AV1 remains available when it is the better or only high-resolution representation.
-4. Added a streaming, pure-Go WebM remuxer using `github.com/at-wat/ebml-go v0.19.3`. Separate YouTube video/audio WebMs are parsed incrementally and timestamp-interleaved into seekable WebM without decoding, transcoding, CGO, FFmpeg, or loading the complete media into memory.
-5. Preserved Opus codec-private metadata, codec delay, seek pre-roll, video dimensions, keyframe flags, and timestamps in finalized WebM output.
-6. Extended browser-assisted adaptive authorization so playback targeting is codec-aware for H.264, VP9, AV1, and Opus rather than globally forcing H.264.
-7. High-resolution video and audio tracks use the existing resumable bounded-range downloader and browser fallback. Both tracks are independently completion-verified before remuxing.
-8. Added safe fallback semantics: if adaptive high-resolution acquisition or WebM validation/remuxing fails and a verified progressive MP4 exists, the job falls back to that complete file and records the downgrade in the job note instead of returning corrupt or partial media.
-9. Updated storage budgeting for separate WebM video + Opus audio sources.
-10. Added unit coverage for 1440p VP9 selection, 2160p AV1 selection, VP9-over-AV1 tie-breaking, codec-aware browser policy, WebM storage estimates, VP9/Opus remuxing, track metadata preservation, frame counts, and rejection of unsupported WebM codecs.
-11. Added the `ebml-go` Apache-2.0 license and third-party notice. Windows/Linux/macOS packaging now includes the complete `licenses/` directory so packaged notice links remain valid.
-12. Updated root/server documentation to describe 1440p/4K behavior, the MP4/WebM strategy, browser requirements, fallback semantics, and the expanded quality values.
+**Progress (2026-09-24):** Chapter parsing, Library/SQLite persistence, MP4/WebM chapter metadata, and preview navigation merged by [PR #47](https://github.com/ajbergh/yt-dl-go/pull/47) (`15f9369`). Opt-in MP3 chapter splitting merged by [PR #48](https://github.com/ajbergh/yt-dl-go/pull/48) (`8ae44e0`): one AAC decode pass writes individually tagged chapter MP3s, queue items expose the grouped file IDs for ZIP save, and grouped outputs persist through SQLite and restart normalization. The one-file default and original M4A path remain unchanged; M4A splitting and chapter-clipped captions remain open scope. Full CI passed on the merged PR, including Go/race tests, Bun UI tests, browser E2E, lint, vulnerability scanning, vet, CodeQL, and Linux/Windows/macOS builds.
 
-#### Codec/container policy
+### M3.3 Embedded subtitles and thumbnails
 
-| Requested path | Video | Audio | Final container |
-| --- | --- | --- | --- |
-| Progressive compatibility | Source combined stream | Source combined stream | MP4 or WebM |
-| Adaptive compatibility | H.264 | AAC | MP4 |
-| Adaptive high resolution | VP9 preferred at equal resolution; AV1 supported | Opus | WebM |
+**Status:** [ ] Â· **P2** Â· **Area:** engine / media
 
-P2.5 remains the place for user-selectable codec/container preferences such as explicit AV1 preference or compatibility-only output. P2.4 keeps those choices automatic.
+Subtitles are sidecar-only, and thumbnails are embedded only in MP3.
 
-#### Validation
+#### Scope
 
-- PR CI run `35617803735` passed frontend type-check/build, Bun integration tests, Go tests, Go vet, real-browser E2E, Windows production build/package/upload, Linux amd64 + arm64 production package/upload, and macOS amd64 + arm64 production package/upload.
-- Earlier CI iterations exposed and fixed: the missing module checksum, a generated browser codec-script compile error, an interleaved WebM-reader test deadlock, YouTube JSON `contentLength` fixture encoding, the legacy test that treated 2160p as unsupported, and a pre-existing Windows timing limit in the 151-item playlist fixture. The Windows fix changes only test timeout/wait behavior, not production scheduler semantics.
-- The opt-in live-download harness already accepts `YTDL_LIVE_MIN_HEIGHT=1440` or `2160` for authorized real-media verification. It remains intentionally outside normal CI because it depends on current YouTube delivery behavior and downloads real media.
+- Optionally embed captions as an MP4 `tx3g`/`wvtt` track or a WebM WebVTT track.
+- Embed cover art in every container (depends on M3.1).
+- Offer **Publish sidecar artwork** (`cover.jpg` / `<name>.jpg`), which was deferred in v1 P1.1.
 
-### P2.5 Advanced codec/container selection
+### M3.4 Opus audio passthrough and more audio formats
 
-**Status:** [x] Implemented
+**Status:** [ ] Â· **P2** Â· **Area:** engine / media
 
-Added an explicit video output-strategy model on top of the validated P2.4 high-resolution codec/container pipeline.
+`selectAudioFormat` is AAC-only (`worker.go:393`), even though Opus is usually YouTube's best audio. MP3 conversion is lossy-to-lossy from a roughly 128 kbps source and runs single-threaded (`audio.go:82-106`).
 
-#### User-facing strategies
+#### Scope
 
-- **Best quality · automatic** — preserves the P2.4 automatic selection policy and chooses the highest supported representation under the selected quality ceiling.
-- **Compatibility MP4 · H.264/AAC** — strict MP4 mode. It selects only progressive H.264/AAC MP4 or adaptive H.264 video + AAC audio and never silently emits WebM.
-- **Prefer VP9 · WebM** — selects VP9 + Opus when available under the quality ceiling; otherwise falls back to the automatic best-supported representation and records that fallback in the job note.
-- **Prefer AV1 · WebM** — selects AV1 + Opus when available under the quality ceiling; otherwise falls back to the automatic best-supported representation and records that fallback in the job note.
-- **Original audio** remains the existing **Audio only → M4A · original AAC** workflow rather than being duplicated as a video-format option.
+- **Audio only â†’ Opus Â· original**: remux the WebM Opus stream to `.opus`/`.webm` with no transcode.
+- Show a UI hint that M4A/Opus originals beat MP3 for quality.
+- Parallelize or stream MP3 encoding so it does not need a full source download first.
 
-#### Persistence and API behavior
+### M3.5 Bulk retry and queue editing
 
-1. Added durable `videoStrategy` job state and `defaultVideoStrategy` application settings.
-2. Added SQLite schema migration **V14** for `jobs.video_strategy` and `app_settings.default_video_strategy`, both defaulting to `best` for existing databases.
-3. New video jobs capture the explicit strategy or inherit the current default; audio-only jobs reject video strategies.
-4. Whole-job retries preserve the original strategy.
-5. Existing stored jobs/settings hydrate safely to `best` when no strategy was previously recorded.
-6. Strategy is independent from the quality ceiling: for example, `2160 + compatibility` can legitimately produce 1080p MP4 when no higher H.264/AAC representation exists.
-7. The automatic `best` policy retains the P2.4 safety invariant that adaptive H.264/AAC MP4 participates automatically only when the verified progressive MP4 fallback required by that path exists. Explicit Compatibility MP4 may attempt the strict adaptive MP4 pair because the user explicitly selected that policy.
+**Status:** [x] Implemented Â· **P1** Â· **Area:** backend / UX
 
-#### UI
+**Progress (2026-10-24):** Retained the local M3.5 implementation and reconciled it with current main. The queue supports retrying all failed playlist items, bounded bulk pause/resume/cancel/delete requests, editing queued or paused settings, and add-as-paused. Partial deletion retains failed selections. Reconfiguration clears unfinished resumable output while preserving finalized siblings; single and bulk lifecycle actions share persistence and reader guards. API documentation and regression tests accompany the implementation.
 
-- Added **Video format** to each inspected video item.
-- Added a batch **Apply video format to all** control.
-- Added **Default video format** to Settings.
-- Queue rows display both the quality ceiling and selected strategy.
-- Context text explains strict MP4 behavior and VP9/AV1 preference fallback semantics without exposing raw itags, signed URLs, or codec implementation details.
+#### Scope
 
-#### Tests
+- Add **Retry all failed items** in a job.
+- Add bulk endpoints: pause/resume/cancel/delete for a set of job IDs.
+- Allow editing quality, format, and category for queued or paused jobs.
+- Add an add-as-paused / **Start immediately** toggle at queue time (from the mock).
 
-Coverage includes:
+### M3.6 Scheduled and watched sources
 
-- strict Compatibility MP4 selection
-- VP9 preference selection
-- AV1 preference selection
-- preferred-codec fallback marking
-- invalid strategy rejection
-- automatic P2.4 policy compatibility
-- default-setting validation and persistence
-- SQLite restart persistence for jobs/settings
-- audio-only strategy rejection
-- whole-job retry preservation
-- per-item and batch UI controls
-- non-default strategy submission from the UI
-- real-browser default strategy save + service-restart persistence
+**Status:** [ ] Â· **P3** Â· **Area:** product
 
-#### Validation
+These features are only for content the user owns or is permitted to download.
 
-CI run `35623299491` passed:
+#### Scope
 
-- frontend type-check/build
-- Bun integration tests
-- Go tests
-- Go vet
-- real-browser E2E
-- Windows production build/package
-- Linux amd64 + arm64 production packages
-- macOS amd64 + arm64 production packages
+- Download windows (e.g. only between 01:00 and 06:00).
+- Watched playlists/channels: periodically re-inspect a saved playlist URL and queue only new items, with explicit per-source opt-in and rights confirmation.
+- Depends on M1.1 so already-downloaded items can be deduplicated by video ID.
 
+### M3.7 Duplicate detection
+
+**Status:** [ ] Â· **P2** Â· **Area:** product
+
+#### Scope
+
+- Warn at inspect time when a video ID/format combination already exists in the Library.
+- Offer Skip, Download anyway, or Replace.
+- Default playlist behavior: skip items already in the Library.
 
 ---
 
-# Milestone 6 — Architecture and maintainability
+# Milestone 4 â€” Frontend architecture, UX, and accessibility
 
-## P1.12 Decompose `src/pages/home.tsx`
+### M4.1 Real routes and URL state
 
-**Status:** [x] Implemented
+**Status:** [ ] Â· **P1** Â· **Area:** frontend
 
-The production page previously owned service initialization, polling, queue state, inspection, settings, library state, job actions, and nearly all rendering in one ~1,479-line file.
+React Router has a single route (`routes.tsx:16-18`), and tabs are a `useState` (`home.tsx:35`). Refreshing the page resets to Queue, Back leaves the app, and nothing can be deep-linked.
 
-#### Implemented structure
+#### Scope
 
-```text
-src/
-  pages/
-    home.tsx
-    queue.tsx
-    library.tsx
-    settings.tsx
-  components/downloader/
-    view-model.tsx
-  hooks/
-    use-service.ts
-    use-jobs.ts
-    use-settings.ts
-```
+- Make `/queue`, `/library`, `/settings`, and `/library/:id` real routes, with filter and search state in the query string.
+- Lazy-load Settings and the dnd-kit queue surfaces.
 
-- `queue.tsx` owns add/inspect controls, batch controls, queue filters, queue rendering, and drag/drop presentation.
-- `library.tsx` owns Library filtering/layout, file cards, preview/save/filesystem controls, and scoped-delete presentation.
-- `settings.tsx` owns service status and all preference/output configuration rendering.
-- `use-service.ts` owns backend bootstrap, SQLite hydration, SSE updates, reconciliation, readiness/error state, and terminal notifications.
-- `use-jobs.ts` owns queue/job mutations, retries, preview/save tickets, filesystem actions, queue/playlist reordering, batch actions, and cleared-completed persistence.
-- `use-settings.ts` owns settings mutation/save behavior, folder selection, notification permission flow, and user-category management.
-- `view-model.tsx` centralizes downloader-specific view types, labels, formatting/selection helpers, thumbnail loading, and the sortable queue row.
-- `home.tsx` is reduced to roughly 450 lines and primarily coordinates derived queue/library state, inspection submission, top-level navigation/messages, and page composition.
-- Existing DOM labels/test selectors were intentionally preserved so the refactor remains behavior-compatible.
+### M4.2 Replace prop drilling with a store
 
-#### Validation
+**Status:** [ ] Â· **P1** Â· **Area:** frontend
 
-- CI run `35565686299` passed frontend type-check/build, Bun integration tests, Go tests, Go vet, the Windows production build, and Windows artifact upload.
+`HomePage` owns about 20 `useState` hooks and passes setters between hooks (`home.tsx:52-80`). `QueuePage` takes 47 props (`queue.tsx:17-64`), `LibraryPage` 21, and `SettingsPage` 20.
 
-## P1.13 Frontend dependency cleanup
+#### Scope
 
-**Status:** [x] Implemented
+- Add a small external store (`useSyncExternalStore` or Zustand; the lint config already expects `@/lib/store`).
+- Keep jobs in a `Map` keyed by ID, with selectors.
+- Track pending state per action and per job instead of a single `busyAction` string (`use-jobs.ts:48`).
 
-Audited the production frontend graph after P1.12 and removed the generated scaffold that was no longer part of the downloader application.
+### M4.3 Keep unsaved settings separate from server state
 
-Implemented:
+**Status:** [ ] Â· **P1** Â· **Area:** frontend / correctness
 
-1. Reduced direct runtime dependencies to React/ReactDOM, React Router, Tailwind, Geist, Lucide, and the three DnD packages used by the queue UI.
-2. Removed unused QueryClient, MotionConfig, Sonner, Radix confirmation-provider, Zustand placeholder-store, and generated shadcn-style UI layers from the production shell.
-3. Deleted 55 orphaned scaffold/helper files that were not reachable from the downloader entrypoint.
-4. Removed unused TanStack/managed-app aliases and dependency pre-bundling from Vite.
-5. Synchronized npm and Bun lockfile root dependency manifests.
-6. Preserved router/error-boundary/preview-diagnostic behavior and the downloader's existing DOM/test contract.
+`settings-changed` and `snapshot` SSE events overwrite the object the Settings form is editing (`use-service.ts:174-186`), so unsaved edits disappear silently. The `settings-changed` merge also bypasses `hydratedSettings`.
 
-Validation note: CI run `35566160345` passed frontend type-check/build, Bun integration tests, Go tests, Go vet, the Windows production build, and Windows artifact upload.
+#### Scope
 
-## P1.14 Browser end-to-end testing
+- Keep separate draft and server state.
+- Show a dirty indicator and an "unsaved changes" guard when navigating away.
+- On an external change, prompt the user instead of overwriting their draft.
 
-**Status:** [x] Implemented
+### M4.4 Render performance and lightweight progress events
 
-Added a real-browser E2E layer using headless Chrome plus the Chrome DevTools Protocol, avoiding another simulated DOM layer or a heavyweight browser-test runtime dependency.
+**Status:** [ ] Â· **P1** Â· **Area:** frontend + backend
 
-Coverage:
+- Every `job-progress` event carries a full job snapshot with all items, up to 5 Hz per active item (`worker.go:1069-1073`, `events.go:77`).
+- Each event triggers `setJobs` and re-renders all of `HomePage`, recomputing about 10 O(n) derivations. There are no `memo`/`useCallback` uses, and `filteredQueue` is not memoized (`home.tsx:302`).
+- Thumbnails are fetched again as blobs on every Library visit (`view-model.tsx:162-182`) without `loading="lazy"`.
 
-1. starts the actual Go executable against a private temporary data directory
-2. inspects a deterministic test-only YouTube fixture URL
-3. creates a real queued download through the browser UI
-4. pauses and resumes the live fixture stream through UI controls
-5. waits for real worker completion
-6. verifies the completed item appears in Library
-7. changes and saves settings through the UI/API
-8. restarts the Go service against the same SQLite/data directory and verifies settings + Library persistence after browser reload
-9. verifies destructive “Delete everywhere” opens an explicit browser confirmation before mutation and removes history only after acceptance
+#### Scope
 
-Implementation details:
+- **Backend:** send item-level progress deltas (`jobId`, `index`, bytes, speed, eta). Emit an explicit `resync` event when a slow client drops events, and support `Last-Event-ID` (event IDs currently reset on restart and dropped events are silent, `events.go:47-71`).
+- **Frontend:**
+  - Coalesce updates per animation frame.
+  - Memoize rows.
+  - Virtualize long queue and Library lists; a 151-item playlist renders 151 rows with about 6 buttons each.
+  - Collapse playlist groups by default.
+  - Serve thumbnails through cacheable `<img>` URLs with lazy loading.
+  - Defer search with `useDeferredValue`.
 
-- `scripts/browser-e2e.mjs` launches a tagged E2E service binary and drives installed Chrome/Chromium over CDP.
-- `src/server/e2e_fixture.go` is compiled only with the `e2e` build tag and supplies deterministic media metadata/bytes.
-- `src/server/e2e_fixture_disabled.go` makes the production build incapable of enabling the fixture through environment variables.
-- `NO_BROWSER=1` supports headless/CI startup without invoking the OS URL handler.
-- CI runs `npm run e2e:browser` after the fast frontend/Go test layers.
-- The first browser pass exposed and fixed a real custom-loopback-port bug: Vite's `crossorigin` asset requests carried the listener origin, but only the hard-coded 5173/8080 origins were accepted. Loopback listeners now automatically trust their own exact HTTP origin at the configured port while network-visible listeners still require explicit allowlists.
-- Later full-matrix runs exposed a lifecycle ordering race: the asynchronous worker could publish `paused` over SSE before the Pause HTTP acknowledgement returned its older `downloading` snapshot, allowing the UI to regress to stale state. Job-action merging now preserves newer SSE lifecycle states for pause/cancel/resume, and Go coverage exercises pause during an active stream read.
+### M4.5 Input ergonomics
 
-Validation note: CI run `35601658829` passed frontend type-check/build, Bun integration tests (including stale-action state regression coverage), Go tests/vet (including active-stream pause/resume), and the full real-Chrome E2E scenario.
+**Status:** [ ] Â· **P1** Â· **Area:** UX
 
-## P2.6 Cross-platform packaging
+- Pressing Enter in the URL field submits the *add* form (`queue.tsx:85,101`) and shows "Confirm you have permissionâ€¦" instead of inspecting. This is a real usability bug.
+- There is no paste detection and no URL drag-and-drop, and the only keyboard handler is at `settings.tsx:134`.
 
-**Status:** [x] Implemented
+#### Scope
 
-The CGO-free Go architecture now has reproducible packaging paths for Windows, Linux, and macOS.
+- Enter inspects.
+- Paste a YouTube URL anywhere to auto-inspect.
+- Drag and drop links and `.txt` URL lists.
+- Shortcuts: `/` focuses search, Esc closes, Ctrl/Cmd+V paste-inspects, and `?` shows shortcut help.
 
-Implemented:
+### M4.6 Feedback: toasts, undo, bulk Library actions
 
-1. Added `scripts/build-unix.sh` to rebuild the embedded React UI, run native-host Go tests/vet, cross-build a requested Linux/macOS architecture with `CGO_ENABLED=0`, and create a tar.gz + SHA-256 checksum.
-2. Added `scripts/package-windows.ps1` to package the checked Windows executable with README/third-party notices and produce a ZIP + SHA-256 checksum.
-3. Expanded CI packaging to Windows plus Linux `amd64`/`arm64` and macOS `amd64`/`arm64` artifacts.
-4. Kept Chrome/Chromium external: browser-assisted HD uses chromedp platform discovery or the existing explicit `CHROME_PATH` override.
-5. Refactored browser-launch, native-folder-picker, and reveal/open command selection into testable platform helpers.
-6. Added platform-independent tests covering Windows, macOS, and Linux command semantics.
-7. Documented Linux's intentional reveal fallback: `xdg-open` opens the containing folder because freedesktop environments do not provide one portable file-selection command.
-8. Documented Linux's `zenity` dependency for the native **Browse** button; manual absolute-path entry remains available without it.
-9. Added `docs/PACKAGING.md` covering package contents, architectures, runtime integration, release promotion, and signing/notarization requirements.
-10. Defined signing as a protected release-stage concern rather than ordinary branch CI: Windows Authenticode and macOS Developer ID/notarization require credentials that must not be stored in the repository.
+**Status:** [ ] Â· **P1** Â· **Area:** UX
 
-Validation note: CI run `35601658829` passed the full source/test/browser gate plus Windows production build/package, Linux `amd64`/`arm64` packages, and macOS `amd64`/`arm64` packages. Every configured package artifact and checksum upload completed successfully.
+- The notice banner never auto-dismisses (`home.tsx:352`).
+- Destructive actions use `window.confirm` and have no undo (`use-jobs.ts:63-67`).
+- The Library has no bulk selection or sort control.
+
+#### Scope
+
+- A toast queue.
+- A soft-delete undo toast for **Remove from Library**, with the actual deletion delayed.
+- Library checkboxes with bulk remove, ZIP, and move-category.
+- Sorting by date, size, title, and channel.
+- An in-app confirmation dialog that lists exactly which copies will be deleted.
+
+### M4.7 Accessibility pass
+
+**Status:** [ ] Â· **P1** Â· **Area:** a11y
+
+- The preview modal (`home.tsx:453-462`) has `role="dialog"` but no Esc, focus trap, initial focus, focus restore, or scroll lock. Fix by using a native `<dialog>` with `showModal()`.
+- Progress bars are bare `div`s (`queue.tsx:322`). Add `role="progressbar"` with `aria-valuenow/min/max` and a text alternative.
+- Contrast is too low: `text-neutral-600` on `#0c0d10` is about 2.6:1, and `text-neutral-500` appears at 49 sites, many at `text-[10px]`/`text-[11px]`. Raise to AA (neutral-400 or lighter) with a 12px minimum.
+- Motion ignores user preferences. Add `motion-reduce:` variants and use non-smooth scrolling when reduced motion is requested.
+- Add `aria-invalid` and `aria-describedby` on form fields that have errors.
+- Add axe-core checks to the browser E2E suite.
+
+### M4.8 Theming and light mode
+
+**Status:** [ ] Â· **P2** Â· **Area:** UX
+
+- Dark mode is hard-coded (`home.tsx:312`, `bg-[#0c0d10]`), even though `index.html:9` declares `color-scheme: light dark`.
+- The not-found page renders with different, light tokens.
+- `index.css:45-190` contains unused shadcn sidebar and chart tokens.
+
+#### Scope
+
+- Use a token-driven theme with system/light/dark options.
+- Remove the unused tokens.
+
+### M4.9 Features from the design mock not yet in production
+
+**Status:** [ ] Â· **P2** Â· **Area:** UX
+
+From `dev_mock_new_ui`, prioritized:
+
+1. Estimated file size per quality option, and fps/HDR badges.
+2. Live total download speed in the header.
+3. Free-disk-space indicator (needs a new Go disk-free API; see M5.4).
+4. A target-path preview on each queue item.
+5. A Library sidebar grouped by channel or category.
+6. Hover-to-play thumbnail cards with duration and format badges.
+7. A metadata inspector in the player modal.
+8. "Copied" and "Saved" confirmations (covered by the M4.6 toasts).
+
+### M4.10 Frontend code quality
+
+**Status:** [ ] Â· **P2** Â· **Area:** maintainability
+
+- Add Prettier. JSX lines currently run 300â€“700+ characters in `queue.tsx`, `library.tsx`, and `settings.tsx`.
+- Split the pages into components (`DraftCard`, `QueueCard`, `LibraryCard`, â€¦) and move non-component exports out of `view-model.tsx`; 19 react-refresh warnings come from mixing them.
+- Remove duplicated helpers:
+  - the video-ID regex (`downloader.ts:194`, `view-model.tsx:114`);
+  - the playlist-selectable predicate (three places);
+  - the bitrate list, the ticket-path regex, and category resolution;
+  - the nine near-identical `setDrafts(map(...))` updaters (`queue.tsx:152-191`).
+- Rename `isActive`, which confusingly includes `queued` (`downloader.ts:353`).
+- Remove dead code: `serviceURL`, `ServiceConnection.token` (after M5.1), `durationMetric`, and the unused `finishedFiles`/`queueJobs`.
+- Prune the unbounded `clearedQueueItems` localStorage entry (`use-jobs.ts:293`).
+- Remove the template restrictions and nonexistent paths from `eslint.config.js:38-106`.
+
+### M4.11 Internationalization readiness
+
+**Status:** [ ] Â· **P3** Â· **Area:** UX
+
+Move all UI strings into a message catalog and make `formatBytes` and date formatting locale-aware. Translation itself remains optional.
 
 ---
+
+# Milestone 5 â€” API, security model, and observability
+
+### M5.1 Built-in UI authentication (token by default)
+
+**Status:** [!] needs design review Â· **P1** Â· **Area:** security
+
+- The API supports bearer tokens, but `builtInServiceConnection()` hard-codes `token: ""` (`view-model.tsx:244`), and the README says to leave `API_TOKEN` unset when using the UI.
+- As a result, on loopback any local process or other OS user can drive the API, including the native folder picker and file reveal.
+
+#### Proposal
+
+- Generate a random per-launch token.
+- The auto-opened browser URL carries it in the fragment (`/#t=â€¦`). The UI moves it into `sessionStorage` or exchanges it for an `HttpOnly; SameSite=Strict` session cookie, then strips it from the URL.
+- `--background` mode prints the tokenized URL to the console.
+- Keep `API_TOKEN` as a fixed-token override for external clients.
+- Require the token for every route except static assets and file tickets.
+
+### M5.2 Standard router, versioning, and error codes
+
+**Status:** [ ] Â· **P2** Â· **Area:** API
+
+- `ServeHTTP` is a 300-line hand-rolled string-splitting router (`server.go:305-607`).
+- There is no API versioning.
+- Errors are prose-only `{"error": "..."}` (`server.go:214-216`), and 405 responses lack an `Allow` header.
+
+#### Scope
+
+- Move to Go 1.22+ `http.ServeMux` method/path patterns.
+- Add an `/api/v1` prefix, keeping `/api` as an alias for a deprecation window.
+- Return RFC 9457 problem details with stable machine-readable `code` values.
+- Remove the redundant `items`/`entries` pair from the inspect response (`api_extra.go:131-134`).
+
+### M5.3 OpenAPI contract and generated TypeScript types
+
+**Status:** [ ] Â· **P2** Â· **Area:** API / frontend
+
+- The only API contract is the README tables.
+- TypeScript types mirror untyped Go strings by hand (`downloader.ts:6`, `store.go:24-37`).
+- The quality list is duplicated in four places (`server.go:674, 770`, `api_extra.go:95`, `view-model.tsx:35-42`).
+- Default settings are duplicated in `use-service.ts:12-25`.
+
+#### Scope
+
+- Define typed Go enums.
+- Maintain an OpenAPI spec (generated or hand-written with a contract test).
+- Generate TypeScript types (`tygo` or `openapi-typescript`).
+- Add a CI diff check.
+
+### M5.4 Structured logging, diagnostics, and a real health endpoint
+
+**Status:** [ ] Â· **P1** Â· **Area:** observability
+
+- Logging is unstructured `log.Printf` to stderr only (`main.go:268`).
+- SABR per-header debug lines log unconditionally (`sabr.go:271, 285`).
+- `/api/health` reports `ready = engine != nil` and always returns an empty `missing` (`server.go:330-338`).
+
+#### Scope
+
+- Use `log/slog` with levels and a `LOG_LEVEL` setting.
+- Write a rotating log file under the data directory.
+- Log requests at debug level.
+- Health should report Chrome discovery and version, DB status, free disk space for the data and output directories, the extractor self-test (M2.8), and update-check status.
+- Add **Settings â†’ Diagnostics â†’ Download support bundle**: a redacted ZIP with logs, effective config, DB stats, and versions. It must never include signed URLs or tokens.
+
+### M5.5 Rate limiting and caching
+
+**Status:** [ ] Â· **P2** Â· **Area:** API
+
+- `/api/inspect` makes up to 6 YouTube calls per request (`api_extra.go:139-155`) and has no concurrency limit.
+- `/api/update` calls GitHub on every request (`server.go:364`), against an unauthenticated limit of 60 requests per hour.
+- SSE connections are unbounded.
+
+#### Scope
+
+- Add per-endpoint concurrency semaphores.
+- Cache update results for about 6 hours.
+- Cap concurrent SSE clients.
+
+### M5.6 Hold the global lock only for in-memory work
+
+**Status:** [ ] Â· **P1** Â· **Area:** backend / performance
+
+The job-action switch in `ServeHTTP` holds `s.mu` across `RemoveAll` and DB writes (`server.go:454-455, 475-479`), which stalls every worker and SSE publisher while it runs.
+
+#### Scope
+
+Snapshot state under the lock, then do the I/O outside it, with per-job state machines. Folds into M1.2.
+
+---
+
+# Milestone 6 â€” Backend maintainability
+
+### M6.1 Split `worker.go` and introduce internal packages
+
+**Status:** [ ] Â· **P2** Â· **Area:** maintainability
+
+`worker.go` has 2,355 lines, and the whole server is `package main`. The largest functions:
+
+| Function | Lines | Location |
+| --- | --- | --- |
+| `selectFormatForStrategy` | 189 | `worker.go:204` |
+| `transferAdaptiveWebM` | 160 | `worker.go:1846` |
+| `transferAudio` | 149 | `worker.go:1243` |
+| `processItem` | 145 | `worker.go:1076` |
+| `run` | 132 | `worker.go:530` |
+
+#### Scope
+
+Extract in this order, with a pure move first and no behavior change:
+
+1. Files: `formats.go`, `scheduler.go`, `progress.go`, `budget.go`, `transfer_*.go`, `mp4_mux.go`, `retention.go`.
+2. Packages: `internal/media` (webm/mp4 mux, id3, audio), `internal/youtube` (extractor, SABR, browser), `internal/store`, and `internal/api`.
+
+### M6.2 Remove duplication and dead code
+
+**Status:** [ ] Â· **P2** Â· **Area:** maintainability
+
+- The open-stream â†’ close-once â†’ length reconcile â†’ `.part`/Sync/rename boilerplate is repeated five times (`worker.go:1282-1313, 1421-1452, 1601-1644, 2142-2185`). Replace it with one `fetchToFile` helper; this also delivers M2.2 consistently.
+- `enqueueJobWithFallback` takes 14 positional arguments (`server.go:835`). Replace them with a `jobSpec` struct.
+- Deduplicate the quality validation (three places), the token check (two), the "stopped and no readers" guard (four), and the `noteX` helpers (three).
+- Delete production code that only tests reference: `OpenRange`, `capturePausedResponse`, `closeOrphanedResult`, `rangeURL`, and `sameBrowserRangeURL` (`browser_provider.go:731-1044`).
+- Name the magic numbers as documented constants:
+  - 6 workers per job;
+  - 8 MiB chunks;
+  - 100 empty reads;
+  - 5s/8s sleeps;
+  - 16Ã— playback;
+  - the 45-minute and 2 MiB/s caps;
+  - the 1500 ms tolerance.
+
+### M6.3 Injectable HTTP and extractor dependencies
+
+**Status:** [ ] Â· **P2** Â· **Area:** testability
+
+- The range HTTP client is built inline (`worker.go:2056`).
+- `youtube.DefaultClient` is mutated globally (`native.go:19`).
+- A new client and transport are created for every operation, so connections and player JS are not reused (`worker.go:110-115, 1095`).
+
+#### Scope
+
+Inject an HTTP doer and extractor. Share one transport per process. This enables the M7.4 tests.
+
+---
+
+# Milestone 7 â€” CI and test quality
+
+### M7.1 Restructure the CI matrix
+
+**Status:** [ ] Â· **P1** Â· **Area:** CI
+
+- Each push performs about 6 UI builds and 6 Go test runs, because each package job rebuilds and retests (`build-windows.ps1:101`, `build-unix.sh:75-76`).
+- The macOS amd64 binary is built on an arm64 runner and Linux arm64 is cross-built, so neither binary is ever executed.
+
+#### Scope
+
+- Build the UI once and pass it on as an artifact.
+- Run the test matrix natively on ubuntu, windows, and macos-arm64.
+- Cross-compile the other targets without retesting, plus a smoke run of `--version` under emulation or on a native arm64 runner.
+- Cache Go modules and npm packages.
+
+### M7.2 Go static analysis, race detection, and vulnerability scanning
+
+**Status:** [x] Â· **P1** Â· **Area:** CI Â· merged by PR #20; all six CI jobs pass
+
+The Ubuntu CI job currently runs normal Go tests and untagged vet, but has no `-race`, gofmt, golangci-lint, or govulncheck gate. It also does not vet the `e2e` build tag. The README notes that race detection needs a C compiler, so the race gate belongs on Ubuntu.
+
+#### Scope
+
+Add `go test -race ./...` on Ubuntu, a gofmt check for first-party Go source, `golangci-lint` with staticcheck/unused analyzers, `govulncheck`, and `go vet -tags e2e`. Keep the existing untagged vet check as well.
+
+**Progress (2026-09-23):** PR #20 (`368fb18`) merged after all six CI jobs passed. The Ubuntu gates now check gofmt, `-race`, golangci-lint, govulncheck, and both normal and E2E-tagged vet. Upgraded `golang.org/x/text` to v0.39.0, the first version fixed for GO-2026-5970; regenerated the 33-package Go notice report. Removed unused code/fields, fixed staticcheck findings, formatted six first-party files, and addressed the races the detector found by snapshotting queued items under the scheduler mutex and configuring test settings before startup. Local golangci-lint, govulncheck, and tagged vet pass; the full Go test and race suites passed in GitHub CI.
+
+### M7.3 Supply-chain automation
+
+**Status:** [x] Â· **P1** Â· **Area:** CI / security
+
+Before this item, `.github/` had no automated dependency or code scanning configuration.
+
+#### Scope
+
+- Dependabot for `gomod`, `npm`, and `github-actions`.
+- CodeQL for Go and JavaScript.
+- Pin actions by SHA.
+- Pin Node (`.nvmrc`), Bun (`bun-version`), and the Go `toolchain` directive.
+- Choose a single JavaScript package manager. CI installs with npm, tests run with Bun, and both `bun.lock` and `package-lock.json` are committed. Remove the other lockfile or add a sync check.
+
+**Progress (2026-09-23):** Merged by [PR #22](https://github.com/ajbergh/yt-dl-go/pull/22) as `2886e37`. Added weekly Dependabot updates for Go, both npm projects, and GitHub Actions; a CodeQL workflow scans Go and JavaScript/TypeScript; every CI/release/CodeQL action reference is pinned to a full commit SHA. Node is pinned by `.nvmrc` (24.21.0), Bun by `bun-version` (1.4.2), and the Go module toolchain by `go1.26.8`. npm is the single JavaScript package manager; Bun remains the pinned test runtime and the redundant root `bun.lock` was removed. All six CI jobs and both CodeQL analyses passed.
+
+### M7.4 Close the test gaps
+
+**Status:** [~] Â· **P1** Â· **Area:** testing
+
+No tests exist for:
+
+- `muxMP4`/`muxMP4Track`;
+- `convertAACToMP3` (there is no `audio_test.go`);
+- `transferAdaptiveMP4`;
+- the native range loop (403 refresh, retry, resume);
+- `publishOutput` naming and collisions, and `sanitizePathComponent`;
+- `jobBudget` concurrency;
+- startup with a corrupt row;
+- migrations from old DB fixtures;
+- retention under `managed-only` (M0.1);
+- `MAX_JOBS` with finished jobs (M0.2);
+- SSE drop/overflow;
+- security headers (M0.4).
+
+#### Scope
+
+- Add the tests above.
+- Add fuzz tests for the UMP/SABR parser, WebVTTâ†’SRT conversion, the naming tokenizer, and the URL/ID validation.
+- Collect coverage reports (`go test -cover`, `bun test --coverage`) and publish them in CI summaries.
+
+**Progress (2026-09-23):** M7.3 PR #26's first CI attempt exposed an intermittent ordering assumption in `TestCancellationQueueAndTimeout`: with a single active-item slot, playlist workers may let blocked item 2 start before item 1 completes, while the test waits for item 1 before issuing cancellation. The failed Go test passed on the workflow rerun, but the fixture still needs deterministic ordering. PR #31's race-detector run also found an actual queue ownership race: `setQueueItems` copied `j.Items` before locking while cancellation refreshed the slice under the mutex. The lock now covers the snapshot, replacement, refresh, and persistence. Both scheduler findings should be addressed before extending this milestone's coverage work.
+
+**Progress (2026-09-24):** The M1.5 Library export CI package run exposed a timing-sensitive terminal-thumbnail race on Linux arm64. Completion evicts terminal jobs from memory; a thumbnail request could pass the shared job preflight, lose the job to eviction, then fail its second lookup with 404 despite the persisted Library record and thumbnail being available. The thumbnail handler now hydrates the terminal record again under the same lock as file selection, and its regression removes the in-memory job before requesting the persisted thumbnail. [PR #77](https://github.com/ajbergh/yt-dl-go/pull/77) merged as `85e8abd`; its full CI and CodeQL checks passed, including the previously failing Linux arm64 package job.
+
+### M7.5 Typed frontend tests and E2E robustness
+
+**Status:** [ ] Â· **P2** Â· **Area:** testing
+
+- Frontend tests are untyped `.mjs`: one 701-line happy-dom file that drives the whole `HomePage`. There is no `test` script.
+- Browser E2E looks for Chrome only on `PATH` (`browser-e2e.mjs:12-23`), so it fails on a default Windows install.
+
+#### Scope
+
+- Migrate to `.test.tsx` with Testing Library, split by page, and add `npm test`.
+- Probe standard Chrome and Edge install paths.
+- Upload E2E service and Chrome logs when a run fails.
+- Add axe checks (M4.7).
+
+---
+
+# Milestone 8 â€” Release and distribution
+
+### M8.1 Ship the first release
+
+**Status:** [x] Initial public v0.1.0 release published 2026-10-10; native signing and independent attestation gaps remain Â· **P1** Â· **Area:** release
+
+- Public [`v0.1.0` release](https://github.com/ajbergh/yt-dl-go/releases/tag/v0.1.0) exists at commit `e285dbe`, with six platform packages, source archive and 15 uploaded assets. Signing/notarization and external attestation lookup limitations are disclosed.
+- Shared action versions now align between the release and CI workflows.
+- The README's Windows download now points to GitHub Releases rather than the gitignored `dist/` directory.
+
+#### Scope
+
+- [x] Add a `workflow_dispatch` dry-run mode to `release.yml` that skips `gh release create` and uploads release artifacts for inspection.
+- [x] Align shared action versions between the two workflows.
+- [x] Cut and publicly publish initial `v0.1.0` release with explicit approval and disclosed distribution limitations. Future release versions follow the versioning plan.
+- [x] Point the README at GitHub Releases.
+
+**Historical progress (2026-09-24, before v0.1.0 publication):** Merged by [PR #15](https://github.com/ajbergh/yt-dl-go/pull/15); all six CI jobs passed. The authorized `v0.1.0` run (35921227203) exposed a source archive checksum path issue, fixed in [PR #31](https://github.com/ajbergh/yt-dl-go/pull/31). Its rerun (35924524457) passed all seven checksum checks but exposed CRLF handling in expected-archive validation, fixed in [PR #32](https://github.com/ajbergh/yt-dl-go/pull/32). Final dry run [35925902083](https://github.com/ajbergh/yt-dl-go/actions/runs/35925902083) passed source validation, all six platform builds, archive and manifest checksums, provenance attestations, and uploaded the 77.5 MB `release-dry-run-v0.1.0` artifact. A fresh user-requested `v0.1.0` dry run [35955844770](https://github.com/ajbergh/yt-dl-go/actions/runs/35955844770) also passed on `main` (SHA `15f9369`). Source validation, browser E2E, all six platform packages, provenance attestations, source/relinking archive, checksum manifest and artifact upload passed; the 78.2 MB `release-dry-run-v0.1.0` artifact is available in the run, and the GitHub Release creation step was skipped. No `v0.1.0` tag or release was created. The first public release version/tag decision remains pending.
+
+### M8.2 Harden the release workflow
+
+**Status:** [x] Â· **P1** Â· **Area:** release / security
+
+- The original findings are addressed: write/attestation permissions are scoped to the jobs that need them, expected archives come from matrix manifests, and build timestamps are normalized to UTC.
+- Dry-run validation covers all archive checks, manifest generation, provenance attestation, and artifact upload.
+
+#### Scope
+
+- [x] Set permissions per job.
+- [x] Derive the expected artifact count from per-matrix manifests.
+- [x] Emit UTC timestamps on both Windows and Unix release builders.
+- [x] Add Windows arm64 builds.
+
+**Progress (2026-09-23):** Implemented in [PR #13](https://github.com/ajbergh/yt-dl-go/pull/13) as `db6f845`, with CRLF-safe expected-archive validation completed in [PR #32](https://github.com/ajbergh/yt-dl-go/pull/32). Workflow permissions are scoped by job, Windows packaging builds amd64 and arm64, build timestamps are converted to UTC, and expected archives come from per-matrix manifests. The successful [dry run 35925902083](https://github.com/ajbergh/yt-dl-go/actions/runs/35925902083) validated source, six platform builds, archive checksums, manifest generation and attestation, and uploaded the workflow artifact. All M8.2 gates are complete.
+
+### M8.3 SBOM and reproducible archives
+
+**Status:** [ ] Â· **P2** Â· **Area:** supply chain
+
+- Generate and attest an SBOM (`syft` or `cyclonedx-gomod` plus the npm SBOM).
+- Make the tar archives reproducible (`--sort=name --mtime=@$SOURCE_DATE_EPOCH --owner=0 --group=0`) and replace `Compress-Archive`, which embeds timestamps, with a deterministic ZIP writer.
+- Verify reproducibility with two independent builds in CI.
+
+### M8.4 Native signing and notarization
+
+**Status:** [!] needs credentials Â· **P1** Â· **Area:** release
+
+This item was carried forward from v1 P2.3.
+
+#### Scope
+
+- Windows Authenticode and macOS Developer ID/notarization in a protected GitHub environment.
+- A macOS `.app` bundle or DMG.
+- Signing is the prerequisite for self-update (M8.6) and for winget/Homebrew acceptance.
+
+### M8.5 Package-manager distribution and a container image
+
+**Status:** [ ] Â· **P2** Â· **Area:** distribution
+
+#### Scope
+
+- Evaluate GoReleaser to replace the two build scripts and generate Homebrew tap, Scoop, and winget manifests.
+- Evaluate AUR and Flatpak later.
+- Publish an optional multi-arch Docker image for `--background` mode, with Chromium included for adaptive HD and documented network-exposure requirements (`API_TOKEN`, `ALLOWED_HOSTS`).
+
+### M8.6 Automatic self-update (carried forward)
+
+**Status:** [!] blocked on M8.4 Â· **P3** Â· **Area:** release
+
+The v1 P2.3 gates still apply: checksum plus signature/provenance verification, atomic replacement, keeping the known-good previous executable, restart health verification with rollback, and explicit user opt-in.
+
+### M8.7 Changelog and commit conventions
+
+**Status:** [ ] Â· **P2** Â· **Area:** process
+
+- Commit styles are mixed (`feat:`, `P2.3:`, `roadmap:`, free text), and recent commits went straight to `main`.
+- Adopt Conventional Commits with release-please, which bumps `package.json` and writes `CHANGELOG.md`.
+- Protect `main` and require CI to pass.
+- Auto-delete merged branches, and clean up the 13 stale `roadmap/*` and `fix/*` remote branches.
+
+---
+
+# Milestone 9 â€” Docs and repository hygiene
+
+### M9.1 Community and governance docs
+
+**Status:** [~] Governance documents, templates, and initial changelog added; automatic changelog/version management remains in M8.7 Â· **P1** Â· **Area:** docs
+
+#### Scope
+
+- [x] Add `LICENSE` (M0.6).
+- [x] Add `SECURITY.md` with private vulnerability reporting guidance and the local API token/ticket model.
+- [x] Add `CONTRIBUTING.md` with setup, npm/Bun roles, CI checks, and contribution guidance.
+- [x] Maintain initial `CHANGELOG.md` with dated public `v0.1.0` release; automate versioning and release-note generation separately in M8.7.
+- [x] Add bug, feature-request, and pull-request templates.
+
+**Progress (2026-09-23):** Implemented on `roadmap/m9-1-governance-docs`; the changelog remains tied to M8.7 so it can be generated from the release history.
+
+### M9.2 Architecture and troubleshooting docs
+
+**Status:** [ ] Â· **P2** Â· **Area:** docs
+
+#### Scope
+
+- `docs/ARCHITECTURE.md`:
+  - request/job lifecycle;
+  - scheduler and slots;
+  - progressive vs adaptive vs SABR vs browser acquisition;
+  - storage policies;
+  - the persistence model;
+  - the SSE contract.
+- `docs/TROUBLESHOOTING.md`:
+  - Chrome discovery and `CHROME_PATH`;
+  - Linux `zenity`;
+  - why HD fell back to progressive (reading job notes);
+  - proxy environments;
+  - where logs and the support bundle live (M5.4).
+
+### M9.3 Fix stale documentation
+
+**Status:** [x] Â· **P1** Â· **Area:** docs
+
+#### Scope
+
+- [x] Describe the embedded UI as part of the platform executable.
+- [x] Remove the sample URL's `si=` share-tracking parameter.
+- [x] Mark v1's roadmap as superseded by `roadmap.md`.
+- [x] Verify `DATA_DIR`, `RETENTION`, and `MAX_JOBS` documentation against current behavior.
+
+**Progress (2026-09-23):** Updated the frontend guide to describe all platform executables, removed the sample URL's share-tracking parameter, marked v1's roadmap as superseded, and confirmed the `DATA_DIR`, `RETENTION`, and `MAX_JOBS` descriptions match the current defaults and behavior.
+
+### M9.4 Remove stray and legacy files
+
+**Status:** [x] Â· **P1** Â· **Area:** hygiene Â· merged by PR #18
+
+- [x] Delete the unreferenced, stale `SOURCE_MANIFEST.sha256`.
+- [x] Delete `vite-dev-reload.ts` and remove the WebSocket mute shim and its TypeScript/lint references from the Vite setup.
+- [x] Restore native Vite HMR and React Fast Refresh; remove disabled HMR and polling while preserving the watcher ignore list.
+- [x] Move `tailwindcss` to `devDependencies` and refresh npm/Bun lockfiles and generated production npm notices.
+- [x] Keep `dev_mock_new_ui/` available as a design reference because M4.9 has not captured its ideas yet; ESLint already excludes it and this repository has no Dependabot configuration.
+- [x] Manually verify a frontend edit hot-updates through the local dev server without a full reload.
+
+**Progress (2026-09-23):** PR #18 (`59dd1cd`) merged after all six CI jobs passed, including license drift, typecheck, lint, frontend and Go tests, browser E2E, and Linux/macOS/Windows package builds. Removed the stale manifest and SSE reload plugin, returned Vite to native HMR defaults, retained the existing file-watch exclusions, and moved Tailwind out of production dependencies. npm now reports 14 production packages in its generated notice report. The source scan found the old manifest substantially stale (62 missing paths, 40 hash mismatches, and 4 valid entries), so it was deleted rather than repaired. Manual HMR smoke check passed: editing the queue page's explanatory text updated it in the open browser, while a browser-side marker and `performance.timeOrigin` remained unchanged, confirming no full reload. The temporary edit and local servers were removed after the check.
+
+### M9.5 Cross-platform developer workflow
+
+**Status:** [ ] Â· **P2** Â· **Area:** DX
+
+- `npm run dev:all` hard-codes PowerShell (`package.json:8`).
+- `start-dev.sh` is not wired to any script and passes `--host` (`start-dev.sh:69`), which contradicts `vite.config.ts:141-143`.
+
+#### Scope
+
+- Add a `Makefile` or `Taskfile.yml` with `dev`, `build`, `test`, `lint`, `e2e`, and `package` targets.
+- Add an `air` config for Go hot reload.
+- Make the dev scripts bind loopback-only by default.
+
+---
+
+# Suggested sequencing
+
+| Phase | Items | Rationale |
+| --- | --- | --- |
+| **1. Stop the bleeding** (days) | M0.1â€“M0.9 | Data loss, security exposure, legal status, and broken fresh clones. Each item is small and independent. |
+| **2. First public release** | M8.1, M8.2, M9.1, M9.3, M9.4, M7.2, M7.3 | A licensed, attributed, linted, vuln-scanned, tagged release. |
+| **3. Durable library** | M1.1â€“M1.5, M5.6 | Library records independent from jobs; incremental persistence; a stable data directory. |
+| **4. Reliable engine** | M2.1â€“M2.8, M6.2, M6.3, M7.4 | Stall safety, atomic writes, resume everywhere, extractor resilience. Refactors (M6.x) land alongside the tests that protect them. |
+| **5. UX and performance** | M4.1â€“M4.7, M5.1, M5.4 | Routes, store, progress deltas, input ergonomics, accessibility, built-in auth, diagnostics. |
+| **6. Media depth** | M3.1â€“M3.5, M3.7, M4.9 | Container metadata, chapters, Opus passthrough, bulk operations, dedupe, mock features. |
+| **7. Distribution** | M8.3â€“M8.5, M8.7, M7.1 | Signing, SBOM, package managers, Docker, CI matrix restructure. |
+| **Later / exploratory** | M3.6, M4.11, M8.6, native tray (v1 P2.2) | Depends on signing, the durable library, and upstream stability. |
+
+---
+
+# Carried forward from v1
+
+- **Native tray (v1 P2.2):** still deferred. Revisit when `gogpu/systray` menu-dispatch and macOS fixes ship and real desktop-session validation is possible. Background notifications should be designed together with M5.4 health reporting.
+- **Automatic self-update (v1 P2.3):** now tracked as M8.6 and blocked on M8.4.
+- **Published sidecar artwork (v1 P1.1 deferral):** now part of M3.3.
 
 # Explicitly deferred / non-goals
 
-These are not current roadmap commitments:
+Unchanged from v1:
 
 - DRM bypass
 - paywall bypass
@@ -717,224 +1153,9 @@ These are not current roadmap commitments:
 - public multi-tenant hosting
 - arbitrary non-YouTube site downloading
 
+v2 adds:
+
+- **Stream-protection/attestation circumvention.** When YouTube returns protection status â‰¥ 3 (`sabr.go:333`), the correct behavior stays "fail with a clear message," not a workaround.
+- **Watched sources (M3.6) must never become unattended bulk scraping.** They are limited to explicitly configured, rights-confirmed sources with conservative polling intervals.
+
 ---
-
-# Implementation journal
-
-## 2026-09-20
-
-### Roadmap creation
-
-**Status:** [x] Complete
-
-- Created `roadmap/media-library-batch-v1`.
-- Added this durable roadmap.
-- Chose **P0.1 Per-download category selection** as the first implementation item because it completes backend/output capabilities that already exist and has a small architectural footprint.
-
-### P0.1 Per-download category selection
-
-**Status:** [x] Complete
-
-Implemented:
-
-1. Extended frontend inspection draft state with `category`.
-2. Added a category selector to each inspection result.
-3. Added `category` to `POST /api/jobs`.
-4. Added optional per-job category handling to the Go API.
-5. Added canonical category validation against persisted `userCategories`.
-6. Preserved backward compatibility by falling back to `defaultCategory` when the field is omitted.
-7. Captured the selected category with the job so output filename expansion and category subfolders use the per-job value.
-8. Exposed category in the job API response and frontend job type.
-9. Preserved category when retrying failed/partial/cancelled jobs.
-10. Updated backend and frontend tests plus the server API documentation.
-
-Validation note: confirmed by CI run `35550906645` on the roadmap branch. Frontend type-check/build, Bun integration tests, Go tests, Go vet, and the Windows production executable build all passed.
-
-### P0.2 Batch “apply to all” controls
-
-**Status:** [x] Complete
-
-Implemented:
-
-1. Added an inspection-level “Apply to all inspected items” toolbar when more than one draft is present.
-2. Added batch media-type selection; audio is applied only to eligible items and only when the backend reports MP3 support.
-3. Added batch video-quality selection; individual videos keep their prior value when the requested ceiling is not advertised as supported.
-4. Added batch MP3 bitrate selection for audio drafts.
-5. Added batch category selection.
-6. Kept all per-item controls active after batch application so users can override individual items.
-7. Added UI coverage for batch controls and the per-item override behavior.
-8. Made the Settings quality selector explicitly addressable and repaired a pre-existing brittle UI-test selector.
-
-Validation note: confirmed by CI run `35550906645` on the roadmap branch. Frontend type-check/build, Bun integration tests, Go tests, Go vet, and the Windows production executable build all passed.
-
-
-### CI foundation
-
-**Status:** [x] Complete
-
-- Added `.github/workflows/ci.yml`.
-- CI runs frontend type-check/build, Bun integration tests, Go tests, and Go vet on Ubuntu.
-- CI also performs the production Windows build through `scripts/build-windows.ps1` and uploads the executable as a short-lived workflow artifact.
-- Push concurrency cancels obsolete branch runs so the newest commit is authoritative.
-
-### P0.3 Separate Library removal from disk deletion
-
-**Status:** [x] Complete
-
-Implemented:
-
-1. Added explicit managed-vs-published availability fields to finalized file metadata.
-2. Added SQLite schema migration v6 to persist those availability states.
-3. Changed ordinary `DELETE /api/jobs/{id}` to mean “Remove from Library”: private managed media and history are removed, while published output is preserved.
-4. Added `DELETE /api/jobs/{id}/managed` for deleting only app-managed media.
-5. Added `DELETE /api/jobs/{id}/published` for deleting only validated tracked output copies.
-6. Added `DELETE /api/jobs/{id}/all` for explicit destructive deletion of managed media, published media, and history.
-7. Added strict output-path validation before published media deletion.
-8. Invalidated download tickets when managed media is removed and reject new/stale tickets for unavailable managed copies.
-9. Changed retention pruning so it never deletes published user output.
-10. Updated the Library UI with separate Remove, Managed copy, Published copy, and Delete everywhere actions, explicit confirmation text, availability badges, and disabled Save actions when managed copies are gone.
-11. Added backend regression coverage for all deletion scopes and retention preservation, plus frontend tests for the scoped actions.
-12. Updated the API documentation.
-
-Important bug fixed: before this milestone, automatic retention cleanup could delete files already copied into the user's configured download directory.
-
-### P0.4 Storage policy and duplicate-copy control
-
-**Status:** [x] Complete
-
-Implemented:
-
-1. Added persisted `storageMode` with three supported policies: `managed-published`, `published-only`, and `managed-only`.
-2. Added SQLite migration v7 for both application settings and per-job captured storage mode.
-3. Captured the selected storage policy when a job is queued and preserved it when retrying jobs.
-4. `managed-published` retains the existing two-copy behavior.
-5. `published-only` publishes the finalized file and then removes the private managed media copy.
-6. `managed-only` retains the private Library copy and skips publication to the configured output directory.
-7. Updated restart/resume validation so completed playlist items can be considered valid from the copy set their policy actually retained.
-8. Added a Settings UI explaining the disk/durability tradeoffs and that policy changes affect only newly queued jobs.
-9. Added backend tests for all three modes and invalid values plus frontend persistence coverage.
-10. Updated API documentation.
-
-### P0.5 Native folder selection and filesystem actions
-
-**Status:** [x] Complete
-
-Implemented:
-
-1. Added a protected localhost filesystem API that accepts only a job ID, persisted file ID, and one of three fixed actions: `reveal`, `open-folder`, or `copy-path`.
-2. The server resolves paths exclusively from tracked published-file metadata; clients cannot submit arbitrary executable filesystem paths.
-3. Re-validates output containment, filename consistency, file type, existence, and expected size before every filesystem action.
-4. Added Windows Explorer reveal/open support, macOS Finder support, and Linux folder opening through `xdg-open`.
-5. Added a native folder-selection endpoint. Windows uses the local Windows Forms folder chooser through PowerShell STA, macOS uses the native `choose folder` dialog, and Linux supports `zenity` when installed.
-6. Folder selection returns only an absolute validated path; cancellation is a normal `204` response.
-7. Connected Settings “Browse” to the native picker while retaining the editable absolute-path field as fallback.
-8. Added Library Reveal, Open Folder, and Copy Path actions for published files.
-9. Filesystem/open operations participate in the job reader guard so published deletion cannot race an active reveal/open operation.
-10. Added backend and frontend tests using injected selectors/openers so CI never launches real OS dialogs.
-11. Updated API documentation.
-
-### P1.1 Preserve thumbnails locally
-
-**Status:** [x] Complete
-
-Implemented:
-
-1. Added best-effort thumbnail capture during media finalization without making artwork failure fatal to the download.
-2. Restricted thumbnail sources and redirects to approved YouTube image hosts and routed downloads through the existing guarded public-HTTPS client.
-3. Added a 5 MiB limit and restricted stored image types to JPEG, PNG, or WebP.
-4. Stored local artwork inside private per-job managed storage; absolute artwork paths are never exposed by the API.
-5. Added SQLite migration v8 for local-thumbnail availability and MIME metadata.
-6. Added an authenticated job-scoped thumbnail endpoint keyed by persisted file ID.
-7. Added reader guards and regular-file validation so thumbnail serving cannot race managed-storage deletion.
-8. Kept the approved remote YouTube thumbnail URL as fallback metadata.
-9. Updated the Library to fetch local artwork with authenticated blob requests and fall back to the remote thumbnail if local artwork is unavailable.
-10. Ensured managed-copy deletion clears local artwork availability, while published-only storage may retain the lightweight local artwork/metadata until Library retention or removal.
-11. Added backend persistence/serving tests and frontend local-thumbnail preference coverage.
-12. Updated API documentation.
-
-Published sidecar artwork remains intentionally deferred; P1.1's durable-Library goal is satisfied by private local artwork without creating additional user-visible files.
-
-
-### P1.2 MP3 ID3 metadata and artwork
-
-**Status:** [x] Complete
-
-Implemented:
-
-1. Added a dependency-free ID3v2.3 writer in pure Go.
-2. Writes Unicode-safe title, artist/channel, playlist album, track number/total, publish year plus full publish-date metadata, and canonical YouTube source URL.
-3. Embeds the locally captured thumbnail as front-cover APIC artwork when it is JPEG/PNG/WebP and no larger than 1 MiB.
-4. Integrates tag writing directly into the existing AAC-to-MP3 conversion stream before MP3 frames, preserving atomic finalization and hard output-budget accounting.
-5. Captures audio metadata and artwork before conversion so cover art can be embedded without rewriting the finalized MP3.
-6. Keeps metadata best-effort: tag construction problems cannot fail an otherwise valid audio conversion.
-7. Preserves the existing untagged converter entry point for compatibility with lower-level tests/callers.
-8. Added unit coverage for ID3v2.3 framing, syncsafe tag sizing, Unicode fields, playlist track metadata, source URL, publish date, supported artwork, and oversized/unsupported artwork exclusion.
-9. Updated the server documentation.
-
-No new runtime dependency, CGO dependency, or FFmpeg requirement was introduced.
-
-
-### P1.3 M4A “original audio” mode
-
-**Status:** [x] Complete
-
-Implemented:
-
-1. Added optional per-job `audioFormat` with `mp3` as the backward-compatible default and `m4a` as the zero-transcode option.
-2. Added SQLite migration v9 and retry persistence for the selected audio format.
-3. Added direct AAC-in-MP4 transfer to finalized `.m4a` output without decode/re-encode.
-4. Preserved the source stream bytes exactly in the M4A path while retaining existing size limits, progress reporting, atomic `.part` finalization, storage policy, output publishing, and restart semantics.
-5. Added `.m4a` to managed-file validation and published-output validation.
-6. Added per-item and batch audio-format controls to inspection UX.
-7. MP3 bitrate controls now appear only for MP3 jobs; M4A requests do not send meaningless bitrate values.
-8. Queue and Library labels distinguish tagged MP3 from M4A original AAC.
-9. Added backend coverage proving M4A output bytes match the source bytes and API validation rejects unsupported audio formats.
-10. Added frontend coverage proving the M4A request sends `audioFormat:"m4a"` without `audioBitrate`.
-11. Updated API documentation.
-
-This path remains limited to compatible AAC-in-MP4 audio streams already selected by the native YouTube format selector; it does not introduce Opus/WebM conversion or FFmpeg.
-
-
-### P1.4 Library folder/category navigation
-
-**Status:** [x] Complete
-
-Implemented:
-
-1. Added category and channel facets derived from persisted finalized-file metadata.
-2. Added file counts per category/channel in filter options.
-3. Expanded Library search across job title, source URL, category, audio format, file title, creator/channel, filename, published filename, and relative output path.
-4. Added logical media, managed-copy, and published-copy storage summaries so users can see the effect of storage policy and scoped deletion.
-5. Added visible-job counts and a one-click filter reset.
-6. Preserved existing video/audio filtering and filesystem actions alongside the new facets.
-7. Persisted the user's Grid/List Library preference in local browser storage.
-8. Added UI regression coverage for category/channel filtering, storage summaries, and layout persistence.
-
-The facet implementation remains frontend-derived from SQLite-backed job/file metadata; no duplicate category or channel index is introduced in the database.
-
-
-### P1.5 Local media preview
-
-**Status:** [x] Complete
-
-Implemented:
-
-1. Extended the existing random file-capability ticket model with an `inline` preview scope rather than exposing filesystem paths or bearer tokens in media URLs.
-2. Inline tickets require a specific managed `fileId`, cannot represent ZIP archives, and expire after 30 minutes; ordinary download tickets remain five-minute attachment tickets.
-3. Reused the existing validated managed-file access path and HTTP single-range support so browser media controls can seek efficiently without loading the full file into JavaScript memory.
-4. Inline responses use the finalized media MIME type and `Content-Disposition: inline`.
-5. Added a Library Preview action for managed media and a modal supporting browser-compatible video and audio.
-6. Preview uses `preload="metadata"`, standard controls, and never autoplays.
-7. Managed-copy removal disables preview automatically; no new arbitrary-path API was introduced.
-8. Added backend tests for inline ticket validation, MIME/disposition, and `206` byte-range behavior.
-9. Added frontend coverage for inline ticket creation, modal rendering, media URL scoping, no-autoplay behavior, and close behavior.
-10. Updated API documentation.
-
-Published-only jobs intentionally do not stream their user-owned output back through the app preview API; those files remain available through native Open/Reveal actions, while in-app preview requires a managed copy.
-
-
-### P1.6 Playlist item selection before queueing
-
-**Status:** [x] Complete
-
-Implemented the playlist subset contract end to end: inspection selection UX, original-index persistence, fresh-metadata revalidation, contiguous scheduler indexes, original-position output naming/MP3 track metadata, retry/restart durability, and regression coverage. No new schema migration was required because queue items are already stored as JSON.

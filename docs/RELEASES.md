@@ -2,14 +2,37 @@
 
 The project separates **release discovery**, **build provenance**, **native platform signing**, and **installation**. They are different trust boundaries and must not be collapsed into one “auto-update” switch.
 
-## Current release model
+## Current desktop candidate
 
-**First public release:** [v0.1.0](https://github.com/ajbergh/yt-dl-go/releases/tag/v0.1.0), published on October 10, 2026 from commit `e285dbec5ca3159992cbf41d905b2d28f9b9553f`. The seven archives and 15 total uploaded assets passed SHA-256 validation. Windows executables were released without Authenticode signing; macOS executables were released without Apple Developer ID signing or notarization. Although the build's attestation steps succeeded, independent GitHub attestation verification returned HTTP 404. The maintainer explicitly approved publication with these limitations disclosed; they remain future distribution-hardening tasks.
+The Wails branch produces Windows, macOS, and Linux desktop apps, each for AMD64
+and ARM64, with both portable packages and installers. See [PACKAGING.md](PACKAGING.md)
+and [DESKTOP.md](DESKTOP.md). The browser/server edition remains available separately.
+
+The full release dry run on `7563843` passed all six native targets, all six
+browser/server packages, installer integration, data preservation, final coverage,
+checksums, and provenance generation. Windows manual acceptance passed, reported
+by the maintainer on 2026-11-05. macOS/Linux manual acceptance and credentialed
+signing verification remain pending. See [RELEASE_CHECKLIST.md](RELEASE_CHECKLIST.md).
+This evidence does not publish a desktop release or authorize moving an existing
+tag. Choose a new package version and matching tag for desktop publication.
+
+## Published release history
+
+[v0.1.0](https://github.com/ajbergh/yt-dl-go/releases/tag/v0.1.0) was published on
+2026-10-10 from `e285dbec5ca3159992cbf41d905b2d28f9b9553f`. It contains the earlier
+browser/server edition: six platform archives and a source archive, with hashes
+and a manifest. Windows had no Authenticode signature; macOS had no Developer ID
+signature or notarization. Independent GitHub attestation verification returned
+HTTP 404 at publication despite successful workflow attestation steps. These are
+historical limitations, not a description of the newer desktop dry run.
+
+## Build identity
 
 The application reports build metadata through `GET /api/health`, Settings, and the packaged executable:
 
 ```text
-youtube-downloader --version
+youtube-vault --version
+# Browser/server edition: youtube-downloader --version
 ```
 
 The reported identity includes:
@@ -18,7 +41,7 @@ The reported identity includes:
 - source commit
 - UTC build timestamp
 
-Direct `go build` output and packaging scripts without explicit release metadata identify themselves as `dev` / `unknown`. The tag-gated release workflow injects the exact tag, source commit, and commit timestamp.
+Direct `go build` defaults to `dev` / `unknown`. Desktop packaging defaults to `dev` but records the source commit and build time. Release jobs supply the same version, source commit, and UTC commit timestamp to every package.
 
 A release build may query GitHub's public latest-release endpoint. A newer **published** release is shown as an informational link in Settings. Draft releases are invisible to that endpoint. The application does **not** download, replace, execute, or install release assets.
 
@@ -45,10 +68,10 @@ The workflow:
 1. checks out the immutable tag;
 2. validates the stable tag format and exact `package.json` version match;
 3. runs frontend type-check/build, Bun tests, Go tests/vet, and real-browser E2E;
-4. builds Windows amd64/arm64, Linux amd64/arm64, and macOS amd64/arm64 packages;
+4. builds both editions for Windows, Linux, and macOS on AMD64/ARM64, including desktop portable packages and installers;
 5. embeds the same version, source commit, and build timestamp into every executable;
 6. creates a tagged source archive with the LGPL decoder source and relinking guide;
-7. verifies per-package SHA-256 checksums and creates `SHA256SUMS.txt`;
+7. requires all expected portable/installer artifacts, verifies final hashes, and creates `SHA256SUMS.txt`;
 8. creates GitHub/Sigstore build-provenance attestations for every release archive and the checksum manifest;
 9. creates a **draft** GitHub Release containing the binaries, source archive, and checksums.
 
@@ -61,24 +84,24 @@ The release workflow uses GitHub artifact attestations backed by OIDC/Sigstore. 
 For example:
 
 ```bash
-gh attestation verify youtube-downloader-windows-amd64.zip --repo ajbergh/yt-dl-go
+gh attestation verify youtube-vault-windows-amd64-setup.exe --repo ajbergh/yt-dl-go
 ```
 
 SHA-256 verification remains independent and should also be performed.
 
 Build provenance is **not** a substitute for Windows Authenticode, Apple Developer ID signing, or Apple notarization.
 
-## Native platform signing gate
+## Native platform signing
 
 Do not present a stable Windows/macOS release as natively signed until these platform trust steps are implemented with protected credentials.
 
 ### Windows
 
-The final executable should be Authenticode-signed using a protected code-signing identity. Verify the Authenticode signature after signing. Because signing changes executable bytes, package checksums and provenance for the final artifact must correspond to the signed binary.
+The standalone executable, packaged application executable, and setup EXE should be Authenticode-signed using a protected code-signing identity. Verify each final signature after signing. Because signing changes executable bytes, package checksums and provenance for the final artifact must correspond to the signed binary.
 
 ### macOS
 
-A public macOS package should use Apple Developer ID signing and the appropriate notarization/stapling flow for its final distribution shape. If distribution moves to a `.app` bundle or DMG, the bundle hierarchy must be signed correctly before notarization.
+A public macOS package should use Apple Developer ID signing and the appropriate notarization/stapling flow for its final distribution shape. The protected Wails path signs the `.app` with Developer ID Application, notarizes/staples it, and packages it. The final PKG uses a separate Developer ID Installer identity and is notarized/stapled before hashing and attestation. See [protected signing setup](DESKTOP.md#protected-macos-signing). Ordinary validation builds use an ad-hoc app signature for execution, not Developer ID signing or notarization.
 
 ### Linux
 
@@ -86,9 +109,9 @@ There is no single OS-native application-signing standard. SHA-256 plus GitHub/S
 
 No signing certificate, private key, Apple credential, or password belongs in the repository. Use protected GitHub environments/secrets or an external signing service.
 
-## First release verification
+## Candidate verification
 
-Use the step-by-step [v0.1.0 release checklist](RELEASE_CHECKLIST.md) for release-source validation, artifact checksum and provenance verification, real-platform smoke tests, signing disclosures, and sign-off. A successful nonpublishing dry run does not create a tag, a draft, or a published release.
+Use the step-by-step [release checklist](RELEASE_CHECKLIST.md) for release-source validation, artifact checksum and provenance verification, real-platform smoke tests, signing disclosures, and sign-off. A successful nonpublishing dry run does not create a tag, a draft, or a published release.
 
 ## Publishing a draft
 

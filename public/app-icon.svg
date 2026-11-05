@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 64 64">
+  <!-- Cloud-download paths from Lucide (ISC); attribution ships in the npm notices. -->
+  <circle cx="32" cy="32" r="30" fill="#e6003d"/>
+  <g transform="translate(17 17) scale(1.25)" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M12 13v8l-4-4"/>
+    <path d="m12 21 4-4"/>
+    <path d="M4.393 15.269A7 7 0 1 1 15.71 8h1.79a4.5 4.5 0 0 1 2.436 8.284"/>
+  </g>
+</svg>
