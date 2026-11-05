@@ -4,6 +4,8 @@ This file summarizes notable user-facing changes. Version **v0.1.0** was publicl
 
 ## [Unreleased]
 
+## [0.2.0] — 2026-11-05
+
 ### Added
 - Wails v2 desktop windows for Windows, macOS, and Linux, with native dialogs, single-instance handling, private per-launch authentication, and shutdown.
 - AMD64/ARM64 portable desktop packages and Windows setup EXE, macOS PKG, and Linux DEB installers, with installation/removal and data-preservation CI.
@@ -20,6 +22,11 @@ This file summarizes notable user-facing changes. Version **v0.1.0** was publicl
 ### Fixed
 - Preserve failed selections after partial deletion, protect active file transfers, and clear obsolete resumable output when changing media settings.
 - Coordinate dependency and CodeQL updates, refresh license notices, and keep generated frontend bundles and build caches out of Git.
+
+### Distribution notes
+- Windows packages are not Authenticode-signed. macOS packages do not have Developer ID distribution signatures or notarization; desktop apps use ad-hoc signing for execution.
+- Automated native build, installer, persistence, and smoke checks cover all six desktop targets. Final manual macOS/Linux acceptance and credentialed signing verification remain pending.
+- Verify package SHA-256 checksums and GitHub build provenance before installation. Automatic self-update remains disabled.
 
 ## [0.1.0] — 2026-10-10
 

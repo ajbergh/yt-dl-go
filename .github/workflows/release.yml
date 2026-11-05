@@ -9,9 +9,9 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: Stable release version to validate (for example, v0.1.0)
+        description: Stable release version to validate (for example, v0.2.0)
         required: true
-        default: v0.1.0
+        default: v0.2.0
         type: string
 
 env:
@@ -276,11 +276,11 @@ jobs:
             target: linux
             arch: arm64
             label: Linux arm64
-          - runner: macos-latest
+          - runner: macos-15-intel
             target: darwin
             arch: amd64
             label: macOS amd64
-          - runner: macos-latest
+          - runner: macos-15
             target: darwin
             arch: arm64
             label: macOS arm64
