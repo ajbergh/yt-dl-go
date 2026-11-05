@@ -1,7 +1,17 @@
-import { cpSync, existsSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
+import { chmodSync, cpSync, existsSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
 export function packageWindows({ root, contents, output, name, arch, version, run }) {
+  // Module-cache license files can be read-only. NSIS preserves source file
+  // attributes, which would prevent a normal uninstall from removing notices.
+  function writableFiles(directory) {
+    for (const entry of readdirSync(directory, { withFileTypes: true })) {
+      const file = path.join(directory, entry.name);
+      if (entry.isDirectory()) writableFiles(file);
+      else chmodSync(file, 0o644);
+    }
+  }
+  writableFiles(contents);
   const candidates = [process.env.NSIS_PATH, "C:/Program Files (x86)/NSIS/makensis.exe", "C:/Program Files/NSIS/makensis.exe"];
   const compiler = candidates.find(file => file && existsSync(file)) || "makensis.exe";
   const module = run("go", ["list", "-m", "-f", "{{.Dir}}", "github.com/wailsapp/wails/v2"], { stdio: ["ignore", "pipe", "inherit"] });

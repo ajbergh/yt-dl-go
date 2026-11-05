@@ -37,7 +37,7 @@ if ((Get-Content -LiteralPath $savedData) -ne 'saved application data') { throw 
 if ($LASTEXITCODE -ne 0) { throw 'Installed application smoke test failed.' }
 # _?= keeps NSIS in place so -Wait observes actual uninstall completion.
 Invoke-Installer (Join-Path $install 'uninstall.exe') @('/S', "_?=$install")
-foreach ($file in @($executable, $menu, $desktop, $registry)) {
+foreach ($file in @((Join-Path $install 'app'), $executable, $menu, $desktop, $registry)) {
     if (Test-Path -LiteralPath $file) { throw "Uninstall left installed integration: $file" }
 }
 if ((Get-Content -LiteralPath $sentinel) -ne 'preserve me') { throw 'Uninstall removed user files.' }
@@ -45,6 +45,20 @@ if ((Get-Content -LiteralPath $savedData) -ne 'saved application data') { throw 
 Remove-Item -LiteralPath $savedData
 Remove-Item -LiteralPath $sentinel
 # NSIS cannot delete its own executable in _?= mode; remove that known file.
-Remove-Item -LiteralPath (Join-Path $install 'uninstall.exe') -ErrorAction SilentlyContinue
-Remove-Item -LiteralPath $install
+# Emulated installer processes and antivirus can briefly retain the image after
+# process exit. Retry only this known executable; never recursively delete.
+for ($attempt = 0; $attempt -lt 50; $attempt++) {
+    try {
+        $uninstaller = Join-Path $install 'uninstall.exe'
+        if (Test-Path -LiteralPath $uninstaller) { Remove-Item -LiteralPath $uninstaller -Force }
+        if (Test-Path -LiteralPath $install) { [System.IO.Directory]::Delete($install) }
+        break
+    } catch {
+        if ($attempt -eq 49) {
+            Get-ChildItem -LiteralPath $install -Force | Format-Table Name, Attributes
+            throw
+        }
+        Start-Sleep -Milliseconds 200
+    }
+}
 Write-Host 'Windows installer, reinstallation, launch, and removal verified.'
