@@ -6,6 +6,14 @@ The existing browser/server edition remains available through the original build
 scripts; both editions use the same per-user data. Close one before starting the
 other. Back up existing data before trying a development build.
 
+## Verification status
+
+The six-target native matrix and full release dry run passed on build source
+`7563843`. Windows manual acceptance passed, reported by the maintainer on
+2026-11-05. macOS/Linux manual acceptance and credentialed signing verification
+remain pending. See the [release checklist](RELEASE_CHECKLIST.md) for evidence
+and publication gates. CI artifacts and dry runs do not constitute publication.
+
 ## Build on the target operating system
 
 Install the repository's Node/npm and Go versions, then `npm ci` in the repository
@@ -105,8 +113,7 @@ Windows, Linux and macOS AMD64/ARM64 archives. It is available through workflow 
 and pull requests. It uploads validation artifacts; it does not create a tag or
 publish a GitHub Release. The tagged release workflow reuses this same native
 matrix and includes the desktop archives, standalone Windows EXEs, Windows setup
-EXEs, macOS PKGs, Linux Debian
-packages, checksums and provenance alongside the browser/server artifacts in a
+EXEs, macOS PKGs, Linux Debian packages, checksums and provenance alongside the browser/server artifacts in a
 draft release. Release dry runs exercise the same matrix without publishing.
 
 After building, `npm run test:desktop` compiles an isolated `desktop,e2e` smoke
@@ -183,6 +190,6 @@ For startup diagnostics when a GUI build has no console, set `DESKTOP_LOG_FILE`
 to a writable file before launching. This records native startup logs; it does
 not log the per-launch bearer. The file is truncated on each launch.
 
-Before release, test the native window, queue events, a permitted media download,
+For each candidate, record manual acceptance of the native window, queue events, a permitted media download,
 preview seeking, save/cancel, ZIP export, folder picker and close/restart on each
 OS family. Build and HTTP transport checks do not replace native UI acceptance.

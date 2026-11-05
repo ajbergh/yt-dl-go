@@ -1,203 +1,177 @@
 <p align="center">
-  <img src="docs/assets/readme-banner.svg" alt="YouTube Downloader — local-first cross-platform downloader built with Go and React" width="100%" />
+  <img src="public/app-icon.svg" alt="YouTube Vault" width="88" />
 </p>
 
-# YouTube Downloader
+# YouTube Vault
 
-YouTube Downloader is a local Windows, macOS, and Linux web application for saving YouTube videos and playlists that you own or are permitted to download. One Go executable starts the local API, serves the embedded React interface, and opens it in your browser. With the default `ADDR`, the URL is `http://127.0.0.1:8080`; changing `ADDR` changes the URL.
+A local desktop app for Windows, macOS, and Linux. Save permitted YouTube videos
+and playlists, manage a persistent queue, and organize your media in a searchable
+Library. The Wails desktop edition opens in its own native window and uses native
+save and folder dialogs.
 
-Use it only for content you own or have permission to save, and in accordance with YouTube's terms. The application does not support DRM, private-video credentials, browser cookies, paywall bypasses, or live/HLS/DASH recording.
+Download only content you own or have permission to save, in accordance with
+YouTube's terms. DRM, private-account credentials, cookie imports, paywall bypasses,
+and live-stream recording are unsupported.
 
-## Native desktop build (Wails v2)
+## Screenshots
 
-Run `npm ci` and `npm run build:desktop` on Windows, macOS, or Linux to build the
-same interface in a native desktop window. Packages and checksums are written to
-`dist/desktop/`. See [desktop build instructions](docs/DESKTOP.md) for WebView
-requirements, AMD64/ARM64 targets, Linux Debian installation, and the native
-build/release workflow. Windows outputs are standalone desktop EXEs; macOS
-outputs are `.app` bundles. The original
-browser/server builds remain available below.
+Actual Windows Wails interface, captured from its embedded WebView2 using
+Playwright with a separate, empty demonstration library. The native window frame
+is outside the captured content.
 
-## Download and run on Windows
+![YouTube Vault download queue in the Windows Wails WebView](docs/assets/screenshots/wails-windows-queue.png)
 
-When a public release is available, download the Windows archive from [GitHub Releases](https://github.com/ajbergh/yt-dl-go/releases/latest), extract it, and double-click `youtube-downloader.exe`. Until the first release is published, GitHub Actions packages are validation artifacts rather than published downloads. Keep the console window open while using the app. The UI connects automatically to the Go API in that same executable; there is no service address to configure. If the browser does not open, visit the URL printed in the console (normally `http://127.0.0.1:8080`).
+![YouTube Vault Library in the native Windows app](docs/assets/screenshots/wails-windows-library.png)
 
-The executable includes the web UI and Go download engine. It does not embed a web browser. For the automatic adaptive-HD path (including 1080p where YouTube makes a compatible stream available), install Chrome, Chromium, or Microsoft Edge. Normal browser discovery is automatic. If needed, point to a specific browser:
+## Get the app
 
-~~~
-$env:CHROME_PATH = 'C:\Program Files\Google\Chrome\Application\chrome.exe'
-.\youtube-downloader.exe
-~~~
+Choose **AMD64** for Intel/AMD computers or **ARM64** for Windows on ARM and Apple
+Silicon. Each target has both a no-install portable package and an installer:
 
-By default, completed media is published to `Downloads/YouTube_Vault` inside your home directory, organized into channel subfolders. The private SQLite database and app-managed media copies live in the per-user `DATA_DIR` (see Configuration), not beside the executable. The default **Managed + Published** storage mode keeps both an app-managed copy and a published copy, so it may require about twice the final media size. Settings lets you change the output location and storage mode. Open the UI, paste an approved YouTube URL, choose a maximum quality and video-format strategy, confirm your rights, and download. `best`, `2160`, `1440`, `1080`, `720`, and `480` are maximum heights—not upscale requests or guarantees. Video format can be **Best quality**, strict **Compatibility MP4** (H.264/AAC), **Prefer VP9**, or **Prefer AV1**. VP9/AV1 preferences fall back to the automatic best-supported format when the preferred codec is unavailable and disclose that fallback in the job note. The actual height and MIME type are shown for each completed file.
-
-### Windows startup failures
-
-If the app exits before opening the UI, run `./youtube-downloader.exe --no-browser`
-from PowerShell to read the startup error. Double-click launches also show a
-startup error dialog. The default database is
-`$env:LOCALAPPDATA\yt-dl-go\state.db`; rebuilding the executable does not replace it.
-If the error reports an incompatible database schema, preserve the entire data
-directory before restoring a known-good backup. Do not delete the database or
-manually add missing columns. To recover legacy `./downloads` data, preserve and
-move aside the incompatible destination, then run `--migrate-legacy-data` from
-the directory containing `downloads`. The original legacy data is kept intact.
-
-## Linux and macOS browser/server edition
-
-The same CGO-free Go application builds for Linux and macOS. CI produces Linux `amd64`/`arm64` and macOS `amd64`/`arm64` validation packages with SHA-256 checksum files. These CI artifacts are currently unsigned; they are not yet signed/notarized public release binaries.
-
-On macOS the app uses `open` for browser/folder navigation and `osascript` for the native folder chooser. On Linux it uses `xdg-open`; the Settings **Browse** button additionally requires `zenity`, but an absolute output path can always be entered manually. For browser-assisted adaptive HD, install a compatible Chrome/Chromium browser or set `CHROME_PATH` explicitly.
-
-See [docs/PACKAGING.md](docs/PACKAGING.md) for artifact names, architecture targets, runtime integration details, and the signing/notarization plan.
-
-After inspection, you can optionally choose an available caption language and save it as a WebVTT (`.vtt`) or SubRip (`.srt`) sidecar. Caption extraction is best-effort: if a selected language is unavailable for one playlist item or YouTube's timed-text request fails, the media download still succeeds and the Library records a caption warning. Published sidecars are written next to their media file; app-managed sidecars are included in whole-job ZIP downloads.
-
-## How HD downloads work
-
-YouTube commonly serves HD and 4K video as separate adaptive video and audio tracks. The Compatibility MP4 strategy is strict: it selects progressive MP4 or adaptive H.264/AAC MP4 and never silently emits WebM. Best quality keeps the automatic policy. VP9 preferred and AV1 preferred select the requested WebM codec when available under the quality ceiling and otherwise fall back to the automatic best-supported format with an explicit job note. For 1440p/2160p, VP9/AV1 video is paired with Opus audio and remuxed into WebM entirely in Go, without transcoding or FFmpeg. When YouTube requires browser-scoped authorization, the app launches a temporary headless Chrome-compatible session, targets the selected codec/quality, captures only the selected tracks through their declared final fragments, and discards the temporary browser profile when the download ends.
-
-The app does not ask you to provide an account token or import cookies from your normal browser profile. YouTube may issue short-lived authorization to the temporary browser session used for adaptive capture; that profile is discarded when the download ends. This is separate from the Go API's optional `API_TOKEN` setting: the built-in UI does not prompt for or send that token, so leave `API_TOKEN` unset when using the bundled UI. If adaptive HD cannot be completed, the app uses the highest verified compatible progressive MP4 when available and records that fallback in the job note. YouTube availability and delivery rules can change, so no downloader can promise a particular resolution for every video.
-
-## Build and package
-
-Requirements:
-
-- Go 1.27.3 or newer
-- Node.js and npm to rebuild the embedded React UI
-- Internet access on the build machine to download Go and npm dependencies
-
-From the repository root in PowerShell, build the UI first, copy it into the Go embed directory, then build the executable. Vite empties root `dist` on each build, removing any existing executable and other files there. Do not use root `dist` as `DATA_DIR`; keep download data outside the build-output directory. Build the executable last.
-
-The checked Windows build workflow is available as:
-
-~~~powershell
-.\scripts\build-windows.ps1
-.\scripts\package-windows.ps1 -ExecutablePath .\dist\youtube-downloader.exe
-~~~
-
-Linux/macOS packages use the shared Unix build script:
-
-~~~bash
-TARGET_OS=linux TARGET_ARCH=amd64 bash ./scripts/build-unix.sh
-TARGET_OS=darwin TARGET_ARCH=arm64 bash ./scripts/build-unix.sh
-~~~
-
-Both packaging paths include the README and third-party notices and produce SHA-256 checksum files. The Unix script can also cross-build the alternate `amd64`/`arm64` architecture because the Go backend is built with `CGO_ENABLED=0`.
-
-It validates the toolchain and installed frontend dependencies, rebuilds the UI directly into the Go embed directory, runs the Go tests with CGO disabled, and verifies the resulting executable. It does not replace `node_modules`, so a running dev server will not lock files needed by the build. If dependencies are missing, close the app or Vite dev server, run `npm ci`, then retry. The workflow leaves other files in root `dist` intact. Pass `-OutputPath` to choose a different executable destination.
-
-~~~
-npm ci
-npm run build
-New-Item -ItemType Directory -Force .\src\server\dist | Out-Null
-Copy-Item -Path .\dist\* -Destination .\src\server\dist -Recurse -Force
-
-Push-Location .\src\server
-go mod download
-go test ./...
-$env:CGO_ENABLED = '0'
-go build -buildvcs=false -trimpath -ldflags='-s -w' -o ..\..\dist\youtube-downloader.exe .
-Pop-Location
-~~~
-
-On Windows the executable result remains `dist\youtube-downloader.exe`. Unix package names include the target OS and architecture. `CGO_ENABLED=0` keeps the Go program self-contained; Chrome remains an external runtime dependency only for browser-assisted adaptive HD downloads.
-
-### Releases and update checks
-
-**First public release:** [v0.1.0 (October 10, 2026)](https://github.com/ajbergh/yt-dl-go/releases/tag/v0.1.0), with Windows, Linux, and macOS AMD64/ARM64 packages, source archive, and SHA-256 manifest. **Windows builds are unsigned; macOS builds are unsigned and not notarized.** Independent provenance verification via GitHub's attestations API was unavailable at publication; read the release notes before using packages.
-
-Tagged stable releases use `.github/workflows/release.yml`. A tag must use `vMAJOR.MINOR.PATCH` form **and exactly match `package.json`**. The workflow runs the full frontend/Go/browser validation suite, builds the Windows/Linux/macOS package matrix, verifies each archive checksum, creates a canonical `SHA256SUMS.txt`, attaches GitHub build-provenance attestations, and creates a **draft** GitHub Release. Draft releases are intentionally invisible to update discovery until a human completes the publication gate.
-
-Release builds embed immutable `version`, source commit, and build-date metadata through Go linker variables. Local/ordinary CI builds remain `dev / unknown`. The Settings page shows this metadata, and packaged binaries can report the same identity without starting the service:
-
-~~~text
-youtube-downloader --version
-~~~
-
-Release builds perform a non-blocking check of the repository's latest stable **published** GitHub Release. Development builds skip that external request entirely.
-
-Update discovery is advisory only. The app links to the validated GitHub Release when a newer stable version exists; it does **not** download or replace its own executable. Automatic self-update remains disabled until Windows Authenticode signing, macOS Developer ID/notarization, post-download verification, and rollback-safe replacement are implemented. See [Release and update policy](docs/RELEASES.md) and the [first release verification checklist](docs/RELEASE_CHECKLIST.md) for the draft publication, artifact checks, signing, and rollback gates.
-
-## Configuration
-
-Deployment settings are optional environment variables. Runtime limits are also stored in SQLite and editable in Settings; matching environment variables take precedence. Saved runtime-limit changes apply when the service restarts.
-
-| Variable | Default | Purpose |
+| Platform | Portable package | Installer |
 | --- | --- | --- |
-| `ADDR` | `127.0.0.1:8080` | Listener address |
-| `DATA_DIR` | `%LOCALAPPDATA%\yt-dl-go` on Windows; `~/Library/Application Support/yt-dl-go` on macOS; `$XDG_DATA_HOME/yt-dl-go` or `~/.local/share/yt-dl-go` on Linux/Unix | Private local data directory; set this variable to choose a different location |
-| `CHROME_PATH` | unset | Override the saved Chrome/Chromium/Edge executable path |
-| `API_TOKEN` | unset | Bearer token for protected API routes. The bundled UI sends no token; leave unset when using the executable's UI. |
-| `HTTPS_PROXY` | unset | Optional `http://` or `https://` CONNECT proxy for native YouTube metadata, media, thumbnail, and caption requests. The target hostname is resolved and checked before CONNECT; browser-assisted Chrome traffic does not use this proxy. |
-| `ALLOWED_ORIGINS` | Own loopback listener origin; Vite origins in `dev` builds | Exact comma-separated HTTP(S) origins accepted by CORS; release builds require an explicit setting for cross-origin access |
-| `ALLOWED_HOSTS` | Loopback authorities at the listener port | Additional exact `host[:port]` values accepted by the host check |
-| `MAX_JOBS` | `32` | Maximum queued, downloading, processing, and paused jobs; finished Library records do not count |
-| `MAX_JOB_BYTES` | `10737418240` | Override the saved per-job media byte limit (10 GiB) |
-| `JOB_TIMEOUT` | `none` | Override the saved overall job deadline; accepts `none`, `0`, or a duration of at least one second. Items have separate size- and duration-aware deadlines, and network reads fail after 60 seconds without data. |
-| `RETENTION` | `never` | Override the saved retention. An explicit duration of at least `5m` expires a record only when every finalized file has a verified published copy. Failed or cancelled jobs with no files are cleaned after 24h by default. |
-| `DOWNLOAD_SLOTS` | `4` | Override the saved limit for concurrent file and ZIP responses; accepts `1`–`16` |
-| `NO_BROWSER` | unset | Backward-compatible environment switch; set to `1` to suppress automatic UI browser launch |
+| Windows 10/11 | `youtube-vault-windows-<arch>.exe` and companion `.zip` with notices | `youtube-vault-windows-<arch>-setup.exe` |
+| macOS | `youtube-vault-darwin-<arch>.tar.gz`, containing `YouTube Vault.app` | `youtube-vault-darwin-<arch>.pkg` |
+| Linux | `youtube-vault-linux-<arch>.tar.gz` | `youtube-vault-linux-<arch>.deb` |
 
-If data from an older working-directory `./downloads` is found, close any running downloader and run `youtube-downloader --migrate-legacy-data` to copy it to the per-user location. The source is kept intact; set `DATA_DIR` first if you want a custom destination. See [server configuration](src/server/README.md) for details.
+The desktop packages are currently validated on this branch through
+[GitHub Actions](https://github.com/ajbergh/yt-dl-go/actions/workflows/desktop.yml).
+The published [v0.1.0 release](https://github.com/ajbergh/yt-dl-go/releases/tag/v0.1.0)
+contains the earlier browser/server edition (`youtube-downloader-*`), not these
+Wails installers. Check the asset names and release notes before downloading.
+CI artifacts and release dry runs are validation builds, not a published desktop release.
 
-### Background / no-browser mode
+- **Windows:** run the setup EXE for Start menu/desktop shortcuts and an uninstaller,
+  or run the standalone portable EXE. WebView2 is required; setup provisions it
+  when missing and needs internet access for that step. Distribute the companion
+  notices ZIP with the portable EXE.
+- **macOS:** open the PKG to install into `/Applications`, or extract the tarball
+  and open `YouTube Vault.app`. Ordinary validation builds have no Developer ID
+  signature or notarization. See the [signing policy](docs/RELEASES.md#native-platform-signing).
+- **Linux:** on compatible Debian/Ubuntu systems, run
+  `sudo apt install ./youtube-vault-linux-amd64.deb` (use `arm64` when appropriate).
+  The portable tarball also needs compatible GTK3, WebKitGTK 4.1, and system
+  libraries; it is not a self-contained AppImage. See [runtime requirements](docs/DESKTOP.md).
 
-The packaged executable normally starts the local service and opens its embedded UI in your default browser. For long-running or headless use, start the same executable with either supported alias:
+All distributables have SHA-256 sidecars. The release pipeline also produces a
+combined checksum manifest and build provenance. These do not replace native OS
+signing. Windows Authenticode and credentialed macOS signing verification remain
+release work.
 
+## Use YouTube Vault
+
+1. Paste an authorized video or playlist URL and inspect it.
+2. Choose video or audio, a maximum quality, and any available captions.
+3. Confirm your rights and add it to the queue. Pause, resume, reorder, or retry
+   items as needed.
+4. Open **Library** to search, preview, save files, or export a ZIP. Use **Settings**
+   to choose the download folder, storage policy, and defaults.
+
+Quality choices are ceilings, not upscaling requests or guarantees. **Compatibility
+MP4** selects H.264/AAC; **Best quality**, **Prefer VP9**, and **Prefer AV1** may
+produce WebM when appropriate. The completed file shows its actual quality and
+format, and fallback notes explain changes. M4A preserves a compatible source
+AAC track; MP3 conversion is built in. Captions are optional VTT/SRT sidecars and
+may fail independently of the media download.
+
+For browser-assisted adaptive HD/4K delivery, install Chrome, Chromium, or Microsoft
+Edge. Browser discovery is automatic; advanced settings or `CHROME_PATH` can select
+an executable. The embedded desktop WebView does not replace that dependency.
+Temporary capture sessions do not import your normal browser's cookies or credentials.
+YouTube delivery changes can affect availability and completion.
+
+Closing the desktop window stops the app and its workers. The queue and Library
+persist for the next launch. No login item, background service, or tray process is installed.
+
+## Your files and saved data
+
+Published downloads default to `~/Downloads/YouTube_Vault`, organized by channel.
+Change this in Settings. The default **Managed + Published** storage policy retains
+both copies and can use about twice the final media size.
+
+Saved preferences, history, and managed files live separately from the executable:
+
+| Platform | Default application-data directory |
+| --- | --- |
+| Windows | `%LOCALAPPDATA%\yt-dl-go` |
+| macOS | `~/Library/Application Support/yt-dl-go` |
+| Linux | `$XDG_DATA_HOME/yt-dl-go`, or `~/.local/share/yt-dl-go` |
+
+Set `DATA_DIR` before launch to choose another private location. Back up the whole
+directory with the app closed before migration or rollback. Installers retain saved
+data and downloads when removed. Both editions share this data; run one edition at a time.
+Never store application data under the repository's generated `dist` directory.
+
+For startup problems, set `DESKTOP_LOG_FILE` to a writable path before launching.
+If an error reports an incompatible data schema, preserve the data and restore a
+compatible backup; do not delete the database or add columns manually. Legacy
+`./downloads` data can be copied with `youtube-vault --migrate-legacy-data` after
+closing the app. See the [engine guide](src/server/README.md) for recovery details.
+
+## Build from source
+
+Install the Node version in [`.nvmrc`](.nvmrc), npm, and the Go version in
+[`src/server/go.mod`](src/server/go.mod), then:
+
+```sh
+npm ci
+npm run build:desktop
 ```
-youtube-downloader --background
-youtube-downloader --no-browser
+
+Build on the target OS. Linux and macOS also require matching native architecture;
+Windows can build AMD64 and ARM64 from one host. Install NSIS 3.11 for Windows,
+Xcode command-line tools for macOS, or the GTK/WebKit development libraries and
+Debian packaging tools for Linux. The script installs pinned Wails tooling.
+
+On Windows, build both architectures with:
+
+```powershell
+./scripts/build-desktop-windows.ps1
+# Or only one:
+./scripts/build-desktop-windows.ps1 -Architecture amd64
 ```
 
-Both modes keep the Go service and download workers running in the foreground process but suppress automatic browser launch. Open the logged local URL (normally `http://127.0.0.1:8080/`) whenever you want the UI. Stop the service with the normal process signal / Ctrl+C. `NO_BROWSER=1` remains supported for CI and older automation.
+Outputs are under `dist/desktop/<os>-<arch>/`. See the
+[desktop build guide](docs/DESKTOP.md) for prerequisites, explicit targets,
+checksums, icons, native tests, and protected signing.
 
-This is intentionally **not** a detached daemon or native system-tray process: the foreground lifetime keeps shutdown/recovery behavior explicit and avoids invisible orphan services.
+## Browser/server edition
 
-For a network-visible deployment, set a random `API_TOKEN` of at least 32 characters, exact `ALLOWED_ORIGINS`, and exact `ALLOWED_HOSTS`; place the service behind TLS and appropriate network controls. The built-in UI cannot authenticate to a token-protected API, so use an external client that can send the bearer token. This program is designed as a trusted local/single-user tool, not a public multi-tenant download service.
+The alternate `youtube-downloader` executable serves the same interface in your
+browser. It defaults to `http://127.0.0.1:8080`; keep its process running while
+using it. `--no-browser` and `--background` suppress browser opening but do not
+detach the process. Stop it with Ctrl+C.
 
-## Verification
+The [packaging guide](docs/PACKAGING.md) covers its scripts and platform
+integration. Network/API configuration belongs to the [engine guide](src/server/README.md)
+and [security policy](SECURITY.md). The desktop edition uses private per-launch
+authentication and does not expose a configurable network listener.
 
-Run the repeatable checks from the repository root (the UI tests use Bun; the production build uses Node/npm):
+## Development and verification
 
-~~~
-npm run typecheck
-npm run build
-Push-Location .\src\server
-go test ./...
-go test -race ./...
-go vet ./...
-go vet -tags=e2e ./...
-golangci-lint run
-govulncheck ./...
-Pop-Location
-bun test .\src\downloader.test.mjs .\src\ui.test.mjs
-npm run e2e:browser
-~~~
+See [Contributing](CONTRIBUTING.md) for setup and checks, the
+[frontend guide](src/README.md) for UI development, and the
+[engine/API guide](src/server/README.md) for configuration and media behavior.
+Native CI runs on all six OS/architecture targets and checks portable packages,
+installer integration, native launch, removal, and saved-data preservation.
 
-The browser E2E layer builds a test-tagged deterministic Go service, drives real headless Chrome, exercises queue/pause/resume/completion/settings/restart persistence, and verifies destructive-action confirmation. The test fixture is excluded from normal production builds.
+Windows manual acceptance passed for the Wails candidate on 2026-11-05, as
+reported by the maintainer. macOS/Linux manual acceptance and credentialed signing
+verification remain pending. See the [release checklist](docs/RELEASE_CHECKLIST.md)
+for current evidence and the remaining publication gates.
 
-The live check is intentionally separate because it downloads real media and depends on current YouTube and browser behavior. Replace the sample URL with a video you are authorized to download and whose available quality meets the selected minimum:
+## Documentation
 
-~~~
-Push-Location .\src\server
-$env:YTDL_LIVE_DOWNLOAD_URL = 'https://youtu.be/y0KRrtfy2pY'
-$env:YTDL_LIVE_MIN_HEIGHT = '1080'
-go test -run TestLiveDownload -count=1 -v
-Pop-Location
-~~~
+- [Desktop builds and runtime](docs/DESKTOP.md)
+- [Packaging and artifact names](docs/PACKAGING.md)
+- [Release/update policy](docs/RELEASES.md) and [release checklist](docs/RELEASE_CHECKLIST.md)
+- [Contributing](CONTRIBUTING.md), [security](SECURITY.md), and [changelog](CHANGELOG.md)
+- [Roadmap](roadmap.md)
 
-The race detector may require a C compiler on Windows, depending on the Go toolchain and target configuration.
+## License
 
-## Licensing
-
-The project is licensed under MIT; third-party components retain their own licenses. Binary packages include complete Go and npm notices, license texts, and the LGPL decoder source. Each tagged release also includes a source archive with the build and relinking instructions. See [third-party notices](src/server/THIRD_PARTY_NOTICES.md) and [LGPL relinking](src/server/LGPL_RELINKING.md).
-
-## Project guides
-
-- [Frontend guide](src/README.md): develop, test, and embed the React UI.
-- [Backend guide](src/server/README.md): service configuration, behavior, and API contract.
-- [Third-party notices](src/server/THIRD_PARTY_NOTICES.md): distribution attribution and licenses.
-- [Packaging guide](docs/PACKAGING.md): Windows/Linux/macOS packages, checksums, runtime integration, and signing/notarization requirements.
-- [Release and update policy](docs/RELEASES.md): versioning, draft publication, provenance, native signing gates, and rollback requirements.
-- [UI reference mock](dev_mock_new_ui/README.md): the supplied design mock; it is not the production UI or backend.
+MIT for the project; third-party components retain their licenses. Distributions
+include dependency notices, license texts, LGPL decoder source, and relinking
+materials. Tagged releases include the corresponding project source archive.
+See [third-party notices](src/server/THIRD_PARTY_NOTICES.md) and
+[LGPL relinking instructions](src/server/LGPL_RELINKING.md).
