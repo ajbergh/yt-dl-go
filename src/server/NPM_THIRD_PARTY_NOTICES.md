@@ -14,8 +14,8 @@ Generated from production dependencies in the root `package-lock.json` with `lic
 | `csstype@3.2.3` | `3.2.3` | MIT | [repository](https://github.com/frenic/csstype) | [text](licenses/npm/csstype-3.2.3-d7516620.txt) |
 | `lucide-react@1.61.0` | `1.61.0` | ISC | [repository](https://github.com/lucide-icons/lucide) | [text](licenses/npm/lucide-react-1.61.0-e950746f.txt) |
 | `react-dom@19.3.1` | `19.3.1` | MIT | [repository](https://github.com/react/react) | [text](licenses/npm/react-dom-19.3.1-7e691db2.txt) |
-| `react-router-dom@7.18.4` | `7.18.4` | MIT | [repository](https://github.com/remix-run/react-router) | [text](licenses/npm/react-router-dom-7.18.4-b18818fe.txt) |
-| `react-router@7.18.4` | `7.18.4` | MIT | [repository](https://github.com/remix-run/react-router) | [text](licenses/npm/react-router-7.18.4-43e2a4e4.txt) |
+| `react-router-dom@7.18.5` | `7.18.5` | MIT | [repository](https://github.com/remix-run/react-router) | [text](licenses/npm/react-router-dom-7.18.5-db749446.txt) |
+| `react-router@7.18.5` | `7.18.5` | MIT | [repository](https://github.com/remix-run/react-router) | [text](licenses/npm/react-router-7.18.5-f4b60b05.txt) |
 | `react@19.3.1` | `19.3.1` | MIT | [repository](https://github.com/react/react) | [text](licenses/npm/react-19.3.1-f4529719.txt) |
 | `scheduler@0.28.0` | `0.28.0` | MIT | [repository](https://github.com/react/react) | [text](licenses/npm/scheduler-0.28.0-e06edbe7.txt) |
 | `set-cookie-parser@2.7.3` | `2.7.3` | MIT | [repository](https://github.com/nfriedly/set-cookie-parser) | [text](licenses/npm/set-cookie-parser-2.7.3-36f6c3ac.txt) |
