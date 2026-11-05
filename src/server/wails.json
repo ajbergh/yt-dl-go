@@ -1,0 +1,13 @@
+{
+  "$schema": "https://wails.io/schemas/config.v2.json",
+  "name": "YouTube Vault",
+  "outputfilename": "youtube-vault",
+  "frontend:dir": "../..",
+  "frontend:install": "npm ci",
+  "frontend:build": "npm run build -- --outDir src/server/dist",
+  "frontend:dev:build": "npm run build -- --outDir src/server/dist",
+  "wailsjsdir": "../../.wails-generated",
+  "build:tags": "desktop",
+  "author": { "name": "yt-dl-go contributors" },
+  "info": { "companyName": "yt-dl-go", "productName": "YouTube Vault", "productVersion": "0.1.0", "copyright": "Copyright yt-dl-go contributors", "comments": "Native desktop interface for yt-dl-go" }
+}

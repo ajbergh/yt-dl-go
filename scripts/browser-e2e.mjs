@@ -373,13 +373,13 @@ async function main() {
     const navigation = await cdp.send("Page.navigate", { url: `${baseURL}/` });
     if (navigation.errorText) throw new Error(`Chrome navigation failed: ${navigation.errorText}`);
     await waitFor(cdp, `document.readyState === "complete"`, "browser document load");
-    await waitFor(cdp, bodyIncludes("Service connected"), "service connection in browser");
+    await waitFor(cdp, bodyIncludes("Ready"), "service connection in browser");
     await captureScreenshot(cdp, "queue-empty");
     await captureScreenshot(cdp, "queue-empty-mobile", 390, 844);
 
     // 1-3: actual service startup, URL inspection, and queue creation.
     await setValue(cdp, "#video-url", fixtureURL);
-    await clickButton(cdp, "Inspect qualities");
+    await clickButton(cdp, "View options");
     await waitFor(cdp, bodyIncludes("E2E Fixture Video"), "fixture inspection result");
     await captureScreenshot(cdp, "inspection");
     await captureScreenshot(cdp, "inspection-mobile", 390, 844);
@@ -468,7 +468,7 @@ async function main() {
     await stopProcess(service);
     await startService();
     await cdp.send("Page.reload", { ignoreCache: true });
-    await waitFor(cdp, bodyIncludes("Service connected"), "service reconnect after restart", 30000);
+    await waitFor(cdp, bodyIncludes("Ready"), "service reconnect after restart", 30000);
     await clickButton(cdp, "Settings");
     await clickSelector(cdp, 'button[aria-label="Advanced settings"]');
     await waitFor(cdp, `document.querySelector("#naming-pattern")?.value === "E2E {title}"`, "persisted naming pattern");

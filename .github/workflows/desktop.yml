@@ -1,0 +1,202 @@
+name: Desktop builds
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        type: string
+        default: dev
+      artifact_prefix:
+        type: string
+        default: desktop
+      sign_macos:
+        type: boolean
+        default: false
+  workflow_dispatch:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: desktop-${{ github.workflow }}-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Wails ${{ matrix.target }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: ${{ inputs.sign_macos && 65 || 35 }}
+    environment: ${{ inputs.sign_macos && startsWith(matrix.target, 'darwin/') && 'macos-signing' || 'desktop-builds' }}
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: windows/amd64
+            artifact_dir: windows-amd64
+            runner: windows-latest
+          - target: windows/arm64
+            artifact_dir: windows-arm64
+            runner: windows-11-arm
+          - target: linux/amd64
+            artifact_dir: linux-amd64
+            runner: ubuntu-24.04
+          - target: linux/arm64
+            artifact_dir: linux-arm64
+            runner: ubuntu-24.04-arm
+          - target: darwin/amd64
+            artifact_dir: darwin-amd64
+            runner: macos-15-intel
+          - target: darwin/arm64
+            artifact_dir: darwin-arm64
+            runner: macos-15
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.1
+        with:
+          go-version-file: src/server/go.mod
+          cache-dependency-path: src/server/go.sum
+      - name: Install Linux WebKit build dependencies
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y build-essential pkg-config libgtk-3-dev libwebkit2gtk-4.1-dev xvfb dbus-x11 dpkg-dev desktop-file-utils
+      - name: Install frontend dependencies
+        run: npm ci
+      - name: Install Windows installer compiler
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          choco install nsis --version=3.11 --no-progress --yes
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Type-check frontend
+        run: npm run typecheck
+      - name: Test desktop packaging
+        run: node --test scripts/desktop-packaging.test.mjs
+      - name: Build embedded interface for tests
+        run: npm run build -- --outDir src/server/dist
+      - name: Test desktop service and native save handling
+        working-directory: src/server
+        shell: bash
+        run: |
+          tags=desktop
+          if [[ "$RUNNER_OS" == Linux ]]; then tags=desktop,webkit2_41; fi
+          go test -tags "$tags" ./...
+          go vet -tags "$tags" ./...
+      - name: Set reproducible build date
+        shell: bash
+        run: |
+          commit_date="$(git show -s --format=%cI "$GITHUB_SHA")"
+          build_date="$(node -e 'console.log(new Date(process.argv[1]).toISOString().replace(/\.\d{3}Z$/, "Z"))' "$commit_date")"
+          echo "BUILD_DATE=$build_date" >> "$GITHUB_ENV"
+      - name: Build and package desktop application
+        run: npm run build:desktop -- ${{ matrix.target }}
+        env:
+          VERSION: ${{ inputs.version || 'dev' }}
+          COMMIT: ${{ github.sha }}
+          DESKTOP_MACOS_SIGN: ${{ inputs.sign_macos && startsWith(matrix.target, 'darwin/') && 'true' || 'false' }}
+          APPLE_CERTIFICATE_P12_BASE64: ${{ secrets.APPLE_CERTIFICATE_P12_BASE64 }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_INSTALLER_CERTIFICATE_P12_BASE64: ${{ secrets.APPLE_INSTALLER_CERTIFICATE_P12_BASE64 }}
+          APPLE_INSTALLER_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_INSTALLER_CERTIFICATE_PASSWORD }}
+          APPLE_INSTALLER_SIGNING_IDENTITY: ${{ secrets.APPLE_INSTALLER_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+      - name: Verify extracted desktop package
+        if: runner.os != 'Linux'
+        run: node scripts/desktop-package-smoke.mjs
+        env:
+          VERSION: ${{ inputs.version || 'dev' }}
+          COMMIT: ${{ github.sha }}
+      - name: Verify Linux desktop package under Xvfb
+        if: runner.os == 'Linux'
+        run: dbus-run-session -- xvfb-run -a node scripts/desktop-package-smoke.mjs
+        env:
+          VERSION: ${{ inputs.version || 'dev' }}
+          COMMIT: ${{ github.sha }}
+          LIBGL_ALWAYS_SOFTWARE: "1"
+          WEBKIT_DISABLE_DMABUF_RENDERER: "1"
+      - name: Install and verify Linux desktop integration
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          data="${XDG_DATA_HOME:-$HOME/.local/share}/yt-dl-go"
+          mkdir -p "$data"
+          printf '%s\n' 'saved application data' > "$data/installer-preservation-test.txt"
+          sudo apt-get install -y ./dist/desktop/linux-*/youtube-vault-linux-*.deb
+          desktop-file-validate /usr/share/applications/youtube-vault.desktop
+          test -x /usr/bin/youtube-vault
+          test -s /usr/share/doc/youtube-vault/THIRD_PARTY_NOTICES.md
+          sudo apt-get install --reinstall -y ./dist/desktop/linux-*/youtube-vault-linux-*.deb
+          dbus-run-session -- xvfb-run -a node scripts/desktop-smoke.mjs --executable /usr/bin/youtube-vault
+          sudo apt-get remove -y youtube-vault
+          test ! -e /usr/bin/youtube-vault
+          test ! -e /usr/share/applications/youtube-vault.desktop
+          test ! -e /usr/share/icons/hicolor/256x256/apps/youtube-vault.png
+          grep -qx 'saved application data' "$data/installer-preservation-test.txt"
+          rm -- "$data/installer-preservation-test.txt"
+        env:
+          VERSION: ${{ inputs.version || 'dev' }}
+          COMMIT: ${{ github.sha }}
+          LIBGL_ALWAYS_SOFTWARE: "1"
+          WEBKIT_DISABLE_DMABUF_RENDERER: "1"
+      - name: Install, reinstall, launch and remove Windows application
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./scripts/desktop-installer-smoke.ps1
+        env:
+          VERSION: ${{ inputs.version || 'dev' }}
+          COMMIT: ${{ github.sha }}
+      - name: Install, reinstall, launch and remove macOS application
+        if: runner.os == 'macOS'
+        run: bash scripts/desktop-installer-smoke-macos.sh
+        env:
+          VERSION: ${{ inputs.version || 'dev' }}
+          COMMIT: ${{ github.sha }}
+      - name: Smoke-test native desktop window
+        if: runner.os != 'Linux'
+        run: npm run test:desktop
+      - name: Smoke-test Linux desktop window under Xvfb
+        if: runner.os == 'Linux'
+        run: dbus-run-session -- xvfb-run -a npm run test:desktop
+        env:
+          LIBGL_ALWAYS_SOFTWARE: "1"
+          WEBKIT_DISABLE_DMABUF_RENDERER: "1"
+      - name: Attest desktop release artifacts
+        if: github.event_name != 'pull_request' && inputs.artifact_prefix == 'release-desktop'
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: |
+            dist/desktop/**/*.exe
+            dist/desktop/**/*.zip
+            dist/desktop/**/*.tar.gz
+            dist/desktop/**/*.deb
+            dist/desktop/**/*.pkg
+      - name: Upload desktop packages
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ${{ inputs.artifact_prefix || 'desktop' }}-${{ runner.os }}-${{ runner.arch }}
+          path: |
+            dist/desktop/${{ matrix.artifact_dir }}/*.exe
+            dist/desktop/${{ matrix.artifact_dir }}/*.deb
+            dist/desktop/${{ matrix.artifact_dir }}/*.pkg
+            dist/desktop/${{ matrix.artifact_dir }}/*.zip
+            dist/desktop/${{ matrix.artifact_dir }}/*.tar.gz
+            dist/desktop/${{ matrix.artifact_dir }}/*.sha256
+            dist/desktop/${{ matrix.artifact_dir }}/expected-*.txt
+          if-no-files-found: error
+          retention-days: 14

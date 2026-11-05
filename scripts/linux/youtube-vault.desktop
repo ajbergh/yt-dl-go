@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=YouTube Vault
+Comment=Manage permitted media downloads
+Exec=youtube-vault
+Icon=youtube-vault
+Terminal=false
+Categories=AudioVideo;Video;Network;
+StartupWMClass=youtube-vault

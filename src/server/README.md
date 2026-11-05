@@ -1,14 +1,27 @@
 # Native Go download service
 
-Live matrix runs accept `YTDL_LIVE_MATRIX_STRATEGY` (default `best`); set it to `compatibility` to exercise H.264/AAC selection independently. Preroll handling and the latest sample-specific validation limits are recorded in [the download readiness investigation](../../docs/VEVO_DOWNLOAD_FIX_2026-10-31.md).
+This engine is shared by the Wails desktop (`youtube-vault`) and browser/server
+(`youtube-downloader`) editions. Desktop uses a native window, a private ephemeral
+loopback listener, and an in-memory per-launch bearer delivered through the Wails
+binding. `ADDR`, `API_TOKEN`, and origin/host overrides cannot expose that listener
+to a network. See the [desktop guide](../../docs/DESKTOP.md).
 
-Temporary capture tabs also apply [targeted player-data ad filtering](../../docs/UBLOCK_PLAYER_FILTERING.md) before page scripts run. Captured media still requires matching source identity and complete verified tracks before publication.
+The listener configuration, browser-opening behavior, and public-client authentication
+below describe the browser/server edition unless stated otherwise. Storage,
+scheduling, format selection, and media verification apply to both.
+
+Temporary capture tabs apply [targeted player-data filtering](../../docs/UBLOCK_PLAYER_FILTERING.md)
+before page scripts run. Publication requires matching source identity, complete
+selected tracks, and duration/size checks. Sample-specific successes do not establish
+universal delivery reliability. Live tests remain opt-in and require authorized
+media; `YTDL_LIVE_MATRIX_STRATEGY=compatibility` exercises H.264/AAC separately from
+the default `best` strategy.
 
 This directory contains the local HTTP service compiled into the `youtube-downloader` executable (`youtube-downloader.exe` on Windows). The executable serves both this API and the embedded React UI from one origin; the UI connects automatically and reads/writes its job history and preferences through the service. The server validates requests, manages download jobs, and streams finalized files. It uses `github.com/kkdai/youtube/v2` for metadata and compatible direct streams, `chromedp` for browser-assisted adaptive video delivery, and `gomedia` to remux MP4 tracks. Audio-only jobs can either preserve the source AAC-in-MP4 stream as M4A with no transcoding or decode AAC and encode tagged MP3 entirely in Go; no FFmpeg or other audio executable is required.
 
 This is a YouTube-only, local/single-user downloader. Download only content you own or are authorized to save. It does not import credentials or cookies from your normal browser profile, perform DRM decryption or paywall bypasses, or record live/HLS/DASH streams. Adaptive capture uses a temporary browser session that YouTube may authorize for that run.
 
-## Run and build
+## Browser/server run and build
 
 The bundled UI is embedded from `dist/` in this directory. For development, run:
 
@@ -27,7 +40,7 @@ go build -buildvcs=false -trimpath -ldflags='-s -w' -o ..\..\dist\youtube-downlo
 
 The repository-level packaging scripts build the embedded frontend, validate the native host, and package Windows/Linux/macOS output with checksums. See [../../docs/PACKAGING.md](../../docs/PACKAGING.md).
 
-Go 1.27 or newer is required. The process listens on `127.0.0.1:8080` by default, serves the SPA at `/`, and asks the operating system to open that address in the default browser. `ADDR` changes the listener and browser URL. If automatic browser launch is blocked, visit the configured address manually. The built-in UI uses the same origin, so it also follows a custom `ADDR`.
+Use the Go version pinned in `go.mod` (currently 1.27.3). The process listens on `127.0.0.1:8080` by default, serves the SPA at `/`, and asks the operating system to open that address in the default browser. `ADDR` changes the listener and browser URL. If automatic browser launch is blocked, visit the configured address manually. The built-in UI uses the same origin, so it also follows a custom `ADDR`.
 
 ## Format selection and adaptive HD / 4K path
 
@@ -88,7 +101,7 @@ Ticket links last five minutes. Individual-file transfers support one byte range
 
 ## API
 
-Control-plane API responses and errors return JSON. `GET /api/downloads/{ticket}` instead streams a file or ZIP. When `API_TOKEN` is configured, send `Authorization: Bearer TOKEN` except for `GET /api/health`, approved CORS preflight requests, and ticket download links. API JSON bodies must be one object no larger than 4096 bytes and cannot include unknown fields. The bundled UI sends no bearer token; if one is configured, use a token-capable external client or leave the token unset for the built-in UI.
+Control-plane API responses and errors return JSON. `GET /api/downloads/{ticket}` instead streams a file or ZIP. When `API_TOKEN` is configured, send `Authorization: Bearer TOKEN` except for `GET /api/health`, approved CORS preflight requests, and ticket download links. API JSON bodies must be one object no larger than 4096 bytes and cannot include unknown fields. The browser/server UI has no token-entry flow; if `API_TOKEN` is configured, use a token-capable external client. Desktop instead receives a private per-launch bearer through its Wails binding.
 
 `GET /api/events` is a long-lived `text/event-stream` endpoint and remains bearer-protected like the rest of the control plane. It sends an initial `snapshot` containing the current jobs and settings, then emits `job-created`, throttled `job-progress`, `job-status`, `job-file-finalized`, `job-error`, `job-deleted`, and `settings-changed` events. Heartbeat comments keep idle connections alive. Slow clients use a bounded event buffer; the bundled UI also performs a 30-second full-job reconciliation so a dropped event cannot permanently desynchronize state. The frontend consumes SSE through authenticated `fetch` rather than native `EventSource`, preserving bearer-header support for external/tokenized use. SSE requests are exempt from the normal short response write deadline so a healthy stream can remain connected indefinitely.
 

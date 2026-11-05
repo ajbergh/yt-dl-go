@@ -2,6 +2,8 @@ import { useEffect, useState, type ReactNode } from "react";
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { Activity, Film, GripVertical } from "lucide-react";
+import { desktopConnection } from "../../lib/desktop";
+import { userFacingMessage } from "../../lib/messages";
 import {
   apiBlob, formatBytes,
   type DownloadFile, type DownloadJob, type Inspection, type QueueItem, type Quality,
@@ -67,8 +69,8 @@ export const field = "w-full min-w-0 rounded-xl border border-neutral-700 bg-neu
 
 export function errorMessage(error: unknown): string {
   return error instanceof TypeError
-    ? "Could not reach the built-in Go service. Retrying automatically."
-    : error instanceof Error ? error.message : "Something went wrong. Please try again.";
+    ? "The app is temporarily unavailable. Retrying automatically."
+    : error instanceof Error ? userFacingMessage(error.message) : "Something went wrong. Please try again.";
 }
 
 export function notificationAPI(): typeof Notification | null {
@@ -76,8 +78,9 @@ export function notificationAPI(): typeof Notification | null {
 }
 
 export function terminalNotification(job: DownloadJob): { title: string; body: string } | null {
-  const error = (job.error || "").trim();
-  if ((job.status === "failed" || job.status === "partial") && /storage|output|disk|filesystem/i.test(error)) {
+  const originalError = (job.error || "").trim();
+  const error = userFacingMessage(originalError);
+  if ((job.status === "failed" || job.status === "partial") && /storage|output|disk|filesystem/i.test(originalError)) {
     return { title: "Download storage error", body: `${job.title}: ${error || "A storage/output error stopped the download."}`.slice(0, 240) };
   }
   if (job.status === "completed") {
@@ -234,6 +237,8 @@ export function etaLabel(seconds: number): string {
 }
 
 export function builtInServiceConnection(): ServiceConnection {
+  const desktop = desktopConnection();
+  if (desktop) return desktop;
   // `npm run dev` fixes Vite at port 5173 and runs Go separately at 8080.
   // The packaged executable serves both UI and API from the current origin.
   // Vite preview/custom ports are not a supported connection mode.
