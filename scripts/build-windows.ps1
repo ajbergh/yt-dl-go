@@ -61,6 +61,7 @@ try {
     $outputDirectory = Split-Path -Parent $OutputPath
 
     Set-Location $repoRoot
+    Invoke-Native 'node' @((Join-Path $PSScriptRoot 'generate-app-icons.mjs'), '--check')
     $serverDist = Join-Path $repoRoot 'src\server\dist'
     if (Test-Path -LiteralPath $serverDist) {
         $serverDistItem = Get-Item -LiteralPath $serverDist

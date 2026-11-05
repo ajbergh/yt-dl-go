@@ -1,0 +1,155 @@
+import { spawnSync } from "node:child_process";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import os from "node:os";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { packageLinux } from "./package-desktop-linux.mjs";
+import { embedMacOSNotices, packageMacOS, packageWindows } from "./package-desktop-installers.mjs";
+
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const server = path.join(root, "src/server");
+const goos = { win32: "windows", darwin: "darwin", linux: "linux" }[process.platform];
+const hostArch = { x64: "amd64", arm64: "arm64" }[process.arch];
+const target = process.argv[2] || `${goos}/${hostArch}`;
+const [targetOS, arch] = target.split("/");
+if (!goos || targetOS !== goos || !["amd64", "arm64"].includes(arch) || target !== `${targetOS}/${arch}`) {
+  throw new Error("Build on the target OS. Supported targets: windows, darwin, linux / amd64, arm64.");
+}
+if (goos !== "windows" && arch !== hostArch) throw new Error("Build Linux and macOS packages on a runner with the target architecture.");
+
+function run(command, args, options = {}) {
+  const result = spawnSync(command, args, { cwd: server, stdio: "inherit", ...options });
+  if (result.error) throw result.error;
+  if (result.status !== 0) throw new Error(`${path.basename(command)} failed (${result.status})`);
+  return result.stdout?.toString().trim();
+}
+
+run(process.execPath, [path.join(root, "scripts/generate-app-icons.mjs"), "--check"], { cwd: root });
+const goRoot = run("go", ["env", "GOROOT"], { stdio: ["ignore", "pipe", "inherit"] });
+const tools = path.join(os.tmpdir(), "yt-dl-go-desktop-tools-v2.17.1");
+mkdirSync(tools, { recursive: true });
+const env = {
+  ...process.env, GOROOT: goRoot, GOTOOLCHAIN: "local", GOBIN: tools,
+  GOOS: goos, GOARCH: hostArch, CGO_ENABLED: "1",
+  PATH: [path.join(goRoot, "bin"), tools, process.env.PATH].join(path.delimiter),
+};
+const exe = name => path.join(tools, name + (goos === "windows" ? ".exe" : ""));
+for (const [name, module] of [
+  ["wails", "github.com/wailsapp/wails/v2/cmd/wails@v2.17.1"],
+  ["go-licenses", "github.com/google/go-licenses/v2@v2.0.1"],
+]) {
+  if (!existsSync(exe(name))) run("go", ["install", module], { env });
+}
+const version = process.env.VERSION || "dev";
+const productVersion = version === "dev" ? JSON.parse(readFileSync(path.join(root, "package.json"), "utf8")).version : version.replace(/^v/, "");
+if (!/^\d+\.\d+\.\d+$/.test(productVersion)) throw new Error("Desktop product version must be MAJOR.MINOR.PATCH");
+const commit = process.env.COMMIT || run("git", ["rev-parse", "HEAD"], { cwd: root, stdio: ["ignore", "pipe", "inherit"] });
+const buildDate = process.env.BUILD_DATE || new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
+for (const value of [version, commit, buildDate]) {
+  if (!/^[A-Za-z0-9:._+\-]+$/.test(value)) throw new Error("Invalid build metadata");
+}
+const tags = goos === "linux" ? "desktop,webkit2_41" : "desktop";
+const flags = `-s -w -X main.buildVersion=${version} -X main.buildCommit=${commit} -X main.buildDate=${buildDate}`;
+const frontendEnv = { ...env };
+delete frontendEnv.VITE_CHECK_MODE;
+run(process.execPath, [path.join(root, "node_modules/vite/bin/vite.js"), "build", "--configLoader", "runner", "--outDir", path.join(server, "dist")], { cwd: root, env: frontendEnv });
+if (!existsSync(path.join(server, "dist/index.html"))) throw new Error("Desktop frontend did not produce index.html");
+// Wails reads productVersion from its project file. Restore the source even if
+// compilation fails; sequential architecture builds share this configuration.
+const configPath = path.join(server, "wails.json");
+const originalConfig = readFileSync(configPath);
+const config = JSON.parse(originalConfig.toString());
+config.info.productVersion = productVersion;
+try {
+  writeFileSync(configPath, JSON.stringify(config, null, 2) + "\n");
+  run(exe("wails"), ["build", "-s", "-m", "-skipbindings", "-platform", target, "-tags", tags, "-ldflags", flags], { env });
+} finally {
+  writeFileSync(configPath, originalConfig);
+}
+
+const output = path.join(path.resolve(root, process.env.DESKTOP_OUTPUT_ROOT || "dist/desktop"), `${goos}-${arch}`);
+mkdirSync(output, { recursive: true });
+const stage = mkdtempSync(path.join(output, ".package-"));
+const name = `youtube-vault-${goos}-${arch}`;
+const contents = path.join(stage, name);
+mkdirSync(contents);
+try {
+  const buildBin = path.join(server, "build/bin");
+  if (goos === "darwin") {
+    const app = readdirSync(buildBin).find(name => name.endsWith(".app"));
+    if (!app) throw new Error("Wails did not produce a macOS app bundle");
+    cpSync(path.join(buildBin, app), path.join(contents, app), { recursive: true });
+  } else {
+    const binary = "youtube-vault" + (goos === "windows" ? ".exe" : "");
+    cpSync(path.join(buildBin, binary), path.join(contents, binary));
+  }
+  for (const file of ["README.md", "LICENSE"]) cpSync(path.join(root, file), path.join(contents, file));
+  for (const file of ["THIRD_PARTY_NOTICES.md", "GO_THIRD_PARTY_NOTICES.md", "NPM_THIRD_PARTY_NOTICES.md", "LGPL_RELINKING.md"]) {
+    cpSync(path.join(server, file), path.join(contents, file));
+  }
+  cpSync(path.join(root, "docs/DESKTOP.md"), path.join(contents, "DESKTOP.md"));
+  cpSync(path.join(server, "licenses"), path.join(contents, "licenses"), { recursive: true });
+  const licenseEnv = { ...env, GOOS: goos, GOARCH: arch, GOFLAGS: `-tags=${tags}` };
+  const ignored = ["--ignore", "youtube-downloader", "--ignore", "github.com/dop251/goja/ftoa"];
+  run(exe("go-licenses"), ["check", ".", "--disallowed_types=forbidden,unknown", ...ignored], { env: licenseEnv });
+  const report = run(exe("go-licenses"), ["report", ".", ...ignored], { env: licenseEnv, stdio: ["ignore", "pipe", "inherit"] });
+  writeFileSync(path.join(contents, "DESKTOP_GO_LICENSES.csv"), report + "\n");
+  run(exe("go-licenses"), ["save", ".", `--save_path=${path.join(contents, "desktop-licenses")}`, ...ignored], { env: licenseEnv });
+  if (goos === "darwin") {
+    embedMacOSNotices(contents);
+    if (process.env.DESKTOP_MACOS_SIGN === "true") {
+      run(process.execPath, [path.join(root, "scripts/sign-desktop-macos.mjs"), path.join(contents, "YouTube Vault.app")], { env });
+    } else {
+      // Embedding notices changes the bundle after Wails' initial ad-hoc sign.
+      // Refresh that signature for native Apple Silicon execution in dry runs.
+      run("codesign", ["--force", "--sign", "-", path.join(contents, "YouTube Vault.app")], { env });
+    }
+  }
+  const archive = path.join(output, name + (goos === "windows" ? ".zip" : ".tar.gz"));
+  const artifacts = [archive];
+  if (goos === "windows") {
+    const quote = text => "'" + text.replaceAll("'", "''") + "'";
+    const script = `$ErrorActionPreference='Stop'; $ProgressPreference='SilentlyContinue'; Compress-Archive -LiteralPath ${quote(contents)} -DestinationPath ${quote(archive)} -Force`;
+    run("powershell.exe", ["-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(script, "utf16le").toString("base64")], { env });
+  } else {
+    run("tar", ["-czf", archive, "-C", stage, name], { env });
+  }
+  const digest = createHash("sha256").update(readFileSync(archive)).digest("hex");
+  writeFileSync(archive + ".sha256", `${digest}  ${path.basename(archive)}\n`);
+  console.log(`Desktop package: ${archive}`);
+  console.log(`SHA-256: ${digest}`);
+  if (goos === "linux") {
+    const deb = packageLinux({ root, stage, contents, output, name, arch, version: version === "dev" ? `${productVersion}~dev` : productVersion, run });
+    const debDigest = createHash("sha256").update(readFileSync(deb)).digest("hex");
+    writeFileSync(deb + ".sha256", `${debDigest}  ${path.basename(deb)}\n`);
+    console.log(`Desktop installer: ${deb}`);
+    artifacts.push(deb);
+  }
+  if (goos === "windows") {
+    // Preserve each architecture before the next build overwrites build/bin.
+    const application = path.join(output, name + ".exe");
+    cpSync(path.join(contents, "youtube-vault.exe"), application);
+    const applicationDigest = createHash("sha256").update(readFileSync(application)).digest("hex");
+    writeFileSync(application + ".sha256", `${applicationDigest}  ${path.basename(application)}\n`);
+    console.log(`Desktop application: ${application}`);
+    console.log(`EXE SHA-256: ${applicationDigest}`);
+    artifacts.push(application);
+  }
+  if (goos === "windows" || goos === "darwin") {
+    const options = { root, stage, contents, output, name, arch, version: productVersion, run };
+    const installer = goos === "windows" ? packageWindows(options) : packageMacOS(options);
+    if (goos === "darwin" && process.env.DESKTOP_MACOS_SIGN === "true") {
+      run(process.execPath, [path.join(root, "scripts/sign-desktop-macos.mjs"), installer], { env });
+    }
+    const installerDigest = createHash("sha256").update(readFileSync(installer)).digest("hex");
+    writeFileSync(installer + ".sha256", `${installerDigest}  ${path.basename(installer)}\n`);
+    console.log(`Desktop installer: ${installer}`);
+    artifacts.push(installer);
+  }
+  writeFileSync(path.join(output, `expected-desktop-${goos}-${arch}.txt`), artifacts.map(file => path.basename(file)).join("\n") + "\n");
+} finally {
+  const relative = path.relative(output, stage);
+  if (!relative.startsWith(".package-") || relative.includes(path.sep)) throw new Error("Unexpected package staging directory");
+  rmSync(stage, { recursive: true, force: true });
+}

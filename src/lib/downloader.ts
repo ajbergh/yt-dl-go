@@ -323,10 +323,10 @@ export async function api<T>(connection: ServiceConnection, path: string, init: 
   if (response.status === 204) return undefined as T;
   const payload: unknown = await response.json().catch(() => null);
   if (!response.ok) {
-    const error = payload && typeof payload === "object" && "error" in payload ? String(payload.error) : `The download service could not complete this request (${response.status}).`;
+    const error = payload && typeof payload === "object" && "error" in payload ? String(payload.error) : `The app could not complete this request (${response.status}).`;
     throw new Error(error);
   }
-  if (!payload) throw new Error("The service returned an unexpected response.");
+  if (!payload) throw new Error("The app could not complete that action. Please try again.");
   return payload as T;
 }
 
@@ -353,7 +353,7 @@ export async function streamServiceEvents(
     throw new Error(message);
   }
   if (!response.headers.get("Content-Type")?.toLowerCase().startsWith("text/event-stream") || !response.body) {
-    throw new Error("The service returned an invalid live-update stream.");
+    throw new Error("Live updates were interrupted. Please try again.");
   }
 
   const reader = response.body.getReader();
@@ -413,11 +413,11 @@ export async function apiBlob(connection: ServiceConnection, path: string, init:
   const response = await fetch(`${connection.base}${path}`, { ...init, headers, credentials: "omit" });
   if (!response.ok) {
     const payload: unknown = await response.clone().json().catch(() => null);
-    const error = payload && typeof payload === "object" && "error" in payload ? String(payload.error) : `The download service could not complete this media request (${response.status}).`;
+    const error = payload && typeof payload === "object" && "error" in payload ? String(payload.error) : `The app could not save this media (${response.status}).`;
     throw new Error(error);
   }
   const blob = await response.blob();
-  if (!blob.size) throw new Error("The service returned empty media.");
+  if (!blob.size) throw new Error("No media was available to save.");
   return blob;
 }
 

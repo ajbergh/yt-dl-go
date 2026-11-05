@@ -1,0 +1,64 @@
+# Run only on disposable GitHub runners: this exercises real per-user installation.
+$ErrorActionPreference = 'Stop'
+Set-StrictMode -Version Latest
+if ($env:GITHUB_ACTIONS -ne 'true') { throw 'Installer integration tests require a disposable GitHub runner.' }
+$repo = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
+$arch = if ($env:RUNNER_ARCH -eq 'ARM64') { 'arm64' } else { 'amd64' }
+$output = Join-Path $repo "dist/desktop/windows-$arch"
+$setup = Join-Path $output "youtube-vault-windows-$arch-setup.exe"
+$install = Join-Path $env:LOCALAPPDATA 'Programs/YouTube Vault'
+$registry = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\YouTube Vault'
+$menu = Join-Path ([Environment]::GetFolderPath('Programs')) 'YouTube Vault.lnk'
+$desktop = Join-Path ([Environment]::GetFolderPath('Desktop')) 'YouTube Vault.lnk'
+if ((Test-Path -LiteralPath $install) -or (Test-Path -LiteralPath $registry)) { throw 'Refusing to overwrite an existing installation.' }
+$data = Join-Path $env:LOCALAPPDATA 'yt-dl-go'
+New-Item -ItemType Directory -Path $data -Force | Out-Null
+$savedData = Join-Path $data 'installer-preservation-test.txt'
+Set-Content -LiteralPath $savedData -Value 'saved application data'
+function Invoke-Installer([string]$File, [string[]]$Arguments) {
+    $process = Start-Process -FilePath $File -ArgumentList $Arguments -Wait -PassThru -WindowStyle Hidden
+    if ($process.ExitCode -ne 0) { throw "Installer exited with $($process.ExitCode)" }
+}
+Invoke-Installer $setup @('/S')
+$executable = Join-Path $install 'app/youtube-vault.exe'
+$portable = Join-Path $output "youtube-vault-windows-$arch.exe"
+if ((Get-FileHash -LiteralPath $executable).Hash -ne (Get-FileHash -LiteralPath $portable).Hash) { throw 'Installed application differs from portable application.' }
+foreach ($file in @($menu, $desktop, (Join-Path $install 'app/THIRD_PARTY_NOTICES.md'), (Join-Path $install 'app/DESKTOP_GO_LICENSES.csv'))) {
+    if (-not (Test-Path -LiteralPath $file)) { throw "Missing installed file: $file" }
+}
+if (-not (Get-ItemProperty -LiteralPath $registry).QuietUninstallString) { throw 'Uninstall registration missing.' }
+# An unrelated file at the chosen install root must survive upgrade and removal.
+$sentinel = Join-Path $install 'keep-user-file.txt'
+Set-Content -LiteralPath $sentinel -Value 'preserve me'
+Invoke-Installer $setup @('/S')
+if ((Get-Content -LiteralPath $sentinel) -ne 'preserve me') { throw 'Reinstallation removed user files.' }
+if ((Get-Content -LiteralPath $savedData) -ne 'saved application data') { throw 'Reinstallation removed saved data.' }
+& node (Join-Path $PSScriptRoot 'desktop-smoke.mjs') --executable $executable
+if ($LASTEXITCODE -ne 0) { throw 'Installed application smoke test failed.' }
+# _?= keeps NSIS in place so -Wait observes actual uninstall completion.
+Invoke-Installer (Join-Path $install 'uninstall.exe') @('/S', "_?=$install")
+foreach ($file in @((Join-Path $install 'app'), $executable, $menu, $desktop, $registry)) {
+    if (Test-Path -LiteralPath $file) { throw "Uninstall left installed integration: $file" }
+}
+if ((Get-Content -LiteralPath $sentinel) -ne 'preserve me') { throw 'Uninstall removed user files.' }
+if ((Get-Content -LiteralPath $savedData) -ne 'saved application data') { throw 'Uninstall removed saved data.' }
+Remove-Item -LiteralPath $savedData
+Remove-Item -LiteralPath $sentinel
+# NSIS cannot delete its own executable in _?= mode; remove that known file.
+# Emulated installer processes and antivirus can briefly retain the image after
+# process exit. Retry only this known executable; never recursively delete.
+for ($attempt = 0; $attempt -lt 50; $attempt++) {
+    try {
+        $uninstaller = Join-Path $install 'uninstall.exe'
+        if (Test-Path -LiteralPath $uninstaller) { Remove-Item -LiteralPath $uninstaller -Force }
+        if (Test-Path -LiteralPath $install) { [System.IO.Directory]::Delete($install) }
+        break
+    } catch {
+        if ($attempt -eq 49) {
+            Get-ChildItem -LiteralPath $install -Force | Format-Table Name, Attributes
+            throw
+        }
+        Start-Sleep -Milliseconds 200
+    }
+}
+Write-Host 'Windows installer, reinstallation, launch, and removal verified.'
