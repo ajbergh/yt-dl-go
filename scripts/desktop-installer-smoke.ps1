@@ -11,6 +11,10 @@ $registry = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\YouTube V
 $menu = Join-Path ([Environment]::GetFolderPath('Programs')) 'YouTube Vault.lnk'
 $desktop = Join-Path ([Environment]::GetFolderPath('Desktop')) 'YouTube Vault.lnk'
 if ((Test-Path -LiteralPath $install) -or (Test-Path -LiteralPath $registry)) { throw 'Refusing to overwrite an existing installation.' }
+$data = Join-Path $env:LOCALAPPDATA 'yt-dl-go'
+New-Item -ItemType Directory -Path $data -Force | Out-Null
+$savedData = Join-Path $data 'installer-preservation-test.txt'
+Set-Content -LiteralPath $savedData -Value 'saved application data'
 function Invoke-Installer([string]$File, [string[]]$Arguments) {
     $process = Start-Process -FilePath $File -ArgumentList $Arguments -Wait -PassThru -WindowStyle Hidden
     if ($process.ExitCode -ne 0) { throw "Installer exited with $($process.ExitCode)" }
@@ -28,6 +32,7 @@ $sentinel = Join-Path $install 'keep-user-file.txt'
 Set-Content -LiteralPath $sentinel -Value 'preserve me'
 Invoke-Installer $setup @('/S')
 if ((Get-Content -LiteralPath $sentinel) -ne 'preserve me') { throw 'Reinstallation removed user files.' }
+if ((Get-Content -LiteralPath $savedData) -ne 'saved application data') { throw 'Reinstallation removed saved data.' }
 & node (Join-Path $PSScriptRoot 'desktop-smoke.mjs') --executable $executable
 if ($LASTEXITCODE -ne 0) { throw 'Installed application smoke test failed.' }
 # _?= keeps NSIS in place so -Wait observes actual uninstall completion.
@@ -36,6 +41,8 @@ foreach ($file in @($executable, $menu, $desktop, $registry)) {
     if (Test-Path -LiteralPath $file) { throw "Uninstall left installed integration: $file" }
 }
 if ((Get-Content -LiteralPath $sentinel) -ne 'preserve me') { throw 'Uninstall removed user files.' }
+if ((Get-Content -LiteralPath $savedData) -ne 'saved application data') { throw 'Uninstall removed saved data.' }
+Remove-Item -LiteralPath $savedData
 Remove-Item -LiteralPath $sentinel
 # NSIS cannot delete its own executable in _?= mode; remove that known file.
 Remove-Item -LiteralPath (Join-Path $install 'uninstall.exe') -ErrorAction SilentlyContinue

@@ -2,6 +2,7 @@ Unicode true
 !include "MUI2.nsh"
 !include "LogicLib.nsh"
 !include "x64.nsh"
+!include "WinVer.nsh"
 Name "YouTube Vault"
 OutFile "${OUTPUT}"
 InstallDir "$LOCALAPPDATA\Programs\YouTube Vault"
@@ -28,6 +29,11 @@ VIAddVersionKey "LegalCopyright" "YouTube Vault contributors"
 Function .onInit
   SetRegView 64
   SetShellVarContext current
+  ${IfNot} ${AtLeastWin10}
+    MessageBox MB_ICONSTOP "YouTube Vault requires Windows 10 or later." /SD IDOK
+    SetErrorLevel 1
+    Quit
+  ${EndIf}
 !if "${ARCH}" == "arm64"
   ${IfNot} ${IsNativeARM64}
 !else

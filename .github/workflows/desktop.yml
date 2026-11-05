@@ -28,7 +28,7 @@ jobs:
   build:
     name: Wails ${{ matrix.target }}
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 35
+    timeout-minutes: ${{ inputs.sign_macos && 65 || 35 }}
     environment: ${{ inputs.sign_macos && startsWith(matrix.target, 'darwin/') && 'macos-signing' || 'desktop-builds' }}
     permissions:
       contents: read
@@ -134,6 +134,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          data="${XDG_DATA_HOME:-$HOME/.local/share}/yt-dl-go"
+          mkdir -p "$data"
+          printf '%s\n' 'saved application data' > "$data/installer-preservation-test.txt"
           sudo apt-get install -y ./dist/desktop/linux-*/youtube-vault-linux-*.deb
           desktop-file-validate /usr/share/applications/youtube-vault.desktop
           test -x /usr/bin/youtube-vault
@@ -144,6 +147,8 @@ jobs:
           test ! -e /usr/bin/youtube-vault
           test ! -e /usr/share/applications/youtube-vault.desktop
           test ! -e /usr/share/icons/hicolor/256x256/apps/youtube-vault.png
+          grep -qx 'saved application data' "$data/installer-preservation-test.txt"
+          rm -- "$data/installer-preservation-test.txt"
         env:
           VERSION: ${{ inputs.version || 'dev' }}
           COMMIT: ${{ github.sha }}
