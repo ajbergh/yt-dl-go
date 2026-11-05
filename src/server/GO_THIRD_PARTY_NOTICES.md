@@ -30,7 +30,7 @@ The kkdai/youtube v2.10.6 entry includes a local MIT-licensed compatibility patc
 | `modernc.org/libc` | `v1.79.0` | BSD-3-Clause | [source](https://pkg.go.dev/modernc.org/libc@v1.79.0) | [license files](licenses/go/modernc.org/libc) |
 | `modernc.org/mathutil` | `v1.7.1` | BSD-3-Clause | [source](https://pkg.go.dev/modernc.org/mathutil@v1.7.1) | [license files](licenses/go/modernc.org/mathutil) |
 | `modernc.org/memory` | `v1.12.1` | BSD-3-Clause | [source](https://pkg.go.dev/modernc.org/memory@v1.12.1) | [license files](licenses/go/modernc.org/memory) |
-| `modernc.org/sqlite` | `v1.61.0` | BSD-3-Clause | [source](https://pkg.go.dev/modernc.org/sqlite@v1.61.0) | [license files](licenses/go/modernc.org/sqlite) |
+| `modernc.org/sqlite` | `v1.61.1` | BSD-3-Clause | [source](https://pkg.go.dev/modernc.org/sqlite@v1.61.1) | [license files](licenses/go/modernc.org/sqlite) |
 | `github.com/dop251/goja/ftoa` (Lucent-derived implementation) | goja module version | Lucent license | [source](https://github.com/dop251/goja) | [text](licenses/go/github.com/dop251/goja/ftoa/LICENSE_LUCENE) |
 | `github.com/dop251/goja/ftoa/internal/fast` (V8-derived implementation) | goja module version | BSD-3-Clause | [source](https://github.com/dop251/goja) | [text](licenses/go/github.com/dop251/goja/ftoa/internal/fast/LICENSE_V8) |
 | Go standard library and runtime | `1.27.x` | BSD-style | [source and license](https://go.dev/LICENSE) | [text](licenses/go/Go-Standard-Library/LICENSE) |

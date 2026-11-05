@@ -175,11 +175,11 @@ jobs:
             target: linux
             arch: arm64
             label: Linux arm64
-          - runner: macos-latest
+          - runner: macos-15-intel
             target: darwin
             arch: amd64
             label: macOS amd64
-          - runner: macos-latest
+          - runner: macos-15
             target: darwin
             arch: arm64
             label: macOS arm64
