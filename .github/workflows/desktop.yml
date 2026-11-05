@@ -14,7 +14,7 @@ on:
         default: false
   workflow_dispatch:
   push:
-    branches: [main, "desktop/**"]
+    branches: [main]
   pull_request:
 
 permissions:

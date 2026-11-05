@@ -109,8 +109,10 @@ browser/favicon assets. Package smoke tests check the actual EXE icon images,
 macOS ICNS pixels, and Debian-installed PNG.
 
 The **Desktop builds** workflow produces Windows AMD64/ARM64 executables and
-Windows, Linux and macOS AMD64/ARM64 archives. It is available through workflow dispatch and runs for desktop branches
-and pull requests. It uploads validation artifacts; it does not create a tag or
+Windows, Linux and macOS AMD64/ARM64 archives. It runs for pull requests and pushes
+to `main`, and is available through workflow dispatch for other branches. Avoiding
+branch-push builds alongside PR builds prevents duplicate, canceled check suites.
+It uploads validation artifacts; it does not create a tag or
 publish a GitHub Release. The tagged release workflow reuses this same native
 matrix and includes the desktop archives, standalone Windows EXEs, Windows setup
 EXEs, macOS PKGs, Linux Debian packages, checksums and provenance alongside the browser/server artifacts in a
