@@ -8,8 +8,8 @@ The kkdai/youtube v2.10.6 entry includes a local MIT-licensed compatibility patc
 | --- | --- | --- | --- | --- |
 | `github.com/at-wat/ebml-go` | `v0.19.4` | Apache-2.0 | [source](https://pkg.go.dev/github.com/at-wat/ebml-go@v0.19.4) | [license files](licenses/go/github.com/at-wat/ebml-go) |
 | `github.com/bitly/go-simplejson` | `v0.5.1` | MIT | [source](https://pkg.go.dev/github.com/bitly/go-simplejson@v0.5.1) | [license files](licenses/go/github.com/bitly/go-simplejson) |
-| `github.com/chromedp/cdproto` | `v0.158.4` | MIT | [source](https://pkg.go.dev/github.com/chromedp/cdproto@v0.158.4) | [license files](licenses/go/github.com/chromedp/cdproto) |
-| `github.com/chromedp/chromedp` | `v0.21.0` | MIT | [source](https://pkg.go.dev/github.com/chromedp/chromedp@v0.21.0) | [license files](licenses/go/github.com/chromedp/chromedp) |
+| `github.com/chromedp/cdproto` | `v0.159.0` | MIT | [source](https://pkg.go.dev/github.com/chromedp/cdproto@v0.159.0) | [license files](licenses/go/github.com/chromedp/cdproto) |
+| `github.com/chromedp/chromedp` | `v0.21.1` | MIT | [source](https://pkg.go.dev/github.com/chromedp/chromedp@v0.21.1) | [license files](licenses/go/github.com/chromedp/chromedp) |
 | `github.com/dlclark/regexp2` | `v1.11.5` | MIT | [source](https://pkg.go.dev/github.com/dlclark/regexp2@v1.11.5) | [license files](licenses/go/github.com/dlclark/regexp2) |
 | `github.com/dop251/goja` | `v0.0.0-20260311135729-065cd970411c` | MIT | [source](https://pkg.go.dev/github.com/dop251/goja@v0.0.0-20260311135729-065cd970411c) | [license files](licenses/go/github.com/dop251/goja) |
 | `github.com/dustin/go-humanize` | `v1.1.0` | MIT | [source](https://pkg.go.dev/github.com/dustin/go-humanize@v1.1.0) | [license files](licenses/go/github.com/dustin/go-humanize) |
