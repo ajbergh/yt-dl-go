@@ -5,9 +5,17 @@ This file summarizes notable user-facing changes. Version **v0.1.0** was publicl
 ## [Unreleased]
 
 ### Added
+- Wails v2 desktop windows for Windows, macOS, and Linux, with native dialogs, single-instance handling, private per-launch authentication, and shutdown.
+- AMD64/ARM64 portable desktop packages and Windows setup EXE, macOS PKG, and Linux DEB installers, with installation/removal and data-preservation CI.
+- Shared crimson cloud-download icons across the app, executable/setup, macOS bundle, Linux launcher, and browser assets.
+- Protected macOS app and PKG signing/notarization support; credentialed verification remains pending.
 - Bulk queue pause, resume, cancel, and delete, with per-job failure reporting.
 - Retry all failed playlist items while retaining successful files.
 - Edit queued or paused download settings and add new downloads as paused.
+
+### Changed
+- Desktop-first README with Windows Wails screenshots, updated core guides, and consolidated planning/investigation documentation.
+- Normal desktop copy uses application terminology instead of storage/service implementation details.
 
 ### Fixed
 - Preserve failed selections after partial deletion, protect active file transfers, and clear obsolete resumable output when changing media settings.

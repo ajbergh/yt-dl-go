@@ -211,6 +211,12 @@ func snapshotLegacyDatabase(source, destination string) error {
 	if err := db.Ping(); err != nil {
 		return fmt.Errorf("open legacy state database: %w", err)
 	}
+	if err := checkDatabaseIntegrity(db); err != nil {
+		return fmt.Errorf("validate legacy state database: %w", err)
+	}
+	if err := checkJobSchema(db); err != nil {
+		return fmt.Errorf("validate legacy state database: %w", err)
+	}
 	quotedDestination := strings.ReplaceAll(destination, "'", "''")
 	if _, err := db.Exec(`VACUUM INTO '` + quotedDestination + `'`); err != nil {
 		return fmt.Errorf("snapshot legacy state database: %w", err)

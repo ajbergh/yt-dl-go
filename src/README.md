@@ -1,8 +1,15 @@
 # Frontend guide
 
-The React/Vite application is embedded in and served by the platform executable. It automatically connects to that executable's Go API to inspect YouTube links, submit jobs, follow progress, manage SQLite-backed preferences and retrieve finalized files through short-lived download tickets.
+The React/Vite interface is embedded in both the Wails desktop app and the
+browser/server executable. Users normally open the desktop app in its native
+window. Both editions share the HTTP API for inspection, queue/Library state,
+preferences, media streaming, and events.
 
-The Go server can host this interface itself, so end users normally run the release executable for their platform and visit `http://127.0.0.1:8080`. A standalone Vite server is useful only while developing the UI.
+In desktop mode a Wails binding supplies a private ephemeral API origin and
+per-launch bearer. The UI authenticates its requests and uses Wails bindings for
+native saves and folder dialogs. In browser/server mode it uses the page origin;
+Vite development uses the configured loopback API below. See the
+[desktop guide](../docs/DESKTOP.md) for native build/runtime details.
 
 ## Develop
 
@@ -13,9 +20,9 @@ npm ci
 npm run dev
 ~~~
 
-Vite listens on `http://127.0.0.1:5173`. In a second terminal, start the Go service with `go run -tags=dev .` from `src/server`, then open the Vite address to use the development UI; it connects to `http://127.0.0.1:8080` automatically. This address is fixed for `npm run dev`; custom Vite ports and `npm run preview` are not detected by the current connection logic. The packaged UI uses its own origin (including a custom `ADDR`), so no endpoint setup is needed in the executable.
+Vite listens on `http://127.0.0.1:5173`. In a second terminal, start the Go service with `go run -tags=dev .` from `src/server`, then open the Vite address to use the development UI; it connects to `http://127.0.0.1:8080` automatically. This address is fixed for `npm run dev`; custom Vite ports and `npm run preview` are not detected by the current connection logic. The browser/server packaged UI uses its own origin (including a custom `ADDR`), so no endpoint setup is needed in the executable.
 
-The `dev` build tag adds `localhost:5173` and `127.0.0.1:5173` to the default CORS allowlist. Release builds default to their own listener origin only. The current UI connection logic supports the configured Vite dev port and the executable's same-origin UI; changing to another frontend origin requires adapting that logic as well as adding the exact origin to `ALLOWED_ORIGINS`. Keep `API_TOKEN` unset for the built-in UI: it does not prompt for or send bearer tokens, and protected API requests will otherwise return `401`.
+The `dev` build tag adds `localhost:5173` and `127.0.0.1:5173` to the default CORS allowlist. Release builds default to their own listener origin only. The current UI connection logic supports the configured Vite dev port and the executable's same-origin UI; changing to another frontend origin requires adapting that logic as well as adding the exact origin to `ALLOWED_ORIGINS`. Keep `API_TOKEN` unset for the browser/server development UI, which has no token-entry flow. Desktop authentication comes from the Wails bootstrap binding instead.
 
 ## Checks and production UI build
 
@@ -28,18 +35,33 @@ npm run build
 
 The UI tests are written for Bun and can be run with `bun test src/downloader.test.mjs src/ui.test.mjs`. CI also runs `npm run e2e:browser`, which requires Chrome/Chromium and Go, builds the service with the test-only `e2e` build tag, and exercises the real browser/service/SQLite workflow. The fixture build is never used by the production executable. CI runs `npm run lint` against the production project; the separate `dev_mock_new_ui` prototype is excluded from that gate.
 
-`npm run build` emits the static SPA to root `dist` and empties that directory first. The Go program embeds assets from `src/server/dist`, so copy the build there before compiling the executable. Do not put `DATA_DIR` under root `dist`; a build removes its contents.
+Build directly into the embed directory when preparing Go builds:
 
-~~~
-New-Item -ItemType Directory -Force .\src\server\dist | Out-Null
-Copy-Item -Path .\dist\* -Destination .\src\server\dist -Recurse -Force
-~~~
+```sh
+npm run build -- --outDir src/server/dist
+```
 
-Vite empties root `dist` on each build. If that directory also contains `youtube-downloader.exe`, run the Go build after the frontend build so the executable is recreated.
+A bare `npm run build` emits to root `dist` and clears that directory first.
+Never store application data or hand-maintained assets there. The shared desktop
+builder handles embedding automatically:
+
+```sh
+npm run build:desktop
+npm run test:desktop
+```
+
+Native checks require platform prerequisites. Use `desktop,webkit2_41` Go tags
+and Xvfb on Linux as documented in [DESKTOP.md](../docs/DESKTOP.md).
 
 ## UI/service contract
 
-The frontend uses the fixed `http://127.0.0.1:8080` origin when running on Vite's configured development port `5173`, and the current page origin in the packaged executable. It checks the service at startup, loads jobs and preferences, retries failed startup checks every 2.5 seconds, then consumes authenticated Server-Sent Events for live job/settings updates with a 30-second full-job reconciliation as a safety net. The UI has no endpoint or API-token prompt. With `API_TOKEN` set, its protected requests fail authentication; unset it for the bundled UI. It calls:
+Connection selection is: Wails bootstrap origin/bearer for desktop, fixed
+`http://127.0.0.1:8080` on Vite's configured port `5173`, or page origin in the
+browser/server package. Startup loads jobs and preferences, retries failed checks
+every 2.5 seconds, and consumes authenticated SSE with a 30-second reconciliation
+fallback. There is no endpoint/token prompt. Desktop uses the native bridge for
+user-confirmed saves/folder selection while streaming previews and events over
+HTTP. It calls:
 
 - `GET /api/health` to confirm a native Go service is ready.
 - `POST /api/inspect` to retrieve metadata and supported qualities before queuing.
@@ -59,7 +81,7 @@ The quality choices are maximum heights. A completed file reports its actual `he
 | `pages/home.tsx` | Top-level orchestration, derived queue/library state, inspection submission, navigation, and page composition |
 | `pages/queue.tsx` | Add/inspect workflow, batch controls, queue filters, queue cards, and drag/drop presentation |
 | `pages/library.tsx` | Library filtering/layout, file cards, preview/save/filesystem controls, and scoped-delete presentation |
-| `pages/settings.tsx` | Service status plus preference/output configuration UI |
+| `pages/settings.tsx` | Preferences, download location, advanced settings, and application diagnostics |
 | `hooks/use-service.ts` | Backend bootstrap, SQLite hydration, SSE updates, reconciliation, readiness/errors, and terminal notifications |
 | `hooks/use-jobs.ts` | Job mutations, retries, tickets, filesystem actions, queue/playlist ordering, batch actions, and cleared-queue persistence |
 | `hooks/use-settings.ts` | Settings save/mutation behavior, folder selection, notification permission, and category management |
@@ -69,3 +91,13 @@ The quality choices are maximum heights. A completed file reports its actual `he
 | `index.css` | Theme and Tailwind styles |
 
 For executable packaging and runtime requirements, see the repository [README](../README.md).
+
+## Documentation screenshots
+
+README images live in `docs/assets/screenshots/`. Capture the actual Wails window
+with disposable data. Playwright can capture embedded WebView2 content; identify
+that capture method when the native OS frame is omitted. Do not substitute the
+`dev_mock_new_ui` prototype or browser E2E screenshots for native-app evidence.
+Avoid personal paths, account information, private media, bearer tokens, or ticket
+URLs. Browser E2E screenshots remain temporary test artifacts unless deliberately
+reviewed and added as documentation assets.

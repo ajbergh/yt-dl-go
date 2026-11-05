@@ -8,7 +8,18 @@ Include the affected version or commit, operating system, the relevant configura
 
 ## Application security boundaries
 
-yt-dl-go is designed as a trusted, single-user local application. By default it listens on `127.0.0.1:8080`. Loopback access is intentionally unauthenticated so the bundled UI can use the API. Do not expose this default setup to a network you do not trust.
+YouTube Vault (`yt-dl-go`) is a trusted, single-user local application. Wails
+desktop binds only an ephemeral IPv4 loopback address and requires an in-memory
+per-launch bearer supplied through a native binding. It validates its exact host
+and desktop origins; environment overrides cannot expose it as a LAN service.
+Tokens are not stored in local storage or URLs. Native saves use temporary files
+beside the chosen destination and finalize atomically; cancellation does not
+overwrite existing files.
+
+The alternate browser/server edition defaults to `127.0.0.1:8080`. Its default
+loopback API is unauthenticated so the bundled browser UI can use it. Do not
+expose this setup to an untrusted network. The deployment settings below apply
+to that edition, not the private desktop listener.
 
 For a non-loopback listener, configure an `API_TOKEN` of at least 32 characters and exact `ALLOWED_HOSTS` and `ALLOWED_ORIGINS` values. Put network-visible access behind TLS and appropriate network controls. Host and origin allowlists do not replace authentication or network protection. The bearer token protects the API routes used to inspect and manage jobs; `/api/health` is public, and `/api/downloads/<ticket>` is authorized by its ticket instead of the bearer token. The bundled UI does not send bearer tokens; setting `API_TOKEN` while using that UI makes protected API requests fail. Use a separate client that can send the token.
 

@@ -1,0 +1,43 @@
+import type { ServiceConnection } from "./downloader";
+
+type DesktopBridge = {
+  Connection(): Promise<ServiceConnection>;
+  Save(path: string): Promise<boolean>;
+  UIReady?(): Promise<void>;
+  UIStage?(stage: string): Promise<void>; // Available only in the e2e-tagged native smoke build.
+};
+
+declare global {
+  interface Window {
+    go?: { main?: { DesktopApp?: DesktopBridge } };
+  }
+}
+
+let connection: ServiceConnection | undefined;
+
+export async function initializeDesktop(): Promise<void> {
+  connection = undefined;
+  const bridge = window.go?.main?.DesktopApp;
+  if (!bridge) return;
+  const result = await bridge.Connection();
+  // Fail closed if bootstrap is incomplete. Never fall back to an unauthenticated
+  // HTTP service or persist the per-launch capability in browser storage.
+  if (!/^http:\/\/127\.0\.0\.1:\d+$/.test(result.base) || !/^[a-f0-9]{64}$/.test(result.token)) {
+    throw new Error("The app could not finish starting. Please close it and try again.");
+  }
+  connection = result;
+}
+
+export function desktopConnection(): ServiceConnection | undefined {
+  return connection;
+}
+
+export function desktopBridge(): DesktopBridge | undefined {
+  return window.go?.main?.DesktopApp;
+}
+
+// Diagnostic milestones are emitted only when the e2e-only bridge exists.
+export function reportDesktopSmokeStage(stage: string): void {
+  const report = desktopBridge()?.UIStage;
+  if (report) void report(stage).catch(() => {});
+}

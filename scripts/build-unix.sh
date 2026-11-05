@@ -40,6 +40,8 @@ if [[ ! -f "$repo_root/node_modules/vite/bin/vite.js" ]]; then
   exit 1
 fi
 
+node "$repo_root/scripts/generate-app-icons.mjs" --check
+
 output="${1:-$repo_root/dist/youtube-downloader-${target_os}-${target_arch}}"
 if [[ "$output" != /* ]]; then
   output="$repo_root/$output"

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { desktopBridge, reportDesktopSmokeStage } from "../lib/desktop";
 import {
   api, streamServiceEvents,
   type AppSettings, type BuildInfo, type DownloadJob, type LibraryPageResponse, type LibraryQuery, type RuntimeSettingSources, type RuntimeSettingValues, type ServiceConnection, type ServiceEvent, type ServiceHealth, type UpdateStatus,
@@ -113,6 +114,9 @@ function hydratedSettings(settings: AppSettings, previous: AppSettings = default
 export function useService() {
   const [connection] = useState<ServiceConnection>(builtInServiceConnection);
   const [serviceReady, setServiceReady] = useState(false);
+  useEffect(() => {
+    if (serviceReady) void desktopBridge()?.UIReady?.();
+  }, [serviceReady]);
   const [jobs, setJobs] = useState<DownloadJob[]>([]);
   const [libraryJobs, setLibraryJobs] = useState<DownloadJob[]>([]);
   const [libraryPage, setLibraryPage] = useState<LibraryPageResponse>(emptyLibraryPage);
@@ -200,16 +204,19 @@ export function useService() {
 
     async function initialize() {
       try {
+        reportDesktopSmokeStage("health-request");
         const health = await api<ServiceHealth>(connection, "/api/health", {
           signal: AbortSignal.any([controller.signal, AbortSignal.timeout(10000)]),
         });
+        reportDesktopSmokeStage("health-response");
         if (health.engine !== "native-go" || health.capabilities?.externalBinariesRequired !== false) {
-          throw new Error("The built-in service is an older or incompatible version.");
+          throw new Error("This app version is incompatible. Please reinstall the latest version.");
         }
         if (!health.ready) {
+          reportDesktopSmokeStage("health-not-ready");
           throw new Error(health.missing.length
-            ? `The Go service is not ready: ${health.missing.join(", ")}.`
-            : "The Go service is starting up.");
+            ? `The app needs attention: ${health.missing.join(", ")}.`
+            : "The app is starting up.");
         }
         setMp3Supported(health.capabilities?.mp3AudioSupported === true);
         setBuildInfo({
@@ -249,6 +256,7 @@ export function useService() {
         if (controller.signal.aborted) return;
         setServiceReady(false);
         setServiceError(errorMessage(error));
+        reportDesktopSmokeStage("service-error");
         retryTimer = setTimeout(() => { void initialize(); }, 2500);
       }
     }
