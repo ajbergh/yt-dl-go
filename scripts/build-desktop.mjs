@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { packageLinux } from "./package-desktop-linux.mjs";
+import { embedMacOSNotices, packageMacOS, packageWindows } from "./package-desktop-installers.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const server = path.join(root, "src/server");
@@ -79,9 +80,6 @@ try {
     const app = readdirSync(buildBin).find(name => name.endsWith(".app"));
     if (!app) throw new Error("Wails did not produce a macOS app bundle");
     cpSync(path.join(buildBin, app), path.join(contents, app), { recursive: true });
-    if (process.env.DESKTOP_MACOS_SIGN === "true") {
-      run(process.execPath, [path.join(root, "scripts/sign-desktop-macos.mjs"), path.join(contents, app)], { env });
-    }
   } else {
     const binary = "youtube-vault" + (goos === "windows" ? ".exe" : "");
     cpSync(path.join(buildBin, binary), path.join(contents, binary));
@@ -98,6 +96,12 @@ try {
   const report = run(exe("go-licenses"), ["report", ".", ...ignored], { env: licenseEnv, stdio: ["ignore", "pipe", "inherit"] });
   writeFileSync(path.join(contents, "DESKTOP_GO_LICENSES.csv"), report + "\n");
   run(exe("go-licenses"), ["save", ".", `--save_path=${path.join(contents, "desktop-licenses")}`, ...ignored], { env: licenseEnv });
+  if (goos === "darwin") {
+    embedMacOSNotices(contents);
+    if (process.env.DESKTOP_MACOS_SIGN === "true") {
+      run(process.execPath, [path.join(root, "scripts/sign-desktop-macos.mjs"), path.join(contents, "YouTube Vault.app")], { env });
+    }
+  }
   const archive = path.join(output, name + (goos === "windows" ? ".zip" : ".tar.gz"));
   const artifacts = [archive];
   if (goos === "windows") {
@@ -127,6 +131,17 @@ try {
     console.log(`Desktop application: ${application}`);
     console.log(`EXE SHA-256: ${applicationDigest}`);
     artifacts.push(application);
+  }
+  if (goos === "windows" || goos === "darwin") {
+    const options = { root, stage, contents, output, name, arch, version: productVersion, run };
+    const installer = goos === "windows" ? packageWindows(options) : packageMacOS(options);
+    if (goos === "darwin" && process.env.DESKTOP_MACOS_SIGN === "true") {
+      run(process.execPath, [path.join(root, "scripts/sign-desktop-macos.mjs"), installer], { env });
+    }
+    const installerDigest = createHash("sha256").update(readFileSync(installer)).digest("hex");
+    writeFileSync(installer + ".sha256", `${installerDigest}  ${path.basename(installer)}\n`);
+    console.log(`Desktop installer: ${installer}`);
+    artifacts.push(installer);
   }
   writeFileSync(path.join(output, `expected-desktop-${goos}-${arch}.txt`), artifacts.map(file => path.basename(file)).join("\n") + "\n");
 } finally {

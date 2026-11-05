@@ -20,6 +20,23 @@ An explicit target can be supplied with `npm run build:desktop -- windows/arm64`
 `darwin/arm64`, or `linux/amd64`. Windows supports both architectures from a Windows
 host. Linux and macOS builds require matching native OS/architecture runners.
 
+Every desktop target produces both a portable package and an installer, for
+AMD64 and ARM64:
+
+| Platform | Portable | Installer |
+| --- | --- | --- |
+| Windows | Standalone `.exe` and notices `.zip` | `-setup.exe` (NSIS) |
+| macOS | `.app` bundle in `.tar.gz` | `.pkg` |
+| Linux | `.tar.gz` | `.deb` (Debian/Ubuntu with compatible runtime libraries) |
+
+Windows packaging requires NSIS 3.11 (`choco install nsis --version=3.11`).
+Set `NSIS_PATH` to a custom `makensis.exe` location if needed. The setup installs
+per user, creates Start menu and desktop shortcuts, registers an uninstaller,
+and installs WebView2 when missing (internet access required for that runtime).
+Uninstall through Windows Settings; saved data and downloads are retained.
+The macOS PKG installs into `/Applications`; remove the app through Finder.
+The portable macOS archive can be extracted and launched without the installer.
+
 On Windows, build standalone desktop executables for both architectures with
 the PowerShell helper:
 
@@ -87,7 +104,8 @@ The **Desktop builds** workflow produces Windows AMD64/ARM64 executables and
 Windows, Linux and macOS AMD64/ARM64 archives. It is available through workflow dispatch and runs for desktop branches
 and pull requests. It uploads validation artifacts; it does not create a tag or
 publish a GitHub Release. The tagged release workflow reuses this same native
-matrix and includes the desktop archives, standalone Windows EXEs, Linux Debian
+matrix and includes the desktop archives, standalone Windows EXEs, Windows setup
+EXEs, macOS PKGs, Linux Debian
 packages, checksums and provenance alongside the browser/server artifacts in a
 draft release. Release dry runs exercise the same matrix without publishing.
 
@@ -104,7 +122,10 @@ backend's health, embedded interface, identity and database restart, then
 launches the unchanged production native window and checks DOM/service-binding
 startup. This startup check terminates the window afterwards; the separate
 e2e test checks clean UI-driven shutdown. Linux CI additionally installs,
-launches and removes the `.deb` and validates its desktop entry. The window
+launches and removes the `.deb` and validates its desktop entry. Windows and
+macOS CI also install, reinstall, launch and remove the final installer outputs.
+Release assembly requires both portable and installer coverage for all six
+targets, plus checksums and provenance for the final files. The window
 tests require no other copy of YouTube Vault to be running. For local backend
 checks while another copy holds the single-instance lock, use
 `node scripts/desktop-package-smoke.mjs --backend-only`.
@@ -117,6 +138,9 @@ a protected GitHub environment named `macos-signing` with these secrets:
 - `APPLE_CERTIFICATE_P12_BASE64`: base64-encoded Developer ID Application P12.
 - `APPLE_CERTIFICATE_PASSWORD`: P12 import password.
 - `APPLE_SIGNING_IDENTITY`: Developer ID Application certificate identity.
+- `APPLE_INSTALLER_CERTIFICATE_P12_BASE64`: Developer ID Installer P12, base64.
+- `APPLE_INSTALLER_CERTIFICATE_PASSWORD`: installer P12 import password.
+- `APPLE_INSTALLER_SIGNING_IDENTITY`: Developer ID Installer certificate identity.
 - `APPLE_ID`, `APPLE_TEAM_ID`, `APPLE_APP_PASSWORD`: notarization credentials.
 
 Set repository variable `MACOS_SIGNING_ENABLED=true` after configuring the
@@ -125,7 +149,7 @@ Enabled tag builds fail if credentials are missing. The signing script imports
 the identity into a temporary keychain, signs with hardened runtime and a
 timestamp, submits to Apple's notary service, staples and validates the ticket,
 and checks Gatekeeper acceptance. Packaging, checksums and provenance happen
-after signing/stapling. The keychain and temporary certificate are removed.
+after signing/stapling both the app and the PKG. The keychain and temporary certificate are removed.
 See [Apple's notarization workflow](https://developer.apple.com/documentation/security/customizing-the-notarization-workflow).
 Credentialed signing and clean-Mac acceptance must be verified before claiming
 that public packages are signed/notarized. Windows Authenticode remains a

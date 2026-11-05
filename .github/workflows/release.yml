@@ -435,12 +435,13 @@ jobs:
       - name: Verify checksums and create manifest
         shell: bash
         run: |
+          node scripts/release-desktop-coverage.mjs dist/release
           cd dist/release
           for checksum in *.sha256; do
             sha256sum -c "$checksum"
           done
           expected_count="$(cat expected-*.txt | wc -l)"
-          actual_count="$(find . -maxdepth 1 -type f \( -name '*.zip' -o -name '*.tar.gz' -o -name '*.deb' -o -name '*.exe' \) | wc -l)"
+          actual_count="$(find . -maxdepth 1 -type f \( -name '*.zip' -o -name '*.tar.gz' -o -name '*.deb' -o -name '*.exe' -o -name '*.pkg' \) | wc -l)"
           if [[ "$expected_count" -eq 0 || "$actual_count" -ne "$expected_count" ]]; then
             echo "Expected $expected_count release archives from build matrix, found $actual_count." >&2
             exit 1
@@ -453,7 +454,7 @@ jobs:
               exit 1
             fi
           done < <(cat expected-*.txt)
-          sha256sum *.zip *.tar.gz *.deb *.exe | sort > SHA256SUMS.txt
+          sha256sum *.zip *.tar.gz *.deb *.exe *.pkg | sort > SHA256SUMS.txt
 
       - name: Attest release checksum manifest
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
@@ -467,6 +468,7 @@ jobs:
           name: release-dry-run-${{ env.RELEASE_VERSION }}
           path: |
             dist/release/*.zip
+            dist/release/*.pkg
             dist/release/*.deb
             dist/release/*.exe
             dist/release/*.tar.gz
@@ -487,6 +489,7 @@ jobs:
             --title "${RELEASE_VERSION}" \
             --generate-notes \
             dist/release/*.zip \
+            dist/release/*.pkg \
             dist/release/*.deb \
             dist/release/*.exe \
             dist/release/*.tar.gz \

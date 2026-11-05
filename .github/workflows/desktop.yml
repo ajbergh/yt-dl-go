@@ -74,6 +74,12 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y build-essential pkg-config libgtk-3-dev libwebkit2gtk-4.1-dev xvfb dbus-x11 dpkg-dev desktop-file-utils
       - name: Install frontend dependencies
         run: npm ci
+      - name: Install Windows installer compiler
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          choco install nsis --version=3.11 --no-progress --yes
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Type-check frontend
         run: npm run typecheck
       - name: Test desktop packaging
@@ -103,6 +109,9 @@ jobs:
           APPLE_CERTIFICATE_P12_BASE64: ${{ secrets.APPLE_CERTIFICATE_P12_BASE64 }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_INSTALLER_CERTIFICATE_P12_BASE64: ${{ secrets.APPLE_INSTALLER_CERTIFICATE_P12_BASE64 }}
+          APPLE_INSTALLER_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_INSTALLER_CERTIFICATE_PASSWORD }}
+          APPLE_INSTALLER_SIGNING_IDENTITY: ${{ secrets.APPLE_INSTALLER_SIGNING_IDENTITY }}
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
@@ -129,13 +138,30 @@ jobs:
           desktop-file-validate /usr/share/applications/youtube-vault.desktop
           test -x /usr/bin/youtube-vault
           test -s /usr/share/doc/youtube-vault/THIRD_PARTY_NOTICES.md
+          sudo apt-get install --reinstall -y ./dist/desktop/linux-*/youtube-vault-linux-*.deb
           dbus-run-session -- xvfb-run -a node scripts/desktop-smoke.mjs --executable /usr/bin/youtube-vault
           sudo apt-get remove -y youtube-vault
+          test ! -e /usr/bin/youtube-vault
+          test ! -e /usr/share/applications/youtube-vault.desktop
+          test ! -e /usr/share/icons/hicolor/256x256/apps/youtube-vault.png
         env:
           VERSION: ${{ inputs.version || 'dev' }}
           COMMIT: ${{ github.sha }}
           LIBGL_ALWAYS_SOFTWARE: "1"
           WEBKIT_DISABLE_DMABUF_RENDERER: "1"
+      - name: Install, reinstall, launch and remove Windows application
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./scripts/desktop-installer-smoke.ps1
+        env:
+          VERSION: ${{ inputs.version || 'dev' }}
+          COMMIT: ${{ github.sha }}
+      - name: Install, reinstall, launch and remove macOS application
+        if: runner.os == 'macOS'
+        run: bash scripts/desktop-installer-smoke-macos.sh
+        env:
+          VERSION: ${{ inputs.version || 'dev' }}
+          COMMIT: ${{ github.sha }}
       - name: Smoke-test native desktop window
         if: runner.os != 'Linux'
         run: npm run test:desktop
@@ -154,6 +180,7 @@ jobs:
             dist/desktop/**/*.zip
             dist/desktop/**/*.tar.gz
             dist/desktop/**/*.deb
+            dist/desktop/**/*.pkg
       - name: Upload desktop packages
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -161,6 +188,7 @@ jobs:
           path: |
             dist/desktop/${{ matrix.artifact_dir }}/*.exe
             dist/desktop/${{ matrix.artifact_dir }}/*.deb
+            dist/desktop/${{ matrix.artifact_dir }}/*.pkg
             dist/desktop/${{ matrix.artifact_dir }}/*.zip
             dist/desktop/${{ matrix.artifact_dir }}/*.tar.gz
             dist/desktop/${{ matrix.artifact_dir }}/*.sha256

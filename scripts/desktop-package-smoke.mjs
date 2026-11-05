@@ -17,7 +17,10 @@ function run(command, args, options = {}) {
   if (result.error) throw result.error;
   assert.equal(result.status, 0, `${command} failed (${result.status})`);
 }
-for (const file of readdirSync(output).filter(file => /\.(exe|zip|tar\.gz|deb)$/.test(file))) {
+const expected = goos === "windows" ? [name + ".zip", name + ".exe", name + "-setup.exe"] : [name + ".tar.gz", name + (goos === "darwin" ? ".pkg" : ".deb")];
+assert.deepEqual(readFileSync(path.join(output, `expected-desktop-${goos}-${arch}.txt`), "utf8").trim().split(/\r?\n/).sort(), expected.sort());
+for (const file of expected) assert.ok(existsSync(path.join(output, file)), `Missing required release artifact ${file}`);
+for (const file of readdirSync(output).filter(file => /\.(exe|zip|tar\.gz|deb|pkg)$/.test(file))) {
   const digest = createHash("sha256").update(readFileSync(path.join(output, file))).digest("hex");
   assert.equal(readFileSync(path.join(output, file + ".sha256"), "utf8").trim(), `${digest}  ${file}`);
 }

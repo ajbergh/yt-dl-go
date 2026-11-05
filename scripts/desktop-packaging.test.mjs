@@ -5,8 +5,46 @@ import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { packageLinux } from "./package-desktop-linux.mjs";
+import { embedMacOSNotices } from "./package-desktop-installers.mjs";
+import { verifyDesktopCoverage } from "./release-desktop-coverage.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+
+test("Release assembly requires portable and installer artifacts for every platform and architecture", () => {
+  const directory = mkdtempSync(path.join(os.tmpdir(), "desktop-coverage-test-"));
+  try {
+    for (const os of ["windows", "darwin", "linux"]) {
+      for (const arch of ["amd64", "arm64"]) {
+        for (const extension of os === "windows" ? [".exe", ".zip", "-setup.exe"] : [".tar.gz", os === "darwin" ? ".pkg" : ".deb"]) {
+          const file = path.join(directory, `youtube-vault-${os}-${arch}${extension}`);
+          writeFileSync(file, "artifact");
+          writeFileSync(file + ".sha256", "checksum");
+        }
+      }
+    }
+    verifyDesktopCoverage(directory);
+    for (const missing of ["youtube-vault-windows-arm64-setup.exe", "youtube-vault-darwin-amd64.pkg", "youtube-vault-linux-arm64.tar.gz"]) {
+      rmSync(path.join(directory, missing));
+      assert.throws(() => verifyDesktopCoverage(directory), /Missing desktop release artifact/);
+      writeFileSync(path.join(directory, missing), "artifact");
+    }
+  } finally { rmSync(directory, { recursive: true, force: true }); }
+});
+
+test("macOS installer app carries all required notices inside its signed bundle", () => {
+  const directory = mkdtempSync(path.join(os.tmpdir(), "desktop-notices-test-"));
+  try {
+    mkdirSync(path.join(directory, "YouTube Vault.app/Contents/Resources"), { recursive: true });
+    mkdirSync(path.join(directory, "desktop-licenses/dependency"), { recursive: true });
+    writeFileSync(path.join(directory, "LICENSE"), "project license");
+    writeFileSync(path.join(directory, "desktop-licenses/dependency/LICENSE"), "dependency license");
+    embedMacOSNotices(directory);
+    const notices = path.join(directory, "YouTube Vault.app/Contents/Resources/notices");
+    assert.equal(readFileSync(path.join(notices, "LICENSE"), "utf8"), "project license");
+    assert.equal(readFileSync(path.join(notices, "desktop-licenses/dependency/LICENSE"), "utf8"), "dependency license");
+    assert.equal(existsSync(path.join(notices, "YouTube Vault.app")), false);
+  } finally { rmSync(directory, { recursive: true, force: true }); }
+});
 test("Debian package preserves notices, installs desktop integration, and uses scanned ABI dependencies", () => {
   const stage = mkdtempSync(path.join(os.tmpdir(), "desktop-packaging-test-"));
   try {
