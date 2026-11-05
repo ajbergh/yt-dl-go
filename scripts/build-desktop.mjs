@@ -100,6 +100,10 @@ try {
     embedMacOSNotices(contents);
     if (process.env.DESKTOP_MACOS_SIGN === "true") {
       run(process.execPath, [path.join(root, "scripts/sign-desktop-macos.mjs"), path.join(contents, "YouTube Vault.app")], { env });
+    } else {
+      // Embedding notices changes the bundle after Wails' initial ad-hoc sign.
+      // Refresh that signature for native Apple Silicon execution in dry runs.
+      run("codesign", ["--force", "--sign", "-", path.join(contents, "YouTube Vault.app")], { env });
     }
   }
   const archive = path.join(output, name + (goos === "windows" ? ".zip" : ".tar.gz"));
