@@ -224,7 +224,7 @@ func TestPlayerAssetCacheHonorsServerExpiry(t *testing.T) {
 }
 
 func TestNativeRangesUseBoundedParallelWindowsAndOrderedOutput(t *testing.T) {
-	payload := make([]byte, 2*adaptiveRangeChunkSize+123)
+	payload := make([]byte, 4*adaptiveRangeChunkSize+123)
 	for i := range payload {
 		payload[i] = byte(i % 251)
 	}
@@ -238,7 +238,7 @@ func TestNativeRangesUseBoundedParallelWindowsAndOrderedOutput(t *testing.T) {
 				break
 			}
 		}
-		if requests.Add(1) == 2 {
+		if requests.Add(1) == 4 {
 			close(barrier)
 		}
 		select {
@@ -267,7 +267,7 @@ func TestNativeRangesUseBoundedParallelWindowsAndOrderedOutput(t *testing.T) {
 		t.Fatal(err)
 	}
 	got, _ := os.ReadFile(path)
-	if size != int64(len(payload)) || !bytes.Equal(got, payload) || maximum.Load() != 2 {
+	if size != int64(len(payload)) || !bytes.Equal(got, payload) || maximum.Load() != 4 {
 		t.Fatalf("bytes=%d concurrency=%d", size, maximum.Load())
 	}
 }

@@ -76,6 +76,10 @@ type nativeHostSlot struct {
 	slots chan struct{}
 }
 
+// Bound each transfer to four 8 MiB range buffers and share the same four-request
+// host limit across concurrent jobs. Smaller sources only request what remains.
+const nativeRangeConcurrency = 4
+
 var nativeHosts = struct {
 	sync.Mutex
 	entries map[string]*nativeHostSlot
@@ -85,7 +89,7 @@ func acquireNativeHost(ctx context.Context, host string) (func(), error) {
 	nativeHosts.Lock()
 	slot := nativeHosts.entries[host]
 	if slot == nil {
-		slot = &nativeHostSlot{slots: make(chan struct{}, 4)}
+		slot = &nativeHostSlot{slots: make(chan struct{}, nativeRangeConcurrency)}
 		nativeHosts.entries[host] = slot
 	}
 	slot.users++
@@ -148,22 +152,27 @@ func (s *server) readNativeRange(ctx context.Context, client *http.Client, profi
 		return &nativeRangeFailure{status: response.StatusCode, delay: retryAfterDelay(response.Header.Get("Retry-After"), time.Now()), expired: sourceURLExpired(format.URL, time.Now())}
 	}
 	reader := idleDeadlineReader{reader: response.Body, timeout: transferIdleTimeout, onIdle: func() { _ = response.Body.Close() }}
-	data, err := io.ReadAll(io.LimitReader(s.bandwidthReader(ctx, reader), chunk.end-chunk.start+2))
+	// The range length is known and bounded. Avoid ReadAll's repeated growth
+	// and copies for each concurrent chunk; keep one extra byte to reject an
+	// oversized response rather than silently accepting a valid-looking prefix.
+	expected := chunk.end - chunk.start + 1
+	data := make([]byte, expected+1)
+	n, err := io.ReadFull(s.bandwidthReader(ctx, reader), data)
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
-	if err != nil || int64(len(data)) != chunk.end-chunk.start+1 {
+	if err != io.ErrUnexpectedEOF || int64(n) != expected {
 		return &nativeRangeFailure{}
 	}
-	chunk.data, chunk.elapsed = data, time.Since(started)
+	chunk.data, chunk.elapsed = data[:n], time.Since(started)
 	return nil
 }
 
 func (s *server) readNativeWindow(ctx context.Context, client *http.Client, profile youtubeClientProfile, format *youtube.Format, start int64) ([]nativeRangeChunk, error) {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	chunks := make([]nativeRangeChunk, 0, 2)
-	for offset := start; offset < format.ContentLength && len(chunks) < 2; {
+	chunks := make([]nativeRangeChunk, 0, nativeRangeConcurrency)
+	for offset := start; offset < format.ContentLength && len(chunks) < nativeRangeConcurrency; {
 		end := min(offset+adaptiveRangeChunkSize, format.ContentLength) - 1
 		chunks = append(chunks, nativeRangeChunk{start: offset, end: end})
 		offset = end + 1
@@ -258,18 +267,13 @@ func (s *server) downloadNativeRangeWindows(ctx context.Context, engine nativeCl
 		if err != nil {
 			return start, err
 		}
+		windowEnd := start
 		for _, chunk := range chunks {
 			written, writeErr := file.WriteAt(chunk.data, chunk.start)
 			if writeErr != nil || written != len(chunk.data) {
 				return start, errStorage
 			}
-			start = chunk.end + 1
-			if err := file.Sync(); err != nil {
-				return start, errStorage
-			}
-			if err := checkpoint(start); err != nil {
-				return start, err
-			}
+			windowEnd = chunk.end + 1
 			limit := int64(0)
 			if s.bandwidth != nil {
 				limit = s.bandwidth.Limit()
@@ -281,6 +285,15 @@ func (s *server) downloadNativeRangeWindows(ctx context.Context, engine nativeCl
 				}
 			}
 		}
+		// Publish only a contiguous, durable prefix. One sync/checkpoint per
+		// window avoids serial disk flushes between already downloaded chunks.
+		if err := file.Sync(); err != nil {
+			return start, errStorage
+		}
+		if err := checkpoint(windowEnd); err != nil {
+			return start, err
+		}
+		start = windowEnd
 	}
 	return start, nil
 }

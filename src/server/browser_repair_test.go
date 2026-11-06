@@ -5,6 +5,41 @@ import (
 	"testing"
 )
 
+func TestBrowserRestoresAutoplayOnlyFromSavedPrefixOutsideAds(t *testing.T) {
+	for _, test := range []struct {
+		name, source string
+		ad           bool
+		position     int64
+		want         bool
+	}{
+		{"autoplay", "anotherID", false, 3500, true},
+		{"empty prefix", "anotherID", false, -1000, true},
+		{"requested", "requestedID", false, 3500, false},
+		{"unknown", "", false, 3500, false},
+		{"advertisement", "anotherID", true, 3500, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			vm := goja.New()
+			_ = vm.Set("source", test.source)
+			_ = vm.Set("ad", test.ad)
+			_, err := vm.RunString(`let loaded; const player={classList:{contains:()=>ad},getVideoData:()=>({video_id:source}),loadVideoById:(value)=>{loaded=value;}};const document={getElementById:()=>player};`)
+			if err != nil {
+				t.Fatal(err)
+			}
+			value, err := vm.RunString(browserRestoreRequestedVideoScript(test.position, "requestedID", "hd2160"))
+			if err != nil || value.ToBoolean() != test.want {
+				t.Fatalf("restore=%v err=%v", value, err)
+			}
+			if test.want {
+				loaded, err := vm.RunString(`loaded.videoId==='requestedID' && loaded.suggestedQuality==='hd2160' && loaded.startSeconds`)
+				if err != nil || loaded.ToFloat() != float64(max(0, test.position))/1000 {
+					t.Fatalf("restore position=%v err=%v", loaded, err)
+				}
+			}
+		})
+	}
+}
+
 func TestBrowserRepairOnlySeeksRequestedMainVideo(t *testing.T) {
 	for _, test := range []struct {
 		name, source string
