@@ -41,6 +41,20 @@ Windows packaging requires NSIS 3.11 (`choco install nsis --version=3.11`).
 Set `NSIS_PATH` to a custom `makensis.exe` location if needed. The setup installs
 per user, creates Start menu and desktop shortcuts, registers an uninstaller,
 and installs WebView2 when missing (internet access required for that runtime).
+
+The Windows build checks for NSIS before compiling either architecture. It searches
+`NSIS_PATH`, `PATH`, the Program Files directories, and the ignored workspace path
+`.tools/nsis/nsis-3.11/makensis.exe`. For a non-administrator setup, extract the
+[portable NSIS 3.11 archive](https://sourceforge.net/projects/nsis/files/NSIS%203/3.11/nsis-3.11.zip/download)
+under `.tools/nsis/`; the ZIP's SHA-256 is
+`c7d27f780ddb6cffb4730138cd1591e841f4b7edb155856901cdf5f214394fa1`.
+Ordinary builds do not install prerequisites automatically.
+
+Desktop license checks include the local YouTube replacement and ship its MIT
+license and patch provenance. Its report URL uses the upstream version declared
+in `go.mod`, since the scanner cannot resolve a remote URL for a local replacement.
+Scanner warnings about inspecting assembly dependencies remain visible; they do
+not indicate that the corresponding license text is missing.
 Uninstall through Windows Settings; saved data and downloads are retained.
 The macOS PKG installs into `/Applications`; remove the app through Finder.
 The portable macOS archive can be extracted and launched without the installer.

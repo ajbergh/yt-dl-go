@@ -21,7 +21,7 @@ try {
 
   const assetsDir = join(outDir, "assets");
   const scripts = readdirSync(assetsDir).filter((name) => name.endsWith(".js"));
-  if (scripts.length === 0) throw new Error("Production build contains no JavaScript assets");
+  if (scripts.length !== 1) throw new Error(`Production build must contain one JavaScript asset; found ${scripts.length}`);
   for (const name of scripts) {
     const source = readFileSync(join(assetsDir, name), "utf8");
     for (const token of forbidden) {

@@ -7,8 +7,44 @@ import { fileURLToPath } from "node:url";
 import { packageLinux } from "./package-desktop-linux.mjs";
 import { embedMacOSNotices } from "./package-desktop-installers.mjs";
 import { verifyDesktopCoverage } from "./release-desktop-coverage.mjs";
+import { completeDesktopLicenseReport, resolveNSIS } from "./desktop-build-support.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+
+test("NSIS discovery validates overrides and finds PATH or Program Files installations before packaging", () => {
+  const directory = mkdtempSync(path.join(os.tmpdir(), "desktop-nsis-test-"));
+  try {
+    const compiler = path.join(directory, "makensis.exe");
+    const env = { PATH: "", ProgramFiles: directory, "ProgramFiles(x86)": directory };
+    const resolve = env => resolveNSIS(env, directory);
+    assert.throws(() => resolve(env), /Install NSIS 3\.11/);
+    assert.throws(() => resolve({ ...env, NSIS_PATH: directory }), /not a compiler file/);
+    writeFileSync(compiler, "fixture");
+    assert.equal(resolve({ ...env, NSIS_PATH: compiler }), compiler);
+    assert.equal(resolve({ ...env, PATH: `"${directory}"` }), compiler);
+    assert.throws(() => resolve({ ...env, PATH: directory, NSIS_PATH: path.join(directory, "missing.exe") }), /NSIS_PATH/);
+    const portable = path.join(directory, ".tools/nsis/nsis-3.11/makensis.exe");
+    mkdirSync(path.dirname(portable), { recursive: true });
+    writeFileSync(portable, "fixture");
+    assert.equal(resolve(env), portable);
+    mkdirSync(path.join(directory, "NSIS"));
+    const installed = path.join(directory, "NSIS/makensis.exe");
+    writeFileSync(installed, "fixture");
+    assert.equal(resolve(env), installed);
+  } finally { rmSync(directory, { recursive: true, force: true }); }
+});
+
+test("desktop report preserves scanned dependencies and supplies local replacement provenance without remote lookup", () => {
+  const report = 'example.org/module,https://example.org/LICENSE,Apache-2.0\n';
+  const license = readFileSync(path.join(root, "src/server/third_party/youtube/LICENSE"), "utf8");
+  const result = completeDesktopLicenseReport(report, "v2.10.6", license);
+  assert.ok(result.includes(report.trim()));
+  assert.match(result, /^github\.com\/kkdai\/youtube\/v2,https:\/\/pkg\.go\.dev\/github\.com\/kkdai\/youtube\/v2@v2\.10\.6,MIT$/m);
+  assert.throws(() => completeDesktopLicenseReport(report, "Unknown", license), /version/);
+  assert.throws(() => completeDesktopLicenseReport(report, "v2.10.6", "unclassified license"), /MIT/);
+  assert.throws(() => completeDesktopLicenseReport(result, "v2.10.6", license), /Unexpected/);
+  assert.throws(() => completeDesktopLicenseReport("", "v2.10.6", license), /Unexpected/);
+});
 
 test("Release assembly requires portable and installer artifacts for every platform and architecture", () => {
   const directory = mkdtempSync(path.join(os.tmpdir(), "desktop-coverage-test-"));

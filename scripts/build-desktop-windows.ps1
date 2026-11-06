@@ -31,9 +31,14 @@ if (-not (Test-Path -LiteralPath (Join-Path $repoRoot 'node_modules/vite/bin/vit
     throw "Frontend dependencies are missing. Run 'npm ci' in the repository root, then rerun this build."
 }
 
+# Check before compiling either architecture, including direct portable installs.
+$nsisCompiler = & node (Join-Path $PSScriptRoot 'desktop-build-support.mjs')
+if ($LASTEXITCODE -ne 0) { throw 'Windows installer compiler prerequisite check failed.' }
+
 $architectures = if ($Architecture -eq 'all') { @('amd64', 'arm64') } else { @($Architecture) }
 try {
     Set-Location $repoRoot
+    Write-Host "Windows installer compiler: $nsisCompiler"
     foreach ($targetArch in $architectures) {
         Write-Host "Building Wails desktop application for windows/$targetArch..." -ForegroundColor Cyan
         & node (Join-Path $PSScriptRoot 'build-desktop.mjs') "windows/$targetArch"
