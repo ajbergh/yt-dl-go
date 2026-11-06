@@ -216,6 +216,7 @@ func TestLiveResolutionMatrix(t *testing.T) {
 					if err != nil {
 						t.Fatal(err)
 					}
+					started := time.Now()
 					response := request(s, "POST", "/api/jobs", string(body), nil)
 					if response.Code != 202 {
 						t.Fatalf("create: %d %s", response.Code, response.Body.String())
@@ -248,6 +249,8 @@ func TestLiveResolutionMatrix(t *testing.T) {
 						t.Fatalf("download status=%s error=%q failures=%v", current.Status, current.Error, current.Failures)
 					}
 					file := current.Files[0]
+					elapsed := time.Since(started)
+					t.Logf("throughput sample=%d quality=%s elapsed=%s output_bytes=%d output_mib_per_sec=%.3f", index+1, quality, elapsed.Round(time.Millisecond), file.Size, float64(file.Size)/(1024*1024)/elapsed.Seconds())
 					t.Logf("requested=%s expected=%dp actual=%dp bytes=%d mime=%s note=%q", quality, wantHeight, file.Height, file.Size, file.MimeType, current.Note)
 					assertFinalFiles(t, s, current)
 					assertLiveContainer(t, filepath.Join(s.cfg.root, job.ID, file.Name), file.MimeType, file.Height, video.Duration)

@@ -526,7 +526,7 @@ func (progress *browserPrerollProgress) observe(now time.Time, ad bool, position
 func (p *chromeBrowserProvider) waitForCapture(ctx context.Context, capture sabrResponseCapture, captureDone <-chan error, detach func(), metrics *browserCaptureMetrics, maximum time.Duration, stalled func() bool, finish func() error) error {
 	timer := time.NewTimer(maximum)
 	defer timer.Stop()
-	ticker := time.NewTicker(2 * time.Second)
+	ticker := time.NewTicker(500 * time.Millisecond)
 	defer ticker.Stop()
 	waitStart := time.Now()
 	defer func() { metrics.addPhase(&metrics.wait, time.Since(waitStart)) }()
@@ -535,6 +535,8 @@ func (p *chromeBrowserProvider) waitForCapture(ctx context.Context, capture sabr
 	var lastRepair time.Time
 	repairCursor := int64(-1)
 	repairAttempts := 0
+	lastVerified := int64(-1)
+	var lastMonitor time.Time
 	for {
 		select {
 		case captureErr := <-captureDone:
@@ -590,29 +592,59 @@ func (p *chromeBrowserProvider) waitForCapture(ctx context.Context, capture sabr
 					}
 				}
 			}
-			if ticks%10 == 0 {
+			if ticks%40 == 0 {
 				p.tracePlaybackState()
 			}
 			// A large SABR response can still be receiving bytes before its
 			// complete fragments reach the assembler. Do not call that an idle
 			// transfer; the overall capture deadline remains the hard bound.
 			verified := capture.verifiedDurationMs()
+			// React promptly to saved media without increasing idle CDP traffic.
+			// Seeking still uses only the verified overlap of all requested tracks.
+			if verified == lastVerified && time.Since(lastMonitor) < 2*time.Second {
+				continue
+			}
+			lastVerified, lastMonitor = verified, time.Now()
 			rate := p.playbackRate
 			if rate < 1 {
 				rate = browserPlaybackRate
 			}
 			playbackScript := browserCapturePlaybackScript(verified, rate, p.playbackQuality, p.playbackDurationMs)
-			monitorScript := `(() => { ` + playbackScript + `; const video=document.querySelector('video'); const player=document.getElementById('movie_player'); return {ad:!!video && !` + browserMainPlaybackScript(p.playbackDurationMs) + `, position:video?.currentTime || 0, duration:Number.isFinite(video?.duration) ? video.duration : 0}; })()`
+			monitorScript := `(() => { const player=document.getElementById('movie_player'); const source=player && typeof player.getVideoData==='function' ? player.getVideoData()?.video_id : ''; const wrongSource=!!source && source!==` + strconv.Quote(p.playbackVideoID) + ` && !(player.classList && player.classList.contains('ad-showing')); if(wrongSource) return {wrongSource:true}; ` + playbackScript + `; const video=document.querySelector('video'); return {ad:!!video && !` + browserMainPlaybackScript(p.playbackDurationMs) + `, position:video?.currentTime || 0, duration:Number.isFinite(video?.duration) ? video.duration : 0}; })()`
 			state, err := chromedp.Run(p.ctx, chromedp.Evaluate[struct {
-				Ad       bool    `json:"ad"`
-				Position float64 `json:"position"`
-				Duration float64 `json:"duration"`
+				WrongSource bool    `json:"wrongSource"`
+				Ad          bool    `json:"ad"`
+				Position    float64 `json:"position"`
+				Duration    float64 `json:"duration"`
 			}](monitorScript))
 			if err != nil {
 				if os.Getenv("YTDL_TRACE_SABR") != "" {
 					log.Printf("browser keep-alive failed: %v", err)
 				}
 				return errBrowserUnavailable
+			}
+			if state.WrongSource {
+				if lastRepair.IsZero() || time.Since(lastRepair) >= 15*time.Second {
+					position := max(0, verified-2000)
+					if position != repairCursor {
+						repairCursor, repairAttempts = position, 0
+					}
+					if repairAttempts >= 3 {
+						return errBrowserUnavailable
+					}
+					restored, restoreErr := chromedp.Run(p.ctx, chromedp.Evaluate[bool](browserRestoreRequestedVideoScript(position, p.playbackVideoID, p.playbackQuality)))
+					if restoreErr != nil {
+						return errBrowserUnavailable
+					}
+					if restored {
+						repairAttempts++
+						lastRepair = time.Now()
+						if os.Getenv("YTDL_TRACE_PERFORMANCE") != "" {
+							log.Printf("browser restoring requested video position_ms=%d attempt=%d", position, repairAttempts)
+						}
+					}
+				}
+				continue
 			}
 			adAdvancing := preroll.observe(time.Now(), state.Ad, state.Position, state.Duration)
 			if stalled() && time.Since(time.Unix(0, p.lastNetworkProgress.Load())) >= browserStreamIdleTimeout && !adAdvancing {

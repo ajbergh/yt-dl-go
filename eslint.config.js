@@ -15,6 +15,8 @@ export default tseslint.config(
       ".wails-generated",
       "dev_mock_new_ui",
       ".vite-cache",
+      ".tools",
+      ".worktrees",
       "*.timestamp-*.mjs",
     ],
   },

@@ -36,6 +36,8 @@ try {
   }
   const contents = path.join(temporary, name);
   for (const file of ["LICENSE", "THIRD_PARTY_NOTICES.md", "DESKTOP_GO_LICENSES.csv", "desktop-licenses", "licenses"]) assert.ok(existsSync(path.join(contents, file)), `Package missing ${file}`);
+  assert.match(readFileSync(path.join(contents, "DESKTOP_GO_LICENSES.csv"), "utf8"), /^github\.com\/kkdai\/youtube\/v2,https:\/\/pkg\.go\.dev\/github\.com\/kkdai\/youtube\/v2@v\d+\.\d+\.\d+,MIT$/m);
+  for (const file of ["third_party/youtube/UPSTREAM.md", "third_party/youtube/LICENSE", "desktop-licenses/github.com/kkdai/youtube/v2/LICENSE"]) assert.ok(existsSync(path.join(contents, file)), `Package missing YouTube provenance: ${file}`);
   const executable = goos === "darwin"
     ? path.join(contents, "YouTube Vault.app/Contents/MacOS/youtube-vault")
     : path.join(contents, "youtube-vault" + (goos === "windows" ? ".exe" : ""));

@@ -6,6 +6,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { packageLinux } from "./package-desktop-linux.mjs";
 import { embedMacOSNotices, packageMacOS, packageWindows } from "./package-desktop-installers.mjs";
+import { completeDesktopLicenseReport, resolveNSIS } from "./desktop-build-support.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const server = path.join(root, "src/server");
@@ -17,6 +18,7 @@ if (!goos || targetOS !== goos || !["amd64", "arm64"].includes(arch) || target !
   throw new Error("Build on the target OS. Supported targets: windows, darwin, linux / amd64, arm64.");
 }
 if (goos !== "windows" && arch !== hostArch) throw new Error("Build Linux and macOS packages on a runner with the target architecture.");
+if (goos === "windows") process.env.NSIS_PATH = resolveNSIS();
 
 function run(command, args, options = {}) {
   const result = spawnSync(command, args, { cwd: server, stdio: "inherit", ...options });
@@ -90,11 +92,15 @@ try {
   }
   cpSync(path.join(root, "docs/DESKTOP.md"), path.join(contents, "DESKTOP.md"));
   cpSync(path.join(server, "licenses"), path.join(contents, "licenses"), { recursive: true });
+  // Preserve the relative provenance link in GO_THIRD_PARTY_NOTICES.md.
+  mkdirSync(path.join(contents, "third_party/youtube"), { recursive: true });
+  for (const file of ["LICENSE", "UPSTREAM.md"]) cpSync(path.join(server, "third_party/youtube", file), path.join(contents, "third_party/youtube", file));
   const licenseEnv = { ...env, GOOS: goos, GOARCH: arch, GOFLAGS: `-tags=${tags}` };
   const ignored = ["--ignore", "youtube-downloader", "--ignore", "github.com/dop251/goja/ftoa"];
   run(exe("go-licenses"), ["check", ".", "--disallowed_types=forbidden,unknown", ...ignored], { env: licenseEnv });
-  const report = run(exe("go-licenses"), ["report", ".", ...ignored], { env: licenseEnv, stdio: ["ignore", "pipe", "inherit"] });
-  writeFileSync(path.join(contents, "DESKTOP_GO_LICENSES.csv"), report + "\n");
+  const report = run(exe("go-licenses"), ["report", ".", ...ignored, "--ignore", "github.com/kkdai/youtube/v2"], { env: licenseEnv, stdio: ["ignore", "pipe", "inherit"] });
+  const youtubeVersion = run("go", ["list", "-m", "-f", "{{.Version}}", "github.com/kkdai/youtube/v2"], { env: licenseEnv, stdio: ["ignore", "pipe", "inherit"] });
+  writeFileSync(path.join(contents, "DESKTOP_GO_LICENSES.csv"), completeDesktopLicenseReport(report, youtubeVersion, readFileSync(path.join(server, "third_party/youtube/LICENSE"), "utf8")));
   run(exe("go-licenses"), ["save", ".", `--save_path=${path.join(contents, "desktop-licenses")}`, ...ignored], { env: licenseEnv });
   if (goos === "darwin") {
     embedMacOSNotices(contents);

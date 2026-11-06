@@ -30,11 +30,11 @@ export default defineConfig(({ mode }) => {
       outDir: "dist",
       emptyOutDir: true,
       write: process.env.VITE_CHECK_MODE !== "true",
-      rollupOptions: {
+      rolldownOptions: {
         output: {
           // Keep the embedded SPA in one JS chunk to avoid extra requests for
           // this desktop-local interface. Revisit if future code splitting is added.
-          inlineDynamicImports: true,
+          codeSplitting: false,
         },
       },
     },
