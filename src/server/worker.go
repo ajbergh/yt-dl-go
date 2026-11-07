@@ -27,7 +27,6 @@ import (
 	"github.com/yapingcat/gomedia/go-mp4"
 )
 
-const formatNote = "Download videos as MP4 or WebM, or save audio as MP3 or M4A. Your selected quality is a maximum; available quality depends on the video. Live streams and streaming-only sources are not supported."
 const playlistNote = "Playlist totals cover all entries exposed by YouTube, not independently verified hidden entries."
 const playlistSelectionNote = "Only the selected exposed playlist items are queued; original playlist positions are preserved."
 const unknownLengthNote = "An unknown-length stream is complete only at clean EOF; its original size cannot be independently verified."
@@ -1405,17 +1404,13 @@ func (s *server) processItem(ctx context.Context, j *jobState, entry *youtube.Pl
 		if j.MediaType == "audio" && j.AudioFormat == "mp3" {
 			file.naming.Codec = "mp3"
 		}
-		if j.StorageMode != "managed-only" {
-			if err := s.publishOutput(j, file); err != nil {
-				return errStorage
-			}
+		if err := s.publishOutput(j, file); err != nil {
+			return errStorage
 		}
-		if j.StorageMode == "published-only" {
-			if err := os.Remove(filepath.Join(j.dir, file.Name)); err != nil && !errors.Is(err, os.ErrNotExist) {
-				return errStorage
-			}
-			file.ManagedAvailable = false
+		if err := os.Remove(filepath.Join(j.dir, file.Name)); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return errStorage
 		}
+		file.ManagedAvailable = false
 		outputSize += file.Size
 	}
 	if err := tracker.release(budget, outputSize); err != nil {
@@ -1429,14 +1424,14 @@ func (s *server) processItem(ctx context.Context, j *jobState, entry *youtube.Pl
 			file.SubtitleError = "Caption sidecar was skipped because the job storage limit is exhausted"
 		} else {
 			subtitleSize := s.captureSubtitle(ctx, j, file, video, captionBudget)
-			if file.Subtitle != nil && file.Subtitle.ManagedAvailable && j.StorageMode != "managed-only" {
+			if file.Subtitle != nil && file.Subtitle.ManagedAvailable {
 				if err := publishSubtitleOutput(j, file); err != nil {
-					file.SubtitleError = "Caption sidecar was saved in the Library but could not be published next to the media file"
+					file.SubtitleError = "Caption sidecar could not be saved next to the media file"
 				}
 			}
-			if file.Subtitle != nil && file.Subtitle.ManagedAvailable && j.StorageMode == "published-only" {
+			if file.Subtitle != nil && file.Subtitle.ManagedAvailable {
 				if err := os.Remove(filepath.Join(j.dir, file.Subtitle.Name)); err != nil && !errors.Is(err, os.ErrNotExist) {
-					file.SubtitleError = "Published caption sidecar exists, but its temporary managed copy could not be removed"
+					file.SubtitleError = "Caption temporary file could not be removed"
 				} else {
 					file.Subtitle.ManagedAvailable = false
 				}
@@ -1780,30 +1775,13 @@ func (s *server) transferOriginalAudio(ctx context.Context, j *jobState, engine 
 }
 
 func (s *server) validCompletedFile(j *jobState, file mediaFile) bool {
-	available := false
-	if file.ManagedAvailable {
-		f, err := openFinal(j.dir, file.Name)
-		if err != nil {
-			return false
-		}
-		info, err := f.Stat()
-		_ = f.Close()
-		if err != nil || info.Size() != file.Size {
-			return false
-		}
-		available = true
+	f, err := openCompletedMedia(j, file)
+	if err != nil {
+		return false
 	}
-	if file.PublishedAvailable {
-		if err := validateOutputCopy(j, file); err != nil {
-			return false
-		}
-		output, statErr := os.Lstat(file.OutputPath)
-		if statErr != nil || !output.Mode().IsRegular() || output.Size() != file.Size {
-			return false
-		}
-		available = true
-	}
-	return available
+	defer f.Close()
+	info, err := f.Stat()
+	return err == nil && info.Size() == file.Size
 }
 
 func (s *server) keepPartial(j *jobState) bool {
@@ -2282,8 +2260,15 @@ func (s *server) transferAdaptiveMP4(ctx context.Context, j *jobState, engine na
 		if ctx.Err() != nil {
 			return result, ctx.Err()
 		}
-		if errors.Is(err, errStorage) || errors.Is(err, errItemReservation) {
+		if errors.Is(err, errStorage) {
 			return result, err
+		}
+		if errors.Is(err, errItemReservation) {
+			log.Printf("browser pair exceeded its item reservation; trying verified native ranges job_id=%s item=%d", j.ID, queueIndex)
+			if browserProvider != nil {
+				_ = browserProvider.Close()
+			}
+			browserProvider = nil
 		}
 	}
 	if dualUsed {
@@ -2450,8 +2435,12 @@ func (s *server) transferAdaptiveWebM(ctx context.Context, j *jobState, engine n
 	if ctx.Err() != nil {
 		return result, ctx.Err()
 	}
-	if errors.Is(err, errStorage) || errors.Is(err, errItemReservation) {
+	if errors.Is(err, errStorage) {
 		return result, err
+	}
+	if errors.Is(err, errItemReservation) && browserProvider != nil {
+		log.Printf("browser pair exceeded its item reservation; trying verified native ranges job_id=%s item=%d", j.ID, queueIndex)
+		_ = browserProvider.Close()
 	}
 	if dualUsed {
 		videoBrowserUsed, audioBrowserUsed = true, true
@@ -2745,8 +2734,13 @@ func (s *server) downloadAdaptiveRanges(ctx context.Context, j *jobState, engine
 			if ctx.Err() != nil {
 				return 0, false, ctx.Err()
 			}
-			if errors.Is(captureErr, errStorage) || errors.Is(captureErr, errItemReservation) {
+			if errors.Is(captureErr, errStorage) {
 				return 0, false, captureErr
+			}
+			if errors.Is(captureErr, errItemReservation) {
+				log.Printf("browser track exceeded its item reservation; trying verified native ranges job_id=%s item=%d itag=%d", j.ID, itemIndex, format.ItagNo)
+				_ = captureProvider.Close()
+				break
 			}
 			if _, canReopen := browserProvider.(browserRetryProvider); canReopen {
 				_ = captureProvider.Close()

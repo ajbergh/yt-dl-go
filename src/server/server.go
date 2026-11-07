@@ -121,7 +121,7 @@ type Job struct {
 	OutputFileMode    string        `json:"-"`
 	OutputFolderMode  string        `json:"-"`
 	Category          string        `json:"category,omitempty"`
-	StorageMode       string        `json:"storageMode"`
+	StorageMode       string        `json:"-"`
 	QueuePosition     int64         `json:"queuePosition,omitempty"`
 }
 
@@ -925,10 +925,10 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			fail(w, 409, "This job has an active file transfer")
 			return
 		}
-		// Removing a job from the Library deletes only app-managed media and
-		// history. Published files in the user's output directory are preserved.
+		// Removing a job drops history and working files. The library media
+		// in the user's download folder is preserved.
 		if err := removeManagedCopies(j); err != nil {
-			fail(w, 500, "Could not remove the job's private managed files")
+			fail(w, 500, "Could not remove the job's working files")
 			return
 		}
 		j.deleting = true
@@ -943,44 +943,6 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.recordPersistenceSuccess()
 		s.forgetJobLocked(j)
 		w.WriteHeader(http.StatusNoContent)
-	case len(parts) == 2 && parts[1] == "managed" && r.Method == http.MethodDelete:
-		if !terminal(j.Status) {
-			fail(w, 409, "Only stopped jobs can have managed copies deleted")
-			return
-		}
-		if j.readers > 0 {
-			fail(w, 409, "This job has an active file transfer")
-			return
-		}
-		if err := removeManagedCopies(j); err != nil {
-			fail(w, 500, "Could not remove the app-managed media copies")
-			return
-		}
-		s.invalidateJobTicketsLocked(j.ID)
-		if err := s.persistJobLocked(j); err != nil {
-			fail(w, 500, "Media copies were removed, but job state could not be saved")
-			return
-		}
-		reply(w, 200, snapshot(j))
-	case len(parts) == 2 && parts[1] == "published" && r.Method == http.MethodDelete:
-		if !terminal(j.Status) {
-			fail(w, 409, "Only stopped jobs can have published copies deleted")
-			return
-		}
-		if j.readers > 0 {
-			fail(w, 409, "This job has an active file or filesystem operation")
-			return
-		}
-		if err := removeOutputCopies(j); err != nil {
-			_ = s.persistJobLocked(j)
-			fail(w, 500, "Could not remove the published media copies")
-			return
-		}
-		if err := s.persistJobLocked(j); err != nil {
-			fail(w, 500, "Published copies were removed, but job state could not be saved")
-			return
-		}
-		reply(w, 200, snapshot(j))
 	case len(parts) == 2 && parts[1] == "all" && r.Method == http.MethodDelete:
 		if !terminal(j.Status) {
 			fail(w, 409, "Only stopped jobs can be deleted")
@@ -992,12 +954,12 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		if err := removeOutputCopies(j); err != nil {
 			_ = s.persistJobLocked(j)
-			fail(w, 500, "Could not remove the published media copies")
+			fail(w, 500, "Could not delete the library files")
 			return
 		}
 		if err := removeManagedCopies(j); err != nil {
 			_ = s.persistJobLocked(j)
-			fail(w, 500, "Published copies were removed, but private managed files could not be removed")
+			fail(w, 500, "Library files were deleted, but working files could not be removed")
 			return
 		}
 		j.deleting = true
@@ -1101,7 +1063,7 @@ func (s *server) handleLibraryItemDelete(w http.ResponseWriter, jobID, fileID st
 			log.Printf("Library item removal recovery failure job=%s: %v", j.ID, saveErr)
 		}
 		j.deleting = false
-		fail(w, http.StatusConflict, "Could not safely remove the app-managed copy")
+		fail(w, http.StatusConflict, "Could not safely remove the working files")
 		return
 	}
 	syncStoredFile(j, *file)
@@ -1154,7 +1116,6 @@ func (s *server) handleSettings(w http.ResponseWriter, r *http.Request) {
 			OutputFolderMode          *string   `json:"outputFolderMode"`
 			DefaultCategory           *string   `json:"defaultCategory"`
 			UserCategories            *[]string `json:"userCategories"`
-			StorageMode               *string   `json:"storageMode"`
 			Retention                 *string   `json:"retention"`
 			MaxJobBytes               *int64    `json:"maxJobBytes"`
 			JobTimeout                *string   `json:"jobTimeout"`
@@ -1204,9 +1165,6 @@ func (s *server) handleSettings(w http.ResponseWriter, r *http.Request) {
 		}
 		if patch.UserCategories != nil {
 			settings.UserCategories = *patch.UserCategories
-		}
-		if patch.StorageMode != nil {
-			settings.StorageMode = *patch.StorageMode
 		}
 		if patch.Retention != nil {
 			settings.Retention = strings.TrimSpace(*patch.Retention)
@@ -1422,16 +1380,16 @@ func (s *server) create(w http.ResponseWriter, r *http.Request) {
 		fail(w, 400, "splitByChapter currently requires MP3 audio output")
 		return
 	}
-	s.enqueueJob(w, u, kind, request.Quality, request.VideoStrategy, request.MediaType, request.AudioFormat, request.AudioBitrate, request.SubtitleLanguage, request.SubtitleFormat, request.Category, "", request.SplitByChapter, request.StartPaused, request.Items)
+	s.enqueueJob(w, u, kind, request.Quality, request.VideoStrategy, request.MediaType, request.AudioFormat, request.AudioBitrate, request.SubtitleLanguage, request.SubtitleFormat, request.Category, request.SplitByChapter, request.StartPaused, request.Items)
 }
 
 // enqueueJob allocates private per-job storage, persists a queued job, and
 // returns 202 only after the job has entered the bounded worker backlog.
-func (s *server) enqueueJob(w http.ResponseWriter, u, kind, quality, requestedVideoStrategy, mediaType, audioFormat, audioBitrate, subtitleLanguage, subtitleFormat, requestedCategory, requestedStorageMode string, splitByChapter, startPaused bool, inspectedItems ...[]inspectedItem) {
-	s.enqueueJobWithFallback(w, u, kind, quality, requestedVideoStrategy, mediaType, audioFormat, audioBitrate, subtitleLanguage, subtitleFormat, requestedCategory, requestedStorageMode, splitByChapter, nil, startPaused, inspectedItems...)
+func (s *server) enqueueJob(w http.ResponseWriter, u, kind, quality, requestedVideoStrategy, mediaType, audioFormat, audioBitrate, subtitleLanguage, subtitleFormat, requestedCategory string, splitByChapter, startPaused bool, inspectedItems ...[]inspectedItem) {
+	s.enqueueJobWithFallback(w, u, kind, quality, requestedVideoStrategy, mediaType, audioFormat, audioBitrate, subtitleLanguage, subtitleFormat, requestedCategory, splitByChapter, nil, startPaused, inspectedItems...)
 }
 
-func (s *server) enqueueJobWithFallback(w http.ResponseWriter, u, kind, quality, requestedVideoStrategy, mediaType, audioFormat, audioBitrate, subtitleLanguage, subtitleFormat, requestedCategory, requestedStorageMode string, splitByChapter bool, requestedAllow360pFallback *bool, startPaused bool, inspectedItems ...[]inspectedItem) {
+func (s *server) enqueueJobWithFallback(w http.ResponseWriter, u, kind, quality, requestedVideoStrategy, mediaType, audioFormat, audioBitrate, subtitleLanguage, subtitleFormat, requestedCategory string, splitByChapter bool, requestedAllow360pFallback *bool, startPaused bool, inspectedItems ...[]inspectedItem) {
 	if s.engine == nil {
 		fail(w, 503, "Native download engine is not initialized")
 		return
@@ -1480,14 +1438,6 @@ func (s *server) enqueueJobWithFallback(w http.ResponseWriter, u, kind, quality,
 		fail(w, 400, err.Error())
 		return
 	}
-	storageMode := requestedStorageMode
-	if storageMode == "" {
-		storageMode = outputSettings.StorageMode
-	}
-	if storageMode != "managed-published" && storageMode != "published-only" && storageMode != "managed-only" {
-		fail(w, 400, "storageMode must be managed-published, published-only, or managed-only")
-		return
-	}
 	allow360pFallback := outputSettings.Allow360pFallback
 	if requestedAllow360pFallback != nil {
 		allow360pFallback = *requestedAllow360pFallback
@@ -1496,23 +1446,32 @@ func (s *server) enqueueJobWithFallback(w http.ResponseWriter, u, kind, quality,
 		ID: randomID(16), URL: u, Kind: kind, Quality: quality, VideoStrategy: videoStrategy, Allow360pFallback: mediaType == "video" && allow360pFallback, MediaType: mediaType, AudioFormat: audioFormat, AudioBitrate: audioBitrate,
 		SubtitleLanguage: subtitleLanguage, SubtitleFormat: subtitleFormat,
 		Status: map[bool]string{true: "paused", false: "queued"}[startPaused], Title: "YouTube " + kind, Files: []mediaFile{}, Items: items, Failures: []itemFailure{},
-		Note: formatNote, CreatedAt: time.Now().UTC().Format(time.RFC3339Nano), DownloadLocation: outputSettings.DownloadLocation,
+		CreatedAt: time.Now().UTC().Format(time.RFC3339Nano), DownloadLocation: outputSettings.DownloadLocation,
 		NamingPattern: outputSettings.NamingPattern, SubfolderSorting: outputSettings.SubfolderSorting,
 		OutputFileMode: outputSettings.OutputFileMode, OutputFolderMode: outputSettings.OutputFolderMode,
-		Category: category, StorageMode: storageMode,
+		Category: category, StorageMode: "published-only",
 		QueuePosition:  s.nextQueuePositionLocked(),
 		SplitByChapter: splitByChapter,
 	}, fileItems: map[int]mediaFile{}, fileGroups: map[int][]mediaFile{}}
 	if kind == "playlist" {
-		j.Note += " " + playlistNote
+		j.Note = playlistNote
 		if len(j.Items) > 0 {
 			total := len(j.Items)
 			j.TotalCount = &total
 		}
 	}
-	j.dir = filepath.Join(s.cfg.root, j.ID)
-	if err := os.Mkdir(j.dir, 0700); err != nil {
-		fail(w, 500, "Cannot allocate private job storage")
+	j.dir = libraryWorkDir(j.Job)
+	folderMode, modeErr := parseOutputMode(j.OutputFolderMode)
+	if modeErr != nil {
+		fail(w, 500, "Invalid download folder permissions")
+		return
+	}
+	if err := os.MkdirAll(j.DownloadLocation, folderMode); err != nil {
+		fail(w, 500, "Cannot create library folder")
+		return
+	}
+	if err := os.MkdirAll(j.dir, 0700); err != nil {
+		fail(w, 500, "Cannot create download working folder")
 		return
 	}
 	if kind == "video" {
@@ -1554,7 +1513,7 @@ func (s *server) issueTicket(w http.ResponseWriter, j *jobState, fileID string, 
 		for _, f := range j.Files {
 			if f.ID == fileID {
 				found = true
-				available = f.ManagedAvailable
+				available = f.PublishedAvailable
 				break
 			}
 		}
@@ -1563,7 +1522,7 @@ func (s *server) issueTicket(w http.ResponseWriter, j *jobState, fileID string, 
 			return
 		}
 		if !available {
-			fail(w, 409, "The app-managed copy for this file is no longer available")
+			fail(w, 409, "The library file is no longer available")
 			return
 		}
 	} else if len(fileIDs) > 0 {
@@ -1571,8 +1530,8 @@ func (s *server) issueTicket(w http.ResponseWriter, j *jobState, fileID string, 
 			found := false
 			for _, file := range j.Files {
 				if file.ID == requestedID {
-					if !file.ManagedAvailable {
-						fail(w, 409, "The app-managed media copy is no longer available")
+					if !file.PublishedAvailable {
+						fail(w, 409, "The library file is no longer available")
 						return
 					}
 					found = true
@@ -1586,8 +1545,8 @@ func (s *server) issueTicket(w http.ResponseWriter, j *jobState, fileID string, 
 		}
 	} else {
 		for _, f := range j.Files {
-			if !f.ManagedAvailable {
-				fail(w, 409, "One or more app-managed copies are no longer available for archive download")
+			if !f.PublishedAvailable {
+				fail(w, 409, "One or more library files are no longer available for archive download")
 				return
 			}
 		}

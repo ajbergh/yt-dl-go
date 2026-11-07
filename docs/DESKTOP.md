@@ -191,7 +191,16 @@ SSE and ranged previews use real authenticated HTTP rather than Wails' buffering
 asset handler. File/ZIP saves and Library exports use native save dialogs and
 stream to a temporary file beside the selected destination; a failed transfer
 does not overwrite an existing file. Tokens are not stored in local storage or
-URLs. Folder selection uses the Wails native picker.
+URLs. Folder selection uses the Wails native picker. Confirmation prompts use
+`DesktopApp.Confirm` and native Yes/No dialogs titled YouTube Vault, with No
+selected by default. Declining or a dialog error prevents the operation. The
+browser/server edition retains browser confirmations.
+
+File → Exit follows the normal shutdown path; Help → About displays version,
+commit, and build date. macOS also retains its application and Edit menus.
+Library playback reads the user-selected download folder directly. Library
+cards provide Reveal, Copy path, Preview, and a single Delete files action;
+Queue saves and Settings Library exports remain available.
 
 For development, rebuild with `npm run build:desktop`. This deliberately uses
 static production assets rather than Wails' dynamic Vite integration. Existing
@@ -207,5 +216,6 @@ to a writable file before launching. This records native startup logs; it does
 not log the per-launch bearer. The file is truncated on each launch.
 
 For each candidate, record manual acceptance of the native window, queue events, a permitted media download,
-preview seeking, save/cancel, ZIP export, folder picker and close/restart on each
-OS family. Build and HTTP transport checks do not replace native UI acceptance.
+preview seeking, native confirmation approval/decline, Queue save/cancel,
+Settings Library export, Reveal/file selection, folder picker, About, and
+File → Exit/close/restart on each OS family. Build and HTTP transport checks do not replace native UI acceptance.

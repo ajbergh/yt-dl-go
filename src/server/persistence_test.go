@@ -142,6 +142,7 @@ func TestRuntimeSettingsPersistAndReportEffectiveSource(t *testing.T) {
 		t.Fatalf("runtime values changed before restart: %+v", s.cfg)
 	}
 	persisted, err := s.store.loadAppSettings()
+	response.Settings.StorageMode = persisted.StorageMode // Legacy database column is absent from the API.
 	if err != nil || !reflect.DeepEqual(persisted, response.Settings) {
 		t.Fatalf("runtime settings did not round-trip to SQLite: persisted=%+v response=%+v err=%v", persisted, response.Settings, err)
 	}

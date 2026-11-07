@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, unlink, writeFile } from "node:fs/promises";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
@@ -273,12 +273,12 @@ async function getJSON(url) {
   return response.json();
 }
 
-async function waitForBackendJobStatus(baseURL, status, timeoutMs = 20000) {
+async function waitForBackendJobStatus(baseURL, status, timeoutMs = 20000, jobID = "") {
   const deadline = Date.now() + timeoutMs;
   let lastJob = null;
   while (Date.now() < deadline) {
-    const data = await getJSON(`${baseURL}/api/jobs`);
-    lastJob = data.jobs?.[0] ?? null;
+    const data = await getJSON(jobID ? `${baseURL}/api/jobs/${jobID}` : `${baseURL}/api/jobs`);
+    lastJob = jobID ? data : data.jobs?.[0] ?? null;
     if (lastJob?.status === status) return lastJob;
     await new Promise(resolve => setTimeout(resolve, 100));
   }
@@ -343,6 +343,11 @@ async function main() {
     };
 
     await startService();
+    const folderSettings = await fetch(`${baseURL}/api/settings`, {
+      method: "PUT", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ downloadLocation: path.join(tempRoot, "library") }),
+    });
+    assert.equal(folderSettings.ok, true);
 
     chrome = spawn(chromePath, [
       "--headless=new",
@@ -484,24 +489,49 @@ async function main() {
     assert.equal(afterRestart.jobs.length, 1);
     assert.equal(afterRestart.jobs[0].status, "completed");
 
+    // Prove that deleting a file outside the app removes only its Library
+    // entry at startup, while the first downloaded file remains playable.
+    const addedResponse = await fetch(`${baseURL}/api/jobs`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ url: fixtureURL, quality: "best", rightsConfirmed: true }),
+    });
+    assert.equal(addedResponse.status, 202);
+    const addedJob = await addedResponse.json();
+    const secondJob = await waitForBackendJobStatus(baseURL, "completed", 30000, addedJob.id);
+    assert.equal(secondJob.id, addedJob.id);
+    const folderResponse = await fetch(`${baseURL}/api/jobs/${addedJob.id}/filesystem`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ fileId: secondJob.files[0].id, action: "copy-path" }),
+    });
+    assert.equal(folderResponse.ok, true);
+    await unlink((await folderResponse.json()).path);
+    await stopProcess(service);
+    await startService();
+    const reconciled = await getJSON(`${baseURL}/api/library`);
+    assert.deepEqual(reconciled.jobs.map(job => job.id), [beforeRestart.jobs[0].id]);
+    await cdp.send("Page.reload", { ignoreCache: true });
+    await waitFor(cdp, bodyIncludes("Ready"), "service reconnect after reconciliation", 30000);
+    await clickButton(cdp, "Library");
+    await waitFor(cdp, bodyIncludes("E2E Fixture Video"), "surviving Library item");
+
     // 9: destructive browser actions must surface an explicit confirmation
     // before the API mutation is allowed.
     const dialogPromise = cdp.waitEvent("Page.javascriptDialogOpening");
     const clickPromise = cdp.evaluate(`(() => {
-      const button = [...document.querySelectorAll("button")].find(item => item.textContent.trim() === "Delete everywhere");
+      const button = [...document.querySelectorAll("button")].find(item => item.textContent.trim() === "Delete files");
       if (!button) return false;
       button.click();
       return true;
     })()`, 30000);
     const dialog = await dialogPromise;
-    assert.match(dialog.message, /Delete this media everywhere/i);
+    assert.match(dialog.message, /Delete these library files/i);
     await cdp.send("Page.handleJavaScriptDialog", { accept: true });
     assert.equal(await clickPromise, true);
     await waitFor(cdp, bodyIncludes("Your library is empty"), "destructive deletion completion", 20000);
     const afterDelete = await getJSON(`${baseURL}/api/library`);
     assert.equal(afterDelete.jobs.length, 0, "confirmed delete-everywhere did not remove Library history");
 
-    console.log("Browser E2E passed: startup, inspect, add-as-paused, configuration editing, bulk resume, pause/resume, completion, Library, settings, restart persistence, confirmation.");
+    console.log("Browser E2E passed: startup, inspect, add-as-paused, configuration editing, bulk resume, pause/resume, completion, Library, settings, restart persistence, deleted-file reconciliation, confirmation.");
   } catch (error) {
     console.error(error?.stack || error);
     if (cdp) {

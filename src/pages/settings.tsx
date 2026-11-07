@@ -56,10 +56,10 @@ export function SettingsPage({
               </div>
 
               <div className="rounded-xl border border-neutral-800 bg-neutral-950/60 p-4">
-                <div className="mb-3 flex items-center gap-3"><span className="grid size-9 place-items-center rounded-lg border border-amber-700/40 bg-amber-950/30 text-amber-300"><Folder className="size-4" aria-hidden="true" /></span><div><h4 className="text-xs font-bold">Download folder</h4><p className="mt-0.5 text-xs text-neutral-400">Choose a folder on this device or an external drive for finished files.</p></div></div>
+                <div className="mb-3 flex items-center gap-3"><span className="grid size-9 place-items-center rounded-lg border border-amber-700/40 bg-amber-950/30 text-amber-300"><Folder className="size-4" aria-hidden="true" /></span><div><h4 className="text-xs font-bold">Download folder</h4><p className="mt-0.5 text-xs text-neutral-400">This folder is your library. Play and preview files directly from here.</p></div></div>
                 <label className="block text-xs font-medium text-neutral-300" htmlFor="download-location">Folder path</label>
                 <div className="mt-1 flex gap-2"><input id="download-location" type="text" title={settings.downloadLocation} autoComplete="off" className={`${field} min-w-0 font-mono text-xs`} value={settings.downloadLocation} onChange={event => changeSetting("downloadLocation", event.target.value)} placeholder="C:\\Users\\you\\Downloads\\YouTube_Vault" /><button type="button" className={button} onClick={() => void selectDownloadFolder()} disabled={!serviceReady} title="Choose a folder with the operating system picker"><Folder className="size-3.5 text-amber-400" aria-hidden="true" />Browse</button></div>
-                <p className="mt-2 text-xs text-neutral-400">Enter the full folder path. The app creates the folder when the first download finishes. Existing files stay in their original locations.</p>
+                <p className="mt-2 text-xs text-neutral-400">Enter the full folder path. The app creates the folder when a download is queued. Existing files stay in their original locations.</p>
                 <div className="mt-3 flex flex-wrap items-center gap-1.5 text-xs">
                   <span className="mr-1 text-neutral-400">Quick paths:</span>
                   {["YouTube_Vault", "Media", "YouTube"].map(name => {
@@ -126,17 +126,6 @@ export function SettingsPage({
                   <input aria-label="Global bandwidth limit in MiB per second" type="number" min="0" max="1024" step="0.25" value={settings.bandwidthLimitBytesPerSec / 1048576} onChange={event => changeSetting("bandwidthLimitBytesPerSec", Math.max(0, Math.round((Number(event.target.value) || 0) * 1048576)))} className={`${field} mt-1.5`} />
                   <span className="mt-1 block text-xs leading-relaxed text-neutral-400">0 = unlimited. The cap is shared fairly across active transfers and applies immediately.</span>
                 </label>
-              </div>
-              <div className="rounded-xl border border-neutral-800 bg-neutral-950/60 p-4">
-                <div className="mb-3 flex items-center gap-3"><span className="grid size-9 place-items-center rounded-lg border border-emerald-700/40 bg-emerald-950/30 text-emerald-300"><HardDrive className="size-4" aria-hidden="true" /></span><div><h4 className="text-xs font-bold">Where to keep files</h4><p className="mt-0.5 text-xs text-neutral-400">Keep finished files in your library, your download folder, or both.</p></div></div>
-                <div className="grid gap-2 md:grid-cols-3">
-                  {([
-                    ["managed-published", "Library and folder", "Keep a library copy and a copy in your download folder. Uses more disk space."],
-                    ["published-only", "Download folder only", "Keep files in your download folder. History remains, but previews and extra saves from the app are unavailable."],
-                    ["managed-only", "Library only", "Keep files in the library without copying them to your download folder."],
-                  ] as const).map(([value, label, description]) => <label key={value} className={`cursor-pointer rounded-lg border p-3 ${settings.storageMode === value ? "border-rose-600/70 bg-rose-950/20" : "border-neutral-800 bg-neutral-900/50"}`}><span className="flex items-center justify-between gap-2 text-xs font-semibold text-neutral-200">{label}<input type="radio" name="storage-mode" value={value} checked={settings.storageMode === value} onChange={() => changeSetting("storageMode", value)} className="accent-rose-600" /></span><span className="mt-1 block text-xs leading-relaxed text-neutral-400">{description}</span></label>)}
-                </div>
-                <p className="mt-3 text-xs leading-relaxed text-neutral-400">The selected policy is captured when a job is queued. Changing this setting later does not alter existing jobs. By default, finished Library entries stay and failed or cancelled jobs without files are cleared after 24 hours.</p>
               </div>
               <div className="rounded-xl border border-neutral-800 bg-neutral-950/60 p-4">
                 <div className="mb-3 flex items-center gap-3"><span className="grid size-9 place-items-center rounded-lg border border-blue-700/40 bg-blue-950/30 text-blue-300"><FileText className="size-4" aria-hidden="true" /></span><div><h4 className="text-xs font-bold">File naming format preferences</h4><p className="mt-0.5 text-xs text-neutral-400">Use tokens to build the saved filename.</p></div></div>

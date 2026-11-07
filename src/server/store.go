@@ -81,7 +81,7 @@ type AppSettings struct {
 	OutputFolderMode          string   `json:"outputFolderMode"`
 	DefaultCategory           string   `json:"defaultCategory"`
 	UserCategories            []string `json:"userCategories"`
-	StorageMode               string   `json:"storageMode"`
+	StorageMode               string   `json:"-"`
 	Retention                 string   `json:"retention"`
 	MaxJobBytes               int64    `json:"maxJobBytes"`
 	JobTimeout                string   `json:"jobTimeout"`
@@ -2191,13 +2191,13 @@ func (s *jobStore) loadJobsFiltered(root, jobID, selection string) ([]*storedJob
 		if filepath.Base(j.ID) != j.ID || j.ID == "." || j.ID == ".." {
 			return nil, errors.New("state database contains an unsafe job id")
 		}
-		loaded := &storedJob{job: j, dir: filepath.Join(root, j.ID), items: map[int][]mediaFile{}, cancelled: saved.cancelRequested != 0}
+		loaded := &storedJob{job: j, dir: dir, items: map[int][]mediaFile{}, cancelled: saved.cancelRequested != 0}
 		loaded.job.Files = []mediaFile{}
 		loaded.job.Failures = []itemFailure{}
 		if saved.doneAt.Valid {
 			loaded.done = time.Unix(0, saved.doneAt.Int64)
 		}
-		if !filepath.IsAbs(dir) || filepath.Clean(dir) != filepath.Join(root, j.ID) {
+		if !filepath.IsAbs(dir) || (filepath.Clean(dir) != filepath.Join(root, j.ID) && filepath.Clean(dir) != libraryWorkDir(j)) {
 			return nil, errors.New("state database contains an unsafe job directory")
 		}
 		if j.Status != "paused" && !terminal(j.Status) {
@@ -2241,6 +2241,7 @@ func (s *jobStore) loadJobsFiltered(root, jobID, selection string) ([]*storedJob
 					})
 				} else {
 					file.Subtitle = &subtitle
+					restoreSubtitlePath(j.DownloadLocation, &file)
 				}
 			}
 			if chaptersJSON != "" {
@@ -2268,6 +2269,7 @@ func (s *jobStore) loadJobsFiltered(root, jobID, selection string) ([]*storedJob
 					for _, stored := range additional {
 						restoreStoredFileMediaType(&stored.File, j.MediaType)
 						stored.File.OutputPath = stored.OutputPath
+						restoreSubtitlePath(j.DownloadLocation, &stored.File)
 						loaded.items[index] = append(loaded.items[index], stored.File)
 						loaded.job.Files = append(loaded.job.Files, stored.File)
 					}
@@ -2322,6 +2324,10 @@ func (s *jobStore) loadLibraryJobs() ([]Job, error) {
 }
 
 func (s *jobStore) loadLibraryJobsForIDs(jobIDs []string) ([]Job, error) {
+	return s.loadLibraryDiskJobs(jobIDs, false)
+}
+
+func (s *jobStore) loadLibraryDiskJobs(jobIDs []string, includeActive bool) ([]Job, error) {
 	settings, err := s.loadAppSettings()
 	if err != nil {
 		return nil, err
@@ -2330,6 +2336,9 @@ func (s *jobStore) loadLibraryJobsForIDs(jobIDs []string) ([]Job, error) {
 		FROM library_items li JOIN library_sources j ON j.source_job_id=li.source_job_id
 		WHERE j.status IN ('completed','partial','failed','cancelled')
 		`
+	if includeActive {
+		query = strings.Replace(query, "WHERE j.status IN ('completed','partial','failed','cancelled')", "WHERE 1=1", 1)
+	}
 	args := []any{}
 	if jobIDs != nil {
 		if len(jobIDs) == 0 {
@@ -2404,6 +2413,7 @@ func (s *jobStore) loadLibraryJobsForIDs(jobIDs []string) ([]Job, error) {
 			result = append(result, j)
 		}
 		file.OutputPath = outputPath
+		restoreSubtitlePath(j.DownloadLocation, &file)
 		result[indexes[j.ID]].Files = append(result[indexes[j.ID]].Files, file)
 	}
 	if err := rows.Err(); err != nil {
@@ -2442,9 +2452,13 @@ func (s *jobStore) loadLibraryJob(root, jobID string) (*storedJob, error) {
 			}
 		}
 	}
+	workDir := libraryWorkDir(job)
+	if _, err := os.Stat(filepath.Join(root, jobID)); err == nil {
+		workDir = filepath.Join(root, jobID)
+	}
 	loaded := &storedJob{
 		job:   job,
-		dir:   filepath.Join(root, jobID),
+		dir:   workDir,
 		done:  time.Now(),
 		items: map[int][]mediaFile{},
 	}
@@ -2471,7 +2485,10 @@ func (s *jobStore) normalizeResumingJob(loaded *storedJob) error {
 		group := loaded.items[index]
 		validGroup := len(group) > 0
 		for _, file := range group {
-			info, err := openFinal(loaded.dir, file.Name)
+			info, err := openCompletedMedia(&jobState{Job: loaded.job, dir: loaded.dir}, file)
+			if errors.Is(err, errLibraryRootUnavailable) {
+				continue
+			}
 			if err != nil {
 				validGroup = false
 				break

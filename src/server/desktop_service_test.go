@@ -150,7 +150,7 @@ func (r desktopEvictionReader) Read(p []byte) (int, error) {
 func TestDesktopTicketSurvivesTerminalEvictionDuringDispatch(t *testing.T) {
 	s := newPersistenceTestServer(t)
 	job := bulkFixtureJob(t, s, "completed")
-	job.Files = []mediaFile{{ID: "file", Name: "000001-abcdefghijk.mp4", MimeType: "video/mp4", Size: 5, ManagedAvailable: true}}
+	job.Files = []mediaFile{{ID: "file", Name: "000001-abcdefghijk.mp4", MimeType: "video/mp4", Size: 5, PublishedAvailable: true}}
 	if err := os.WriteFile(filepath.Join(job.dir, job.Files[0].Name), []byte("media"), 0600); err != nil {
 		t.Fatal(err)
 	}

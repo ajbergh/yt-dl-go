@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -74,7 +75,7 @@ func trackedOutputCommand(goos, action, path, folder string) (string, []string, 
 	switch goos {
 	case "windows":
 		if action == "reveal" {
-			return "explorer.exe", []string{"/select," + path}, nil
+			return "explorer.exe", []string{"/select,", path}, nil
 		}
 		return "explorer.exe", []string{folder}, nil
 	case "darwin":
@@ -83,8 +84,14 @@ func trackedOutputCommand(goos, action, path, folder string) (string, []string, 
 		}
 		return "open", []string{folder}, nil
 	case "linux":
-		// xdg-open has no portable file-selection operation, so reveal opens
-		// the containing folder rather than executing an arbitrary file path.
+		if action == "reveal" {
+			uri := (&url.URL{Scheme: "file", Path: path}).String()
+			// dbus-send uses commas to delimit array elements, so encode a
+			// literal filename comma even though it is valid in a file URI.
+			uri = strings.ReplaceAll(uri, ",", "%2C")
+			return "dbus-send", []string{"--session", "--print-reply", "--type=method_call", "--dest=org.freedesktop.FileManager1", "/org/freedesktop/FileManager1", "org.freedesktop.FileManager1.ShowItems", "array:string:" + uri, "string:"}, nil
+		}
+		// Fall back to opening the folder if file selection is unsupported.
 		return "xdg-open", []string{folder}, nil
 	default:
 		return "", nil, errors.New("filesystem opening is not supported on this platform")
@@ -94,13 +101,38 @@ func trackedOutputCommand(goos, action, path, folder string) (string, []string, 
 func openTrackedOutput(ctx context.Context, action, path string) error {
 	info, err := os.Lstat(path)
 	if err != nil || !info.Mode().IsRegular() {
-		return errors.New("published output is unavailable")
+		return errors.New("library file is unavailable")
 	}
-	commandName, args, err := trackedOutputCommand(runtime.GOOS, action, path, filepath.Dir(path))
+	return runTrackedOutput(ctx, runtime.GOOS, action, path, filepath.Dir(path), func(ctx context.Context, command string, args ...string) error {
+		return exec.CommandContext(ctx, command, args...).Run()
+	})
+}
+
+type filesystemCommandRunner func(context.Context, string, ...string) error
+
+func runTrackedOutput(ctx context.Context, goos, action, path, folder string, run filesystemCommandRunner) error {
+	commandName, args, err := trackedOutputCommand(goos, action, path, folder)
 	if err != nil {
 		return err
 	}
-	return exec.CommandContext(ctx, commandName, args...).Run()
+	if goos == "linux" && action == "reveal" {
+		// ShowItems is supported by common file managers (including Nautilus
+		// and Dolphin). Keep a nonresponsive session bus from delaying fallback.
+		selectCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+		err = run(selectCtx, commandName, args...)
+		cancel()
+		if err == nil {
+			return nil
+		}
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		commandName, args, err = trackedOutputCommand(goos, "open-folder", path, folder)
+		if err != nil {
+			return err
+		}
+	}
+	return run(ctx, commandName, args...)
 }
 
 func (s *server) handleFilesystem(w http.ResponseWriter, r *http.Request, jobID string) {
@@ -153,17 +185,17 @@ func (s *server) handleFilesystem(w http.ResponseWriter, r *http.Request, jobID 
 	}
 	if !file.PublishedAvailable {
 		s.mu.Unlock()
-		fail(w, 409, "The published copy is no longer available")
+		fail(w, 409, "The library file is no longer available")
 		return
 	}
 	if err := validateOutputCopy(j, file); err != nil {
 		s.mu.Unlock()
-		fail(w, 409, "The tracked published path is invalid")
+		fail(w, 409, "The tracked library path is invalid")
 		return
 	}
 	if info, err := os.Lstat(file.OutputPath); err != nil || !info.Mode().IsRegular() || info.Size() != file.Size {
 		s.mu.Unlock()
-		fail(w, 409, "The published copy is no longer available")
+		fail(w, 409, "The library file is no longer available")
 		return
 	}
 	path := file.OutputPath

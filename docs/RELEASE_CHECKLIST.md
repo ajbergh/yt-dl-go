@@ -25,6 +25,18 @@ that every architecture or later changed build has been manually exercised.
 Documentation-only changes preserve this build evidence. Re-run relevant checks
 when application, dependency, build, signing, or packaging behavior changes.
 
+## Single-folder Library branch verification
+
+Recorded 2026-11-06 for the `single-folder-library` branch:
+
+- The maintainer confirmed the download and native-dialog tests passed.
+- Fresh Queue and Library screenshots were captured from the actual Windows
+  Wails WebView2 with Playwright and isolated synthetic data; the OS frame is
+  omitted. The capture fixture used a separate instance lock and local debugging
+  configuration through temporary build files; production source was unchanged.
+- Automated backend, UI/bridge, browser E2E, and static-check results are recorded
+  in the PR. Manual macOS/Linux acceptance remains pending.
+
 ## 1. Select and validate the source
 
 - [ ] Select the intended source commit, review changes, and confirm current CI/CodeQL.
@@ -68,9 +80,22 @@ cover each OS family and the architectures intended for publication.
 - [ ] Install and open through the normal OS entry point; also test the portable package.
 - [ ] Inspect a permitted video/playlist; exercise queue events, pause/resume, and retry.
 - [ ] Complete a permitted download and verify actual quality and file playback.
-- [ ] Verify Library previews/seeking, native save/cancel, ZIP export, and folder selection.
+- [ ] Verify Library previews/seeking, Reveal/file selection, Copy path, and the
+      single Delete files confirmation; verify the files are deleted only after approval.
+- [ ] Verify native confirmations for history removal, retries, and bulk operations;
+      decline each operation and verify that nothing is changed.
+- [ ] Verify File → Exit and Help → About. Test Queue save/cancel, Settings Library
+      export, and the native folder picker.
+- [ ] Upgrade a disposable legacy Library from each old storage mode. Verify one
+      final media copy, working playback/captions, and recovery from a missing caption.
+- [ ] Delete one file outside the app, restart, and verify only that Library entry
+      disappears. Disconnect/reconnect the Library folder and verify entries survive.
+- [ ] Retry a permitted large adaptive download that previously exceeded its item
+      reservation; verify actual quality and the configured job limit.
+- [ ] Refresh the native documentation screenshots using disposable data; include
+      the updated Library controls and a native confirmation in the PR evidence.
 - [ ] Close/restart and verify queue, Library, preferences, and output locations.
-- [ ] Verify installer reinstallation/removal retains saved data and published files.
+- [ ] Verify installer reinstallation/removal retains saved data and Library files.
 - [ ] Record dependencies, permissions prompts, quarantine, and signing warnings.
 
 ## 4. Signing and publication

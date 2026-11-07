@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"github.com/wailsapp/wails/v2"
@@ -26,7 +27,7 @@ import (
 //go:embed build/appicon.png
 var desktopIcon []byte
 
-// DesktopApp exposes only bootstrap and user-confirmed save operations. The
+// DesktopApp exposes bootstrap, native dialogs, and save operations. The
 // existing authenticated HTTP API remains the shared engine control plane.
 type DesktopApp struct {
 	ctx     context.Context
@@ -61,12 +62,19 @@ func (a *DesktopApp) Save(path string) (bool, error) {
 	})
 }
 
+func (a *DesktopApp) Confirm(title, message string) (bool, error) {
+	result, err := wruntime.MessageDialog(a.ctx, wruntime.MessageDialogOptions{
+		Type: wruntime.QuestionDialog, Title: title, Message: message,
+		Buttons: []string{"Yes", "No"}, DefaultButton: "No", CancelButton: "No",
+	})
+	return err == nil && result == "Yes", err
+}
+
 func (a *DesktopApp) startup(ctx context.Context, c config) {
 	if os.Getenv("DESKTOP_SMOKE_OUTPUT") != "" {
 		log.Print("Desktop service startup entered")
 	}
 	defer close(a.ready)
-	a.ctx = ctx
 	a.service, a.err = newDesktopService(c)
 	if os.Getenv("DESKTOP_SMOKE_OUTPUT") != "" {
 		log.Printf("Desktop service initialized: %t", a.err == nil)
@@ -110,8 +118,28 @@ func main() {
 	}
 	app := &DesktopApp{ready: make(chan struct{})}
 	appMenu := menu.NewMenu()
-	appMenu.Append(menu.AppMenu())
-	appMenu.Append(menu.EditMenu())
+	if runtime.GOOS == "darwin" {
+		appMenu.Append(menu.AppMenu())
+	}
+	fileMenu := appMenu.AddSubmenu("File")
+	fileMenu.AddText("Exit", nil, func(*menu.CallbackData) {
+		wruntime.Quit(app.ctx)
+	})
+	if runtime.GOOS == "darwin" {
+		appMenu.Append(menu.EditMenu())
+	}
+	helpMenu := appMenu.AddSubmenu("Help")
+	helpMenu.AddText("About", nil, func(*menu.CallbackData) {
+		info := currentBuildInfo()
+		_, dialogErr := wruntime.MessageDialog(app.ctx, wruntime.MessageDialogOptions{
+			Type: wruntime.InfoDialog, Title: "About YouTube Vault",
+			Message: fmt.Sprintf("YouTube Vault\nVideo and playlist downloads\n\nVersion: %s\nCommit: %s\nBuilt: %s\n\nYour download folder is your library.", info.Version, info.Commit, info.Date),
+			Buttons: []string{"OK"}, DefaultButton: "OK",
+		})
+		if dialogErr != nil {
+			log.Printf("show About dialog: %v", dialogErr)
+		}
+	})
 	err = wails.Run(&options.App{
 		Title: "YouTube Vault", Width: 1280, Height: 860, MinWidth: 780, MinHeight: 600,
 		BackgroundColour: options.NewRGB(10, 10, 10),
@@ -134,7 +162,10 @@ func main() {
 			},
 		},
 		Menu: appMenu, Bind: []interface{}{app},
-		OnStartup:  func(ctx context.Context) { go app.startup(ctx, c) },
+		OnStartup: func(ctx context.Context) {
+			app.ctx = ctx
+			go app.startup(ctx, c)
+		},
 		OnDomReady: func(context.Context) { log.Print("Desktop WebView DOM ready") },
 		OnShutdown: func(context.Context) {
 			<-app.ready

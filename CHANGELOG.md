@@ -4,6 +4,25 @@ This file summarizes notable user-facing changes. Version **v0.1.0** was publicl
 
 ## [Unreleased]
 
+### Added
+
+- Native File → Exit and Help → About menus, with version and build details.
+- Native desktop confirmation dialogs titled YouTube Vault, with No selected by default; browser builds retain browser confirmations.
+
+### Changed
+
+- The selected download folder is the Library's single media location. Playback and previews read directly from disk; storage-policy settings and automatic duplicate media copies are removed.
+- Library cards now offer Reveal, Copy path, Preview, and one Delete files action. Redundant Folder, Save/ZIP, and Remove controls are removed.
+- The generic format explanation is no longer displayed on queued or active downloads, including saved jobs from older versions.
+
+### Fixed
+
+- Startup reconciles deleted media without restoring it from obsolete copies; unavailable Library folders preserve their metadata.
+- Legacy app-only files migrate into their recorded download folder. Missing captions do not block startup, and a failed migration save rolls back newly created outputs.
+- Restarted jobs reuse finalized Library files instead of downloading them again.
+- Windows Reveal passes the selection switch and file path separately. Linux tries file selection through FileManager1 and falls back to the containing folder when unavailable.
+- Browser audio capture receives a share of the reserved headroom. Browser reservation overruns fall back to verified native ranges without relaxing the job limit or changing the selected quality.
+
 ## [0.2.0] — 2026-11-05
 
 ### Added

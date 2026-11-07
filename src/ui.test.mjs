@@ -74,6 +74,7 @@ beforeEach(async () => {
   rows = [];
   rejectedBulkIDs = new Set();
   testWindow.confirm = () => true;
+  delete testWindow.go;
   missing = [];
   healthEngine = "native-go";
   healthVersion = "dev";
@@ -108,9 +109,9 @@ beforeEach(async () => {
       return Response.json({ settings, sources: { retention: "SQLite (active)", maxJobBytes: "SQLite (active)", jobTimeout: "SQLite (active)", chromePath: "SQLite (active)", downloadSlots: "SQLite (active)" }, effective: { retention: "never", maxJobBytes: 10737418240, jobTimeout: "none", chromePath: "", downloadSlots: 4 } });
     }
     if (path === "/api/folders/select" && init.method === "POST") return Response.json({ path: "C:\\Media\\YouTube" });
-    if (path === "/api/settings") return Response.json({ settings: { defaultQuality: "best", defaultVideoStrategy: "best", allow360pFallback: false, maxConcurrentDownloads: 3, bandwidthLimitBytesPerSec: 0, notificationsEnabled, downloadLocation: "C:\\Downloads\\YouTube_Vault", namingPattern: "{channel} - {title} [{resolution}]", subfolderSorting: "channel", defaultCategory: "General", userCategories: ["General", "Music"], storageMode: "managed-published", outputFileMode: "0600", outputFolderMode: "0700", retention: "never", maxJobBytes: 10737418240, jobTimeout: "none", chromePath: "", downloadSlots: 4 }, sources: { retention: "SQLite (active)", maxJobBytes: "SQLite (active)", jobTimeout: "SQLite (active)", chromePath: "SQLite (active)", downloadSlots: "SQLite (active)" }, effective: { retention: "never", maxJobBytes: 10737418240, jobTimeout: "none", chromePath: "", downloadSlots: 4 } });
+    if (path === "/api/settings") return Response.json({ settings: { defaultQuality: "best", defaultVideoStrategy: "best", allow360pFallback: false, maxConcurrentDownloads: 3, bandwidthLimitBytesPerSec: 0, notificationsEnabled, downloadLocation: "C:\\Downloads\\YouTube_Vault", namingPattern: "{channel} - {title} [{resolution}]", subfolderSorting: "channel", defaultCategory: "General", userCategories: ["General", "Music"], outputFileMode: "0600", outputFolderMode: "0700", retention: "never", maxJobBytes: 10737418240, jobTimeout: "none", chromePath: "", downloadSlots: 4 }, sources: { retention: "SQLite (active)", maxJobBytes: "SQLite (active)", jobTimeout: "SQLite (active)", chromePath: "SQLite (active)", downloadSlots: "SQLite (active)" }, effective: { retention: "never", maxJobBytes: 10737418240, jobTimeout: "none", chromePath: "", downloadSlots: 4 } });
     if (path === "/api/events") {
-      const settings = { defaultQuality: "best", defaultVideoStrategy: "best", allow360pFallback: false, maxConcurrentDownloads: 3, bandwidthLimitBytesPerSec: 0, notificationsEnabled, downloadLocation: "C:\\Downloads\\YouTube_Vault", namingPattern: "{channel} - {title} [{resolution}]", subfolderSorting: "channel", defaultCategory: "General", userCategories: ["General", "Music"], storageMode: "managed-published", outputFileMode: "0600", outputFolderMode: "0700", retention: "never", maxJobBytes: 10737418240, jobTimeout: "none", chromePath: "", downloadSlots: 4 };
+      const settings = { defaultQuality: "best", defaultVideoStrategy: "best", allow360pFallback: false, maxConcurrentDownloads: 3, bandwidthLimitBytesPerSec: 0, notificationsEnabled, downloadLocation: "C:\\Downloads\\YouTube_Vault", namingPattern: "{channel} - {title} [{resolution}]", subfolderSorting: "channel", defaultCategory: "General", userCategories: ["General", "Music"], outputFileMode: "0600", outputFolderMode: "0700", retention: "never", maxJobBytes: 10737418240, jobTimeout: "none", chromePath: "", downloadSlots: 4 };
       const settingsSources = { retention: "SQLite (active)", maxJobBytes: "SQLite (active)", jobTimeout: "SQLite (active)", chromePath: "SQLite (active)", downloadSlots: "SQLite (active)" };
       const settingsEffective = { retention: "never", maxJobBytes: 10737418240, jobTimeout: "none", chromePath: "", downloadSlots: 4 };
       const events = [{ type: "snapshot", jobs: rows, settings, settingsSources, settingsEffective }, ...(liveEvent ? [liveEvent] : [])];
@@ -209,6 +210,7 @@ beforeEach(async () => {
   });
 });
 afterEach(async () => {
+  delete testWindow.go;
   await act(async () => root.unmount());
   container.remove();
   globalThis.fetch = realFetch;
@@ -524,7 +526,7 @@ describe("Downloader UI and Go API integration", () => {
     expect(saved.bandwidthLimitBytesPerSec).toBe(5 * 1024 * 1024);
     expect(saved.outputFileMode).toBe("0600");
     expect(saved.outputFolderMode).toBe("0700");
-    expect(saved.storageMode).toBe("managed-published");
+    expect(saved.storageMode).toBeUndefined();
   });
 
   test("persists only a supported preference through the service API", async () => {
@@ -543,7 +545,7 @@ describe("Downloader UI and Go API integration", () => {
     await setSelect(videoFormat, "av1");
     await click(button("Save preferences"));
     const save = requests.find(item => item.path === "/api/settings" && item.method === "PUT");
-    expect(JSON.parse(save.body)).toEqual({ defaultQuality: "720", defaultVideoStrategy: "av1", allow360pFallback: false, maxConcurrentDownloads: 3, bandwidthLimitBytesPerSec: 0, notificationsEnabled: false, downloadLocation: "C:\\Downloads\\YouTube_Vault", namingPattern: "{channel} - {title} [{resolution}]", subfolderSorting: "channel", defaultCategory: "General", userCategories: ["General", "Music"], storageMode: "managed-published", outputFileMode: "0600", outputFolderMode: "0700", retention: "never", maxJobBytes: 10737418240, jobTimeout: "none", chromePath: "", downloadSlots: 4 });
+    expect(JSON.parse(save.body)).toEqual({ defaultQuality: "720", defaultVideoStrategy: "av1", allow360pFallback: false, maxConcurrentDownloads: 3, bandwidthLimitBytesPerSec: 0, notificationsEnabled: false, downloadLocation: "C:\\Downloads\\YouTube_Vault", namingPattern: "{channel} - {title} [{resolution}]", subfolderSorting: "channel", defaultCategory: "General", userCategories: ["General", "Music"], outputFileMode: "0600", outputFolderMode: "0700", retention: "never", maxJobBytes: 10737418240, jobTimeout: "none", chromePath: "", downloadSlots: 4 });
     expect(container.textContent).toContain("Saved");
   });
   test("keeps 360p recovery disabled unless the user opts in", async () => {
@@ -655,15 +657,14 @@ describe("Downloader UI and Go API integration", () => {
     expect(container.querySelector("#download-location").value).toBe("C:\\Media\\YouTube");
     expect(container.textContent).toContain("Download folder selected");
   });
-  test("persists the selected storage policy for new jobs", async () => {
+  test("uses the download folder as the only library location", async () => {
     await click(button("Settings"));
     await click(container.querySelector('button[aria-label="Advanced settings"]'));
-    const publishedOnly = container.querySelector('input[name="storage-mode"][value="published-only"]');
-    await click(publishedOnly);
+    expect(container.querySelector('input[name="storage-mode"]')).toBeNull();
+    expect(container.textContent).toContain("This folder is your library");
     await click(button("Save preferences"));
     const saves = requests.filter(item => item.path === "/api/settings" && item.method === "PUT");
-    expect(JSON.parse(saves.at(-1).body).storageMode).toBe("published-only");
-    expect(container.textContent).toContain("Download folder only");
+    expect(JSON.parse(saves.at(-1).body).storageMode).toBeUndefined();
   });
   test("applies live SSE job progress without repeated full-list polling", async () => {
     rows = [{
@@ -854,8 +855,8 @@ describe("Downloader UI and Go API integration", () => {
     await connect();
     await click(button("Library"));
     expect(container.textContent).toContain("2 of 2 jobs visible");
-    expect(container.textContent).toContain("App storage");
-    expect(container.textContent).toContain("Output folder");
+    expect(container.textContent).not.toContain("App storage");
+    expect(container.textContent).toContain("Library size");
 
     await setSelect(container.querySelector('select[aria-label="Filter library by category"]'), "Music");
     expect(container.querySelectorAll('section[aria-labelledby="library-heading"] article')).toHaveLength(1);
@@ -884,43 +885,72 @@ describe("Downloader UI and Go API integration", () => {
     expect(container.querySelector('img[data-local-thumbnail="preferred"]')).toBeTruthy();
   });
 
-  test("separates Library removal from managed and published media deletion", async () => {
+  test("waits for native confirmation before forgetting history", async () => {
+    rows = [{ ...job, kind: "video", status: "failed" }];
+    await remount();
+    await connect();
+    let resolveConfirmation;
+    const prompts = [];
+    testWindow.confirm = () => { throw new Error("WebView dialog used"); };
+    testWindow.go = { main: { DesktopApp: { Confirm: (title, message) => {
+      prompts.push([title, message]);
+      return new Promise(resolve => { resolveConfirmation = resolve; });
+    } } } };
+    await click(button("Forget history"));
+    await click(button("Forget history"));
+    expect(prompts).toHaveLength(1);
+    expect(prompts[0][0]).toBe("YouTube Vault");
+    expect(prompts[0][1]).toContain("Library items and media files will remain available");
+    expect(requests.some(item => item.method === "DELETE")).toBe(false);
+    await act(async () => { resolveConfirmation(false); });
+    expect(requests.some(item => item.method === "DELETE")).toBe(false);
+    await click(button("Forget history"));
+    await act(async () => { resolveConfirmation(true); });
+    expect(requests.some(item => item.path.endsWith("/history") && item.method === "DELETE")).toBe(true);
+  });
+
+  test("shows a native confirmation failure without performing the action", async () => {
+    rows = [{ ...job, kind: "video", status: "failed" }];
+    await remount();
+    await connect();
+    testWindow.go = { main: { DesktopApp: { Confirm: async () => { throw new Error("Native dialog unavailable"); } } } };
+    await click(button("Forget history"));
+    expect(requests.some(item => item.method === "DELETE")).toBe(false);
+    expect(container.textContent).toContain("Native dialog unavailable");
+  });
+
+  test("offers one file deletion action and only local library controls", async () => {
     rows = [{ ...job, status: "completed", completedCount: 1, totalCount: 1, files: [
-      { id: "file-1", name: "001-test.mp4", size: 1024, outputRelativePath: "Fixture channel/test.mp4", managedAvailable: true, publishedAvailable: true },
+      { id: "file-1", name: "001-test.mp4", size: 1024, outputRelativePath: "Fixture channel/test.mp4", managedAvailable: false, publishedAvailable: true },
     ] }];
     await remount();
     await connect();
     await click(button("Library"));
-    expect(button("Remove")).toBeTruthy();
-    expect(button("Delete app copy")).toBeTruthy();
-    expect(button("Delete output copy")).toBeTruthy();
-    expect(button("Delete everywhere")).toBeTruthy();
-    expect(button("Reveal")).toBeTruthy();
-    expect(button("Folder")).toBeTruthy();
+    expect(button("Remove")).toBeUndefined();
+    expect(button("Remove file")).toBeUndefined();
+    expect(button("Folder")).toBeUndefined();
+    expect(button("Save")).toBeUndefined();
     expect(button("Copy path")).toBeTruthy();
-
+    expect(button("Preview")).toBeTruthy();
+    expect([...container.querySelectorAll("button")].filter(item => item.textContent.trim() === "Delete files")).toHaveLength(1);
+    expect(button("Delete app copy")).toBeUndefined();
+    expect(button("Delete output copy")).toBeUndefined();
+    expect(button("Delete files")).toBeTruthy();
     await click(button("Reveal"));
     const filesystemRequest = requests.find(item => item.path.endsWith("/filesystem") && item.method === "POST");
     expect(JSON.parse(filesystemRequest.body)).toEqual({ fileId: "file-1", action: "reveal" });
-
     const originalConfirm = testWindow.confirm;
     testWindow.confirm = () => true;
     try {
-      await click(button("Delete output copy"));
-      expect(requests.some(item => item.path.endsWith("/published") && item.method === "DELETE")).toBe(true);
-      expect(container.textContent).toContain("Published output files deleted");
-
-      await click(button("Delete app copy"));
-      expect(requests.some(item => item.path.endsWith("/managed") && item.method === "DELETE")).toBe(true);
-      expect(container.textContent).toContain("App-managed media copies deleted");
-    } finally {
-      testWindow.confirm = originalConfirm;
-    }
+      await click(button("Delete files"));
+      expect(requests.some(item => item.path.endsWith("/all") && item.method === "DELETE")).toBe(true);
+      expect(container.textContent).toContain("Files and Library history deleted");
+    } finally { testWindow.confirm = originalConfirm; }
   });
 
-  test("previews managed media through an inline scoped ticket without autoplay", async () => {
+  test("previews download-folder media through an inline scoped ticket without autoplay", async () => {
     rows = [{ ...job, status: "completed", completedCount: 1, totalCount: 1, files: [
-      { id: "preview-file", name: "001-preview.mp4", title: "Preview clip", size: 1024, mimeType: "video/mp4", managedAvailable: true, publishedAvailable: false,
+      { id: "preview-file", name: "001-preview.mp4", title: "Preview clip", size: 1024, mimeType: "video/mp4", managedAvailable: false, publishedAvailable: true,
         chapters: [{ startMs: 0, endMs: 75000, title: "Opening" }, { startMs: 75000, endMs: 120000, title: "Second chapter" }] },
     ] }];
     await remount();
@@ -954,21 +984,17 @@ describe("Downloader UI and Go API integration", () => {
     expect(document.activeElement).toBe(previewButton);
   });
 
-  test("requests an archive ticket and a native browser download", async () => {
+  test("does not offer extra saves for a playlist already on disk", async () => {
     rows = [{ ...job, status: "completed", completedCount: 2, totalCount: 2, files: [
-      { id: "file-1", name: "001-test.mp4", size: 1024 },
-      { id: "file-2", name: "002-test.mp4", size: 2048 },
+      { id: "file-1", name: "001-test.mp4", size: 1024, publishedAvailable: true },
+      { id: "file-2", name: "002-test.mp4", size: 2048, publishedAvailable: true },
     ] }];
     await remount();
     await connect();
     await click(button("Library"));
-    let target;
-    const original = testWindow.HTMLAnchorElement.prototype.click;
-    testWindow.HTMLAnchorElement.prototype.click = function () { target = this.href; };
-    try {
-      await click(button("Save all as ZIP"));
-      expect(target).toBe("http://127.0.0.1:8080/api/downloads/test-ticket");
-      expect(requests.some(item => item.path.endsWith("/ticket") && item.body === "{}")).toBe(true);
-    } finally { testWindow.HTMLAnchorElement.prototype.click = original; }
+    expect(button("Save all as ZIP")).toBeUndefined();
+    expect(button("Save")).toBeUndefined();
+    expect(button("Remove file")).toBeUndefined();
+    expect([...container.querySelectorAll("button")].filter(item => item.textContent.trim() === "Delete files")).toHaveLength(1);
   });
 });

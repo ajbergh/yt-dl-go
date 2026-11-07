@@ -17,6 +17,13 @@ func (s *server) captureAdaptivePair(ctx context.Context, j *jobState, engine na
 	if selection.audio.ContentLength <= 0 || selection.audio.ContentLength >= budget {
 		return 0, 0, false, errItemReservation
 	}
+	// The reservation includes container headroom. Give audio a share as well:
+	// browser segments can contain more framing than the advertised source file.
+	audioBudget := selection.audio.ContentLength
+	if selection.video.ContentLength > 0 && selection.video.ContentLength < budget-audioBudget {
+		spare := budget - selection.video.ContentLength - audioBudget
+		audioBudget += min(spare/2, max(int64(64*1024), audioBudget/20))
+	}
 	for _, part := range []string{videoPart, audioPart} {
 		if _, statErr := os.Stat(part); statErr == nil {
 			if _, checkpointed := provider.(browserCheckpointProvider); !checkpointed || s.store == nil {
@@ -65,7 +72,7 @@ func (s *server) captureAdaptivePair(ctx context.Context, j *jobState, engine na
 			}
 		}
 		var captureErr error
-		videoSize, audioSize, captureErr = pair.CaptureTracks(ctx, video.ID, selection.video, candidates, selection.audio, videoPart, audioPart, budget-selection.audio.ContentLength, selection.audio.ContentLength, progress)
+		videoSize, audioSize, captureErr = pair.CaptureTracks(ctx, video.ID, selection.video, candidates, selection.audio, videoPart, audioPart, budget-audioBudget, audioBudget, progress)
 		if captureErr == nil {
 			v, ve := os.Stat(videoPart)
 			a, ae := os.Stat(audioPart)
