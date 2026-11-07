@@ -883,14 +883,20 @@ describe("Downloader UI and Go API integration", () => {
     expect(container.querySelector('img[data-local-thumbnail="preferred"]')).toBeTruthy();
   });
 
-  test("offers folder file deletion and metadata removal", async () => {
+  test("offers one file deletion action and only local library controls", async () => {
     rows = [{ ...job, status: "completed", completedCount: 1, totalCount: 1, files: [
       { id: "file-1", name: "001-test.mp4", size: 1024, outputRelativePath: "Fixture channel/test.mp4", managedAvailable: false, publishedAvailable: true },
     ] }];
     await remount();
     await connect();
     await click(button("Library"));
-    expect(button("Remove")).toBeTruthy();
+    expect(button("Remove")).toBeUndefined();
+    expect(button("Remove file")).toBeUndefined();
+    expect(button("Folder")).toBeUndefined();
+    expect(button("Save")).toBeUndefined();
+    expect(button("Copy path")).toBeTruthy();
+    expect(button("Preview")).toBeTruthy();
+    expect([...container.querySelectorAll("button")].filter(item => item.textContent.trim() === "Delete files")).toHaveLength(1);
     expect(button("Delete app copy")).toBeUndefined();
     expect(button("Delete output copy")).toBeUndefined();
     expect(button("Delete files")).toBeTruthy();
@@ -942,21 +948,17 @@ describe("Downloader UI and Go API integration", () => {
     expect(document.activeElement).toBe(previewButton);
   });
 
-  test("requests an archive ticket and a native browser download", async () => {
+  test("does not offer extra saves for a playlist already on disk", async () => {
     rows = [{ ...job, status: "completed", completedCount: 2, totalCount: 2, files: [
-      { id: "file-1", name: "001-test.mp4", size: 1024 },
-      { id: "file-2", name: "002-test.mp4", size: 2048 },
+      { id: "file-1", name: "001-test.mp4", size: 1024, publishedAvailable: true },
+      { id: "file-2", name: "002-test.mp4", size: 2048, publishedAvailable: true },
     ] }];
     await remount();
     await connect();
     await click(button("Library"));
-    let target;
-    const original = testWindow.HTMLAnchorElement.prototype.click;
-    testWindow.HTMLAnchorElement.prototype.click = function () { target = this.href; };
-    try {
-      await click(button("Save all as ZIP"));
-      expect(target).toBe("http://127.0.0.1:8080/api/downloads/test-ticket");
-      expect(requests.some(item => item.path.endsWith("/ticket") && item.body === "{}")).toBe(true);
-    } finally { testWindow.HTMLAnchorElement.prototype.click = original; }
+    expect(button("Save all as ZIP")).toBeUndefined();
+    expect(button("Save")).toBeUndefined();
+    expect(button("Remove file")).toBeUndefined();
+    expect([...container.querySelectorAll("button")].filter(item => item.textContent.trim() === "Delete files")).toHaveLength(1);
   });
 });

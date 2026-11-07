@@ -1,10 +1,10 @@
 import {
-  ArrowDownToLine, FileText, Film, Folder, FolderTree, HardDrive, Play, RefreshCw, Search, Trash2,
+  FileText, Film, FolderTree, HardDrive, Play, RefreshCw, Search, Trash2,
 } from "lucide-react";
 import type { DownloadFile, DownloadJob, ServiceConnection } from "../lib/downloader";
 import { userFacingMessage } from "../lib/messages";
 import {
-  LibraryThumbnail, button, dateLabel, durationLabel, field, formatBytes, panel, primaryButton,
+  LibraryThumbnail, button, dateLabel, durationLabel, field, formatBytes, panel,
   qualityLabels, statusClass, statusLabels, type LibraryFilter,
 } from "../components/downloader/view-model";
 
@@ -16,7 +16,7 @@ type LibraryStats = {
 };
 
 
-type LibraryJobAction = "retry" | "remove" | "remove-library-item" | "delete-all";
+type LibraryJobAction = "retry" | "delete-all";
 
 type LibraryPageProps = {
   libraryJobs: DownloadJob[];
@@ -41,7 +41,6 @@ type LibraryPageProps = {
   connection: ServiceConnection;
   busyAction: string;
   previewFile: (job: DownloadJob, file: DownloadFile) => void | Promise<void>;
-  saveFile: (job: DownloadJob, fileId?: string) => void | Promise<void>;
   filesystemAction: (job: DownloadJob, fileId: string, action: "copy-path" | "reveal" | "open-folder") => void | Promise<void>;
   jobAction: (job: DownloadJob, action: LibraryJobAction, fileId?: string) => void | Promise<void>;
 };
@@ -50,11 +49,11 @@ export function LibraryPage({
   libraryJobs, visibleLibraryJobs, libraryTotalJobs, librarySearch, setLibrarySearch, libraryFilter, setLibraryFilter,
   libraryCategory, setLibraryCategory, libraryChannel, setLibraryChannel, libraryCategories,
   libraryChannels, libraryLayout, setLibraryLayout, libraryStats, hasMoreLibrary, loadingLibraryMore, loadMoreLibrary, connection, busyAction,
-  previewFile, saveFile, filesystemAction, jobAction,
+  previewFile, filesystemAction, jobAction,
 }: LibraryPageProps) {
   return (
 <section aria-labelledby="library-heading" className="space-y-4">
-          <div className="flex flex-wrap items-end justify-between gap-3"><div><p className="mb-1 text-xs font-bold uppercase tracking-[0.16em] text-neutral-400">Saved output</p><h2 id="library-heading" className="text-2xl font-bold">Download library</h2><p className="mt-1 text-xs text-neutral-400">Find, preview, and save your finished downloads.</p></div><div className="flex items-center gap-2 rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-xs text-neutral-400"><HardDrive className="size-3.5 text-amber-400" aria-hidden="true" />{visibleLibraryJobs.length} of {libraryTotalJobs} jobs visible (matching filters)</div></div>
+          <div className="flex flex-wrap items-end justify-between gap-3"><div><p className="mb-1 text-xs font-bold uppercase tracking-[0.16em] text-neutral-400">Saved output</p><h2 id="library-heading" className="text-2xl font-bold">Download library</h2><p className="mt-1 text-xs text-neutral-400">Find, preview, and organize your downloaded files.</p></div><div className="flex items-center gap-2 rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-xs text-neutral-400"><HardDrive className="size-3.5 text-amber-400" aria-hidden="true" />{visibleLibraryJobs.length} of {libraryTotalJobs} jobs visible (matching filters)</div></div>
           <div className="grid grid-cols-2 gap-2">
             <div className={`${panel} px-4 py-3`}><p className="text-xs uppercase tracking-wider text-neutral-400">Files</p><p className="mt-1 text-lg font-bold text-white">{libraryStats.files}</p></div>
             <div className={`${panel} px-4 py-3`}><p className="text-xs uppercase tracking-wider text-neutral-400">Library size</p><p className="mt-1 text-lg font-bold text-white">{formatBytes(libraryStats.publishedBytes)}</p></div>
@@ -75,23 +74,20 @@ export function LibraryPage({
               <button type="button" className={button} disabled={!librarySearch && libraryFilter === "all" && libraryCategory === "all" && libraryChannel === "all"} onClick={() => { setLibrarySearch(""); setLibraryFilter("all"); setLibraryCategory("all"); setLibraryChannel("all"); }}>Reset filters</button>
             </div>
           </div>
-          {libraryStats.files === 0 ? <div className={`${panel} px-5 py-14 text-center`}><Film className="mx-auto mb-3 size-8 text-neutral-400" aria-hidden="true" /><h3 className="text-sm font-semibold text-neutral-200">Your library is empty</h3><p className="mt-1 text-xs text-neutral-400">Finished downloads appear here, ready to play, save, or organize.</p></div>
+          {libraryStats.files === 0 ? <div className={`${panel} px-5 py-14 text-center`}><Film className="mx-auto mb-3 size-8 text-neutral-400" aria-hidden="true" /><h3 className="text-sm font-semibold text-neutral-200">Your library is empty</h3><p className="mt-1 text-xs text-neutral-400">Finished downloads appear here, ready to play or organize.</p></div>
             : visibleLibraryJobs.length === 0 ? <div className={`${panel} px-5 py-12 text-center text-xs text-neutral-400`}>No saved downloads match these filters.</div>
             : <div className={`grid gap-4 ${libraryLayout === "grid" ? "md:grid-cols-2" : "grid-cols-1"}`}>
               {visibleLibraryJobs.map(job => <article key={job.id} className={`${panel} overflow-hidden`}>
                 <div className="flex items-start justify-between gap-3 border-b border-neutral-800 p-4">
                   <div className="min-w-0"><div className="mb-1.5 flex flex-wrap gap-2"><span className={`rounded-full border px-2 py-0.5 text-xs font-semibold ${statusClass(job.status)}`}>{statusLabels[job.status]}</span><span className="text-xs text-neutral-400">{job.kind} · {job.mediaType === "audio" ? (job.audioFormat === "m4a" ? "M4A original" : `MP3 ${job.audioBitrate ?? "192k"}`) : qualityLabels[job.quality]}{job.category ? ` · ${job.category}` : ""}</span></div><h3 className="truncate text-sm font-bold text-white">{job.title}</h3><p className="mt-1 text-xs text-neutral-400">{dateLabel(job.createdAt)} · {job.files.length} file{job.files.length === 1 ? "" : "s"}</p></div>
-                  <button type="button" className={button} disabled={busyAction === job.id} onClick={() => void jobAction(job, "remove")} aria-label={`Remove ${job.title} from Library`} title="Remove from Library and keep files in your download folder"><Trash2 className="size-3.5" aria-hidden="true" /><span>Remove</span></button>
                 </div>
                 <div className="space-y-2 p-3">
                   {job.files.map(file => <div key={file.id} className="flex flex-wrap items-center gap-3 rounded-xl border border-neutral-800/80 bg-neutral-950/70 p-2.5">
                     <LibraryThumbnail connection={connection} jobId={job.id} file={file} audio={job.mediaType === "audio"} />
                     <div className="min-w-0 flex-1"><h4 className="truncate text-xs font-semibold text-neutral-200" title={file.title || file.outputName || file.name}>{file.title || file.outputName || file.name}</h4><p className="mt-1 truncate font-mono text-xs text-neutral-400" title={file.outputRelativePath || file.author || file.name}>{file.outputRelativePath || file.author || file.name}</p><p className="mt-1 text-xs text-neutral-400">{file.height ? `${file.height}p · ` : ""}{formatBytes(file.size)}{file.durationSeconds ? ` · ${durationLabel(file.durationSeconds)}` : ""}{file.subtitle ? ` · CC ${file.subtitle.label || file.subtitle.languageCode} ${file.subtitle.format.toUpperCase()}` : ""}</p><div className="mt-1 flex flex-wrap gap-1">{file.subtitleError && <span className="rounded bg-amber-950/60 px-1.5 py-0.5 text-[9px] text-amber-300" title={userFacingMessage(file.subtitleError)}>Caption warning</span>}{file.publishedAvailable === false && <span className="rounded bg-amber-950/60 px-1.5 py-0.5 text-[9px] text-amber-300">File unavailable</span>}</div></div>
                     <div className="flex w-full flex-wrap items-center justify-end gap-1.5">
-                      {file.publishedAvailable !== false && file.outputRelativePath && <><button type="button" className={button} disabled={busyAction === `${job.id}:${file.id}:reveal`} onClick={() => void filesystemAction(job, file.id, "reveal")} aria-label={`Reveal ${file.title || file.name} in folder`} title="Show the file in its folder"><FolderTree className="size-3.5" aria-hidden="true" /><span>Reveal</span></button><button type="button" className={button} disabled={busyAction === `${job.id}:${file.id}:open-folder`} onClick={() => void filesystemAction(job, file.id, "open-folder")} aria-label={`Open folder for ${file.title || file.name}`} title="Open download folder"><Folder className="size-3.5" aria-hidden="true" /><span>Folder</span></button><button type="button" className={button} disabled={busyAction === `${job.id}:${file.id}:copy-path`} onClick={() => void filesystemAction(job, file.id, "copy-path")} aria-label={`Copy path for ${file.title || file.name}`} title="Copy full file path"><FileText className="size-3.5" aria-hidden="true" /><span>Copy path</span></button></>}
+                      {file.publishedAvailable !== false && file.outputRelativePath && <><button type="button" className={button} disabled={busyAction === `${job.id}:${file.id}:reveal`} onClick={() => void filesystemAction(job, file.id, "reveal")} aria-label={`Reveal ${file.title || file.name} in folder`} title="Show the file in its folder"><FolderTree className="size-3.5" aria-hidden="true" /><span>Reveal</span></button><button type="button" className={button} disabled={busyAction === `${job.id}:${file.id}:copy-path`} onClick={() => void filesystemAction(job, file.id, "copy-path")} aria-label={`Copy path for ${file.title || file.name}`} title="Copy full file path"><FileText className="size-3.5" aria-hidden="true" /><span>Copy path</span></button></>}
                       <button type="button" className={button} disabled={busyAction === `${job.id}:${file.id}:preview` || file.publishedAvailable === false} onClick={() => void previewFile(job, file)} aria-label={`Preview ${file.title || file.name}`} title={file.publishedAvailable === false ? "The library file is unavailable" : "Preview local media"}><Play className="size-3.5" aria-hidden="true" /><span>Preview</span></button>
-                      <button type="button" className={button} disabled={busyAction === `${job.id}:${file.id}` || file.publishedAvailable === false} onClick={() => void saveFile(job, file.id)} aria-label={`Save ${file.title || file.name}`} title={file.publishedAvailable === false ? "The library file is unavailable" : "Save a copy to your device"}><ArrowDownToLine className="size-3.5" aria-hidden="true" /><span>Save</span></button>
-                      <button type="button" className={button} disabled={busyAction === job.id} onClick={() => void jobAction(job, "remove-library-item", file.id)} aria-label={`Remove ${file.title || file.name} from Library`} title="Remove this file from Library and keep its download-folder copy and history"><Trash2 className="size-3.5" aria-hidden="true" /><span>Remove file</span></button>
                     </div>
                   </div>)}
                 </div>
@@ -99,7 +95,6 @@ export function LibraryPage({
                   {job.error && <p className="max-w-sm text-xs text-amber-300/80">{userFacingMessage(job.error)}</p>}
                   <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
                     {(job.status === "partial" || job.status === "failed" || job.status === "cancelled") && <button type="button" className={button} onClick={() => void jobAction(job, "retry")} disabled={busyAction === job.id}><RefreshCw className="size-3.5" aria-hidden="true" />Retry job</button>}
-                    {job.files.length > 1 && job.files.every(file => file.publishedAvailable !== false) && <button type="button" className={primaryButton} onClick={() => void saveFile(job)} disabled={busyAction === `${job.id}:zip`}><ArrowDownToLine className="size-3.5" aria-hidden="true" />Save all as ZIP</button>}
                     <button type="button" className={`${button} border-red-900/70 text-red-300 hover:border-red-700 hover:bg-red-950/40`} onClick={() => void jobAction(job, "delete-all")} disabled={busyAction === job.id}><Trash2 className="size-3.5" aria-hidden="true" />Delete files</button>
                   </div>
                 </div>

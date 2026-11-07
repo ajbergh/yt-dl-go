@@ -438,7 +438,6 @@ export function HomePage() {
           connection={connection}
           busyAction={busyAction}
           previewFile={previewFile}
-          saveFile={saveFile}
           filesystemAction={filesystemAction}
           jobAction={jobAction}
         />}

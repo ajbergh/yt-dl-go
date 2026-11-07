@@ -1,6 +1,8 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"reflect"
 	"strings"
 	"testing"
@@ -101,7 +103,7 @@ func TestNativeFolderCommands(t *testing.T) {
 }
 
 func TestTrackedOutputCommands(t *testing.T) {
-	path := "/media/downloads/video.mp4"
+	path := "/media/downloads/Channel Name/video #1, café.mp4"
 	tests := []struct {
 		name    string
 		goos    string
@@ -109,11 +111,11 @@ func TestTrackedOutputCommands(t *testing.T) {
 		command string
 		args    []string
 	}{
-		{"windows reveal", "windows", "reveal", "explorer.exe", []string{"/select," + path}},
+		{"windows reveal", "windows", "reveal", "explorer.exe", []string{"/select,", path}},
 		{"windows folder", "windows", "open-folder", "explorer.exe", []string{"/media/downloads"}},
 		{"macOS reveal", "darwin", "reveal", "open", []string{"-R", path}},
 		{"macOS folder", "darwin", "open-folder", "open", []string{"/media/downloads"}},
-		{"Linux reveal fallback", "linux", "reveal", "xdg-open", []string{"/media/downloads"}},
+		{"Linux reveal", "linux", "reveal", "dbus-send", []string{"--session", "--print-reply", "--type=method_call", "--dest=org.freedesktop.FileManager1", "/org/freedesktop/FileManager1", "org.freedesktop.FileManager1.ShowItems", "array:string:file:///media/downloads/Channel%20Name/video%20%231%2C%20caf%C3%A9.mp4", "string:"}},
 		{"Linux folder", "linux", "open-folder", "xdg-open", []string{"/media/downloads"}},
 	}
 	for _, test := range tests {
@@ -186,5 +188,45 @@ func TestAutomaticBrowserEnabled(t *testing.T) {
 	}
 	if !automaticBrowserEnabled(runtimeOptions{}, "true") {
 		t.Fatal("legacy NO_BROWSER semantics should remain exact: only value 1 suppresses launch")
+	}
+}
+
+func TestWindowsRevealSeparatesSwitchAndPath(t *testing.T) {
+	for _, path := range []string{`C:\Downloads\Channel Name\Video [1080p].mp4`, `\\server\share\Channel, Name\café #1.mp4`} {
+		command, args, err := trackedOutputCommand("windows", "reveal", path, `C:\Downloads`)
+		if err != nil || command != "explorer.exe" || !reflect.DeepEqual(args, []string{"/select,", path}) {
+			t.Fatalf("invalid Explorer arguments: %q %q %v", command, args, err)
+		}
+	}
+}
+
+func TestLinuxRevealSelectsOrFallsBackToFolder(t *testing.T) {
+	for _, selectionError := range []error{nil, errors.New("file manager does not implement ShowItems")} {
+		var commands []string
+		err := runTrackedOutput(context.Background(), "linux", "reveal", "/media/Channel Name/video.mp4", "/media/Channel Name", func(ctx context.Context, command string, args ...string) error {
+			commands = append(commands, command)
+			if command == "dbus-send" {
+				if _, hasDeadline := ctx.Deadline(); !hasDeadline {
+					t.Fatal("selection needs a timeout")
+				}
+				return selectionError
+			}
+			if !reflect.DeepEqual(args, []string{"/media/Channel Name"}) {
+				t.Fatalf("wrong fallback folder: %q", args)
+			}
+			return nil
+		})
+		expected := []string{"dbus-send"}
+		if selectionError != nil {
+			expected = append(expected, "xdg-open")
+		}
+		if err != nil || !reflect.DeepEqual(commands, expected) {
+			t.Fatalf("reveal sequence=%v err=%v", commands, err)
+		}
+	}
+	launchError := errors.New("folder opener failed")
+	err := runTrackedOutput(context.Background(), "linux", "reveal", "/media/video.mp4", "/media", func(context.Context, string, ...string) error { return launchError })
+	if !errors.Is(err, launchError) {
+		t.Fatalf("fallback error was hidden: %v", err)
 	}
 }
