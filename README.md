@@ -7,7 +7,7 @@
 A local desktop app for Windows, macOS, and Linux. Save permitted YouTube videos
 and playlists, manage a persistent queue, and organize your media in a searchable
 Library. The Wails desktop edition opens in its own native window and uses native
-save and folder dialogs.
+save, folder, and confirmation dialogs.
 
 Download only content you own or have permission to save, in accordance with
 YouTube's terms. DRM, private-account credentials, cookie imports, paywall bypasses,
@@ -16,12 +16,12 @@ and live-stream recording are unsupported.
 ## Screenshots
 
 Actual Windows Wails interface, captured from its embedded WebView2 using
-Playwright with a separate, empty demonstration library. The native window frame
-is outside the captured content.
+Playwright with a separate demonstration Library containing synthetic fixture
+data. The native window frame is outside the captured content.
 
 ![YouTube Vault download queue in the Windows Wails WebView](docs/assets/screenshots/wails-windows-queue.png)
 
-![YouTube Vault Library in the native Windows app](docs/assets/screenshots/wails-windows-library.png)
+![YouTube Vault Library in the Windows Wails WebView](docs/assets/screenshots/wails-windows-library.png)
 
 ## Get the app
 
@@ -64,8 +64,13 @@ release work.
 2. Choose video or audio, a maximum quality, and any available captions.
 3. Confirm your rights and add it to the queue. Pause, resume, reorder, or retry
    items as needed.
-4. Open **Library** to search, preview, save files, or export a ZIP. Use **Settings**
-   to choose the download folder, storage policy, and defaults.
+4. Open **Library** to search, preview, reveal, copy paths, or delete downloaded
+   files. Use **Settings** to choose the Library folder, naming rules, and defaults.
+
+**Delete files** removes the files from disk and their Library record after
+confirmation. **Forget history** in the Queue keeps Library files and entries.
+Desktop confirmations use native Yes/No dialogs, with No selected by default.
+Use **File → Exit** to close the desktop app and **Help → About** for build details.
 
 Quality choices are ceilings, not upscaling requests or guarantees. **Compatibility
 MP4** selects H.264/AAC; **Best quality**, **Prefer VP9**, and **Prefer AV1** may
@@ -88,8 +93,9 @@ persist for the next launch. No login item, background service, or tray process 
 Your download folder is your library. Downloads default to
 `~/Downloads/YouTube_Vault`, organized by channel; change this in Settings.
 The app keeps one media file and plays/previews it directly from that folder.
-At startup, missing files are removed from the Library. Existing app-only media
-is moved into its recorded download folder when upgrading.
+At startup, missing files are removed from the Library. An unavailable Library
+folder (for example, a disconnected drive) preserves its entries. Existing
+app-only media is moved into its recorded download folder when upgrading.
 
 Saved preferences and history live separately from the executable:
 
@@ -99,9 +105,10 @@ Saved preferences and history live separately from the executable:
 | macOS | `~/Library/Application Support/yt-dl-go` |
 | Linux | `$XDG_DATA_HOME/yt-dl-go`, or `~/.local/share/yt-dl-go` |
 
-Set `DATA_DIR` before launch to choose another private location. Back up the whole
-directory with the app closed before migration or rollback. Installers retain saved
-data and downloads when removed. Both editions share this data; run one edition at a time.
+Set `DATA_DIR` before launch to choose another private location. Back up both
+this data directory and your Library folder with the app closed before migration
+or rollback. Installers retain saved data and downloads when removed. Both
+editions share this data; run one edition at a time.
 Never store application data under the repository's generated `dist` directory.
 
 For startup problems, set `DESKTOP_LOG_FILE` to a writable path before launching.

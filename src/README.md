@@ -7,7 +7,7 @@ preferences, media streaming, and events.
 
 In desktop mode a Wails binding supplies a private ephemeral API origin and
 per-launch bearer. The UI authenticates its requests and uses Wails bindings for
-native saves and folder dialogs. In browser/server mode it uses the page origin;
+native saves, folder pickers, and confirmation dialogs. In browser/server mode it uses the page origin;
 Vite development uses the configured loopback API below. See the
 [desktop guide](../docs/DESKTOP.md) for native build/runtime details.
 
@@ -26,7 +26,7 @@ The `dev` build tag adds `localhost:5173` and `127.0.0.1:5173` to the default CO
 
 ## Checks and production UI build
 
-Settings opens with download location, folder organization, notifications, and a summary of the saved video defaults. The Advanced settings toggle reveals format and quality overrides, transfer limits, storage policy, filename templates, permissions, runtime settings, and diagnostics. Collapsing it preserves edits; Save preferences also saves collapsed fields. Use automatic video defaults restores best quality, automatic stream selection for each video, and disabled 360p recovery without changing other preferences.
+Settings opens with download location, folder organization, notifications, and a summary of the saved video defaults. The Advanced settings toggle reveals format and quality overrides, transfer limits, filename templates, permissions, runtime settings, and diagnostics. Collapsing it preserves edits; Save preferences also saves collapsed fields. Use automatic video defaults restores best quality, automatic stream selection for each video, and disabled 360p recovery without changing other preferences.
 
 ~~~
 npm run typecheck
@@ -74,18 +74,35 @@ HTTP. It calls:
 
 The quality choices are maximum heights. A completed file reports its actual `height` and `mimeType`; the job `note` discloses adaptive-HD or progressive-fallback behavior. The full request and response contract is in [server/README.md](server/README.md).
 
+## Library and confirmation behavior
+
+The download folder is the sole media location. Library playback uses scoped
+HTTP tickets to read the tracked folder file; it does not require a second app
+copy. Library cards expose Reveal, Copy path, Preview, and one Delete files
+operation for the job's files. Queue history removal preserves Library files.
+Settings no longer exposes a storage policy.
+
+All action confirmations go through `confirmAction` in `lib/desktop.ts`. It
+awaits the native `DesktopApp.Confirm` binding when present and uses
+`window.confirm` only in browser mode. The job hook prevents overlapping prompts;
+a declined prompt or native-dialog error must never submit the mutation. Keep
+confirmation messages, destructive scope, and backend endpoints consistent.
+Rebuild the desktop executable when adding or changing a Go binding; refreshing
+the WebView updates only the frontend.
+
 ## Source map
 
 | Location | Responsibility |
 | --- | --- |
 | `pages/home.tsx` | Top-level orchestration, derived queue/library state, inspection submission, navigation, and page composition |
 | `pages/queue.tsx` | Add/inspect workflow, batch controls, queue filters, queue cards, and drag/drop presentation |
-| `pages/library.tsx` | Library filtering/layout, file cards, preview/save/filesystem controls, and scoped-delete presentation |
+| `pages/library.tsx` | Library filtering/layout, file cards, preview/Reveal/Copy path controls, and file-deletion presentation |
 | `pages/settings.tsx` | Preferences, download location, advanced settings, and application diagnostics |
 | `hooks/use-service.ts` | Backend bootstrap, SQLite hydration, SSE updates, reconciliation, readiness/errors, and terminal notifications |
 | `hooks/use-jobs.ts` | Job mutations, retries, tickets, filesystem actions, queue/playlist ordering, batch actions, and cleared-queue persistence |
 | `hooks/use-settings.ts` | Settings save/mutation behavior, folder selection, notification permission, and category management |
 | `components/downloader/view-model.tsx` | Downloader view types, labels, formatting/selection helpers, thumbnail loading, and sortable queue-row UI |
+| `lib/desktop.ts` | Wails bootstrap, native saves, and asynchronous confirmations with a browser fallback |
 | `lib/downloader.ts` | YouTube URL parsing, API types/client, service-event streaming, and formatting helpers |
 | `downloader.test.mjs`, `ui.test.mjs` | Bun tests for URL/API helpers and the React page/API integration |
 | `index.css` | Theme and Tailwind styles |
