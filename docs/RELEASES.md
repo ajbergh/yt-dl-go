@@ -2,19 +2,25 @@
 
 The project separates **release discovery**, **build provenance**, **native platform signing**, and **installation**. They are different trust boundaries and must not be collapsed into one “auto-update” switch.
 
-## Current desktop candidate
+## Desktop releases
 
 The Wails branch produces Windows, macOS, and Linux desktop apps, each for AMD64
 and ARM64, with both portable packages and installers. See [PACKAGING.md](PACKAGING.md)
 and [DESKTOP.md](DESKTOP.md). The browser/server edition remains available separately.
 
-The full release dry run on `7563843` passed all six native targets, all six
-browser/server packages, installer integration, data preservation, final coverage,
-checksums, and provenance generation. Windows manual acceptance passed, reported
-by the maintainer on 2026-11-05. macOS/Linux manual acceptance and credentialed
-signing verification remain pending. See [RELEASE_CHECKLIST.md](RELEASE_CHECKLIST.md).
-This evidence does not publish a desktop release or authorize moving an existing
-tag. Choose a new package version and matching tag for desktop publication.
+[v0.2.0](https://github.com/ajbergh/yt-dl-go/releases/tag/v0.2.0) was published
+on 2026-11-05. Its earlier full dry run on `7563843` passed all six native
+targets, all six browser/server packages, installer integration, data preservation,
+final coverage, checksums, and provenance generation. Windows manual acceptance
+passed, reported by the maintainer on 2026-11-05. macOS/Linux manual acceptance
+and credentialed signing verification remain pending. These historical results
+do not replace verification of the next release's final artifacts; see
+[RELEASE_CHECKLIST.md](RELEASE_CHECKLIST.md).
+
+Version 0.3.0 makes the selected download folder the sole Library media location
+and adds native menus/confirmations. Its maintainer confirmed download and dialog
+testing on 2026-11-06. Release artifacts still require the workflow, checksum,
+provenance, and platform disclosures below before publication.
 
 ## Published release history
 
@@ -55,7 +61,7 @@ A release tag must be exactly:
 v<package.json version>
 ```
 
-Example: package version `0.2.0` requires tag `v0.2.0`.
+Example: package version `0.3.0` requires tag `v0.3.0`.
 
 The release workflow rejects malformed tags and fails before tests or packaging if the stable tag does not match `package.json`.
 

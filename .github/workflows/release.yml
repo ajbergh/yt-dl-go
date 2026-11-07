@@ -9,9 +9,9 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: Stable release version to validate (for example, v0.2.0)
+        description: Stable release version to validate (for example, v0.3.0)
         required: true
-        default: v0.2.0
+        default: v0.3.0
         type: string
 
 env:

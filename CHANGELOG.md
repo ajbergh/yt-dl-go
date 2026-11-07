@@ -4,6 +4,8 @@ This file summarizes notable user-facing changes. Version **v0.1.0** was publicl
 
 ## [Unreleased]
 
+## [0.3.0] — 2026-11-06
+
 ### Added
 
 - Native File → Exit and Help → About menus, with version and build details.
