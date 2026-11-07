@@ -2260,8 +2260,15 @@ func (s *server) transferAdaptiveMP4(ctx context.Context, j *jobState, engine na
 		if ctx.Err() != nil {
 			return result, ctx.Err()
 		}
-		if errors.Is(err, errStorage) || errors.Is(err, errItemReservation) {
+		if errors.Is(err, errStorage) {
 			return result, err
+		}
+		if errors.Is(err, errItemReservation) {
+			log.Printf("browser pair exceeded its item reservation; trying verified native ranges job_id=%s item=%d", j.ID, queueIndex)
+			if browserProvider != nil {
+				_ = browserProvider.Close()
+			}
+			browserProvider = nil
 		}
 	}
 	if dualUsed {
@@ -2428,8 +2435,12 @@ func (s *server) transferAdaptiveWebM(ctx context.Context, j *jobState, engine n
 	if ctx.Err() != nil {
 		return result, ctx.Err()
 	}
-	if errors.Is(err, errStorage) || errors.Is(err, errItemReservation) {
+	if errors.Is(err, errStorage) {
 		return result, err
+	}
+	if errors.Is(err, errItemReservation) && browserProvider != nil {
+		log.Printf("browser pair exceeded its item reservation; trying verified native ranges job_id=%s item=%d", j.ID, queueIndex)
+		_ = browserProvider.Close()
 	}
 	if dualUsed {
 		videoBrowserUsed, audioBrowserUsed = true, true
@@ -2723,8 +2734,13 @@ func (s *server) downloadAdaptiveRanges(ctx context.Context, j *jobState, engine
 			if ctx.Err() != nil {
 				return 0, false, ctx.Err()
 			}
-			if errors.Is(captureErr, errStorage) || errors.Is(captureErr, errItemReservation) {
+			if errors.Is(captureErr, errStorage) {
 				return 0, false, captureErr
+			}
+			if errors.Is(captureErr, errItemReservation) {
+				log.Printf("browser track exceeded its item reservation; trying verified native ranges job_id=%s item=%d itag=%d", j.ID, itemIndex, format.ItagNo)
+				_ = captureProvider.Close()
+				break
 			}
 			if _, canReopen := browserProvider.(browserRetryProvider); canReopen {
 				_ = captureProvider.Close()
