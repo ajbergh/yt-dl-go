@@ -1,4 +1,4 @@
-// download.go validates private finalized outputs and serves ticket-scoped
+// download.go validates finalized library files and serves ticket-scoped
 // file or ZIP responses, including single-range support for individual files.
 package main
 
@@ -115,7 +115,7 @@ func (s *server) download(w http.ResponseWriter, r *http.Request) {
 	for _, f := range j.Files {
 		_, selected := selectedIDs[f.ID]
 		if (t.fileID == "" && len(selectedIDs) == 0) || t.fileID == f.ID || selected {
-			if !f.ManagedAvailable {
+			if !f.PublishedAvailable {
 				unavailable = true
 				continue
 			}
@@ -127,7 +127,7 @@ func (s *server) download(w http.ResponseWriter, r *http.Request) {
 			s.evictTerminalJobLocked(j)
 		}
 		s.mu.Unlock()
-		fail(w, 409, "The app-managed media copy is no longer available")
+		fail(w, 409, "The library file is no longer available")
 		return
 	}
 	j.readers++
@@ -146,7 +146,7 @@ func (s *server) download(w http.ResponseWriter, r *http.Request) {
 	}
 	// Validate before sending headers; retention cannot remove an active transfer.
 	for _, entry := range files {
-		f, err := openFinal(j.dir, entry.Name)
+		f, err := openLibraryMedia(j, entry)
 		if err != nil {
 			fail(w, 409, "Finalized output is no longer available")
 			return
@@ -157,8 +157,8 @@ func (s *server) download(w http.ResponseWriter, r *http.Request) {
 			fail(w, 409, "Finalized output has changed")
 			return
 		}
-		if entry.Subtitle != nil && entry.Subtitle.ManagedAvailable {
-			sidecar, sidecarErr := openSubtitleManaged(j.dir, *entry.Subtitle)
+		if t.fileID == "" && entry.Subtitle != nil && entry.Subtitle.PublishedAvailable {
+			sidecar, sidecarErr := openLibrarySubtitle(j, *entry.Subtitle)
 			if sidecarErr != nil {
 				fail(w, 409, "Caption sidecar is no longer available")
 				return
@@ -174,7 +174,7 @@ func (s *server) download(w http.ResponseWriter, r *http.Request) {
 	// Native save dialogs may remain open before the client starts reading bytes.
 	_ = http.NewResponseController(w).SetWriteDeadline(deadline)
 	if t.fileID != "" {
-		f, err := openFinal(j.dir, files[0].Name)
+		f, err := openLibraryMedia(j, files[0])
 		if err != nil {
 			fail(w, 409, "Finalized output is unavailable")
 			return
@@ -194,8 +194,8 @@ func (s *server) download(w http.ResponseWriter, r *http.Request) {
 		if t.inline {
 			disposition = "inline"
 		}
-		w.Header().Set("Content-Disposition", mime.FormatMediaType(disposition, map[string]string{"filename": files[0].Name}))
-		http.ServeContent(w, r, files[0].Name, time.Time{}, f)
+		w.Header().Set("Content-Disposition", mime.FormatMediaType(disposition, map[string]string{"filename": libraryFilename(files[0])}))
+		http.ServeContent(w, r, libraryFilename(files[0]), time.Time{}, f)
 		return
 	}
 	if r.Header.Get("Range") != "" {
@@ -206,11 +206,11 @@ func (s *server) download(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Disposition", `attachment; filename="youtube-`+j.ID+`.zip"`)
 	archive := zip.NewWriter(w)
 	for _, entry := range files {
-		f, err := openFinal(j.dir, entry.Name)
+		f, err := openLibraryMedia(j, entry)
 		if err != nil {
 			panic(http.ErrAbortHandler)
 		}
-		out, err := archive.CreateHeader(&zip.FileHeader{Name: entry.Name, Method: zip.Store})
+		out, err := archive.CreateHeader(&zip.FileHeader{Name: libraryFilename(entry), Method: zip.Store})
 		if err == nil {
 			_, err = io.Copy(out, f)
 		}
@@ -219,12 +219,12 @@ func (s *server) download(w http.ResponseWriter, r *http.Request) {
 			// Never send a valid-looking, silently incomplete ZIP after a stream error.
 			panic(http.ErrAbortHandler)
 		}
-		if entry.Subtitle != nil && entry.Subtitle.ManagedAvailable {
-			sidecar, sidecarErr := openSubtitleManaged(j.dir, *entry.Subtitle)
+		if entry.Subtitle != nil && entry.Subtitle.PublishedAvailable {
+			sidecar, sidecarErr := openLibrarySubtitle(j, *entry.Subtitle)
 			if sidecarErr != nil {
 				panic(http.ErrAbortHandler)
 			}
-			sidecarOut, sidecarErr := archive.CreateHeader(&zip.FileHeader{Name: entry.Subtitle.Name, Method: zip.Deflate})
+			sidecarOut, sidecarErr := archive.CreateHeader(&zip.FileHeader{Name: entry.Subtitle.OutputName, Method: zip.Deflate})
 			if sidecarErr == nil {
 				_, sidecarErr = io.Copy(sidecarOut, sidecar)
 			}

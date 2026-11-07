@@ -153,17 +153,17 @@ func (s *server) handleFilesystem(w http.ResponseWriter, r *http.Request, jobID 
 	}
 	if !file.PublishedAvailable {
 		s.mu.Unlock()
-		fail(w, 409, "The published copy is no longer available")
+		fail(w, 409, "The library file is no longer available")
 		return
 	}
 	if err := validateOutputCopy(j, file); err != nil {
 		s.mu.Unlock()
-		fail(w, 409, "The tracked published path is invalid")
+		fail(w, 409, "The tracked library path is invalid")
 		return
 	}
 	if info, err := os.Lstat(file.OutputPath); err != nil || !info.Mode().IsRegular() || info.Size() != file.Size {
 		s.mu.Unlock()
-		fail(w, 409, "The published copy is no longer available")
+		fail(w, 409, "The library file is no longer available")
 		return
 	}
 	path := file.OutputPath

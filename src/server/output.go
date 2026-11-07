@@ -27,7 +27,7 @@ func defaultAppSettings() AppSettings {
 		NamingPattern:    defaultNamingPattern, SubfolderSorting: "channel",
 		OutputFileMode: "0600", OutputFolderMode: "0700",
 		DefaultCategory: "General", UserCategories: append([]string(nil), defaultUserCategories...),
-		StorageMode: "managed-published",
+		StorageMode: "published-only",
 		Retention:   "never", MaxJobBytes: 10 << 30, JobTimeout: "none", DownloadSlots: 4,
 	}
 }
@@ -59,9 +59,7 @@ func mergeAppSettings(defaults, settings AppSettings) AppSettings {
 	if settings.UserCategories == nil {
 		settings.UserCategories = append([]string(nil), defaults.UserCategories...)
 	}
-	if settings.StorageMode == "" {
-		settings.StorageMode = defaults.StorageMode
-	}
+	settings.StorageMode = "published-only" // Retained database column for upgrades.
 	if settings.OutputFileMode == "" {
 		settings.OutputFileMode = defaults.OutputFileMode
 	}
@@ -138,9 +136,6 @@ func validateAppSettings(settings AppSettings) error {
 	}
 	if settings.SubfolderSorting != "channel" && settings.SubfolderSorting != "category" && settings.SubfolderSorting != "flat" {
 		return errors.New("subfolderSorting must be channel, category, or flat")
-	}
-	if settings.StorageMode != "managed-published" && settings.StorageMode != "published-only" && settings.StorageMode != "managed-only" {
-		return errors.New("storageMode must be managed-published, published-only, or managed-only")
 	}
 	if settings.BandwidthLimitBytesPerSec < 0 || settings.BandwidthLimitBytesPerSec > maxBandwidthLimitBytesPerSec {
 		return errors.New("bandwidthLimitBytesPerSec must be between 0 and 1073741824")
@@ -281,6 +276,10 @@ func namingCodec(mimeType string) string {
 }
 
 func (s *server) publishOutput(j *jobState, file *mediaFile) error {
+	return s.finalizeLibraryOutput(j, file, true)
+}
+
+func (s *server) finalizeLibraryOutput(j *jobState, file *mediaFile, moveSource bool) error {
 	if j.DownloadLocation == "" || j.NamingPattern == "" {
 		return errors.New("job has no captured output preferences")
 	}
@@ -360,7 +359,7 @@ func (s *server) publishOutput(j *jobState, file *mediaFile) error {
 		_ = os.Remove(temporaryPath)
 
 		publishedByMove := false
-		if j.StorageMode == "published-only" {
+		if moveSource {
 			sourcePath := filepath.Join(j.dir, file.Name)
 			moveErr := durableRename(sourcePath, temporaryPath)
 			if moveErr == nil {

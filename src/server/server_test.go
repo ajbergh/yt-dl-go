@@ -282,19 +282,22 @@ func TestMaxJobsCountsPausedJobsAndItemRetries(t *testing.T) {
 
 func assertFinalFiles(t *testing.T, s *server, j Job) {
 	t.Helper()
-	entries, err := os.ReadDir(filepath.Join(s.cfg.root, j.ID))
-	expectedEntries := len(j.Files)
-	for _, file := range j.Files {
-		if file.ThumbnailLocalAvailable {
-			expectedEntries++
+	loaded, err := s.store.loadJob(s.cfg.root, j.ID)
+	if err != nil || loaded == nil {
+		t.Fatalf("load job: %v", err)
+	}
+	entries, err := os.ReadDir(loaded.dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range entries {
+		if outputName.MatchString(entry.Name()) || strings.HasSuffix(entry.Name(), ".part") {
+			t.Fatalf("temporary or duplicate media retained: %s", entry.Name())
 		}
 	}
-	if err != nil || len(entries) != expectedEntries {
-		t.Fatalf("unfinished or missing files: %d entries, %d final files, %v", len(entries), len(j.Files), err)
-	}
 	var size int64
-	for _, file := range j.Files {
-		f, err := openFinal(filepath.Join(s.cfg.root, j.ID), file.Name)
+	for _, file := range loaded.job.Files {
+		f, err := openLibraryMedia(&jobState{Job: loaded.job}, file)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -470,10 +473,10 @@ func TestSubtitleSidecarDownloadAndPublishing(t *testing.T) {
 		t.Fatalf("subtitle job did not complete: %+v", completed)
 	}
 	file := completed.Files[0]
-	if file.Subtitle == nil || file.Subtitle.LanguageCode != "en" || file.Subtitle.Format != "srt" || !file.Subtitle.ManagedAvailable || !file.Subtitle.PublishedAvailable || file.SubtitleError != "" {
+	if file.Subtitle == nil || file.Subtitle.LanguageCode != "en" || file.Subtitle.Format != "srt" || file.Subtitle.ManagedAvailable || !file.Subtitle.PublishedAvailable || file.SubtitleError != "" {
 		t.Fatalf("caption sidecar metadata missing: %+v", file)
 	}
-	managed, err := os.ReadFile(filepath.Join(s.cfg.root, completed.ID, file.Subtitle.Name))
+	managed, err := os.ReadFile(filepath.Join(s.settings.DownloadLocation, filepath.FromSlash(file.Subtitle.OutputRelativePath)))
 	if err != nil || !strings.Contains(string(managed), "Fixture caption") {
 		t.Fatalf("managed caption sidecar missing: %v %q", err, string(managed))
 	}
@@ -498,7 +501,7 @@ func TestSubtitleSidecarDownloadAndPublishing(t *testing.T) {
 	}
 	foundSidecar := false
 	for _, entry := range zr.File {
-		if entry.Name == file.Subtitle.Name {
+		if entry.Name == file.Subtitle.OutputName {
 			foundSidecar = true
 		}
 	}
@@ -642,7 +645,7 @@ func TestDownloadedLibraryFileCarriesDescriptionChapters(t *testing.T) {
 func TestLibraryRemovalPreservesPublishedMedia(t *testing.T) {
 	s := testServer(t, fixtureClient(1), nil)
 	j := waitTerminal(t, s, createJob(t, s, testVideo).ID)
-	if len(j.Files) != 1 || !j.Files[0].ManagedAvailable || !j.Files[0].PublishedAvailable {
+	if len(j.Files) != 1 || j.Files[0].ManagedAvailable || !j.Files[0].PublishedAvailable {
 		t.Fatalf("completed file availability not recorded: %+v", j.Files)
 	}
 	outputPath := trackedOutputPath(t, s, j.ID, j.Files[0].ID)
@@ -674,179 +677,39 @@ func TestLibraryRemovalPreservesPublishedMedia(t *testing.T) {
 	_ = os.Remove(outputPath)
 }
 
-func TestScopedMediaDeletion(t *testing.T) {
+func TestSingleLibraryFileDeletion(t *testing.T) {
 	s := testServer(t, fixtureClient(1), nil)
-
-	publishedJob := waitTerminal(t, s, createJob(t, s, testVideo).ID)
-	publishedPath := trackedOutputPath(t, s, publishedJob.ID, publishedJob.Files[0].ID)
-	response := request(s, "DELETE", "/api/jobs/"+publishedJob.ID+"/published", "", nil)
-	var afterPublished Job
-	if response.Code != 200 || json.Unmarshal(response.Body.Bytes(), &afterPublished) != nil {
-		t.Fatalf("delete published copies: %d %s", response.Code, response.Body.String())
+	job := waitTerminal(t, s, createJob(t, s, testVideo).ID)
+	path := trackedOutputPath(t, s, job.ID, job.Files[0].ID)
+	if job.Files[0].ManagedAvailable || !job.Files[0].PublishedAvailable {
+		t.Fatal("expected only the library file")
 	}
-	if afterPublished.Files[0].PublishedAvailable || !afterPublished.Files[0].ManagedAvailable {
-		t.Fatalf("published deletion changed wrong copy state: %+v", afterPublished.Files[0])
+	if _, err := os.Stat(filepath.Join(s.cfg.root, job.ID, job.Files[0].Name)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("private copy retained")
 	}
-	if _, err := os.Stat(publishedPath); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("published file survived scoped deletion: %v", err)
+	if response := request(s, "DELETE", "/api/jobs/"+job.ID+"/all", "", nil); response.Code != 204 {
+		t.Fatalf("delete files: %d %s", response.Code, response.Body.String())
 	}
-	if request(s, "POST", "/api/jobs/"+publishedJob.ID+"/ticket", `{"fileId":"`+afterPublished.Files[0].ID+`"}`, nil).Code != 200 {
-		t.Fatal("managed copy became unavailable after published-only deletion")
+	if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("library file retained")
 	}
-
-	managedJob := waitTerminal(t, s, createJob(t, s, testVideo).ID)
-	managedPath := trackedOutputPath(t, s, managedJob.ID, managedJob.Files[0].ID)
-	response = request(s, "DELETE", "/api/jobs/"+managedJob.ID+"/managed", "", nil)
-	var afterManaged Job
-	if response.Code != 200 || json.Unmarshal(response.Body.Bytes(), &afterManaged) != nil {
-		t.Fatalf("delete managed copies: %d %s", response.Code, response.Body.String())
-	}
-	if afterManaged.Files[0].ManagedAvailable || !afterManaged.Files[0].PublishedAvailable {
-		t.Fatalf("managed deletion changed wrong copy state: %+v", afterManaged.Files[0])
-	}
-	if _, err := os.Stat(managedPath); err != nil {
-		t.Fatalf("published output was removed with managed copy: %v", err)
-	}
-	if request(s, "POST", "/api/jobs/"+managedJob.ID+"/ticket", `{"fileId":"`+afterManaged.Files[0].ID+`"}`, nil).Code != 409 {
-		t.Fatal("ticket was issued for a removed managed copy")
-	}
-
-	allJob := waitTerminal(t, s, createJob(t, s, testVideo).ID)
-	allPath := trackedOutputPath(t, s, allJob.ID, allJob.Files[0].ID)
-	if response = request(s, "DELETE", "/api/jobs/"+allJob.ID+"/all", "", nil); response.Code != 204 {
-		t.Fatalf("delete everywhere: %d %s", response.Code, response.Body.String())
-	}
-	if request(s, "GET", "/api/jobs/"+allJob.ID, "", nil).Code != 404 {
-		t.Fatal("delete everywhere retained Library history")
-	}
-	if _, err := os.Stat(allPath); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("delete everywhere retained published media: %v", err)
-	}
-	_ = os.Remove(managedPath)
-}
-
-func TestStoragePolicies(t *testing.T) {
-	for _, tt := range []struct {
-		mode               string
-		managed, published bool
-	}{
-		{mode: "managed-published", managed: true, published: true},
-		{mode: "published-only", managed: false, published: true},
-		{mode: "managed-only", managed: true, published: false},
-	} {
-		t.Run(tt.mode, func(t *testing.T) {
-			s := testServer(t, fixtureClient(1), nil)
-			settings := request(s, "PUT", "/api/settings", `{"storageMode":"`+tt.mode+`"}`, nil)
-			if settings.Code != 200 {
-				t.Fatalf("set storage mode: %d %s", settings.Code, settings.Body.String())
-			}
-			j := waitTerminal(t, s, createJob(t, s, testVideo).ID)
-			if j.StorageMode != tt.mode || len(j.Files) != 1 {
-				t.Fatalf("storage policy not captured: %+v", j)
-			}
-			file := j.Files[0]
-			if file.ManagedAvailable != tt.managed || file.PublishedAvailable != tt.published {
-				t.Fatalf("availability for %s = managed:%t published:%t", tt.mode, file.ManagedAvailable, file.PublishedAvailable)
-			}
-			managedPath := filepath.Join(s.cfg.root, j.ID, file.Name)
-			_, managedErr := os.Stat(managedPath)
-			if tt.managed && managedErr != nil {
-				t.Fatalf("managed copy missing for %s: %v", tt.mode, managedErr)
-			}
-			if !tt.managed && !errors.Is(managedErr, os.ErrNotExist) {
-				t.Fatalf("managed copy unexpectedly retained for %s: %v", tt.mode, managedErr)
-			}
-			outputPath := trackedOutputPath(t, s, j.ID, file.ID)
-			if tt.published {
-				if outputPath == "" {
-					t.Fatalf("published output path missing for %s", tt.mode)
-				}
-				if _, err := os.Stat(outputPath); err != nil {
-					t.Fatalf("published copy missing for %s: %v", tt.mode, err)
-				}
-				_ = os.Remove(outputPath)
-			} else if outputPath != "" {
-				t.Fatalf("managed-only job unexpectedly published to %q", outputPath)
-			}
-		})
+	if response := request(s, "GET", "/api/library", "", nil); strings.Contains(response.Body.String(), job.ID) {
+		t.Fatal("deleted item retained in library")
 	}
 }
 
-func TestRetentionAcrossStoragePolicies(t *testing.T) {
-	for _, mode := range []string{"managed-published", "published-only", "managed-only"} {
-		for _, retention := range []struct {
-			name     string
-			duration time.Duration
-		}{
-			{name: "default-never"},
-			{name: "explicit", duration: 5 * time.Minute},
-		} {
-			t.Run(mode+"/"+retention.name, func(t *testing.T) {
-				s := testServer(t, fixtureClient(1), func(c *config) { c.retain = retention.duration })
-				settings := request(s, "PUT", "/api/settings", `{"storageMode":"`+mode+`"}`, nil)
-				if settings.Code != 200 {
-					t.Fatalf("set storage mode: %d %s", settings.Code, settings.Body.String())
-				}
-				job := waitTerminal(t, s, createJob(t, s, testVideo).ID)
-				if job.Status != "completed" || len(job.Files) != 1 {
-					t.Fatalf("fixture did not finalize media: %+v", job)
-				}
-				waitPersistedTerminalJob(t, s, job.ID)
-				managedPath := filepath.Join(s.cfg.root, job.ID, job.Files[0].Name)
-				publishedPath := trackedOutputPath(t, s, job.ID, job.Files[0].ID)
-				setPersistedJobDoneAt(t, s, job.ID, time.Now().Add(-time.Hour))
-				for cycle := 0; cycle < 3; cycle++ {
-					s.prune(time.Now().Add(time.Duration(cycle) * 24 * time.Hour))
-				}
-				wantPruned := retention.duration > 0 && mode != "managed-only"
-				response := request(s, "GET", "/api/jobs/"+job.ID, "", nil)
-				if (wantPruned && response.Code != 404) || (!wantPruned && response.Code != 200) {
-					t.Fatalf("retention mode=%s duration=%s job status=%d", mode, retention.duration, response.Code)
-				}
-				var libraryRows int
-				if err := s.store.db.QueryRow(`SELECT COUNT(*) FROM library_items WHERE source_job_id=?`, job.ID).Scan(&libraryRows); err != nil {
-					t.Fatal(err)
-				}
-				if libraryRows != 1 {
-					t.Fatalf("retention left %d Library rows; want 1 retained item", libraryRows)
-				}
-				if mode == "managed-only" || (mode == "managed-published" && !wantPruned) {
-					if _, err := os.Stat(managedPath); err != nil {
-						t.Fatalf("managed copy lost under %s: %v", mode, err)
-					}
-				} else if _, err := os.Stat(managedPath); !errors.Is(err, os.ErrNotExist) {
-					t.Fatalf("managed copy unexpectedly retained: %v", err)
-				}
-				if publishedPath != "" {
-					if _, err := os.Stat(publishedPath); err != nil {
-						t.Fatalf("published copy lost under %s: %v", mode, err)
-					}
-				}
-			})
-		}
-	}
-}
-
-func TestRetentionKeepsManagedCopyWhenPublishedCopyDisappears(t *testing.T) {
+func TestRetentionPreservesLibraryFile(t *testing.T) {
 	s := testServer(t, fixtureClient(1), func(c *config) { c.retain = 5 * time.Minute })
 	job := waitTerminal(t, s, createJob(t, s, testVideo).ID)
-	if job.Status != "completed" || len(job.Files) != 1 {
-		t.Fatalf("fixture did not finalize media: %+v", job)
-	}
 	waitPersistedTerminalJob(t, s, job.ID)
-	publishedPath := trackedOutputPath(t, s, job.ID, job.Files[0].ID)
-	if err := os.Remove(publishedPath); err != nil {
-		t.Fatal(err)
-	}
-	s.mu.Lock()
+	path := trackedOutputPath(t, s, job.ID, job.Files[0].ID)
 	setPersistedJobDoneAt(t, s, job.ID, time.Now().Add(-time.Hour))
-	s.mu.Unlock()
 	s.prune(time.Now())
-	if request(s, "GET", "/api/jobs/"+job.ID, "", nil).Code != 200 {
-		t.Fatal("retention removed the Library record after its published copy disappeared")
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("retention deleted library file: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(s.cfg.root, job.ID, job.Files[0].Name)); err != nil {
-		t.Fatalf("retention removed the only remaining media copy: %v", err)
+	if response := request(s, "GET", "/api/library", "", nil); !strings.Contains(response.Body.String(), job.ID) {
+		t.Fatal("retention removed Library item")
 	}
 }
 
@@ -941,7 +804,11 @@ func TestOriginalM4AAudioPreservesSourceBytes(t *testing.T) {
 	if !strings.HasSuffix(file.Name, ".m4a") || file.MimeType != "audio/mp4" || file.MediaType != "audio" {
 		t.Fatalf("unexpected M4A metadata: %+v", file)
 	}
-	handle, err := openFinal(filepath.Join(s.cfg.root, j.ID), file.Name)
+	loaded, err := s.store.loadJob(s.cfg.root, j.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	handle, err := openLibraryMedia(&jobState{Job: loaded.job}, loaded.job.Files[0])
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1182,8 +1049,8 @@ func TestTrackedFilesystemActions(t *testing.T) {
 	if request(s, "POST", "/api/jobs/"+j.ID+"/filesystem", `{"fileId":"`+file.ID+`","action":"execute"}`, nil).Code != 400 {
 		t.Fatal("filesystem action accepted unsupported operation")
 	}
-	if request(s, "DELETE", "/api/jobs/"+j.ID+"/published", "", nil).Code != 200 {
-		t.Fatal("could not remove published fixture")
+	if err := os.Remove(outputPath); err != nil {
+		t.Fatal(err)
 	}
 	if request(s, "POST", "/api/jobs/"+j.ID+"/filesystem", `{"fileId":"`+file.ID+`","action":"reveal"}`, nil).Code != 409 {
 		t.Fatal("filesystem action accepted removed published media")
@@ -1311,7 +1178,7 @@ func TestCancelPausedJobRemovesTemporaryFiles(t *testing.T) {
 		t.Fatalf("pause: %d %s", response.Code, response.Body.String())
 	}
 	waitJob(t, s, job.ID, func(value Job) bool { return value.Status == "paused" })
-	partialPath := filepath.Join(s.cfg.root, job.ID, "test-output.part")
+	partialPath := filepath.Join(libraryWorkDir(Job{ID: job.ID, DownloadLocation: s.settings.DownloadLocation}), "test-output.part")
 	if err := os.WriteFile(partialPath, []byte("partial"), 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -1376,7 +1243,7 @@ func TestDownloadsAndRetention(t *testing.T) {
 		t.Fatal("scoped single-file range failed")
 	}
 	w = request(s, "GET", path+"?fileId="+j.Files[1].ID, "", map[string]string{"Authorization": ""})
-	if w.Code != 200 || !strings.Contains(w.Header().Get("Content-Disposition"), j.Files[0].Name) {
+	if w.Code != 200 || !strings.Contains(w.Header().Get("Content-Disposition"), j.Files[0].OutputName) {
 		t.Fatal("ticket changed scope through query parameters")
 	}
 	w = request(s, "GET", path, "", map[string]string{"Range": "bytes=900-"})

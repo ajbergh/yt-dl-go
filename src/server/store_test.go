@@ -18,6 +18,19 @@ func persistentTestConfig(t *testing.T, root string) config {
 		t.Fatal(err)
 	}
 	prepareTestDataDir(t, root)
+	store, err := openJobStore(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	settings, err := store.loadAppSettings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	settings.DownloadLocation = filepath.Join(root, "library")
+	if err := store.saveAppSettings(settings); err != nil {
+		t.Fatal(err)
+	}
+	_ = store.close()
 	return config{
 		addr: "127.0.0.1:8080", root: root, token: strings.Repeat("a", 32),
 		origins: map[string]bool{"http://localhost:5173": true}, hosts: map[string]bool{"127.0.0.1:8080": true},

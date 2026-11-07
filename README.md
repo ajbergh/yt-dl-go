@@ -85,11 +85,13 @@ persist for the next launch. No login item, background service, or tray process 
 
 ## Your files and saved data
 
-Published downloads default to `~/Downloads/YouTube_Vault`, organized by channel.
-Change this in Settings. The default **Managed + Published** storage policy retains
-both copies and can use about twice the final media size.
+Your download folder is your library. Downloads default to
+`~/Downloads/YouTube_Vault`, organized by channel; change this in Settings.
+The app keeps one media file and plays/previews it directly from that folder.
+At startup, missing files are removed from the Library. Existing app-only media
+is moved into its recorded download folder when upgrading.
 
-Saved preferences, history, and managed files live separately from the executable:
+Saved preferences and history live separately from the executable:
 
 | Platform | Default application-data directory |
 | --- | --- |

@@ -1405,17 +1405,13 @@ func (s *server) processItem(ctx context.Context, j *jobState, entry *youtube.Pl
 		if j.MediaType == "audio" && j.AudioFormat == "mp3" {
 			file.naming.Codec = "mp3"
 		}
-		if j.StorageMode != "managed-only" {
-			if err := s.publishOutput(j, file); err != nil {
-				return errStorage
-			}
+		if err := s.publishOutput(j, file); err != nil {
+			return errStorage
 		}
-		if j.StorageMode == "published-only" {
-			if err := os.Remove(filepath.Join(j.dir, file.Name)); err != nil && !errors.Is(err, os.ErrNotExist) {
-				return errStorage
-			}
-			file.ManagedAvailable = false
+		if err := os.Remove(filepath.Join(j.dir, file.Name)); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return errStorage
 		}
+		file.ManagedAvailable = false
 		outputSize += file.Size
 	}
 	if err := tracker.release(budget, outputSize); err != nil {
@@ -1429,14 +1425,14 @@ func (s *server) processItem(ctx context.Context, j *jobState, entry *youtube.Pl
 			file.SubtitleError = "Caption sidecar was skipped because the job storage limit is exhausted"
 		} else {
 			subtitleSize := s.captureSubtitle(ctx, j, file, video, captionBudget)
-			if file.Subtitle != nil && file.Subtitle.ManagedAvailable && j.StorageMode != "managed-only" {
+			if file.Subtitle != nil && file.Subtitle.ManagedAvailable {
 				if err := publishSubtitleOutput(j, file); err != nil {
-					file.SubtitleError = "Caption sidecar was saved in the Library but could not be published next to the media file"
+					file.SubtitleError = "Caption sidecar could not be saved next to the media file"
 				}
 			}
-			if file.Subtitle != nil && file.Subtitle.ManagedAvailable && j.StorageMode == "published-only" {
+			if file.Subtitle != nil && file.Subtitle.ManagedAvailable {
 				if err := os.Remove(filepath.Join(j.dir, file.Subtitle.Name)); err != nil && !errors.Is(err, os.ErrNotExist) {
-					file.SubtitleError = "Published caption sidecar exists, but its temporary managed copy could not be removed"
+					file.SubtitleError = "Caption temporary file could not be removed"
 				} else {
 					file.Subtitle.ManagedAvailable = false
 				}
@@ -1780,30 +1776,13 @@ func (s *server) transferOriginalAudio(ctx context.Context, j *jobState, engine 
 }
 
 func (s *server) validCompletedFile(j *jobState, file mediaFile) bool {
-	available := false
-	if file.ManagedAvailable {
-		f, err := openFinal(j.dir, file.Name)
-		if err != nil {
-			return false
-		}
-		info, err := f.Stat()
-		_ = f.Close()
-		if err != nil || info.Size() != file.Size {
-			return false
-		}
-		available = true
+	f, err := openCompletedMedia(j, file)
+	if err != nil {
+		return false
 	}
-	if file.PublishedAvailable {
-		if err := validateOutputCopy(j, file); err != nil {
-			return false
-		}
-		output, statErr := os.Lstat(file.OutputPath)
-		if statErr != nil || !output.Mode().IsRegular() || output.Size() != file.Size {
-			return false
-		}
-		available = true
-	}
-	return available
+	defer f.Close()
+	info, err := f.Stat()
+	return err == nil && info.Size() == file.Size
 }
 
 func (s *server) keepPartial(j *jobState) bool {

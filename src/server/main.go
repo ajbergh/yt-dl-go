@@ -323,6 +323,10 @@ func newServer(c config) (*server, error) {
 		}
 		_ = store.close()
 	}
+	if err := s.reconcileLibrary(); err != nil {
+		s.stop()
+		return nil, fmt.Errorf("reconcile library: %w", err)
+	}
 	loaded, err := store.loadActiveJobs(root)
 	if err != nil {
 		_ = store.close()

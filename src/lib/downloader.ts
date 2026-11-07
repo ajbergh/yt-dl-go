@@ -83,7 +83,6 @@ export interface DownloadJob {
   subtitleLanguage?: string;
   subtitleFormat?: "vtt" | "srt";
   category?: string;
-  storageMode?: "managed-published" | "published-only" | "managed-only";
   queuePosition?: number;
   status: JobStatus;
   title: string;
@@ -215,7 +214,6 @@ export interface AppSettings {
   outputFolderMode: string;
   defaultCategory: string;
   userCategories: string[];
-  storageMode: "managed-published" | "published-only" | "managed-only";
   retention: string;
   maxJobBytes: number;
   jobTimeout: string;
