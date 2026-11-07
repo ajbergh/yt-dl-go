@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { api, formatBytes, parseYouTubeURL, serviceURL } from "./lib/downloader";
-import { desktopConnection, initializeDesktop } from "./lib/desktop";
+import { confirmAction, desktopConnection, initializeDesktop } from "./lib/desktop";
 
 describe("desktop bootstrap", () => {
   const originalWindow = globalThis.window;
@@ -9,6 +9,30 @@ describe("desktop bootstrap", () => {
     await initializeDesktop();
     if (originalWindow === undefined) delete globalThis.window;
     else globalThis.window = originalWindow;
+  });
+  test("uses native confirmations without opening a WebView dialog", async () => {
+    const calls = [];
+    globalThis.window = {
+      confirm: () => { throw new Error("WebView confirmation must not be used"); },
+      go: { main: { DesktopApp: { Confirm: async (title, message) => { calls.push([title, message]); return false; } } } },
+    };
+    expect(await confirmAction("Remove history?")).toBe(false);
+    expect(calls).toEqual([["YouTube Vault", "Remove history?"]]);
+    globalThis.window.go.main.DesktopApp.Confirm = async () => true;
+    expect(await confirmAction("Remove history?")).toBe(true);
+  });
+  test("propagates native dialog errors instead of falling back to WebView confirmation", async () => {
+    globalThis.window = {
+      confirm: () => { throw new Error("Unexpected fallback"); },
+      go: { main: { DesktopApp: { Confirm: async () => { throw new Error("Native dialog unavailable"); } } } },
+    };
+    await expect(confirmAction("Delete files?")).rejects.toThrow("Native dialog unavailable");
+  });
+  test("keeps confirmations available in ordinary browser builds", async () => {
+    let asked;
+    globalThis.window = { confirm: message => { asked = message; return true; } };
+    expect(await confirmAction("Cancel downloads?")).toBe(true);
+    expect(asked).toBe("Cancel downloads?");
   });
   test("uses the private connection supplied by Wails before mounting the UI", async () => {
     const connection = { base: "http://127.0.0.1:49152", token: "a".repeat(64) };

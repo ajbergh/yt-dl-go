@@ -27,7 +27,7 @@ import (
 //go:embed build/appicon.png
 var desktopIcon []byte
 
-// DesktopApp exposes only bootstrap and user-confirmed save operations. The
+// DesktopApp exposes bootstrap, native dialogs, and save operations. The
 // existing authenticated HTTP API remains the shared engine control plane.
 type DesktopApp struct {
 	ctx     context.Context
@@ -60,6 +60,14 @@ func (a *DesktopApp) Save(path string) (bool, error) {
 			Title: "Save download", DefaultFilename: filename, CanCreateDirectories: true,
 		})
 	})
+}
+
+func (a *DesktopApp) Confirm(title, message string) (bool, error) {
+	result, err := wruntime.MessageDialog(a.ctx, wruntime.MessageDialogOptions{
+		Type: wruntime.QuestionDialog, Title: title, Message: message,
+		Buttons: []string{"Yes", "No"}, DefaultButton: "No", CancelButton: "No",
+	})
+	return err == nil && result == "Yes", err
 }
 
 func (a *DesktopApp) startup(ctx context.Context, c config) {

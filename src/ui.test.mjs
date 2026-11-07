@@ -74,6 +74,7 @@ beforeEach(async () => {
   rows = [];
   rejectedBulkIDs = new Set();
   testWindow.confirm = () => true;
+  delete testWindow.go;
   missing = [];
   healthEngine = "native-go";
   healthVersion = "dev";
@@ -209,6 +210,7 @@ beforeEach(async () => {
   });
 });
 afterEach(async () => {
+  delete testWindow.go;
   await act(async () => root.unmount());
   container.remove();
   globalThis.fetch = realFetch;
@@ -881,6 +883,40 @@ describe("Downloader UI and Go API integration", () => {
     await act(async () => { await new Promise(resolve => setTimeout(resolve, 10)); });
     expect(requests.some(item => item.path.endsWith("/thumbnail") && item.url.includes("fileId=file-thumb"))).toBe(true);
     expect(container.querySelector('img[data-local-thumbnail="preferred"]')).toBeTruthy();
+  });
+
+  test("waits for native confirmation before forgetting history", async () => {
+    rows = [{ ...job, kind: "video", status: "failed" }];
+    await remount();
+    await connect();
+    let resolveConfirmation;
+    const prompts = [];
+    testWindow.confirm = () => { throw new Error("WebView dialog used"); };
+    testWindow.go = { main: { DesktopApp: { Confirm: (title, message) => {
+      prompts.push([title, message]);
+      return new Promise(resolve => { resolveConfirmation = resolve; });
+    } } } };
+    await click(button("Forget history"));
+    await click(button("Forget history"));
+    expect(prompts).toHaveLength(1);
+    expect(prompts[0][0]).toBe("YouTube Vault");
+    expect(prompts[0][1]).toContain("Library items and media files will remain available");
+    expect(requests.some(item => item.method === "DELETE")).toBe(false);
+    await act(async () => { resolveConfirmation(false); });
+    expect(requests.some(item => item.method === "DELETE")).toBe(false);
+    await click(button("Forget history"));
+    await act(async () => { resolveConfirmation(true); });
+    expect(requests.some(item => item.path.endsWith("/history") && item.method === "DELETE")).toBe(true);
+  });
+
+  test("shows a native confirmation failure without performing the action", async () => {
+    rows = [{ ...job, kind: "video", status: "failed" }];
+    await remount();
+    await connect();
+    testWindow.go = { main: { DesktopApp: { Confirm: async () => { throw new Error("Native dialog unavailable"); } } } };
+    await click(button("Forget history"));
+    expect(requests.some(item => item.method === "DELETE")).toBe(false);
+    expect(container.textContent).toContain("Native dialog unavailable");
   });
 
   test("offers one file deletion action and only local library controls", async () => {

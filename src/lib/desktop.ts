@@ -3,6 +3,7 @@ import type { ServiceConnection } from "./downloader";
 type DesktopBridge = {
   Connection(): Promise<ServiceConnection>;
   Save(path: string): Promise<boolean>;
+  Confirm(title: string, message: string): Promise<boolean>;
   UIReady?(): Promise<void>;
   UIStage?(stage: string): Promise<void>; // Available only in the e2e-tagged native smoke build.
 };
@@ -34,6 +35,12 @@ export function desktopConnection(): ServiceConnection | undefined {
 
 export function desktopBridge(): DesktopBridge | undefined {
   return window.go?.main?.DesktopApp;
+}
+
+export async function confirmAction(message: string, title = "YouTube Vault"): Promise<boolean> {
+  const bridge = desktopBridge();
+  if (bridge) return bridge.Confirm(title, message);
+  return window.confirm(message);
 }
 
 // Diagnostic milestones are emitted only when the e2e-only bridge exists.

@@ -1,8 +1,8 @@
 import { userFacingMessage } from "../lib/messages";
-import { useState, type Dispatch, type SetStateAction } from "react";
+import { useRef, useState, type Dispatch, type SetStateAction } from "react";
 import type { DragEndEvent } from "@dnd-kit/core";
 import { arrayMove } from "@dnd-kit/sortable";
-import { desktopBridge } from "../lib/desktop";
+import { confirmAction, desktopBridge } from "../lib/desktop";
 import {
   api,
   type DownloadFile,
@@ -62,13 +62,28 @@ export function useJobs({
     }
   });
 
+  const confirmationPending = useRef(false);
+
+  async function confirmJobAction(message: string): Promise<boolean> {
+    if (confirmationPending.current) return false;
+    confirmationPending.current = true;
+    try {
+      return await confirmAction(message);
+    } catch (error) {
+      setActionError(errorMessage(error));
+      return false;
+    } finally {
+      confirmationPending.current = false;
+    }
+  }
+
   async function jobAction(job: DownloadJob, action: JobAction, fileId?: string) {
     if (!serviceReady) return;
-    if (action === "retry" && !window.confirm("Retry this URL? Confirm that you own the content or have permission to download it.")) return;
-    if (action === "remove" && !window.confirm("Remove this item from the Library? History will be removed. Files in your download folder will be preserved.")) return;
-    if (action === "remove-library-item" && !window.confirm("Remove this file from the Library? The file in your download folder and the job history will remain.")) return;
-    if (action === "forget-history" && !window.confirm("Remove finished job history from the Queue? Library items and media files will remain available.")) return;
-    if (action === "delete-all" && !window.confirm("Delete these library files? This removes the files from your download folder and their Library history. This cannot be undone.")) return;
+    if (action === "retry" && !(await confirmJobAction("Retry this URL? Confirm that you own the content or have permission to download it."))) return;
+    if (action === "remove" && !(await confirmJobAction("Remove this item from the Library? History will be removed. Files in your download folder will be preserved."))) return;
+    if (action === "remove-library-item" && !(await confirmJobAction("Remove this file from the Library? The file in your download folder and the job history will remain."))) return;
+    if (action === "forget-history" && !(await confirmJobAction("Remove finished job history from the Queue? Library items and media files will remain available."))) return;
+    if (action === "delete-all" && !(await confirmJobAction("Delete these library files? This removes the files from your download folder and their Library history. This cannot be undone."))) return;
 
     setBusyAction(job.id);
     setActionError("");
@@ -133,7 +148,7 @@ export function useJobs({
 
   async function retryAllFailedItems(job: DownloadJob) {
     if (!serviceReady || job.kind !== "playlist" || !["partial", "failed", "cancelled"].includes(job.status)) return;
-    if (!window.confirm("Retry every failed or cancelled playlist item? Confirm that you own the content or have permission to download it.")) return;
+    if (!(await confirmJobAction("Retry every failed or cancelled playlist item? Confirm that you own the content or have permission to download it."))) return;
     setBusyAction(`${job.id}:retry-failed`);
     setActionError("");
     try {
@@ -175,8 +190,8 @@ export function useJobs({
   async function bulkJobAction(action: "pause" | "resume" | "cancel" | "delete", jobIds: string[]): Promise<string[] | null> {
     const uniqueIDs = [...new Set(jobIds)];
     if (!serviceReady || uniqueIDs.length === 0) return null;
-    if (action === "cancel" && !window.confirm(`Cancel ${uniqueIDs.length} selected job${uniqueIDs.length === 1 ? "" : "s"}?`)) return null;
-    if (action === "delete" && !window.confirm(`Remove ${uniqueIDs.length} selected job${uniqueIDs.length === 1 ? "" : "s"} from the Library? History will be removed; downloaded files will remain.`)) return null;
+    if (action === "cancel" && !(await confirmJobAction(`Cancel ${uniqueIDs.length} selected job${uniqueIDs.length === 1 ? "" : "s"}?`))) return null;
+    if (action === "delete" && !(await confirmJobAction(`Remove ${uniqueIDs.length} selected job${uniqueIDs.length === 1 ? "" : "s"} from the Library? History will be removed; downloaded files will remain.`))) return null;
     setBusyAction("bulk");
     setActionError("");
     try {
