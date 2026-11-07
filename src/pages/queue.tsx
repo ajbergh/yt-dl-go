@@ -323,6 +323,8 @@ export function QueuePage({
               </div> : <div className="space-y-2.5">
                 {filteredQueue.map(({ job, item }) => {
                   const itemActive = item.status === "downloading" || item.status === "processing";
+                  // Older saved jobs may still contain the retired format explainer.
+                  const jobNote = job.note?.replace(/^Download videos as MP4 or WebM[\s\S]*?Live streams and streaming-only sources are not supported\.\s*/, "").trim();
                   const batchControls = job.kind === "playlist" && item.index === 1;
                   const itemError = item.error || ((job.kind === "video" || !job.items?.length) ? job.error : "");
                   const label = job.mediaType === "audio" ? (job.audioFormat === "m4a" ? "M4A · original AAC" : `MP3 ${job.audioBitrate ?? "192k"}`) : `${qualityLabels[job.quality]} · ${videoStrategyLabels[job.videoStrategy ?? "best"]}`;
@@ -364,7 +366,7 @@ export function QueuePage({
                     </div>
                     {item.index === 1 && editingJobID === job.id && <JobConfigurationEditor key={job.id} job={job} categories={settings.userCategories} busy={busyAction === `${job.id}:configuration`} onSave={patch => void updateJobConfiguration(job, patch)} />}
                     {itemError && item.status === "failed" && <p className="mt-3 flex items-start gap-1.5 text-xs text-red-300"><AlertCircle className="mt-0.5 size-3 shrink-0" aria-hidden="true" />{userFacingMessage(itemError)}</p>}
-                    {job.note && item.index === 1 && <p className="mt-3 text-xs leading-relaxed text-amber-300/80">{userFacingMessage(job.note)}</p>}
+                    {jobNote && item.index === 1 && <p className="mt-3 text-xs leading-relaxed text-amber-300/80">{userFacingMessage(jobNote)}</p>}
                   </article>;
                 })}
               </div>}

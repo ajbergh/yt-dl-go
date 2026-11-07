@@ -1446,7 +1446,7 @@ func (s *server) enqueueJobWithFallback(w http.ResponseWriter, u, kind, quality,
 		ID: randomID(16), URL: u, Kind: kind, Quality: quality, VideoStrategy: videoStrategy, Allow360pFallback: mediaType == "video" && allow360pFallback, MediaType: mediaType, AudioFormat: audioFormat, AudioBitrate: audioBitrate,
 		SubtitleLanguage: subtitleLanguage, SubtitleFormat: subtitleFormat,
 		Status: map[bool]string{true: "paused", false: "queued"}[startPaused], Title: "YouTube " + kind, Files: []mediaFile{}, Items: items, Failures: []itemFailure{},
-		Note: formatNote, CreatedAt: time.Now().UTC().Format(time.RFC3339Nano), DownloadLocation: outputSettings.DownloadLocation,
+		CreatedAt: time.Now().UTC().Format(time.RFC3339Nano), DownloadLocation: outputSettings.DownloadLocation,
 		NamingPattern: outputSettings.NamingPattern, SubfolderSorting: outputSettings.SubfolderSorting,
 		OutputFileMode: outputSettings.OutputFileMode, OutputFolderMode: outputSettings.OutputFolderMode,
 		Category: category, StorageMode: "published-only",
@@ -1454,7 +1454,7 @@ func (s *server) enqueueJobWithFallback(w http.ResponseWriter, u, kind, quality,
 		SplitByChapter: splitByChapter,
 	}, fileItems: map[int]mediaFile{}, fileGroups: map[int][]mediaFile{}}
 	if kind == "playlist" {
-		j.Note += " " + playlistNote
+		j.Note = playlistNote
 		if len(j.Items) > 0 {
 			total := len(j.Items)
 			j.TotalCount = &total

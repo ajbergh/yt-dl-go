@@ -8,14 +8,6 @@
   "frontend:dev:build": "npm run build -- --outDir src/server/dist",
   "wailsjsdir": "../../.wails-generated",
   "build:tags": "desktop",
-  "author": {
-    "name": "yt-dl-go contributors"
-  },
-  "info": {
-    "companyName": "yt-dl-go",
-    "productName": "YouTube Vault",
-    "productVersion": "0.2.0",
-    "copyright": "Copyright yt-dl-go contributors",
-    "comments": "Native desktop interface for yt-dl-go"
-  }
+  "author": { "name": "yt-dl-go contributors" },
+  "info": { "companyName": "yt-dl-go", "productName": "YouTube Vault", "productVersion": "0.2.0", "copyright": "Copyright yt-dl-go contributors", "comments": "Native desktop interface for yt-dl-go" }
 }

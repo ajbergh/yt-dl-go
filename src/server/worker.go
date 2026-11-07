@@ -27,7 +27,6 @@ import (
 	"github.com/yapingcat/gomedia/go-mp4"
 )
 
-const formatNote = "Download videos as MP4 or WebM, or save audio as MP3 or M4A. Your selected quality is a maximum; available quality depends on the video. Live streams and streaming-only sources are not supported."
 const playlistNote = "Playlist totals cover all entries exposed by YouTube, not independently verified hidden entries."
 const playlistSelectionNote = "Only the selected exposed playlist items are queued; original playlist positions are preserved."
 const unknownLengthNote = "An unknown-length stream is complete only at clean EOF; its original size cannot be independently verified."
