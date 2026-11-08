@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { Activity, Film, GripVertical } from "lucide-react";
@@ -163,12 +163,30 @@ export function SortableQueueOrderRow({ id, label, detail, children, below }: { 
 export function LibraryThumbnail({ connection, jobId, file, audio, className }: { connection: ServiceConnection; jobId: string; file: DownloadFile; audio: boolean; className?: string }) {
   const requestKey = JSON.stringify([connection.base, connection.token, jobId, file.id, file.thumbnailLocalAvailable, file.thumbnailUrl]);
   const [localSource, setLocalSource] = useState<{ requestKey: string; url: string } | null>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [nearViewport, setNearViewport] = useState(() => typeof IntersectionObserver === "undefined");
   const source = localSource?.requestKey === requestKey ? localSource.url : file.thumbnailUrl ?? "";
+
+  useEffect(() => {
+    // Remote artwork uses native image lazy loading. Defer authenticated local
+    // blob requests as well so thousands of off-screen cards do not fetch at once.
+    if (nearViewport || typeof IntersectionObserver === "undefined") return;
+    const element = containerRef.current;
+    if (!element) return;
+    const observer = new IntersectionObserver(entries => {
+      if (entries.some(entry => entry.isIntersecting)) {
+        setNearViewport(true);
+        observer.disconnect();
+      }
+    }, { rootMargin: "400px 0px" });
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [nearViewport, requestKey]);
 
   useEffect(() => {
     const controller = new AbortController();
     let objectURL = "";
-    if (file.thumbnailLocalAvailable) {
+    if (file.thumbnailLocalAvailable && nearViewport) {
       void apiBlob({ base: connection.base, token: connection.token }, `/api/jobs/${encodeURIComponent(jobId)}/thumbnail?fileId=${encodeURIComponent(file.id)}`, {
         signal: controller.signal,
       }).then(blob => {
@@ -181,12 +199,14 @@ export function LibraryThumbnail({ connection, jobId, file, audio, className }: 
       controller.abort();
       if (objectURL) URL.revokeObjectURL(objectURL);
     };
-  }, [connection.base, connection.token, file.id, file.thumbnailLocalAvailable, jobId, requestKey]);
+  }, [connection.base, connection.token, file.id, file.thumbnailLocalAvailable, jobId, requestKey, nearViewport]);
 
   const mediaClassName = className ?? "aspect-video w-24 shrink-0 rounded-md bg-neutral-900 object-cover";
-  return source
-    ? <img loading="lazy" src={source} alt="" referrerPolicy="no-referrer" data-local-thumbnail={file.thumbnailLocalAvailable ? "preferred" : undefined} className={mediaClassName} />
-    : <div className={"grid place-items-center text-neutral-600 " + mediaClassName}>{audio ? <Activity className="size-5" aria-hidden="true" /> : <Film className="size-5" aria-hidden="true" />}</div>;
+  return <div ref={containerRef} className="w-full">
+    {source
+      ? <img loading="lazy" src={source} alt="" referrerPolicy="no-referrer" data-local-thumbnail={file.thumbnailLocalAvailable ? "preferred" : undefined} className={mediaClassName} />
+      : <div className={"grid place-items-center text-neutral-600 " + mediaClassName}>{audio ? <Activity className="size-5" aria-hidden="true" /> : <Film className="size-5" aria-hidden="true" />}</div>}
+  </div>;
 }
 
 export function durationMetric(job: DownloadJob): string {
