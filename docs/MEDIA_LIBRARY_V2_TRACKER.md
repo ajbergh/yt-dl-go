@@ -24,8 +24,8 @@
 | M05 | Search, category, channel and media type filters | Complete | Existing \`/api/library\` filtering reused; search input debounced in \`src/pages/home.tsx\` |
 | M06 | Sorting and favorites | Partial | Favorites now use SQLite-backed organization API with legacy migration; sorting remains client-side and loaded-page scoped |
 | M07 | Channel and source playlist browsing | Partial | Sidebar channel facet shortcuts plus loaded source-playlist view; true server-wide playlist grouping remains |
-| M08 | User collections | Partial | Create/rename/delete and membership now persist through SQLite v32 API; portability via Library ZIP export/import remains |
-| M09 | Dedicated per-file permanent delete | In progress | New `DELETE /api/jobs/:id/library-files/:fileId` and native-confirmed selected-file UI; added regression tests, CI validation pending |
+| M08 | User collections | Partial | SQLite-backed create/rename/delete/membership and portable ZIP v2 export/import implemented; global collection browse, visual QA and CI remain |
+| M09 | Dedicated per-file permanent delete | Complete | Selected-file API, path validation and preservation tests; previous branch head `e795208` passed CI and desktop builds |
 | M10 | Multi-select and bulk file actions | Not started | Needs safe selection and backend semantics |
 | M11 | Keyboard and accessibility polish | Partial | Ctrl/Cmd+F, focusable cards, Enter preview; audit still needed |
 | M12 | High-scale performance | Partial | Existing server page cursors and thumbnail loading; virtualization and server-wide file sorting remain |
@@ -49,6 +49,8 @@
 - [x] Implement SQLite v32 organization persistence, authenticated GET/PUT endpoints, revision-based conflict rejection, and one-time legacy preference migration.
 - [x] Add Go persistence/authorization/conflict tests and frontend remount integration coverage.
 - [ ] Update PR #149 with checked features, verification, and limitations.
+- [x] Include portable favorites and collections in ZIP v2, retain acceptance of v1 archives, and merge organization atomically with imported media metadata.
+- [x] Cover source-to-imported key mapping, duplicate-name/ID merges, orphan reference omission, idempotence and rollback with backend tests.
 
 ## Detailed acceptance / unfinished scope
 
@@ -64,9 +66,9 @@
 - [x] Existing server-side search/type/category/channel query and pagination integration.
 - [x] Grid/list and sort preferences in local browser storage.
 - [x] Favorites and collection membership stored in SQLite v32; synchronized across windows when reloaded (revision conflicts prevent silent overwrites).
-- [ ] Data migration/export portability between independently installed app instances; ZIP metadata export/import support.
+- [x] Portable ZIP v2 metadata export/import for favorites and collections with deterministic media-identity remapping (latest CI pending).
 - [ ] Global server-supported file sorting/pagination and favorites filtering.
-- [ ] Collection export/import.
+- [x] Collection export/import: additive merges by case-insensitive collection name, preserves existing data, and records empty collections (latest CI pending).
 - [ ] Source playlist dedicated server filtering when libraries span many API pages.
 - [ ] Orphan cleanup for deleted/moved media references.
 
@@ -81,7 +83,9 @@
 
 ## CI history / validation truthfulness
 
-- Last completed pre-deletion PR head `7fafd83` passed **CI, CodeQL and desktop builds**. Current selected-file deletion changes are new commits and must be independently validated; do not claim the new head is green without checking its own workflow runs.
+- Portable ZIP v2 retains `state.db` for private backups and adds only validated, tracked favorites and collections to `library.json`. v1 ZIP imports remain supported. Source `jobId:fileId` references map to deterministic imported IDs, while absent/stale entries are ignored. Merge never deletes existing favorites, merges same-name collections, and remaps colliding collection IDs. Organization and media import share one SQLite transaction; a failure rolls back both. Added round-trip, idempotency, legacy-v1, validation and 200-collection-limit rollback tests. **Latest-head CI pending**.
+
+- Completed pre-ZIP PR head `e795208` passed **CI, CodeQL, and desktop builds**. ZIP organization portability changes are subsequent commits and require independent CI validation before marking the new head green.
 - Selected-file deletion only operates on tracked, regular-sized published output under the configured library root. It does not delete a sibling media entry, media associated with another job, or whole-job history. Refuses modified or symlinked output, and active readers. The operation is not an undoable trash move; documented confirmation is mandatory. Partial caption/media filesystem deletion errors are reported and the job state is persisted for recovery.
 
 - Follow-up persistence implementation adds `src/server/library_organization.go` and v32 database migration, preserving existing jobs and files. The `/api/library/organization` GET/PUT endpoint rejects invalid entries and stale revisions (409). `src/hooks/use-library-organization.ts` loads from SQLite, migrates existing local-only preferences *only when remote revision is zero and empty*, and serializes client updates. Legacy localStorage remains a compatibility cache, not the source of truth.
