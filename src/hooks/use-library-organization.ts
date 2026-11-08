@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import { api, type ServiceConnection } from "../lib/downloader";
 import { libraryCollectionsKey, normalizeCollections, readCollections, type MediaCollection } from "../lib/library-collections";
+import { setFavoriteBatch } from "../lib/library-selection";
 
 const favoritesStorageKey = "yt-dl-go:library-favorites-v2";
 
@@ -51,6 +52,7 @@ export function useLibraryOrganization(connection: ServiceConnection): {
   ready: boolean;
   error: string;
   toggleFavorite: (key: string) => void;
+  setFavoritesForKeys: (keys: string[], favorite: boolean) => void;
   setCollections: Dispatch<SetStateAction<MediaCollection[]>>;
   reload: () => void;
 } {
@@ -157,6 +159,11 @@ export function useLibraryOrganization(connection: ServiceConnection): {
       : [...previous.favorites, key],
   })), [update]);
 
+  const setFavoritesForKeys = useCallback((keys: string[], favorite: boolean) => update(previous => {
+    const next = setFavoriteBatch(previous.favorites, keys, favorite);
+    return next === previous.favorites ? previous : { ...previous, favorites: next };
+  }), [update]);
+
   const setCollections: Dispatch<SetStateAction<MediaCollection[]>> = useCallback(updater => {
     update(previous => ({
       ...previous,
@@ -170,6 +177,7 @@ export function useLibraryOrganization(connection: ServiceConnection): {
     ready,
     error,
     toggleFavorite,
+    setFavoritesForKeys,
     setCollections,
     reload: () => { setReady(false); setError(""); void load(); },
   };
