@@ -355,7 +355,7 @@ export function HomePage() {
         </div>
       </header>
 
-      <main className="mx-auto w-full max-w-7xl space-y-6 px-4 py-6 sm:px-6">
+      <main className={"mx-auto w-full space-y-6 px-4 py-6 sm:px-6 " + (tab === "library" ? "max-w-[1800px]" : "max-w-7xl")}>
         {notice && <div role="status" className="flex items-center gap-2 rounded-xl border border-emerald-800/60 bg-emerald-950/40 px-4 py-3 text-sm text-emerald-200"><Check className="size-4 shrink-0" aria-hidden="true" /><span className="flex-1">{notice}</span><button type="button" aria-label="Dismiss notification" className="grid size-9 shrink-0 place-items-center rounded-lg hover:bg-emerald-900/50" onClick={() => setNotice("")}><X className="size-4" aria-hidden="true" /></button></div>}
         {!serviceReady && tab !== "settings" && <div role={serviceError ? "alert" : "status"} className="flex items-start gap-2 rounded-xl border border-amber-800/60 bg-amber-950/40 px-4 py-3 text-sm text-amber-200"><AlertCircle className="mt-0.5 size-4 shrink-0" aria-hidden="true" />{serviceError ? `${serviceError} The app will retry automatically.` : "Starting the app…"}</div>}
         {pollError && <div role="alert" className="flex items-start gap-2 rounded-xl border border-amber-800/60 bg-amber-950/40 px-4 py-3 text-sm text-amber-200"><AlertCircle className="mt-0.5 size-4 shrink-0" aria-hidden="true" />{pollError}</div>}
