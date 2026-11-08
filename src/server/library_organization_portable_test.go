@@ -3,11 +3,10 @@ package main
 import (
 	"archive/zip"
 	"bytes"
-	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
