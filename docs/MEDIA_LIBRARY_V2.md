@@ -26,6 +26,17 @@ Favorites are stored in the local frontend preferences (`localStorage`) using a 
 
 Search and server filters work against the API's existing 50-job pagination. Sort and favorites filter apply to the currently loaded pages; to load more, use **Load more**. The sidebar count for media types reflects loaded records, while the overall library stats use server aggregates.
 
+## Follow-up implementation (2026-11-08)
+
+- Fixed the browser E2E expectation to wait for the new **Media Library** heading instead of the removed "Download library" heading.
+- Added source-playlist browsing and channel facet navigation. Playlist browsing operates on loaded pages, and channel filtering still delegates to the existing server API.
+- Implemented local user collections with create, rename, remove, and add/remove media membership. Deleting a collection does **not** delete any downloaded files. The collection model validates persisted data, deduplicates membership, and rejects case-insensitive duplicate names.
+- Added narrow-window Library navigation and a collection-creation control.
+- Added targeted frontend regression tests for collection behaviors, playlist browsing, and collection model validation.
+- Canonical scope: [complete master prompt](YOUTUBE_VAULT_MEDIA_LIBRARY_V2_MASTER_PROMPT.md). Delivery and verification status: [tracking document](MEDIA_LIBRARY_V2_TRACKER.md).
+
+**Persistence limitation:** collections and favorites currently use per-browser localStorage; they are not part of SQLite, Library ZIP exports, or shared between Wails and a separate browser profile. Server-backed persistence remains outstanding.
+
 ## Next development passes
 
 - [ ] Real virtualized scrolling and scalable thumbnail-fetch scheduling for 10,000+ media items
