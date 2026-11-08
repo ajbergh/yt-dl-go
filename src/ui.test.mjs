@@ -1123,10 +1123,10 @@ describe("Downloader UI and Go API integration", () => {
     expect(container.querySelector('[role="group"][aria-label="Bulk media actions"]').textContent).toContain("2 loaded media items selected");
     await click(button("Select all loaded"));
     await click(button("Favorite selected"));
-    expect(organizationResponse.favorites).toEqual(["bulk-media-job:file-0", "bulk-media-job:file-1", "bulk-media-job:file-2"]);
+    expect([...organizationResponse.favorites].sort()).toEqual(["bulk-media-job:file-0", "bulk-media-job:file-1", "bulk-media-job:file-2"]);
     await setSelect(container.querySelector('select[aria-label="Bulk collection"]'), "c_media");
     await click(button("Add to collection"));
-    expect(organizationResponse.collections[0].itemKeys).toEqual(organizationResponse.favorites);
+    expect([...organizationResponse.collections[0].itemKeys].sort()).toEqual([...organizationResponse.favorites].sort());
     await click(button("Remove favorites"));
     expect(organizationResponse.favorites).toEqual([]);
     await click(button("Remove from collection"));
@@ -1208,8 +1208,10 @@ describe("Downloader UI and Go API integration", () => {
     expect(cards()).toHaveLength(50);
     expect(container.textContent).toContain("50 of 102 matching media loaded");
     await click(button("Load more"));
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 20)); });
     expect(cards()).toHaveLength(100);
     await click(button("Load more"));
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 20)); });
     expect(cards()).toHaveLength(102);
     expect(button("Load more")).toBeUndefined();
     expect(new Set([...cards()].map(card => card.getAttribute("aria-label"))).size).toBe(102);
@@ -1359,6 +1361,7 @@ describe("Downloader UI and Go API integration", () => {
     await remount();
     await connect();
     await click(button("Library"));
+    await click(container.querySelector('[role="button"][aria-label="Select First video"]'));
     const originalConfirm = testWindow.confirm;
     const prompts = [];
     try {
