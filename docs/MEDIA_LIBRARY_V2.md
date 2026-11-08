@@ -18,11 +18,11 @@ Design target: media-first, dark, Plex-inspired desktop library.
 
 ## Important semantics
 
-**Delete files** invokes the existing job-level endpoint and deletes **all files associated with the selected download job**. It is not a single-file delete. When a job contains multiple media files, an explicit warning appears.
+**Delete entire download** invokes the existing job-level endpoint and deletes all files associated with that download job. **Delete selected file** uses a separate validated endpoint to remove only the selected file and its associated caption sidecar. Both actions require explicit confirmation.
 
 **Forget item** uses the preexisting single-file library-index removal endpoint. It leaves the downloaded file and job history on disk.
 
-Favorites and collections are now stored in the **SQLite state database (migration v32)**, using a versioned organization document. A legacy `localStorage` compatibility cache remains, and old local preferences are migrated when the database organization document is empty and at revision zero. They are not yet included in Library ZIP exports/imports.
+Favorites and collections are now stored in the **SQLite state database (migration v32)**, using a versioned organization document. A legacy `localStorage` compatibility cache remains, and old local preferences are migrated when the database organization document is empty and at revision zero. They are included in portable Library ZIP v2 metadata exports/imports.
 
 Search and server filters work against the API's existing 50-job pagination. Sort and favorites filter apply to the currently loaded pages; to load more, use **Load more**. The sidebar count for media types reflects loaded records, while the overall library stats use server aggregates.
 
@@ -35,7 +35,7 @@ Search and server filters work against the API's existing 50-job pagination. Sor
 - Added targeted frontend regression tests for collection behaviors, playlist browsing, and collection model validation.
 - Canonical scope: [complete master prompt](YOUTUBE_VAULT_MEDIA_LIBRARY_V2_MASTER_PROMPT.md). Delivery and verification status: [tracking document](MEDIA_LIBRARY_V2_TRACKER.md).
 
-**Persistence improvement:** favorites and collections use an authenticated `GET/PUT /api/library/organization` endpoint backed by SQLite. Updates use a revision compare-and-swap to avoid silently overwriting another window. Stale updates return 409 with a reload option in the UI. Existing per-browser values migrate on first use if no server state exists. Library ZIP import/export portability remains outstanding.
+**Persistence improvement:** favorites and collections use an authenticated `GET/PUT /api/library/organization` endpoint backed by SQLite. Updates use a revision compare-and-swap to avoid silently overwriting another window. Stale updates return 409 with a reload option in the UI. Existing per-browser values migrate on first use if no server state exists. Library ZIP v2 now exports and restores portable organization metadata; older v1 ZIP archives are still accepted.
 
 ## SQLite organization persistence (2026-11-08)
 
@@ -46,7 +46,7 @@ Search and server filters work against the API's existing 50-job pagination. Sor
 - Tests cover backend restart persistence and stale/invalid writes, plus frontend hydration across remounts.
 - Browser E2E assertions were updated for redesigned heading and empty-Library text. Confirm latest CI outcomes separately before merging.
 
-**Remaining limitations:** organization metadata is not in Library ZIP export/import, and UI membership/count filters remain limited to loaded pages. Revision conflicts require a manual reload; automatic multi-window change broadcasting is not implemented.
+**Remaining limitations:** UI membership/count filters remain limited to loaded pages. Revision conflicts require manual reload; automatic multi-window change broadcasting is not implemented.
 
 ## Safe single-file deletion (2026-11-08)
 
@@ -56,15 +56,25 @@ Search and server filters work against the API's existing 50-job pagination. Sor
 - The Library inspector now offers **Delete selected file** and **Delete entire download** as distinct actions. The selected-file action has its own irreversible-deletion confirmation showing the media title.
 - Added Go regression tests for two-file playlists, restart/history consistency, modified/symlinked files, unknown file IDs and unauthorized access. Added frontend confirmation/routing test and updated the browser E2E selector for the newly labeled job-wide action.
 
-**Follow-up:** Review partial filesystem failures, UI feedback, and native-window tests. Automated verification for this head is pending. Export/import of favorites and collections remains a separate roadmap milestone.
+**Follow-up:** Review partial filesystem failures, UI feedback, and native-window tests. The selected-file deletion phase passed source/desktop CI on head `e795208`.
+
+## Portable Library ZIP v2 organization metadata (2026-11-08)
+
+- A v2 `library.json` document now includes `organization.favorites` and `organization.collections` in addition to portable media records; the private `state.db` backup remains unchanged. Exports omit dangling favorites/memberships not represented by the exported media records, but preserve empty collections.
+- Imports still accept **v1** archives without organization metadata. V2 import validates names, IDs, and limits and remaps saved source `jobId:fileId` references to the deterministic imported media IDs, so favorites and collections point to the new Library records instead of the original device IDs.
+- Existing favorites are kept; collections with equal case-insensitive names merge memberships; collection ID collisions receive deterministic new IDs. Import does not move, overwrite, or delete media files, settings, or download history.
+- Library metadata and organization changes run in **one SQLite transaction**. Conflicts or invalid merged organization abort the entire import. Repeated imports are idempotent, including organization revision tracking.
+- Settings now reports when favorites/collections were restored. Go coverage includes export filtering, round-trip ZIP restore, merge/collision semantics, v1 compatibility, duplicate/invalid metadata rejection, and rollback on collection-limit errors.
+
+**Known limitations:** ZIP import adds metadata-only media entries without copying files. The restored media remains unavailable until downloaded again. Organization data is portable, but there is no direct reconciliation of imported media with existing local media whose IDs differ; server-wide filtering and virtualization remain future work. Latest-head CI validation is pending.
 
 ## Next development passes
 
 - [ ] Real virtualized scrolling and scalable thumbnail-fetch scheduling for 10,000+ media items
 - [ ] Server-supported global file-based sorting, favorites filtering, and page cursors
-- [x] Durable SQLite-backed favorites and user-defined collections (migration v32; export/import pending)
+- [x] Durable SQLite-backed favorites and user-defined collections, including portable ZIP v2 export/import (latest ZIP CI pending)
 - [ ] Grouped channel and source-playlist browsing
-- [x] True per-file permanent deletion with dedicated Go API and explicit confirmation (current CI pending)
+- [x] True per-file permanent deletion with dedicated Go API and explicit confirmation (previous completed CI green)
 - [ ] Multi-select and safe, purpose-specific bulk actions
 - [ ] Optional richer playback experience and metadata indexing
 - [ ] Manual native-window visual acceptance on Windows, macOS, and Linux
