@@ -14,7 +14,7 @@ import {
 } from "lucide-react";
 import {
   api, parseYouTubeURL,
-  type DownloadJob, type Inspection, type Quality,
+  type DownloadJob, type Inspection, type LibraryQuery, type Quality,
 } from "../lib/downloader";
 
 import {
@@ -53,6 +53,14 @@ export function HomePage() {
   const [librarySearch, setLibrarySearch] = useState("");
   const [libraryCategory, setLibraryCategory] = useState("all");
   const [libraryChannel, setLibraryChannel] = useState("all");
+  const [libraryView, setLibraryView] = useState<LibraryQuery>(() => {
+    try {
+      const sort = window.localStorage.getItem("yt-dl-go:library-sort-v2");
+      return { sort: sort === "oldest" || sort === "title" || sort === "size" || sort === "duration" ? sort : "recent" };
+    } catch {
+      return { sort: "recent" };
+    }
+  });
   const [libraryLayout, setLibraryLayout] = useState<"grid" | "list">(() => {
     try { return window.localStorage.getItem(libraryLayoutKey) === "list" ? "list" : "grid"; }
     catch { return "grid"; }
@@ -151,6 +159,7 @@ export function HomePage() {
       type: libraryFilter === "all" ? undefined : libraryFilter,
       category: libraryCategory === "all" ? undefined : libraryCategory,
       channel: libraryChannel === "all" ? undefined : libraryChannel,
+      ...libraryView,
     }), 250);
     return () => clearTimeout(timer);
   }, [librarySearch, libraryFilter, libraryCategory, libraryChannel, setLibraryQuery]);
@@ -432,6 +441,8 @@ export function HomePage() {
           libraryLayout={libraryLayout}
           setLibraryLayout={setLibraryLayout}
           libraryStats={libraryStats}
+          libraryTotalFiles={libraryPage.totalFiles ?? 0}
+          onViewChange={setLibraryView}
           hasMoreLibrary={Boolean(libraryPage.nextCursor)}
           loadingLibraryMore={loadingLibraryMore}
           loadMoreLibrary={() => void loadMoreLibrary().catch(error => setServiceError(errorMessage(error)))}
