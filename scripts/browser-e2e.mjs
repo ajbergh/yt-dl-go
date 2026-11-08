@@ -518,7 +518,7 @@ async function main() {
     // before the API mutation is allowed.
     const dialogPromise = cdp.waitEvent("Page.javascriptDialogOpening");
     const clickPromise = cdp.evaluate(`(() => {
-      const button = [...document.querySelectorAll("button")].find(item => item.textContent.trim() === "Delete files");
+      const button = [...document.querySelectorAll("button")].find(item => item.textContent.trim() === "Delete entire download");
       if (!button) return false;
       button.click();
       return true;
