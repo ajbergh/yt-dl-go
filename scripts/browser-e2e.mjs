@@ -524,9 +524,19 @@ async function main() {
       return true;
     })()`, 30000);
     const dialog = await dialogPromise;
-    assert.match(dialog.message, /Delete these library files/i);
-    await cdp.send("Page.handleJavaScriptDialog", { accept: true });
-    assert.equal(await clickPromise, true);
+    let acceptDeletion = false;
+    try {
+      assert.equal(dialog.type, "confirm");
+      assert.match(dialog.message, /permanently delete ALL files belonging to this download/i);
+      assert.match(dialog.message, /including media on Library pages you have not loaded/i);
+      assert.match(dialog.message, /cannot be undone/i);
+      acceptDeletion = true;
+    } finally {
+      // Dismiss even an unexpected dialog before collecting diagnostics, so a
+      // failed assertion cannot leave Runtime.evaluate blocked on confirmation.
+      await cdp.send("Page.handleJavaScriptDialog", { accept: acceptDeletion });
+      assert.equal(await clickPromise, true);
+    }
     await waitFor(cdp, bodyIncludes("Your media library is empty"), "destructive deletion completion", 20000);
     const afterDelete = await getJSON(`${baseURL}/api/library`);
     assert.equal(afterDelete.jobs.length, 0, "confirmed delete-everywhere did not remove Library history");
