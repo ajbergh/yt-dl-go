@@ -160,7 +160,7 @@ export function SortableQueueOrderRow({ id, label, detail, children, below }: { 
   </div>;
 }
 
-export function LibraryThumbnail({ connection, jobId, file, audio }: { connection: ServiceConnection; jobId: string; file: DownloadFile; audio: boolean }) {
+export function LibraryThumbnail({ connection, jobId, file, audio, className }: { connection: ServiceConnection; jobId: string; file: DownloadFile; audio: boolean; className?: string }) {
   const requestKey = JSON.stringify([connection.base, connection.token, jobId, file.id, file.thumbnailLocalAvailable, file.thumbnailUrl]);
   const [localSource, setLocalSource] = useState<{ requestKey: string; url: string } | null>(null);
   const source = localSource?.requestKey === requestKey ? localSource.url : file.thumbnailUrl ?? "";
@@ -183,9 +183,10 @@ export function LibraryThumbnail({ connection, jobId, file, audio }: { connectio
     };
   }, [connection.base, connection.token, file.id, file.thumbnailLocalAvailable, jobId, requestKey]);
 
+  const mediaClassName = className ?? "aspect-video w-24 shrink-0 rounded-md bg-neutral-900 object-cover";
   return source
-    ? <img src={source} alt="" referrerPolicy="no-referrer" data-local-thumbnail={file.thumbnailLocalAvailable ? "preferred" : undefined} className="aspect-video w-24 shrink-0 rounded-md bg-neutral-900 object-cover" />
-    : <div className="grid aspect-video w-24 shrink-0 place-items-center rounded-md bg-neutral-900 text-neutral-600">{audio ? <Activity className="size-5" aria-hidden="true" /> : <Film className="size-5" aria-hidden="true" />}</div>;
+    ? <img loading="lazy" src={source} alt="" referrerPolicy="no-referrer" data-local-thumbnail={file.thumbnailLocalAvailable ? "preferred" : undefined} className={mediaClassName} />
+    : <div className={"grid place-items-center text-neutral-600 " + mediaClassName}>{audio ? <Activity className="size-5" aria-hidden="true" /> : <Film className="size-5" aria-hidden="true" />}</div>;
 }
 
 export function durationMetric(job: DownloadJob): string {
