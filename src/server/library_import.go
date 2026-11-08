@@ -65,7 +65,7 @@ func (s *server) handleLibraryImport(w http.ResponseWriter, r *http.Request) {
 		fail(w, status, err.Error())
 		return
 	}
-	count, err := s.store.importLibraryRecords(manifest, document.Records)
+	count, organizationUpdated, err := s.store.importLibraryDocument(manifest, document)
 	if err != nil {
 		var conflict *libraryImportConflictError
 		if errors.As(err, &conflict) {
@@ -75,7 +75,7 @@ func (s *server) handleLibraryImport(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-	reply(w, http.StatusOK, map[string]any{"imported": count, "idempotent": count == 0})
+	reply(w, http.StatusOK, map[string]any{"imported": count, "organizationUpdated": organizationUpdated, "idempotent": count == 0 && !organizationUpdated})
 }
 
 func parseLibraryImportArchive(data []byte) (libraryExportManifest, libraryExportDocument, error) {
@@ -118,7 +118,7 @@ func parseLibraryImportArchive(data []byte) (libraryExportManifest, libraryExpor
 	if err := decodeStrictJSON(manifestBytes, &manifest); err != nil {
 		return manifest, document, badLibraryImport("Invalid Library manifest")
 	}
-	if manifest.Format != "yt-dl-go-library-export" || manifest.FormatVersion != libraryExportFormatVersion || manifest.MediaIncluded {
+	if manifest.Format != "yt-dl-go-library-export" || (manifest.FormatVersion != libraryLegacyExportFormatVersion && manifest.FormatVersion != libraryExportFormatVersion) || manifest.MediaIncluded {
 		return manifest, document, badLibraryImport("Unsupported Library archive format or version")
 	}
 	documentBytes, err := readZipEntryBounded(documentEntry, maxLibraryImportJSONBytes)
@@ -136,6 +136,16 @@ func parseLibraryImportArchive(data []byte) (libraryExportManifest, libraryExpor
 	}
 	if err := validatePortableRecords(document.Records); err != nil {
 		return manifest, document, err
+	}
+	if document.Organization != nil {
+		org := libraryOrganization{Favorites: document.Organization.Favorites, Collections: document.Organization.Collections}
+		if err := validateLibraryOrganization(org); err != nil {
+			return manifest, document, badLibraryImport("Invalid portable Library organization: %v", err)
+		}
+		encoded, err := json.Marshal(document.Organization)
+		if err != nil || len(encoded) > maxLibraryOrganizationBytes {
+			return manifest, document, badLibraryImport("Portable Library organization exceeds 512 KiB")
+		}
 	}
 	return manifest, document, nil
 }
@@ -237,9 +247,11 @@ func portableRelativePath(value string) (string, error) {
 }
 
 func (s *jobStore) importLibraryRecords(manifest libraryExportManifest, records []libraryExportRecord) (int, error) {
-	if s == nil || s.db == nil {
-		return 0, errors.New("state database is unavailable")
-	}
+	count, _, err := s.importLibraryDocument(manifest, libraryExportDocument{Records: records})
+	return count, err
+}
+
+func (s *jobStore) importLibraryRecordsTx(tx *sql.Tx, manifest libraryExportManifest, records []libraryExportRecord) (int, error) {
 	stableRecords := append([]libraryExportRecord(nil), records...)
 	sort.Slice(stableRecords, func(i, j int) bool {
 		if stableRecords[i].JobID != stableRecords[j].JobID {
@@ -250,11 +262,6 @@ func (s *jobStore) importLibraryRecords(manifest libraryExportManifest, records 
 		}
 		return stableRecords[i].File.Name < stableRecords[j].File.Name
 	})
-	tx, err := s.db.Begin()
-	if err != nil {
-		return 0, err
-	}
-	defer func() { _ = tx.Rollback() }()
 	createdSources := make(map[string]struct{})
 	createdItems := 0
 	for _, record := range stableRecords {
@@ -302,9 +309,6 @@ func (s *jobStore) importLibraryRecords(manifest libraryExportManifest, records 
 			return 0, err
 		}
 		createdItems++
-	}
-	if err := tx.Commit(); err != nil {
-		return 0, err
 	}
 	return createdItems, nil
 }

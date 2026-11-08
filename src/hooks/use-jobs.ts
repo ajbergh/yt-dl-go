@@ -17,7 +17,7 @@ import {
   type QueueRow,
 } from "../components/downloader/view-model";
 
-export type JobAction = "pause" | "resume" | "cancel" | "retry" | "remove" | "remove-library-item" | "forget-history" | "delete-all";
+export type JobAction = "pause" | "resume" | "cancel" | "retry" | "remove" | "remove-library-item" | "delete-library-file" | "forget-history" | "delete-all";
 export type JobConfigurationPatch = Partial<Pick<DownloadJob, "quality" | "videoStrategy" | "audioFormat" | "audioBitrate" | "category">>;
 
 export function mergeJobActionResult(current: DownloadJob, result: DownloadJob, action: JobAction): DownloadJob {
@@ -82,19 +82,25 @@ export function useJobs({
     if (action === "retry" && !(await confirmJobAction("Retry this URL? Confirm that you own the content or have permission to download it."))) return;
     if (action === "remove" && !(await confirmJobAction("Remove this item from the Library? History will be removed. Files in your download folder will be preserved."))) return;
     if (action === "remove-library-item" && !(await confirmJobAction("Remove this file from the Library? The file in your download folder and the job history will remain."))) return;
+    if (action === "delete-library-file") {
+      const item = job.files.find(file => file.id === fileId);
+      if (!item || !(await confirmJobAction(`Permanently delete ONLY "${item.title || item.outputName || item.name}" from your download folder? Other files in this download and the job history will be preserved. This cannot be undone.`))) return;
+    }
     if (action === "forget-history" && !(await confirmJobAction("Remove finished job history from the Queue? Library items and media files will remain available."))) return;
-    if (action === "delete-all" && !(await confirmJobAction("Delete these library files? This removes the files from your download folder and their Library history. This cannot be undone."))) return;
+    if (action === "delete-all" && !(await confirmJobAction("Permanently delete ALL files belonging to this download, including media on Library pages you have not loaded? Files and Library history will be removed. This cannot be undone."))) return;
 
     setBusyAction(job.id);
     setActionError("");
     try {
-      if (action === "remove-library-item") {
+      if (action === "remove-library-item" || action === "delete-library-file") {
         if (!fileId) throw new Error("A Library file ID is required.");
-        await api<void>(connection, `/api/jobs/${encodeURIComponent(job.id)}/library-items/${encodeURIComponent(fileId)}`, {
+        await api<void>(connection, `/api/jobs/${encodeURIComponent(job.id)}/${action === "delete-library-file" ? "library-files" : "library-items"}/${encodeURIComponent(fileId)}`, {
           method: "DELETE",
           signal: AbortSignal.timeout(15000),
         });
-        setNotice("Removed this file from the Library. Job history and downloaded files were preserved.");
+        setNotice(action === "delete-library-file"
+          ? "Selected file permanently deleted. Other media in this download and job history were preserved."
+          : "Removed this file from the Library. Job history and downloaded files were preserved.");
       } else if (action === "remove" || action === "forget-history" || action === "delete-all") {
         const suffix = action === "delete-all" ? "/all" : action === "forget-history" ? "/history" : "";
         await api<void>(connection, `/api/jobs/${encodeURIComponent(job.id)}${suffix}`, {
@@ -120,6 +126,45 @@ export function useJobs({
       void refreshLibrary().catch(error => setActionError(errorMessage(error)));
     } catch (error) {
       setActionError(errorMessage(error));
+    } finally {
+      setBusyAction("");
+    }
+  }
+
+  // Library-only bulk removal never unlinks downloaded files. Individual
+  // failures remain selected and are reported; successes are refreshed once.
+  async function bulkForgetLibraryItems(items: { jobId: string; fileId: string }[]): Promise<string[] | null> {
+    const unique = [...new Map(items.filter(item => item.jobId && item.fileId).map(item => [
+      item.jobId + ":" + item.fileId, item,
+    ])).values()];
+    if (!serviceReady || busyAction || unique.length === 0 || unique.length > 100) return null;
+    if (!(await confirmJobAction(`Forget ${unique.length} selected Library file${unique.length === 1 ? "" : "s"}? Only their Library index entries will be removed. Downloaded files and job history remain on disk. This cannot be undone in the Library without reimporting.`))) return null;
+    setBusyAction("bulk-library");
+    setActionError("");
+    const removed: string[] = [];
+    const failed: string[] = [];
+    try {
+      for (const item of unique) {
+        const key = item.jobId + ":" + item.fileId;
+        try {
+          await api<void>(connection, `/api/jobs/${encodeURIComponent(item.jobId)}/library-items/${encodeURIComponent(item.fileId)}`, {
+            method: "DELETE",
+            signal: AbortSignal.timeout(15000),
+          });
+          removed.push(key);
+        } catch (error) {
+          failed.push(`${key}: ${errorMessage(error)}`);
+        }
+      }
+      setNotice(`Removed ${removed.length} selected Library entr${removed.length === 1 ? "y" : "ies"}; downloaded files and job history were preserved.` +
+        (failed.length ? ` ${failed.length} could not be removed.` : ""));
+      if (failed.length) setActionError(failed.map(message => userFacingMessage(message)).join("; "));
+      try {
+        await refreshLibrary();
+      } catch (error) {
+        setActionError(errorMessage(error));
+      }
+      return removed;
     } finally {
       setBusyAction("");
     }
@@ -428,6 +473,7 @@ export function useJobs({
     retryAllFailedItems,
     updateJobConfiguration,
     bulkJobAction,
+    bulkForgetLibraryItems,
     previewFile,
     saveFile,
     filesystemAction,

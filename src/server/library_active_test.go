@@ -58,6 +58,26 @@ func TestLibraryListsFinalizedFilesWhileJobStillRuns(t *testing.T) {
 		time.Sleep(25 * time.Millisecond)
 	}
 	outputPath := trackedOutputPath(t, s, job.ID, finalized.ID)
+	page := requestLibraryFilesPage(t, s, "/api/library/files?limit=1&sort=title&source="+job.ID)
+	if page.TotalFiles != 1 || len(page.Jobs) != 1 || page.Jobs[0].Files[0].ID != finalized.ID {
+		t.Fatalf("active file missing from file-level paging: %+v", page)
+	}
+	key := job.ID + ":" + finalized.ID
+	if _, _, err := s.store.saveLibraryOrganization(libraryOrganization{Favorites: []string{key},
+		Collections: []libraryCollection{{ID: "c_active", Name: "Active tracks", ItemKeys: []string{key}}}}); err != nil {
+		t.Fatal(err)
+	}
+	for _, filter := range []string{"favorites=1", "collection=c_active"} {
+		page := requestLibraryFilesPage(t, s, "/api/library/files?limit=1&sort=title&"+filter)
+		if page.TotalFiles != 1 || len(page.Jobs) != 1 || page.Jobs[0].Files[0].ID != finalized.ID {
+			t.Fatalf("active file missing from organization filter %s: %+v", filter, page)
+		}
+	}
+	for _, suffix := range []string{"/library-items/", "/library-files/"} {
+		if result := request(s, "DELETE", "/api/jobs/"+job.ID+suffix+finalized.ID, "", nil); result.Code != 409 {
+			t.Fatalf("active file mutation accepted: %s %d", suffix, result.Code)
+		}
+	}
 	response := request(s, "POST", "/api/jobs/"+job.ID+"/filesystem", `{"fileId":"`+finalized.ID+`","action":"copy-path"}`, nil)
 	var copied struct{ Path string }
 	if response.Code != 200 || json.Unmarshal(response.Body.Bytes(), &copied) != nil || copied.Path != outputPath {
@@ -93,5 +113,24 @@ func TestLibraryListsFinalizedFilesWhileJobStillRuns(t *testing.T) {
 		if path := trackedOutputPath(t, s, done.ID, file.ID); path != "" {
 			_ = os.Remove(path)
 		}
+	}
+}
+
+func TestActiveLibraryFileBackfillSurvivesRestart(t *testing.T) {
+	s := testServer(t, fixtureClient(1), nil)
+	job := waitTerminal(t, s, createJob(t, s, testVideo).ID)
+	waitPersistedTerminalJob(t, s, job.ID)
+	// Simulate an older version with a paused playlist's finalized item in the
+	// durable index but no library_sources row until the job becomes terminal.
+	if _, err := s.store.db.Exec(`UPDATE jobs SET status='paused' WHERE id=?`, job.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.store.db.Exec(`DELETE FROM library_sources WHERE source_job_id=?`, job.ID); err != nil {
+		t.Fatal(err)
+	}
+	restarted := restartLibraryServer(t, s)
+	page := requestLibraryFilesPage(t, restarted, "/api/library/files?limit=1&sort=title")
+	if page.TotalFiles != 1 || len(page.Jobs) != 1 || page.Jobs[0].Status != "paused" || page.Jobs[0].Files[0].ID != job.Files[0].ID {
+		t.Fatalf("active file was not backfilled after restart: %+v", page)
 	}
 }

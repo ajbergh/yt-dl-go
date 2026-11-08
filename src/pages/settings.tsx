@@ -359,11 +359,15 @@ function LibraryTransferPanel({ connection, serviceReady }: Pick<SettingsPagePro
     setMessage("");
     setError("");
     try {
-      const result = await api<{ imported: number; idempotent: boolean }>(connection, "/api/library/import", {
+      const result = await api<{ imported: number; idempotent: boolean; organizationUpdated?: boolean }>(connection, "/api/library/import", {
         method: "POST", headers: { "Content-Type": "application/zip" }, body: file,
         signal: AbortSignal.timeout(5 * 60 * 1000),
       });
-      setMessage(result.idempotent ? "This Library archive is already imported." : `Imported ${result.imported} Library file${result.imported === 1 ? "" : "s"}.`);
+      setMessage(result.idempotent
+        ? "This Library archive is already imported."
+        : result.organizationUpdated
+          ? `Imported ${result.imported} Library file${result.imported === 1 ? "" : "s"} and restored favorites and collections.`
+          : `Imported ${result.imported} Library file${result.imported === 1 ? "" : "s"}.`);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Could not import the Library.");
     } finally {
@@ -376,7 +380,8 @@ function LibraryTransferPanel({ connection, serviceReady }: Pick<SettingsPagePro
     <div className="flex flex-wrap items-start justify-between gap-3">
       <div>
         <h3 id="library-export-heading" className="text-sm font-bold">Library backup and import</h3>
-        <p className="mt-1 max-w-2xl text-xs leading-relaxed text-neutral-400">Export your library details as a ZIP. Media files are not included. Import adds library details only; settings, queues, and history stay on this device. Imported files must be downloaded again to play or save them.</p>
+        <p className="mt-1 max-w-2xl text-xs leading-relaxed text-neutral-400">Export library metadata, favorites, and collections as a ZIP. Media files are not included. Import adds missing items and merges favorites and collections without replacing your existing ones; settings, queues, and history stay on this device. Imported files must be downloaded again to play or save them.</p>
+        <p className="mt-2 max-w-2xl text-xs leading-relaxed text-amber-200">The ZIP also includes a private database snapshot containing saved app settings and diagnostics. Store exports securely. Import uses portable Library metadata only; it does not restore the private database.</p>
       </div>
       <div className="flex flex-wrap gap-2">
         <button type="button" className={button} onClick={() => void exportLibrary()} disabled={!serviceReady || exporting || importing}>

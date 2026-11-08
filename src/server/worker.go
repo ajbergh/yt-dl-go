@@ -1300,8 +1300,9 @@ func (s *server) processItem(ctx context.Context, j *jobState, entry *youtube.Pl
 	splitChapters := j.MediaType == "audio" && j.SplitByChapter && j.AudioFormat == "mp3" && len(parseDescriptionChapters(video.Description, video.Duration)) > 1
 	if j.MediaType == "audio" && j.SubtitleLanguage == "" && !splitChapters {
 		if existing, ok := s.store.findPublishedAudio(j, video.ID); ok {
-			s.reuseLibraryAudio(ctx, j, existing, current)
-			return nil
+			if s.reuseLibraryAudio(ctx, j, existing, current) {
+				return nil
+			}
 		}
 	}
 	requested := estimatedItemBudget(j, video, format, selection)
@@ -1485,7 +1486,7 @@ func (s *server) processItem(ctx context.Context, j *jobState, entry *youtube.Pl
 // reuseLibraryAudio records an already published track for this item instead of
 // downloading and encoding it again. The new Library entry shares the published
 // file, so no "(2)" copy is created.
-func (s *server) reuseLibraryAudio(ctx context.Context, j *jobState, existing mediaFile, current int) {
+func (s *server) reuseLibraryAudio(ctx context.Context, j *jobState, existing mediaFile, current int) bool {
 	file := existing
 	file.ID = randomID(16)
 	file.ManagedAvailable = false
@@ -1496,8 +1497,21 @@ func (s *server) reuseLibraryAudio(ctx context.Context, j *jobState, existing me
 		file.Category = j.Category
 	}
 	s.captureThumbnail(ctx, j, &file)
-	s.updateProgress(j, current, file.Size, file.Size)
 	s.mu.Lock()
+	// Deletion may have completed while artwork was being fetched. Revalidate
+	// under the same lock as deletion's ownership preflight before recording
+	// the new reference, or fall back to acquiring our own audio source.
+	verified, err := openLibraryMedia(j, file)
+	if err != nil {
+		s.mu.Unlock()
+		if file.ThumbnailLocalAvailable {
+			if path, pathErr := thumbnailPath(j, file); pathErr == nil {
+				_ = os.Remove(path)
+			}
+		}
+		return false
+	}
+	_ = verified.Close()
 	setItemFiles(j, current, []mediaFile{file})
 	s.rebuildFilesLocked(j)
 	s.refreshQueueItemLocked(j, current)
@@ -1505,6 +1519,7 @@ func (s *server) reuseLibraryAudio(ctx context.Context, j *jobState, existing me
 	s.persistJobLocked(j)
 	s.publishJobEventLocked("job-file-finalized", j)
 	s.mu.Unlock()
+	return true
 }
 
 func itemTransferTimeout(video *youtube.Video, expectedBytes, bandwidthLimit int64) time.Duration {

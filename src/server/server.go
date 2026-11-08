@@ -718,6 +718,10 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		reply(w, http.StatusOK, diagnostics)
 		return
 	}
+	if r.URL.Path == "/api/library/organization" {
+		s.handleLibraryOrganization(w, r)
+		return
+	}
 	if r.URL.Path == "/api/library/export" {
 		if r.Method != http.MethodGet {
 			fail(w, http.StatusMethodNotAllowed, "Method not allowed")
@@ -740,6 +744,10 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if r.URL.Path == "/api/events" {
 		s.serveEvents(w, r)
+		return
+	}
+	if r.URL.Path == "/api/library/files" {
+		s.handleLibraryFiles(w, r)
 		return
 	}
 	if r.URL.Path == "/api/library" {
@@ -803,7 +811,7 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/api/jobs/"), "/")
-	validLibraryItemRoute := len(parts) == 3 && parts[1] == "library-items" && r.Method == http.MethodDelete
+	validLibraryItemRoute := len(parts) == 3 && (parts[1] == "library-items" || parts[1] == "library-files") && r.Method == http.MethodDelete
 	if !strings.HasPrefix(r.URL.Path, "/api/jobs/") || (len(parts) > 2 && !validLibraryItemRoute) || parts[0] == "" {
 		fail(w, 404, "Endpoint not found")
 		return
@@ -826,6 +834,10 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if len(parts) == 3 && parts[1] == "library-items" && r.Method == http.MethodDelete {
 		s.handleLibraryItemDelete(w, parts[0], parts[2])
+		return
+	}
+	if len(parts) == 3 && parts[1] == "library-files" && r.Method == http.MethodDelete {
+		s.handleSingleLibraryFileDelete(w, parts[0], parts[2])
 		return
 	}
 	if len(parts) == 2 && parts[1] == "history" && r.Method == http.MethodDelete {
@@ -957,6 +969,28 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			fail(w, 409, "This job has an active file transfer")
 			return
 		}
+		// Preflight every path before unlinking anything. Reused audio can be
+		// owned by multiple jobs, including one still publishing its state.
+		for _, file := range j.Files {
+			var paths []string
+			if file.PublishedAvailable {
+				paths = append(paths, file.OutputPath)
+			}
+			if file.Subtitle != nil && file.Subtitle.PublishedAvailable {
+				paths = append(paths, file.Subtitle.OutputPath)
+			}
+			for _, path := range paths {
+				shared, err := s.libraryPathSharedLocked(j.ID, "", path)
+				if err != nil {
+					fail(w, 500, "Could not verify library file ownership")
+					return
+				}
+				if shared {
+					fail(w, 409, "Another Library item refers to the same output path. Forget the other Library entry before deleting this download.")
+					return
+				}
+			}
+		}
 		if err := removeOutputCopies(j); err != nil {
 			_ = s.persistJobLocked(j)
 			fail(w, 500, "Could not delete the library files")
@@ -999,7 +1033,7 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 func libraryJobRoute(parts []string, method string) bool {
 	if len(parts) == 3 {
-		return parts[1] == "library-items" && method == http.MethodDelete
+		return (parts[1] == "library-items" || parts[1] == "library-files") && method == http.MethodDelete
 	}
 	if len(parts) == 1 {
 		return method == http.MethodDelete

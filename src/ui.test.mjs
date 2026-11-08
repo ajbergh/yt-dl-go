@@ -6,6 +6,8 @@ import { mergeJobActionResult } from "./hooks/use-jobs";
 import { terminalNotification } from "./components/downloader/view-model";
 import { userFacingMessage } from "./lib/messages";
 import { namingTokenNames, previewFilename, sanitizeFilenameComponent } from "./lib/naming";
+import { addCollection, collectionNameIsAvailable, normalizeCollections, renameCollection, removeCollection, toggleCollectionItem } from "./lib/library-collections";
+import { chooseMediaKeys, setCollectionBatch, setFavoriteBatch } from "./lib/library-selection";
 
 describe("filename naming preview", () => {
   test("shows each token and sanitizes the single-pass preview like the publisher", () => {
@@ -23,6 +25,57 @@ describe("filename naming preview", () => {
   });
 });
 
+
+describe("Media Library collection model", () => {
+  test("rejects corrupt or duplicate collection entries while preserving valid memberships", () => {
+    const value = [
+      { id: "c_a", name: "  Watch Later  ", itemKeys: ["job:file", "job:file", "job:other"] },
+      { id: "c_b", name: "watch later", itemKeys: [] },
+      { id: "bad id!", name: "Invalid", itemKeys: [] },
+      { id: "c_c", name: "Music", itemKeys: [null, "job:track"] },
+    ];
+    expect(normalizeCollections(value)).toEqual([
+      { id: "c_a", name: "Watch Later", itemKeys: ["job:file", "job:other"] },
+      { id: "c_c", name: "Music", itemKeys: ["job:track"] },
+    ]);
+    expect(normalizeCollections(null)).toEqual([]);
+  });
+
+  test("renaming and removing collections never alters unrelated memberships", () => {
+    const created = addCollection([], "c_a", "Watch Later");
+    expect(collectionNameIsAvailable(created, "watch later")).toBe(false);
+    expect(addCollection(created, "c_b", "WATCH LATER")).toBe(created);
+    const withFile = toggleCollectionItem(created, "c_a", "job:file", true);
+    expect(toggleCollectionItem(withFile, "c_a", "job:file", true)).toEqual(withFile);
+    const renamed = renameCollection(withFile, "c_a", "Videos");
+    expect(renamed[0]).toEqual({ id: "c_a", name: "Videos", itemKeys: ["job:file"] });
+    expect(removeCollection(renamed, "c_a")).toEqual([]);
+  });
+});
+
+describe("Media Library multi-selection", () => {
+  test("handles single-click, additive toggle, range, and additive range within the visible result order", () => {
+    const keys = ["a", "b", "c", "d"];
+    expect(chooseMediaKeys(keys, [], "b", "", {})).toEqual(["b"]);
+    expect(chooseMediaKeys(keys, ["b"], "d", "b", { range: true })).toEqual(["b", "c", "d"]);
+    expect(chooseMediaKeys(keys, ["b", "c", "d"], "c", "b", { additive: true })).toEqual(["b", "d"]);
+    expect(chooseMediaKeys(keys, ["a"], "d", "b", { additive: true, range: true })).toEqual(["a", "b", "c", "d"]);
+    expect(chooseMediaKeys(["a", "c"], ["a", "b"], "c", "a", { range: true })).toEqual(["a", "c"]);
+    expect(chooseMediaKeys(keys, ["b"], "missing", "b", {})).toEqual(["b"]);
+  });
+
+  test("changes favorites and collection membership without duplicates and enforces per-batch limits", () => {
+    const keys = ["job:one", "job:two", "job:one"];
+    expect(setFavoriteBatch(["job:one"], keys, true)).toEqual(["job:one", "job:two"]);
+    expect(setFavoriteBatch(["job:one", "job:two", "other:file"], keys, false)).toEqual(["other:file"]);
+    expect(setCollectionBatch(["job:one"], keys, true)).toEqual(["job:one", "job:two"]);
+    expect(setCollectionBatch(["job:one", "job:two", "other:file"], keys, false)).toEqual(["other:file"]);
+    const full = Array.from({ length: 10000 }, (_, i) => "item:" + i);
+    expect(setFavoriteBatch(full, ["another:item"], true)).toBe(full);
+    expect(setCollectionBatch(full, ["another:item"], true)).toBe(full);
+  });
+});
+
 const testWindow = new Window({ url: "http://localhost:5173/" });
 for (const key of ["window", "document", "HTMLElement", "HTMLInputElement", "Node", "Event", "MouseEvent"]) {
   globalThis[key] = key === "window" ? testWindow : testWindow[key];
@@ -35,12 +88,16 @@ const realFetch = globalThis.fetch;
 let requests;
 let rows;
 let rejectedBulkIDs;
+let rejectedLibraryFileKeys;
 let missing;
 let healthEngine;
 let healthVersion;
 let diagnosticsResponse;
 let updateResponse;
+let organizationResponse;
 let liveEvent;
+let keepEventsOpen;
+let emitLiveEvent;
 let notificationsEnabled;
 let notificationPermission;
 let notificationPermissionRequests;
@@ -73,6 +130,7 @@ beforeEach(async () => {
   requests = [];
   rows = [];
   rejectedBulkIDs = new Set();
+  rejectedLibraryFileKeys = new Set();
   testWindow.confirm = () => true;
   delete testWindow.go;
   missing = [];
@@ -80,7 +138,13 @@ beforeEach(async () => {
   healthVersion = "dev";
   diagnosticsResponse = { count: 0, issues: [] };
   updateResponse = { currentVersion: "dev", updateAvailable: false, developmentBuild: true, automaticUpdate: false, note: "Development build: external update checks are skipped." };
+  organizationResponse = { revision: 0, favorites: [], collections: [] };
+  testWindow.localStorage.removeItem("yt-dl-go:library-collections-v2");
+  testWindow.localStorage.removeItem("yt-dl-go:library-favorites-v2");
+  testWindow.localStorage.removeItem("yt-dl-go:library-sort-v2");
   liveEvent = null;
+  keepEventsOpen = false;
+  emitLiveEvent = null;
   notificationsEnabled = false;
   notificationPermission = "granted";
   notificationPermissionRequests = 0;
@@ -101,7 +165,17 @@ beforeEach(async () => {
     if (path === "/api/health") return Response.json({ ready: missing.length === 0, missing, engine: healthEngine, version: healthVersion, commit: healthVersion === "dev" ? "unknown" : "abc123def456", buildDate: healthVersion === "dev" ? "unknown" : "2026-09-21T12:00:00Z", capabilities: { combinedStreamsOnly: false, adaptiveStreamsSupported: true, externalBinariesRequired: false, mp3AudioSupported: true } });
     if (path === "/api/diagnostics") return Response.json(diagnosticsResponse);
     if (path === "/api/library/export") return new Response("zip archive bytes", { headers: { "Content-Type": "application/zip" } });
-    if (path === "/api/library/import" && init.method === "POST") return Response.json({ imported: 3, idempotent: false });
+    if (path === "/api/library/import" && init.method === "POST") return Response.json({ imported: 3, idempotent: false, organizationUpdated: true });
+    if (path === "/api/library/organization") {
+      if (init.method === "PUT") {
+        const body = JSON.parse(init.body);
+        if (body.revision !== organizationResponse.revision) {
+          return Response.json({ error: "Library organization was changed in another window. Reload before editing." }, { status: 409 });
+        }
+        organizationResponse = { revision: organizationResponse.revision + 1, favorites: body.favorites, collections: body.collections };
+      }
+      return Response.json(organizationResponse);
+    }
     if (path === "/api/update") return Response.json(updateResponse);
     if (path === "/api/settings" && init.method === "PUT") {
       const settings = JSON.parse(init.body);
@@ -116,11 +190,66 @@ beforeEach(async () => {
       const settingsEffective = { retention: "never", maxJobBytes: 10737418240, jobTimeout: "none", chromePath: "", downloadSlots: 4 };
       const events = [{ type: "snapshot", jobs: rows, settings, settingsSources, settingsEffective }, ...(liveEvent ? [liveEvent] : [])];
       const body = events.map((event, index) => `id: ${index + 1}\nevent: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`).join("");
+      if (keepEventsOpen) {
+        let eventID = events.length;
+        return new Response(new ReadableStream({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode(body));
+            emitLiveEvent = event => controller.enqueue(new TextEncoder().encode(`id: ${++eventID}\nevent: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`));
+          },
+        }), { headers: { "Content-Type": "text/event-stream" } });
+      }
       return new Response(body, { headers: { "Content-Type": "text/event-stream" } });
     }
     if (path === "/api/inspect") return Response.json(inspection);
     if (path === "/api/jobs" && init.method === "POST") return Response.json(job, { status: 202 });
     if (path === "/api/jobs") return Response.json({ jobs: rows });
+    if (path === "/api/library/files") {
+      const params = new URL(url).searchParams;
+      const type = params.get("type");
+      const category = params.get("category");
+      const channel = params.get("channel");
+      const search = (params.get("q") || "").toLowerCase();
+      const collection = organizationResponse.collections.find(value => value.id === params.get("collection"));
+      let items = rows
+        .flatMap(job => (job.files || []).map(file => ({ ...job, files: [file] })))
+        .filter(job => {
+          const file = job.files[0];
+          const mediaType = file.mediaType || job.mediaType || "video";
+          const mediaCategory = job.category || file.category || "Uncategorized";
+          const mediaChannel = file.author?.trim() || "Unknown channel";
+          const key = job.id + ":" + file.id;
+          const text = [job.title, job.url, job.category, file.title, file.name, file.outputName, file.author, file.category].join(" ").toLowerCase();
+          return (!type || mediaType === type) && (!category || mediaCategory === category)
+            && (!channel || mediaChannel === channel) && (!search || text.includes(search))
+            && (params.get("favorites") !== "1" || organizationResponse.favorites.includes(key))
+            && (!params.get("collection") || collection?.itemKeys.includes(key))
+            && (params.get("playlists") !== "1" || job.kind === "playlist")
+            && (!params.get("source") || job.id === params.get("source"))
+            && (params.get("recent") !== "1" || new Date(job.createdAt).getTime() > Date.now() - 30 * 86400000);
+        });
+      const sort = params.get("sort") || "recent";
+      const compareKey = job => {
+        const file = job.files[0];
+        if (sort === "title") return (file.title || file.outputName || file.name || "").toLowerCase();
+        if (sort === "size") return file.size || 0;
+        if (sort === "duration") return file.durationSeconds || 0;
+        return job.createdAt;
+      };
+      items = items.sort((a, b) => {
+        const ka = compareKey(a), kb = compareKey(b);
+        const direction = sort === "oldest" || sort === "title" ? 1 : -1;
+        return (ka < kb ? -direction : ka > kb ? direction : 0) ||
+          (a.files[0].id < b.files[0].id ? -direction : a.files[0].id > b.files[0].id ? direction : 0);
+      });
+      const limit = Number(params.get("limit") || 50);
+      const offset = Number(params.get("cursor") || 0);
+      const paged = items.slice(offset, offset + limit);
+      return Response.json({
+        jobs: paged, totalFiles: items.length, totalJobs: new Set(items.map(job => job.id)).size,
+        nextCursor: offset + limit < items.length ? String(offset + limit) : undefined,
+      });
+    }
     if (path === "/api/library") return Response.json({ jobs: rows.filter(item => ["completed", "partial", "failed", "cancelled"].includes(item.status) && item.files?.length > 0) });
     if (path === "/api/queue/order" && init.method === "PUT") {
       const { jobIds } = JSON.parse(init.body);
@@ -197,6 +326,15 @@ beforeEach(async () => {
     if (init.method === "DELETE" && path.endsWith("/managed")) {
       const current = rows[0] ?? job;
       return Response.json({ ...current, files: (current.files ?? []).map(file => ({ ...file, managedAvailable: false })) });
+    }
+    if (init.method === "DELETE" && path.includes("/library-items/")) {
+      const parts = path.split("/");
+      const itemKey = parts[3] + ":" + parts[5];
+      if (rejectedLibraryFileKeys.has(itemKey)) return Response.json({ error: "Library item is in use" }, { status: 409 });
+      rows = rows.map(item => item.id === parts[3]
+        ? { ...item, files: (item.files ?? []).filter(file => file.id !== parts[5]) }
+        : item);
+      return new Response(null, { status: 204 });
     }
     if (init.method === "DELETE") return new Response(null, { status: 204 });
     return Response.json({ error: "Not found." }, { status: 404 });
@@ -330,6 +468,7 @@ describe("Downloader UI and Go API integration", () => {
       expect(target).toBe("blob:library-export");
       expect(container.textContent).toContain("Library export downloaded.");
       expect(container.textContent).toContain("Media files are not included.");
+      expect(container.textContent).toContain("The ZIP also includes a private database snapshot");
     } finally {
       URL.createObjectURL = originalCreate;
       URL.revokeObjectURL = originalRevoke;
@@ -349,7 +488,7 @@ describe("Downloader UI and Go API integration", () => {
     expect(request?.method).toBe("POST");
     expect(new Headers(request?.headers).get("Content-Type")).toBe("application/zip");
     expect(request?.body).toBe(archive);
-    expect(container.textContent).toContain("Imported 3 Library files.");
+    expect(container.textContent).toContain("Imported 3 Library files and restored favorites and collections.");
     expect(container.textContent).toContain("settings, queues, and history stay on this device");
   });
   test("rejects an incompatible backend without manual setup", async () => {
@@ -883,7 +1022,7 @@ describe("Downloader UI and Go API integration", () => {
     await remount();
     await connect();
     await click(button("Library"));
-    expect(container.textContent).toContain("2 of 2 jobs visible");
+    expect(container.textContent).toContain("2 of 2 matching media loaded");
     expect(container.textContent).not.toContain("App storage");
     expect(container.textContent).toContain("Library size");
 
@@ -902,6 +1041,294 @@ describe("Downloader UI and Go API integration", () => {
     window.localStorage.removeItem("yt-dl-go:library-layout");
   });
 
+
+  test("creates, renames and deletes a collection without deleting any media files", async () => {
+    rows = [{ ...job, id: "collection-job", title: "Playlist", status: "completed", completedCount: 2, totalCount: 2, files: [
+      { id: "clip-a", name: "a.mp4", title: "Clip A", size: 1024, publishedAvailable: true },
+      { id: "clip-b", name: "b.mp4", title: "Clip B", size: 2048, publishedAvailable: true },
+    ] }];
+    testWindow.localStorage.removeItem("yt-dl-go:library-collections-v2");
+    await remount();
+    await connect();
+    await click(button("Library"));
+    await click(container.querySelector('button[aria-label="New collection"]'));
+    await setInput(container.querySelector('input[aria-label="Collection name"]'), "Travel");
+    await click(button("Create collection"));
+    expect(JSON.parse(testWindow.localStorage.getItem("yt-dl-go:library-collections-v2"))[0].name).toBe("Travel");
+
+    await click(button("All media"));
+    await click(container.querySelector('[role="button"][aria-label="Select Clip B"]'));
+    const checkbox = container.querySelector('input[aria-label="Add Clip B to Travel"]');
+    expect(checkbox).toBeTruthy();
+    await click(checkbox);
+    expect(JSON.parse(testWindow.localStorage.getItem("yt-dl-go:library-collections-v2"))[0].itemKeys).toEqual(["collection-job:clip-b"]);
+
+    await click(container.querySelector('button[title="Travel"]'));
+    expect(container.querySelectorAll('section[aria-labelledby="library-heading"] article')).toHaveLength(1);
+    expect(container.textContent).toContain("Clip B");
+
+    await click(container.querySelector('button[aria-label="Rename collection Travel"]'));
+    await setInput(container.querySelector('input[aria-label="Rename collection"]'), "Sailing");
+    await click(button("Save collection name"));
+    expect(container.querySelector('button[title="Sailing"]')).toBeTruthy();
+
+    const originalConfirm = testWindow.confirm;
+    testWindow.confirm = () => true;
+    try {
+      await click(container.querySelector('button[aria-label="Delete collection Sailing"]'));
+    } finally {
+      testWindow.confirm = originalConfirm;
+    }
+    expect(JSON.parse(testWindow.localStorage.getItem("yt-dl-go:library-collections-v2"))).toEqual([]);
+    expect(requests.some(item => item.method === "DELETE")).toBe(false);
+    testWindow.localStorage.removeItem("yt-dl-go:library-collections-v2");
+  });
+
+  test("hydrates favorites and collections from the backend across remounts", async () => {
+    organizationResponse = {
+      revision: 5,
+      favorites: ["library-job:source-file"],
+      collections: [{ id: "saved-collection", name: "Saved", itemKeys: ["library-job:source-file"] }],
+    };
+    rows = [{ ...job, id: "library-job", status: "completed", completedCount: 1, totalCount: 1, files: [
+      { id: "source-file", name: "track.m4a", title: "Saved track", size: 1024, publishedAvailable: true },
+    ] }];
+    await remount();
+    await connect();
+    await click(button("Library"));
+    expect(container.querySelector('button[title="Saved"]')).toBeTruthy();
+    expect(container.querySelector('button[aria-label="Remove favorite: Saved track"]')).toBeTruthy();
+    await click(container.querySelector('button[aria-label="Remove favorite: Saved track"]'));
+    expect(organizationResponse.revision).toBe(6);
+    expect(organizationResponse.favorites).toEqual([]);
+    await remount();
+    await click(button("Library"));
+    expect(container.querySelector('button[title="Saved"]')).toBeTruthy();
+    expect(container.querySelector('button[aria-label="Add favorite: Saved track"]')).toBeTruthy();
+    expect(requests.some(item => item.path === "/api/library/organization")).toBe(true);
+  });
+
+  test("browses loaded playlist media separately from standalone videos", async () => {
+    rows = [
+      { ...job, id: "playlist-job", kind: "playlist", title: "Trip playlist", status: "completed", mediaType: "video", completedCount: 1, totalCount: 1, files: [
+        { id: "trip-clip", name: "trip.mp4", title: "Trip clip", size: 1024, publishedAvailable: true },
+      ] },
+      { ...job, id: "standalone-job", kind: "video", title: "Standalone", status: "completed", mediaType: "video", completedCount: 1, totalCount: 1, files: [
+        { id: "single-clip", name: "single.mp4", title: "Single clip", size: 1024, publishedAvailable: true },
+      ] },
+    ];
+    await remount();
+    await connect();
+    await click(button("Library"));
+    expect(container.querySelectorAll('section[aria-labelledby="library-heading"] article')).toHaveLength(2);
+    await click(button("Playlists"));
+    expect(container.querySelectorAll('section[aria-labelledby="library-heading"] article')).toHaveLength(1);
+    expect(container.textContent).toContain("Trip clip");
+  });
+
+  test("renders media files individually and persists favorites", async () => {
+    rows = [{ ...job, id: "playlist-library", kind: "playlist", status: "completed", title: "Weekend playlist", completedCount: 2, totalCount: 2, files: [
+      { id: "first-clip", name: "first.mp4", title: "First clip", size: 1024, mediaType: "video", publishedAvailable: true, outputRelativePath: "Channel A/first.mp4" },
+      { id: "second-clip", name: "second.mp4", title: "Second clip", size: 2048, mediaType: "video", publishedAvailable: true, outputRelativePath: "Channel A/second.mp4" },
+    ] }];
+    await remount();
+    await connect();
+    await click(button("Library"));
+    expect(container.querySelectorAll('section[aria-labelledby="library-heading"] article')).toHaveLength(2);
+    expect(container.textContent).toContain("First clip");
+    expect(container.textContent).toContain("Second clip");
+    const favorite = container.querySelector('button[aria-label="Add favorite: Second clip"]');
+    expect(favorite).toBeTruthy();
+    await click(favorite);
+    expect(JSON.parse(window.localStorage.getItem("yt-dl-go:library-favorites-v2"))).toContain("playlist-library:second-clip");
+    const card = container.querySelector('[role="button"][aria-label="Select Second clip"]');
+    await click(card);
+    expect(container.querySelector('[aria-label="Selected media details"]').textContent).toContain("Second clip");
+    window.localStorage.removeItem("yt-dl-go:library-favorites-v2");
+  });
+
+  test("selects loaded media with shift and control clicks, then applies one persisted bulk organization update", async () => {
+    const files = ["Alpha", "Beta", "Gamma"].map((name, index) => ({
+      id: "file-" + index, name: name + ".mp4", title: name, size: 1024,
+      mediaType: "video", outputRelativePath: "Videos/" + name + ".mp4", publishedAvailable: true,
+    }));
+    rows = [{ ...job, id: "bulk-media-job", status: "completed", completedCount: 3, totalCount: 3, files }];
+    organizationResponse = { revision: 1, favorites: [], collections: [{ id: "c_media", name: "Watch Later", itemKeys: [] }] };
+    await remount();
+    await connect();
+    await click(button("Library"));
+    const card = name => container.querySelector('[role="button"][aria-label="Select ' + name + '"]');
+    await click(card("Alpha"));
+    await act(async () => card("Gamma").dispatchEvent(new testWindow.MouseEvent("click", { bubbles: true, shiftKey: true })));
+    expect(container.querySelector('[role="group"][aria-label="Bulk media actions"]').textContent).toContain("3 loaded media items selected");
+    await act(async () => card("Beta").dispatchEvent(new testWindow.MouseEvent("click", { bubbles: true, ctrlKey: true })));
+    expect(container.querySelector('[role="group"][aria-label="Bulk media actions"]').textContent).toContain("2 loaded media items selected");
+    await click(button("Select all loaded"));
+    await click(button("Favorite selected"));
+    expect([...organizationResponse.favorites].sort()).toEqual(["bulk-media-job:file-0", "bulk-media-job:file-1", "bulk-media-job:file-2"]);
+    await setSelect(container.querySelector('select[aria-label="Bulk collection"]'), "c_media");
+    await click(button("Add to collection"));
+    expect([...organizationResponse.collections[0].itemKeys].sort()).toEqual([...organizationResponse.favorites].sort());
+    await click(button("Remove favorites"));
+    expect(organizationResponse.favorites).toEqual([]);
+    await click(button("Remove from collection"));
+    expect(organizationResponse.collections[0].itemKeys).toEqual([]);
+    await click(button("Clear selection"));
+    expect(container.querySelector('[role="group"][aria-label="Bulk media actions"]')).toBeNull();
+    expect(requests.filter(item => item.path === "/api/library/organization" && item.method === "PUT")).toHaveLength(4);
+  });
+
+  test("Ctrl/Cmd+A and Escape select and clear loaded media without hijacking search input", async () => {
+    rows = [{ ...job, id: "keyboard-media", status: "completed", completedCount: 2, totalCount: 2, files: [
+      { id: "a", name: "a.mp4", title: "Alpha", size: 100, publishedAvailable: true },
+      { id: "b", name: "b.mp4", title: "Beta", size: 100, publishedAvailable: true },
+    ] }];
+    await remount();
+    await connect();
+    await click(button("Library"));
+    const first = container.querySelector('[role="button"][aria-label="Select Alpha"]');
+    await act(async () => {
+      first.focus();
+      testWindow.dispatchEvent(new testWindow.KeyboardEvent("keydown", { key: "a", ctrlKey: true, bubbles: true, cancelable: true }));
+    });
+    expect(container.querySelector('[role="group"][aria-label="Bulk media actions"]').textContent).toContain("2 loaded media items selected");
+    await act(async () => {
+      testWindow.dispatchEvent(new testWindow.KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+    });
+    expect(container.querySelector('[role="group"][aria-label="Bulk media actions"]')).toBeNull();
+    const search = container.querySelector('input[aria-label="Search library"]');
+    await act(async () => {
+      search.focus();
+      testWindow.dispatchEvent(new testWindow.KeyboardEvent("keydown", { key: "a", ctrlKey: true, bubbles: true, cancelable: true }));
+    });
+    expect(container.querySelector('[role="group"][aria-label="Bulk media actions"]')).toBeNull();
+  });
+
+  test("bulk forgetting asks once, never deletes disk files, and leaves failed items selected", async () => {
+    rows = [{ ...job, id: "bulk-forget-job", status: "completed", completedCount: 3, totalCount: 3, files: [
+      { id: "one", name: "One.mp4", title: "One", size: 100, publishedAvailable: true },
+      { id: "two", name: "Two.mp4", title: "Two", size: 100, publishedAvailable: true },
+      { id: "three", name: "Three.mp4", title: "Three", size: 100, publishedAvailable: true },
+    ] }];
+    rejectedLibraryFileKeys.add("bulk-forget-job:two");
+    await remount();
+    await connect();
+    await click(button("Library"));
+    await click(button("Select all loaded"));
+    const prompts = [];
+    const originalConfirm = testWindow.confirm;
+    try {
+      testWindow.confirm = message => { prompts.push(message); return false; };
+      await click(button("Forget selected (keep files)"));
+      expect(prompts).toHaveLength(1);
+      expect(prompts[0]).toContain("Downloaded files and job history remain on disk");
+      expect(requests.some(item => item.method === "DELETE")).toBe(false);
+      testWindow.confirm = () => true;
+      await click(button("Forget selected (keep files)"));
+      const deleted = requests.filter(item => item.method === "DELETE");
+      expect(deleted).toHaveLength(3);
+      expect(deleted.every(item => item.path.includes("/library-items/"))).toBe(true);
+      expect(deleted.some(item => item.path.endsWith("/all") || item.path.includes("/library-files/"))).toBe(false);
+      expect(container.textContent).toContain("Removed 2 selected Library entries");
+      expect(container.textContent).toContain("1 could not be removed");
+      expect(container.querySelector('[role="group"][aria-label="Bulk media actions"]').textContent).toContain("1 loaded media item selected");
+    } finally {
+      testWindow.confirm = originalConfirm;
+    }
+  });
+
+  test("paginates more than 100 files from one playlist without dropping repeated source IDs", async () => {
+    const files = Array.from({ length: 102 }, (_, i) => ({
+      id: "media-" + String(i).padStart(3, "0"), name: "media-" + String(i).padStart(3, "0") + ".mp4",
+      title: "Media " + String(i).padStart(3, "0"), size: 100 + i, publishedAvailable: true,
+    }));
+    rows = [{ ...job, id: "one-large-playlist", status: "completed", completedCount: 102, totalCount: 102, files }];
+    await remount();
+    await connect();
+    await click(button("Library"));
+    const cards = () => container.querySelectorAll('[data-media-card]');
+    expect(cards()).toHaveLength(50);
+    expect(container.textContent).toContain("50 of 102 matching media loaded");
+    await click(button("Load more"));
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 20)); });
+    expect(cards()).toHaveLength(100);
+    await click(button("Load more"));
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 20)); });
+    expect(cards()).toHaveLength(102);
+    expect(button("Load more")).toBeUndefined();
+    expect(new Set([...cards()].map(card => card.getAttribute("aria-label"))).size).toBe(102);
+    await setSelect(container.querySelector('select[aria-label="Sort library"]'), "title");
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 320)); });
+    expect(cards()).toHaveLength(50);
+    expect(cards()[0].getAttribute("aria-label")).toBe("Select Media 000");
+    expect(container.textContent).toContain("50 of 102 matching media loaded");
+    expect(requests.some(req => req.path === "/api/library/files" && req.url.includes("sort=title"))).toBe(true);
+  });
+
+  test("refreshes finalized active files without losing loaded pages or the selected sort", async () => {
+    keepEventsOpen = true;
+    rows = [{ ...job, id: "live-playlist", status: "downloading", files: Array.from({ length: 102 }, (_, i) => ({
+      id: "live-" + i, name: `track-${String(i).padStart(3, "0")}.mp4`, title: `Track ${String(i).padStart(3, "0")}`,
+      size: 1024, publishedAvailable: true,
+    })) }];
+    await remount();
+    await connect();
+    await click(button("Library"));
+    await setSelect(container.querySelector('select[aria-label="Sort library"]'), "title");
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 320)); });
+    await click(button("Load more"));
+    await click(button("Load more"));
+    expect(container.querySelectorAll('[data-media-card]')).toHaveLength(102);
+    rows[0] = { ...rows[0], files: [...rows[0].files, { id: "new-live", name: "new.mp4", title: "Track 103", size: 2048, publishedAvailable: true }] };
+    await act(async () => {
+      emitLiveEvent({ type: "job-file-finalized", job: rows[0] });
+      await new Promise(resolve => setTimeout(resolve, 30));
+    });
+    const cards = [...container.querySelectorAll('[data-media-card]')];
+    expect(cards).toHaveLength(103);
+    expect(new Set(cards.map(card => card.getAttribute("aria-label"))).size).toBe(103);
+    expect(cards.at(-1).getAttribute("aria-label")).toBe("Select Track 103");
+    expect(container.querySelector('select[aria-label="Sort library"]').value).toBe("title");
+    expect(button("Load more")).toBeUndefined();
+  });
+
+  test("keeps active finalized files playable while disabling stopped-job mutations and mixed bulk forget", async () => {
+    const file = { id: "active-file", name: "active.mp4", title: "Active file", size: 1024, publishedAvailable: true, outputRelativePath: "active.mp4" };
+    rows = [
+      { ...job, id: "active-job", status: "processing", files: [file] },
+      { ...job, id: "stopped-job", status: "completed", files: [{ ...file, id: "stopped-file", title: "Stopped file" }] },
+    ];
+    await remount();
+    await connect();
+    await click(button("Library"));
+    await click(container.querySelector('[data-media-card][aria-label="Select Active file"]'));
+    for (const label of ["Preview", "Reveal", "Copy path", "Open folder"]) expect(button(label).disabled).toBe(false);
+    for (const label of ["Forget item", "Delete selected file", "Delete entire download"]) expect(button(label).disabled).toBe(true);
+    await click(container.querySelector('button[aria-label="Select all visible media"]'));
+    expect(button("Forget selected (keep files)").disabled).toBe(true);
+    expect(requests.some(item => item.method === "DELETE")).toBe(false);
+  });
+
+  test("favorite browse loads only matching files from across server pages", async () => {
+    const files = Array.from({ length: 60 }, (_, i) => ({
+      id: "favorite-file-" + String(i).padStart(3, "0"), name: "f" + i + ".mp4",
+      title: "Clip " + i, size: 1024, publishedAvailable: true,
+    }));
+    rows = [{ ...job, id: "favorites-deep", status: "completed", completedCount: 60, totalCount: 60, files }];
+    organizationResponse = {
+      revision: 4, favorites: ["favorites-deep:favorite-file-000", "favorites-deep:favorite-file-059"], collections: [],
+    };
+    await remount();
+    await connect();
+    await click(button("Library"));
+    await click(button("Favorites"));
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 320)); });
+    const cards = container.querySelectorAll('[data-media-card]');
+    expect(cards).toHaveLength(2);
+    expect([...cards].map(card => card.getAttribute("aria-label")).sort()).toEqual(["Select Clip 0", "Select Clip 59"]);
+    expect(requests.some(req => req.path === "/api/library/files" && req.url.includes("favorites=1"))).toBe(true);
+  });
+
   test("prefers authenticated local thumbnails and retains remote artwork as fallback metadata", async () => {
     rows = [{ ...job, status: "completed", completedCount: 1, totalCount: 1, files: [
       { id: "file-thumb", name: "001-test.mp4", size: 1024, thumbnailUrl: "https://i.ytimg.com/vi/fixture/hqdefault.jpg", thumbnailLocalAvailable: true, thumbnailMimeType: "image/jpeg", managedAvailable: true, publishedAvailable: false },
@@ -912,6 +1339,40 @@ describe("Downloader UI and Go API integration", () => {
     await act(async () => { await new Promise(resolve => setTimeout(resolve, 10)); });
     expect(requests.some(item => item.path.endsWith("/thumbnail") && item.url.includes("fileId=file-thumb"))).toBe(true);
     expect(container.querySelector('img[data-local-thumbnail="preferred"]')).toBeTruthy();
+  });
+
+  test("defers local thumbnail API downloads until the card enters the viewport margin", async () => {
+    const previousObserver = globalThis.IntersectionObserver;
+    const observers = [];
+    globalThis.IntersectionObserver = class {
+      constructor(callback, options) {
+        this.callback = callback;
+        this.options = options;
+        observers.push(this);
+      }
+      observe(target) { this.target = target; }
+      disconnect() { this.disconnected = true; }
+    };
+    rows = [{ ...job, id: "lazy-thumbnails", status: "completed", completedCount: 1, totalCount: 1, files: [
+      { id: "lazy-file", name: "lazy.mp4", size: 1024, thumbnailUrl: "https://example.invalid/lazy.jpg",
+        thumbnailLocalAvailable: true, managedAvailable: true, publishedAvailable: true },
+    ] }];
+    try {
+      await remount();
+      await connect();
+      await click(button("Library"));
+      expect(observers.length).toBeGreaterThan(0);
+      expect(observers[0].options.rootMargin).toBe("400px 0px");
+      expect(requests.filter(item => item.path.endsWith("/thumbnail"))).toHaveLength(0);
+      await act(async () => {
+        observers[0].callback([{ isIntersecting: true }]);
+        await new Promise(resolve => setTimeout(resolve, 0));
+      });
+      expect(requests.filter(item => item.path.endsWith("/thumbnail"))).toHaveLength(1);
+    } finally {
+      if (previousObserver === undefined) delete globalThis.IntersectionObserver;
+      else globalThis.IntersectionObserver = previousObserver;
+    }
   });
 
   test("waits for native confirmation before forgetting history", async () => {
@@ -948,7 +1409,7 @@ describe("Downloader UI and Go API integration", () => {
     expect(container.textContent).toContain("Native dialog unavailable");
   });
 
-  test("offers one file deletion action and only local library controls", async () => {
+  test("offers scoped selected-file and whole-download actions", async () => {
     rows = [{ ...job, status: "completed", completedCount: 1, totalCount: 1, files: [
       { id: "file-1", name: "001-test.mp4", size: 1024, outputRelativePath: "Fixture channel/test.mp4", managedAvailable: false, publishedAvailable: true },
     ] }];
@@ -961,19 +1422,48 @@ describe("Downloader UI and Go API integration", () => {
     expect(button("Save")).toBeUndefined();
     expect(button("Copy path")).toBeTruthy();
     expect(button("Preview")).toBeTruthy();
-    expect([...container.querySelectorAll("button")].filter(item => item.textContent.trim() === "Delete files")).toHaveLength(1);
+    expect([...container.querySelectorAll("button")].filter(item => item.textContent.trim() === "Delete entire download")).toHaveLength(1);
     expect(button("Delete app copy")).toBeUndefined();
     expect(button("Delete output copy")).toBeUndefined();
-    expect(button("Delete files")).toBeTruthy();
+    expect(button("Delete entire download")).toBeTruthy();
+    expect(button("Delete selected file")).toBeTruthy();
     await click(button("Reveal"));
     const filesystemRequest = requests.find(item => item.path.endsWith("/filesystem") && item.method === "POST");
     expect(JSON.parse(filesystemRequest.body)).toEqual({ fileId: "file-1", action: "reveal" });
     const originalConfirm = testWindow.confirm;
     testWindow.confirm = () => true;
     try {
-      await click(button("Delete files"));
+      await click(button("Delete entire download"));
       expect(requests.some(item => item.path.endsWith("/all") && item.method === "DELETE")).toBe(true);
       expect(container.textContent).toContain("Files and Library history deleted");
+    } finally { testWindow.confirm = originalConfirm; }
+  });
+
+  test("confirms and deletes only the selected file without deleting its playlist siblings", async () => {
+    rows = [{ ...job, id: "playlist-safe-delete", kind: "playlist", status: "completed", completedCount: 2, totalCount: 2, files: [
+      { id: "first-file", name: "first.mp4", title: "First video", size: 1024, mediaType: "video", outputRelativePath: "Videos/first.mp4", managedAvailable: false, publishedAvailable: true },
+      { id: "second-file", name: "second.mp4", title: "Second video", size: 2048, mediaType: "video", outputRelativePath: "Videos/second.mp4", managedAvailable: false, publishedAvailable: true },
+    ] }];
+    await remount();
+    await connect();
+    await click(button("Library"));
+    await click(container.querySelector('[role="button"][aria-label="Select First video"]'));
+    const originalConfirm = testWindow.confirm;
+    const prompts = [];
+    try {
+      testWindow.confirm = message => { prompts.push(message); return false; };
+      await click(button("Delete selected file"));
+      expect(prompts).toHaveLength(1);
+      expect(prompts[0]).toContain('ONLY "First video"');
+      expect(prompts[0]).toContain("Other files");
+      expect(requests.some(item => item.method === "DELETE")).toBe(false);
+      testWindow.confirm = () => true;
+      await click(button("Delete selected file"));
+      const deletes = requests.filter(item => item.method === "DELETE");
+      expect(deletes).toHaveLength(1);
+      expect(deletes[0].path).toBe("/api/jobs/playlist-safe-delete/library-files/first-file");
+      expect(container.textContent).toContain("Other media in this download");
+      expect(requests.some(item => item.path.endsWith("/all") && item.method === "DELETE")).toBe(false);
     } finally { testWindow.confirm = originalConfirm; }
   });
 
@@ -1024,6 +1514,6 @@ describe("Downloader UI and Go API integration", () => {
     expect(button("Save all as ZIP")).toBeUndefined();
     expect(button("Save")).toBeUndefined();
     expect(button("Remove file")).toBeUndefined();
-    expect([...container.querySelectorAll("button")].filter(item => item.textContent.trim() === "Delete files")).toHaveLength(1);
+    expect([...container.querySelectorAll("button")].filter(item => item.textContent.trim() === "Delete entire download")).toHaveLength(1);
   });
 });

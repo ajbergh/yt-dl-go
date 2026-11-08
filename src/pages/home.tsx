@@ -14,7 +14,7 @@ import {
 } from "lucide-react";
 import {
   api, parseYouTubeURL,
-  type DownloadJob, type Inspection, type Quality,
+  type DownloadJob, type Inspection, type LibraryQuery, type Quality,
 } from "../lib/downloader";
 
 import {
@@ -53,6 +53,14 @@ export function HomePage() {
   const [librarySearch, setLibrarySearch] = useState("");
   const [libraryCategory, setLibraryCategory] = useState("all");
   const [libraryChannel, setLibraryChannel] = useState("all");
+  const [libraryView, setLibraryView] = useState<LibraryQuery>(() => {
+    try {
+      const sort = window.localStorage.getItem("yt-dl-go:library-sort-v2");
+      return { sort: sort === "oldest" || sort === "title" || sort === "size" || sort === "duration" ? sort : "recent" };
+    } catch {
+      return { sort: "recent" };
+    }
+  });
   const [libraryLayout, setLibraryLayout] = useState<"grid" | "list">(() => {
     try { return window.localStorage.getItem(libraryLayoutKey) === "list" ? "list" : "grid"; }
     catch { return "grid"; }
@@ -68,7 +76,7 @@ export function HomePage() {
 
   const {
     busyAction, actionError, preview, setPreview, clearedQueueItems, jobAction,
-    retryPlaylistItem, retryAllFailedItems, updateJobConfiguration, bulkJobAction, previewFile, saveFile, filesystemAction, reorderQueuedJobs,
+    retryPlaylistItem, retryAllFailedItems, updateJobConfiguration, bulkJobAction, bulkForgetLibraryItems, previewFile, saveFile, filesystemAction, reorderQueuedJobs,
     downloadNext, reorderPlaylistItems, batchAction, clearCompleted,
   } = useJobs({
     connection, serviceReady, jobs, setJobs, queuedJobsOrdered, setNotice, refreshLibrary,
@@ -139,8 +147,8 @@ export function HomePage() {
     const channels = job.files.map(file => file.author?.trim() || "Unknown channel");
     const text = `${job.title} ${job.url} ${job.category ?? ""} ${job.audioFormat ?? ""} ${job.subtitleLanguage ?? ""} ${job.files.map(file => `${file.title ?? ""} ${file.author ?? ""} ${file.category ?? ""} ${file.name} ${file.outputName ?? ""} ${file.outputRelativePath ?? ""} ${file.subtitle?.label ?? ""} ${file.subtitle?.languageCode ?? ""}`).join(" ")}`.toLowerCase();
     return (!query || text.includes(query))
-      && (libraryFilter === "all" || (job.mediaType ?? "video") === libraryFilter)
-      && (libraryCategory === "all" || category === libraryCategory)
+      && (libraryFilter === "all" || job.files.some(file => (file.mediaType || job.mediaType || "video") === libraryFilter))
+      && (libraryCategory === "all" || category === libraryCategory || job.files.some(file => file.category === libraryCategory))
       && (libraryChannel === "all" || channels.includes(libraryChannel));
   }), [libraryJobs, libraryFilter, librarySearch, libraryCategory, libraryChannel]);
   const libraryTotalJobs = libraryPage.totalJobs;
@@ -151,9 +159,10 @@ export function HomePage() {
       type: libraryFilter === "all" ? undefined : libraryFilter,
       category: libraryCategory === "all" ? undefined : libraryCategory,
       channel: libraryChannel === "all" ? undefined : libraryChannel,
+      ...libraryView,
     }), 250);
     return () => clearTimeout(timer);
-  }, [librarySearch, libraryFilter, libraryCategory, libraryChannel, setLibraryQuery]);
+  }, [librarySearch, libraryFilter, libraryCategory, libraryChannel, libraryView, setLibraryQuery]);
 
   useEffect(() => {
     try { window.localStorage.setItem(libraryLayoutKey, libraryLayout); }
@@ -355,7 +364,7 @@ export function HomePage() {
         </div>
       </header>
 
-      <main className="mx-auto w-full max-w-7xl space-y-6 px-4 py-6 sm:px-6">
+      <main className={"mx-auto w-full space-y-6 px-4 py-6 sm:px-6 " + (tab === "library" ? "max-w-[1800px]" : "max-w-7xl")}>
         {notice && <div role="status" className="flex items-center gap-2 rounded-xl border border-emerald-800/60 bg-emerald-950/40 px-4 py-3 text-sm text-emerald-200"><Check className="size-4 shrink-0" aria-hidden="true" /><span className="flex-1">{notice}</span><button type="button" aria-label="Dismiss notification" className="grid size-9 shrink-0 place-items-center rounded-lg hover:bg-emerald-900/50" onClick={() => setNotice("")}><X className="size-4" aria-hidden="true" /></button></div>}
         {!serviceReady && tab !== "settings" && <div role={serviceError ? "alert" : "status"} className="flex items-start gap-2 rounded-xl border border-amber-800/60 bg-amber-950/40 px-4 py-3 text-sm text-amber-200"><AlertCircle className="mt-0.5 size-4 shrink-0" aria-hidden="true" />{serviceError ? `${serviceError} The app will retry automatically.` : "Starting the app…"}</div>}
         {pollError && <div role="alert" className="flex items-start gap-2 rounded-xl border border-amber-800/60 bg-amber-950/40 px-4 py-3 text-sm text-amber-200"><AlertCircle className="mt-0.5 size-4 shrink-0" aria-hidden="true" />{pollError}</div>}
@@ -432,6 +441,8 @@ export function HomePage() {
           libraryLayout={libraryLayout}
           setLibraryLayout={setLibraryLayout}
           libraryStats={libraryStats}
+          libraryTotalFiles={libraryPage.totalFiles ?? 0}
+          onViewChange={setLibraryView}
           hasMoreLibrary={Boolean(libraryPage.nextCursor)}
           loadingLibraryMore={loadingLibraryMore}
           loadMoreLibrary={() => void loadMoreLibrary().catch(error => setServiceError(errorMessage(error)))}
@@ -440,6 +451,7 @@ export function HomePage() {
           previewFile={previewFile}
           filesystemAction={filesystemAction}
           jobAction={jobAction}
+          bulkForgetLibraryItems={bulkForgetLibraryItems}
         />}
 
         {tab === "settings" && <SettingsPage

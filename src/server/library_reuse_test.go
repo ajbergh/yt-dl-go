@@ -44,7 +44,41 @@ func TestRepeatedAudioJobReusesPublishedTrack(t *testing.T) {
 	if first.Files[0].ID == second.Files[0].ID || second.Files[0].OutputName != first.Files[0].OutputName {
 		t.Fatalf("second Library entry was not a distinct reference to the shared file: %+v / %+v", first.Files[0], second.Files[0])
 	}
-	_ = os.Remove(published[0])
+	for _, job := range []Job{first, second} {
+		waitPersistedTerminalJob(t, s, job.ID)
+		for _, suffix := range []string{"/all", "/library-files/" + job.Files[0].ID} {
+			response := request(s, "DELETE", "/api/jobs/"+job.ID+suffix, "", nil)
+			if response.Code != 409 {
+				t.Fatalf("shared audio deletion was allowed: %d %s", response.Code, response.Body.String())
+			}
+		}
+		path := ticketPath(t, s, job.ID, `{"fileId":"`+job.Files[0].ID+`","inline":true}`)
+		if response := request(s, "GET", path, "", nil); response.Code != 200 || response.Body.String() != fixtureData {
+			t.Fatalf("shared audio was removed: %d %s", response.Code, response.Body.String())
+		}
+	}
+	keys := []string{first.ID + ":" + first.Files[0].ID, second.ID + ":" + second.Files[0].ID}
+	if _, _, err := s.store.saveLibraryOrganization(libraryOrganization{Favorites: keys,
+		Collections: []libraryCollection{{ID: "c_shared", Name: "Shared tracks", ItemKeys: keys}}}); err != nil {
+		t.Fatal(err)
+	}
+	archivePath, cleanup, err := s.createLibraryExport()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
+	archive, err := os.ReadFile(archivePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	target := newPersistenceTestServer(t)
+	if response := importPortableOrganizationArchive(t, target, archive); response.Code != 200 {
+		t.Fatalf("shared audio archive import: %d %s", response.Code, response.Body.String())
+	}
+	organization, err := target.store.loadLibraryOrganization()
+	if err != nil || len(organization.Favorites) != 2 || len(organization.Collections) != 1 || len(organization.Collections[0].ItemKeys) != 2 || organization.Favorites[0] == organization.Favorites[1] {
+		t.Fatalf("shared audio identities lost during archive round trip: %+v %v", organization, err)
+	}
 }
 
 func TestRepeatedMP3JobReusesOnlyMatchingBitrate(t *testing.T) {

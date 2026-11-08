@@ -39,7 +39,9 @@ size; the encoder documents a small, bounded quality cost on well under 0.1% of 
 A new audio job reuses an already published track instead of downloading and encoding it
 again (which previously produced `... (2).mp3`). Reuse requires the same video, output format,
 MP3 bitrate, the same Library folder, no captions, no chapter split, and a published file still on disk with its recorded
-size. The new Library entry shares that file, so deleting files from one entry removes it for both.
+size. The new Library entry shares that file. File and whole-download deletion reject
+paths still owned by another Library entry; forget the other index entry first if
+you intend to delete the shared file. Forgetting an entry preserves the file.
 
 Finished tracks appear in the Library while the remaining playlist items are still running.
 Preview, Reveal, and Copy path operate on those finalized files immediately; archive downloads
