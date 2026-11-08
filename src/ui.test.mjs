@@ -1068,7 +1068,7 @@ describe("Downloader UI and Go API integration", () => {
     expect(container.textContent).toContain("Native dialog unavailable");
   });
 
-  test("offers one file deletion action and only local library controls", async () => {
+  test("offers scoped selected-file and whole-download actions", async () => {
     rows = [{ ...job, status: "completed", completedCount: 1, totalCount: 1, files: [
       { id: "file-1", name: "001-test.mp4", size: 1024, outputRelativePath: "Fixture channel/test.mp4", managedAvailable: false, publishedAvailable: true },
     ] }];
@@ -1095,6 +1095,33 @@ describe("Downloader UI and Go API integration", () => {
       await click(button("Delete entire download"));
       expect(requests.some(item => item.path.endsWith("/all") && item.method === "DELETE")).toBe(true);
       expect(container.textContent).toContain("Files and Library history deleted");
+    } finally { testWindow.confirm = originalConfirm; }
+  });
+
+  test("confirms and deletes only the selected file without deleting its playlist siblings", async () => {
+    rows = [{ ...job, id: "playlist-safe-delete", kind: "playlist", status: "completed", completedCount: 2, totalCount: 2, files: [
+      { id: "first-file", name: "first.mp4", title: "First video", size: 1024, mediaType: "video", outputRelativePath: "Videos/first.mp4", managedAvailable: false, publishedAvailable: true },
+      { id: "second-file", name: "second.mp4", title: "Second video", size: 2048, mediaType: "video", outputRelativePath: "Videos/second.mp4", managedAvailable: false, publishedAvailable: true },
+    ] }];
+    await remount();
+    await connect();
+    await click(button("Library"));
+    const originalConfirm = testWindow.confirm;
+    const prompts = [];
+    try {
+      testWindow.confirm = message => { prompts.push(message); return false; };
+      await click(button("Delete selected file"));
+      expect(prompts).toHaveLength(1);
+      expect(prompts[0]).toContain('ONLY "First video"');
+      expect(prompts[0]).toContain("Other files");
+      expect(requests.some(item => item.method === "DELETE")).toBe(false);
+      testWindow.confirm = () => true;
+      await click(button("Delete selected file"));
+      const deletes = requests.filter(item => item.method === "DELETE");
+      expect(deletes).toHaveLength(1);
+      expect(deletes[0].path).toBe("/api/jobs/playlist-safe-delete/library-files/first-file");
+      expect(container.textContent).toContain("Other media in this download");
+      expect(requests.some(item => item.path.endsWith("/all") && item.method === "DELETE")).toBe(false);
     } finally { testWindow.confirm = originalConfirm; }
   });
 
