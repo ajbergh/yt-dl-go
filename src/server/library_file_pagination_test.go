@@ -12,7 +12,7 @@ func seedFilePages(t *testing.T, s *server) {
 	t.Helper()
 	for _, spec := range []struct {
 		id, title, date, kind string
-		files []mediaFile
+		files                 []mediaFile
 	}{
 		{
 			id: "global-sort-a", title: "A playlist", date: "2026-10-01T12:00:00Z", kind: "playlist",
@@ -112,8 +112,8 @@ func TestGlobalMediaFilesFilterAtFileGrainIncludingFavoritesAndCollections(t *te
 	s := newPersistenceTestServer(t)
 	seedFilePages(t, s)
 	_, conflict, err := s.store.saveLibraryOrganization(libraryOrganization{
-		Revision: 0,
-		Favorites: []string{"global-sort-a:global-file-a", "global-sort-b:global-file-b"},
+		Revision:    0,
+		Favorites:   []string{"global-sort-a:global-file-a", "global-sort-b:global-file-b"},
 		Collections: []libraryCollection{{
 			ID: "collection-media", Name: "Playlist", ItemKeys: []string{"global-sort-a:global-file-m", "global-sort-b:global-file-b"},
 		}},
@@ -121,7 +121,10 @@ func TestGlobalMediaFilesFilterAtFileGrainIncludingFavoritesAndCollections(t *te
 	if err != nil || conflict {
 		t.Fatalf("save library organization: %v, conflict=%v", err, conflict)
 	}
-	checks := []struct{ params string; want []string }{
+	checks := []struct {
+		params string
+		want   []string
+	}{
 		{"type=audio", []string{"global-file-a"}},
 		{"type=video&sort=title", []string{"global-file-b", "global-file-m", "global-file-z"}},
 		{"channel=Channel+A", []string{"global-file-a"}},
