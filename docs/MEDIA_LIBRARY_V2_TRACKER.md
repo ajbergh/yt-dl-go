@@ -22,13 +22,13 @@
 | M03 | Responsive grid and list | Complete | Same data with view toggle; local preference |
 | M04 | Selected-item detail inspector | Complete | File metadata and preview/reveal/copy/open-folder actions |
 | M05 | Search, category, channel and media type filters | Complete | Existing \`/api/library\` filtering reused; search input debounced in \`src/pages/home.tsx\` |
-| M06 | Sorting and favorites | Partial | Favorites now use SQLite-backed organization API with legacy migration; sorting remains client-side and loaded-page scoped |
+| M06 | Sorting and favorites | In verification | `/api/library/files` now sorts across all media records, with SQLite global favorites filtering; new CI and desktop acceptance pending |
 | M07 | Channel and source playlist browsing | Partial | Sidebar channel facet shortcuts plus loaded source-playlist view; true server-wide playlist grouping remains |
-| M08 | User collections | Partial | SQLite-backed create/rename/delete/membership and portable ZIP v2 export/import implemented; global collection browse, visual QA and CI remain |
+| M08 | User collections | In verification | SQLite-backed CRUD, ZIP v2 portability, and server-wide collection membership filtering; UI/CI validation still required |
 | M09 | Dedicated per-file permanent delete | Complete | Selected-file API, path validation and preservation tests; previous branch head `e795208` passed CI and desktop builds |
 | M10 | Multi-select and bulk file actions | Partial | Loaded-page Ctrl/Cmd, Shift and select-all; bulk favorites, collections, and confirmed metadata-only forget (100 max); permanent bulk file deletion intentionally unsupported |
 | M11 | Keyboard and accessibility polish | Partial | Ctrl/Cmd+F/A, Escape, arrow focus/selection, Shift ranges, and Enter preview; screen-reader and contrast audit still needed |
-| M12 | High-scale performance | Partial | Existing server page cursors plus viewport-gated local thumbnail fetches (400px prefetch margin); grid virtualization and global file sorting remain |
+| M12 | Partial | Partial | File-level 50/100-record database paging and viewport-gated thumbnails implemented; grid virtualization and indexed sorting performance remain to be optimized |
 | M13 | Desktop responsive visual acceptance | Not started | Manually compare mockup with native windows on Win/macOS/Linux |
 | M14 | Automated browser tests | In progress | Repaired stale Library heading and empty-library browser selectors; latest CI E2E rerun required |
 | M15 | Cross-platform desktop CI | In progress | Reverify latest branch head after changes |
@@ -63,7 +63,7 @@
 - [x] Media-specific artwork fallbacks and duration/quality/format metadata.
 - [x] Selected media inspector with current preview and filesystem actions.
 - [ ] True list table with headers and column sorting (current list is compact card rows).
-- [ ] Grid virtualization / intersection-based local thumbnail fetching.
+- [ ] Grid virtualization for 10k+ media (intersection-based local thumbnail loading already implemented).
 - [ ] Full-resolution artwork fallback performance for remote and offline content.
 
 ### Organization and persistence
@@ -71,9 +71,9 @@
 - [x] Grid/list and sort preferences in local browser storage.
 - [x] Favorites and collection membership stored in SQLite v32; synchronized across windows when reloaded (revision conflicts prevent silent overwrites).
 - [x] Portable ZIP v2 metadata export/import for favorites and collections with deterministic media-identity remapping (latest CI pending).
-- [ ] Global server-supported file sorting/pagination and favorites filtering.
+- [x] Global file-level keyset pagination, sort (recent/oldest/title/size/duration), and SQLite favorites/collection filters (new CI pending).
 - [x] Collection export/import: additive merges by case-insensitive collection name, preserves existing data, and records empty collections (latest CI pending).
-- [ ] Source playlist dedicated server filtering when libraries span many API pages.
+- [x] Server-side `playlists=1` and `source=<jobID>` file filters; UI source-discovery list still reflects loaded pages.
 - [ ] Orphan cleanup for deleted/moved media references.
 
 ### Safety and accessibility
@@ -86,6 +86,10 @@
 - [ ] Complete reduced-motion/mobile/narrow visual audit.
 
 ## CI history / validation truthfulness
+
+- File-level global paging implementation adds `/api/library/files` independently of the legacy job-grouped `/api/library`. Page queries use SQLite keyset cursors with a sort+filter fingerprint to reject stale/mismatched cursors, deterministic per-file tie-breaking, and limit 1–100. Unlike job-group paging, file-page reads materialize **only selected file IDs**, even when a single playlist contains 10,100 files. End-to-end UI now pages and deduplicates by `jobID:fileID`, preserves server ordering, and supports global sorting, favorite filtering and collection membership. New Go tests exercise 5 sorts, malformed/changed cursors, global filters, and a 10,100-file playlist; UI tests exercise 102-file multi-page accumulation and favorites beyond the first page. **CI for new commits is pending.**
+- Safety correction: job-wide delete UI and confirmation now always warn that *every* source download file may be deleted, including media on unloaded pages. No changes to the validated single-file deletion or legacy `/api/library` contract.
+- The preceding head `0ff1768` passed source CI (including browser E2E), CodeQL and Desktop builds. Current global paging head must be checked independently.
 
 - M10 / M11 work: `src/lib/library-selection.ts` provides deterministic range/additive selection and bounded batch favorite/collection helpers. `src/pages/library.tsx` renders the selection toolbar and keyboard controls. `src/hooks/use-jobs.ts` bulk-forgets **only indexed Library entries**, with one confirmation, per-item error reporting, and a 100-item cap; no downloaded media or job history is deleted. CI on the latest branch head is pending.
 - M12 incremental performance: `LibraryThumbnail` now gates local authenticated thumbnail blob fetches behind an `IntersectionObserver` with a 400px prefetch margin, falls back to immediate loading in unsupported WebViews, and retains native `loading=lazy` for remote art. Visual/window inspection and full-list virtualization are still outstanding.
