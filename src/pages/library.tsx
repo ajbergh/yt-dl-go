@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  Activity, ArrowDownAZ, CalendarDays, CheckCircle2, Clock3, Copy, FileAudio,
+  Activity, ArrowDownAZ, Clock3, Copy, FileAudio,
   FileText, Film, FolderOpen, Grid2X2, HardDrive, Heart, List, Music2,
   Play, RefreshCw, Search, SlidersHorizontal, Trash2, Users, X,
 } from "lucide-react";
@@ -58,6 +58,7 @@ type SortMode = "recent" | "oldest" | "title" | "size" | "duration";
 type LibrarySection = "all" | "favorites" | "recent";
 const favoritesStorageKey = "yt-dl-go:library-favorites-v2";
 const sortStorageKey = "yt-dl-go:library-sort-v2";
+const recentCutoff = Date.now() - 30 * 86400000;
 
 function storedFavorites(): string[] {
   try {
@@ -149,7 +150,7 @@ export function LibraryPage({
       if (section === "favorites" && !favorites.includes(item.key)) return false;
       if (section === "recent") {
         const timestamp = new Date(item.job.createdAt).getTime();
-        if (!Number.isFinite(timestamp) || Date.now() - timestamp > 30 * 86400000) return false;
+        if (!Number.isFinite(timestamp) || timestamp < recentCutoff) return false;
       }
       return true;
     });
@@ -206,7 +207,7 @@ export function LibraryPage({
   return (
     <section aria-labelledby="library-heading" className="min-w-0">
       <div className={"grid items-start gap-4 lg:grid-cols-[188px_minmax(0,1fr)] " +
-        (inspectorOpen && selected ? "2xl:grid-cols-[188px_minmax(0,1fr)_310px]" : "")}>
+        (inspectorOpen && selected ? "xl:grid-cols-[188px_minmax(0,1fr)_310px]" : "")}>
         <aside aria-label="Library navigation" className="hidden rounded-2xl border border-neutral-800/80 bg-[#111216] p-3 lg:block">
           <p className="px-3 pb-3 pt-2 text-[10px] font-bold uppercase tracking-[.2em] text-neutral-500">Browse</p>
           <nav className="space-y-1" aria-label="Media sections">
@@ -288,7 +289,7 @@ export function LibraryPage({
                 </select>
               </label>
             </div>
-            {showFilters && <div className="grid gap-2 border-t border-neutral-800 pt-3 sm:grid-cols-2">
+            <div className={"grid gap-2 border-t border-neutral-800 pt-3 sm:grid-cols-2 " + (showFilters ? "" : "hidden")}>
               <select aria-label="Filter library by category" value={libraryCategory} onChange={event => setLibraryCategory(event.target.value)} className={field + " py-2 text-xs"}>
                 <option value="all">All categories ({libraryStats.files})</option>
                 {libraryCategories.map(([category, count]) => <option key={category} value={category}>{category} ({count})</option>)}
@@ -297,7 +298,7 @@ export function LibraryPage({
                 <option value="all">All channels</option>
                 {libraryChannels.map(([channel, count]) => <option key={channel} value={channel}>{channel} ({count})</option>)}
               </select>
-            </div>}
+            </div>
             <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-neutral-500">
               <p>{visibleLibraryJobs.length} of {libraryTotalJobs} jobs visible (matching filters) · {filtered.length} loaded media items</p>
               {filtersActive && <button type="button" onClick={resetFilters} className="flex items-center gap-1 text-rose-300 hover:text-rose-200"><X className="size-3" />Reset filters</button>}
@@ -334,7 +335,7 @@ export function LibraryPage({
                       if (event.key === "Enter") openItem(item);
                     }
                   }}
-                  className={"group min-w-0 cursor-pointer rounded-2xl border bg-[#191a20] p-2.5 transition-colors focus-visible:outline-2 focus-visible:outline-rose-400 " +
+                  className={"group relative min-w-0 cursor-pointer rounded-2xl border bg-[#191a20] p-2.5 transition-colors focus-visible:outline-2 focus-visible:outline-rose-400 " +
                     (active ? "border-rose-500 shadow-[0_0_0_1px_rgba(244,63,94,.25)]" : "border-neutral-800 hover:border-neutral-600") +
                     (libraryLayout === "list" ? " flex items-center gap-3" : "")}>
                   {artwork(item, libraryLayout === "list" ? "list" : "card")}
@@ -369,7 +370,7 @@ export function LibraryPage({
           </div>}
         </div>
 
-        {inspectorOpen && selected && <aside aria-label="Selected media details" className="min-w-0 rounded-2xl border border-neutral-800 bg-[#141519] p-4 lg:col-start-2 2xl:col-start-3 2xl:row-start-1">
+        {inspectorOpen && selected && <aside aria-label="Selected media details" className="min-w-0 rounded-2xl border border-neutral-800 bg-[#141519] p-4 lg:col-start-2 xl:col-start-3 xl:row-start-1">
           <div className="mb-3 flex items-center justify-between">
             <p className="text-xs font-bold uppercase tracking-widest text-neutral-400">Media details</p>
             <button type="button" onClick={() => setInspectorOpen(false)} aria-label="Close media details" className="rounded-lg p-2 text-neutral-400 hover:bg-neutral-800 hover:text-white"><X className="size-4" /></button>
