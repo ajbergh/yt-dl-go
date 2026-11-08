@@ -1,11 +1,13 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import {
   Activity, ArrowDownAZ, Clock3, Copy, FileAudio,
-  FileText, Film, FolderOpen, Grid2X2, HardDrive, Heart, List, Music2,
+  FileText, Film, FolderOpen, Grid2X2, HardDrive, Heart, List, Music2, Plus, Pencil, Layers,
   Play, RefreshCw, Search, SlidersHorizontal, Trash2, Users, X,
 } from "lucide-react";
 import type { DownloadFile, DownloadJob, ServiceConnection } from "../lib/downloader";
 import { userFacingMessage } from "../lib/messages";
+import { confirmAction } from "../lib/desktop";
+import { addCollection, collectionNameIsAvailable, libraryCollectionsKey, readCollections, removeCollection, renameCollection, toggleCollectionItem, type MediaCollection } from "../lib/library-collections";
 import {
   LibraryThumbnail, button, dateLabel, durationLabel, field, formatBytes,
   statusClass, statusLabels, type LibraryFilter,
@@ -55,7 +57,7 @@ type MediaItem = {
   available: boolean;
 };
 type SortMode = "recent" | "oldest" | "title" | "size" | "duration";
-type LibrarySection = "all" | "favorites" | "recent";
+type LibrarySection = "all" | "favorites" | "recent" | "playlists";
 const favoritesStorageKey = "yt-dl-go:library-favorites-v2";
 const sortStorageKey = "yt-dl-go:library-sort-v2";
 const recentCutoff = Date.now() - 30 * 86400000;
@@ -114,6 +116,15 @@ export function LibraryPage({
   const [selectedKey, setSelectedKey] = useState("");
   const [inspectorOpen, setInspectorOpen] = useState(true);
   const [showFilters, setShowFilters] = useState(false);
+  const [collections, setCollections] = useState<MediaCollection[]>(readCollections);
+  const [activeCollectionID, setActiveCollectionID] = useState("");
+  const [showCollectionForm, setShowCollectionForm] = useState(false);
+  const [newCollectionName, setNewCollectionName] = useState("");
+  const [renameCollectionID, setRenameCollectionID] = useState("");
+  const [renamedCollectionName, setRenamedCollectionName] = useState("");
+  const [collectionError, setCollectionError] = useState("");
+  const [showChannelList, setShowChannelList] = useState(false);
+  const [selectedPlaylistID, setSelectedPlaylistID] = useState("");
   const searchRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -124,6 +135,10 @@ export function LibraryPage({
     try { window.localStorage.setItem(sortStorageKey, sort); }
     catch { /* Sorting remains available within this session. */ }
   }, [sort]);
+  useEffect(() => {
+    try { window.localStorage.setItem(libraryCollectionsKey, JSON.stringify(collections)); }
+    catch { /* Collections remain editable for the current session. */ }
+  }, [collections]);
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "f") {
@@ -145,8 +160,13 @@ export function LibraryPage({
     audio: allLoaded.filter(item => item.mediaType === "audio").length,
     favorites: allLoaded.filter(item => favorites.includes(item.key)).length,
   }), [allLoaded, favorites]);
+  const activeCollection = collections.find(collection => collection.id === activeCollectionID);
+  const playlistJobs = libraryJobs.filter(job => job.kind === "playlist" && job.files.length > 0);
   const filtered = useMemo(() => {
+    const collection = collections.find(entry => entry.id === activeCollectionID);
     const visible = loaded.filter(item => {
+      if (collection && !collection.itemKeys.includes(item.key)) return false;
+      if (section === "playlists" && (item.job.kind !== "playlist" || (selectedPlaylistID && item.job.id !== selectedPlaylistID))) return false;
       if (section === "favorites" && !favorites.includes(item.key)) return false;
       if (section === "recent") {
         const timestamp = new Date(item.job.createdAt).getTime();
@@ -155,9 +175,9 @@ export function LibraryPage({
       return true;
     });
     return sortMedia(visible, sort);
-  }, [loaded, section, favorites, sort]);
+  }, [loaded, section, favorites, sort, collections, activeCollectionID, selectedPlaylistID]);
   const selected = filtered.find(item => item.key === selectedKey) || filtered[0];
-  const filtersActive = Boolean(librarySearch || libraryFilter !== "all" || libraryCategory !== "all" || libraryChannel !== "all" || section !== "all");
+  const filtersActive = Boolean(librarySearch || libraryFilter !== "all" || libraryCategory !== "all" || libraryChannel !== "all" || section !== "all" || activeCollectionID);
 
   function resetFilters() {
     setLibrarySearch("");
@@ -165,11 +185,75 @@ export function LibraryPage({
     setLibraryCategory("all");
     setLibraryChannel("all");
     setSection("all");
+    setActiveCollectionID("");
+    setSelectedPlaylistID("");
   }
   function navigate(type: LibraryFilter, nextSection: LibrarySection = "all") {
     setLibraryFilter(type);
+    setLibraryChannel("all");
     setSection(nextSection);
+    setActiveCollectionID("");
+    setSelectedPlaylistID("");
     setSelectedKey("");
+  }
+  function browseCollection(id: string) {
+    setActiveCollectionID(id);
+    setSelectedPlaylistID("");
+    setLibraryFilter("all");
+    setLibraryCategory("all");
+    setLibraryChannel("all");
+    setSection("all");
+    setSelectedKey("");
+  }
+  function browseChannel(channel: string) {
+    setActiveCollectionID("");
+    setSelectedPlaylistID("");
+    setLibraryFilter("all");
+    setLibraryCategory("all");
+    setSection("all");
+    setLibraryChannel(channel);
+    setSelectedKey("");
+  }
+  function browsePlaylist(id: string) {
+    setActiveCollectionID("");
+    setSelectedPlaylistID(id);
+    setLibraryFilter("all");
+    setLibraryCategory("all");
+    setLibraryChannel("all");
+    setSection("playlists");
+    setSelectedKey("");
+  }
+  function createCollection(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!collectionNameIsAvailable(collections, newCollectionName)) {
+      setCollectionError("Choose a unique collection name (up to 80 characters).");
+      return;
+    }
+    const id = "c_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 10);
+    setCollections(previous => addCollection(previous, id, newCollectionName));
+    browseCollection(id);
+    setNewCollectionName("");
+    setCollectionError("");
+    setShowCollectionForm(false);
+  }
+  function saveCollectionRename(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!collectionNameIsAvailable(collections, renamedCollectionName, renameCollectionID)) {
+      setCollectionError("Choose a unique collection name (up to 80 characters).");
+      return;
+    }
+    setCollections(previous => renameCollection(previous, renameCollectionID, renamedCollectionName));
+    setRenameCollectionID("");
+    setRenamedCollectionName("");
+    setCollectionError("");
+  }
+  async function deleteCollection(collection: MediaCollection) {
+    const confirmed = await confirmAction('Delete collection "' + collection.name + '"? The downloaded files are not affected.');
+    if (!confirmed) return;
+    setCollections(previous => removeCollection(previous, collection.id));
+    if (activeCollectionID === collection.id) browseCollection("");
+    setRenameCollectionID("");
+    setCollectionError("");
   }
   function toggleFavorite(key: string) {
     setFavorites(previous => previous.includes(key) ? previous.filter(entry => entry !== key) : [...previous, key]);
