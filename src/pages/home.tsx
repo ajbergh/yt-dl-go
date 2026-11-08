@@ -68,7 +68,7 @@ export function HomePage() {
 
   const {
     busyAction, actionError, preview, setPreview, clearedQueueItems, jobAction,
-    retryPlaylistItem, retryAllFailedItems, updateJobConfiguration, bulkJobAction, previewFile, saveFile, filesystemAction, reorderQueuedJobs,
+    retryPlaylistItem, retryAllFailedItems, updateJobConfiguration, bulkJobAction, bulkForgetLibraryItems, previewFile, saveFile, filesystemAction, reorderQueuedJobs,
     downloadNext, reorderPlaylistItems, batchAction, clearCompleted,
   } = useJobs({
     connection, serviceReady, jobs, setJobs, queuedJobsOrdered, setNotice, refreshLibrary,
@@ -440,6 +440,7 @@ export function HomePage() {
           previewFile={previewFile}
           filesystemAction={filesystemAction}
           jobAction={jobAction}
+          bulkForgetLibraryItems={bulkForgetLibraryItems}
         />}
 
         {tab === "settings" && <SettingsPage
