@@ -20,7 +20,7 @@ type LibraryStats = {
   managedBytes: number;
   publishedBytes: number;
 };
-type LibraryJobAction = "retry" | "delete-all" | "remove-library-item";
+type LibraryJobAction = "retry" | "delete-all" | "remove-library-item" | "delete-library-file";
 type LibraryPageProps = {
   libraryJobs: DownloadJob[];
   visibleLibraryJobs: DownloadJob[];
@@ -585,9 +585,15 @@ export function LibraryPage({
                 onClick={() => void jobAction(selected.job, "remove-library-item", selected.file.id)}><X className="size-3.5" />Forget item</button>
             </div>
             <button type="button" className={button + " w-full border-red-900/70 text-red-300 hover:border-red-700 hover:bg-red-950/40"}
+              title="Permanently delete only the selected file"
+              disabled={busyAction === selected.job.id || !selected.available || !selected.file.outputRelativePath}
+              onClick={() => void jobAction(selected.job, "delete-library-file", selected.file.id)}>
+              <Trash2 className="size-4" />Delete selected file
+            </button>
+            <button type="button" className={button + " w-full border-red-900/70 text-red-300 hover:border-red-700 hover:bg-red-950/40"}
               title="Permanently delete every file belonging to this download job"
               disabled={busyAction === selected.job.id} onClick={() => void jobAction(selected.job, "delete-all")}>
-              <Trash2 className="size-4" />Delete files
+              <Trash2 className="size-4" />Delete entire download
             </button>
             {selected.job.files.length > 1 && <p className="text-xs text-amber-300">Deletes all {selected.job.files.length} files from this download job, not only the selected item.</p>}
             {(selected.job.status === "partial" || selected.job.status === "failed" || selected.job.status === "cancelled") &&
