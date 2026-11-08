@@ -105,7 +105,9 @@ export function useLibraryOrganization(connection: ServiceConnection): {
   }, [connection]);
 
   useEffect(() => {
-    void load();
+    // Schedule the external data read after the effect body. React effects must
+    // not synchronously call a state-setting loader during render commit.
+    void Promise.resolve().then(load);
     return () => { requestGeneration.current += 1; writable.current = false; };
   }, [load]);
 
