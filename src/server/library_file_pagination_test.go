@@ -102,6 +102,7 @@ func TestGlobalMediaPaginationReturnsOnlySelectedFilesAndStableSort(t *testing.T
 	if r := request(s, http.MethodPost, "/api/library/files", "", nil); r.Code != http.StatusMethodNotAllowed {
 		t.Fatalf("unexpected method = %d", r.Code)
 	}
+	s.cfg.token = "expected-library-token"
 	if r := request(s, http.MethodGet, "/api/library/files", "", map[string]string{"Authorization": "Bearer wrong"}); r.Code != http.StatusUnauthorized {
 		t.Fatalf("unauthorized media file list = %d", r.Code)
 	}
