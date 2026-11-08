@@ -105,6 +105,10 @@ func TestOpenJobStoreSnapshotsEachPendingMigration(t *testing.T) {
 			t.Fatalf("prepare v25 database by removing the v30 %s column: %v", column, err)
 		}
 	}
+	if _, err := store.db.Exec(`DROP TABLE library_organization`); err != nil {
+		_ = store.close()
+		t.Fatalf("prepare v25 database by removing the v32 organization table: %v", err)
+	}
 	if _, err := store.db.Exec(`DELETE FROM schema_migrations WHERE version > 25`); err != nil {
 		_ = store.close()
 		t.Fatalf("prepare v25 migration history: %v", err)
@@ -128,14 +132,19 @@ func TestOpenJobStoreSnapshotsEachPendingMigration(t *testing.T) {
 	}
 
 	snapshots := migrationSnapshots(t, root)
-	if len(snapshots) != 7 { // initial v1 plus upgrades before v26 through v31.
+	if len(snapshots) != 8 { // initial v1 plus upgrades before v26 through v32.
 		t.Fatalf("migration snapshot count = %d, want 7: %v", len(snapshots), snapshots)
 	}
 	foundV26, foundV27, foundV28, foundV29, foundV30 := false, false, false, false, false
-	foundV31 := false
+	foundV31, foundV32 := false, false
 	for _, path := range snapshots {
 		name := filepath.Base(path)
 		switch {
+		case strings.Contains(name, "v32-from-v31-"):
+			foundV32 = true
+			if version := snapshotMigrationVersion(t, path); version != 31 {
+				t.Errorf("v32 snapshot records schema version %d, want 31", version)
+			}
 		case strings.Contains(name, "v31-from-v30-"):
 			foundV31 = true
 			if version := snapshotMigrationVersion(t, path); version != 30 {
@@ -168,8 +177,8 @@ func TestOpenJobStoreSnapshotsEachPendingMigration(t *testing.T) {
 			}
 		}
 	}
-	if !foundV26 || !foundV27 || !foundV28 || !foundV29 || !foundV30 || !foundV31 {
-		t.Fatalf("missing per-migration snapshots: v26=%v v27=%v v28=%v v29=%v v30=%v; paths=%v", foundV26, foundV27, foundV28, foundV29, foundV30, snapshots)
+	if !foundV26 || !foundV27 || !foundV28 || !foundV29 || !foundV30 || !foundV31 || !foundV32 {
+		t.Fatalf("missing per-migration snapshots: v26=%v v27=%v v28=%v v29=%v v30=%v v31=%v v32=%v; paths=%v", foundV26, foundV27, foundV28, foundV29, foundV30, foundV31, foundV32, snapshots)
 	}
 }
 
