@@ -26,9 +26,9 @@
 | M07 | Channel and source playlist browsing | Partial | Sidebar channel facet shortcuts plus loaded source-playlist view; true server-wide playlist grouping remains |
 | M08 | User collections | Partial | SQLite-backed create/rename/delete/membership and portable ZIP v2 export/import implemented; global collection browse, visual QA and CI remain |
 | M09 | Dedicated per-file permanent delete | Complete | Selected-file API, path validation and preservation tests; previous branch head `e795208` passed CI and desktop builds |
-| M10 | Multi-select and bulk file actions | Not started | Needs safe selection and backend semantics |
-| M11 | Keyboard and accessibility polish | Partial | Ctrl/Cmd+F, focusable cards, Enter preview; audit still needed |
-| M12 | High-scale performance | Partial | Existing server page cursors and thumbnail loading; virtualization and server-wide file sorting remain |
+| M10 | Multi-select and bulk file actions | Partial | Loaded-page Ctrl/Cmd, Shift and select-all; bulk favorites, collections, and confirmed metadata-only forget (100 max); permanent bulk file deletion intentionally unsupported |
+| M11 | Keyboard and accessibility polish | Partial | Ctrl/Cmd+F/A, Escape, arrow focus/selection, Shift ranges, and Enter preview; screen-reader and contrast audit still needed |
+| M12 | High-scale performance | Partial | Existing server page cursors plus viewport-gated local thumbnail fetches (400px prefetch margin); grid virtualization and global file sorting remain |
 | M13 | Desktop responsive visual acceptance | Not started | Manually compare mockup with native windows on Win/macOS/Linux |
 | M14 | Automated browser tests | In progress | Repaired stale Library heading and empty-library browser selectors; latest CI E2E rerun required |
 | M15 | Cross-platform desktop CI | In progress | Reverify latest branch head after changes |
@@ -44,6 +44,10 @@
 - [x] Implement basic create/rename/delete collection and add/remove media UX without touching underlying downloads.
 - [x] Add UI regression tests for new organization flows.
 - [ ] Verify final branch CI; fix failing jobs or document reproducible blockers.
+- [x] Implement loaded-page multi-select (plain, Ctrl/Cmd, Shift, Ctrl/Cmd+A, arrows, Escape) and safe batch favorites/collection operations.
+- [x] Add single-confirmation, metadata-only bulk forget (up to 100 loaded entries) with partial failure reporting and one Library refresh.
+- [x] Defer authenticated local thumbnail blob requests until cards enter a 400px viewport margin, with fallback when IntersectionObserver is unavailable.
+- [x] Add unit/integration coverage for selection, bulk changes, partial failures, keyboard shortcuts and local thumbnail scheduling.
 - [x] Separate `Delete selected file` from `Delete entire download`; reject modified/symlinked paths and preserve sibling files and history.
 - [x] Add backend and frontend regression tests for single-file deletion and refresh browser E2E button text.
 - [x] Implement SQLite v32 organization persistence, authenticated GET/PUT endpoints, revision-based conflict rejection, and one-time legacy preference migration.
@@ -77,11 +81,15 @@
 - [x] Explicit job-wide Delete label; warning for multi-file jobs.
 - [x] Existing confirmation for job-wide Delete.
 - [x] Dedicated single-file permanent deletion endpoint and UI, guarded by tracked-path validation and native confirmation (latest CI to verify).
-- [ ] Standard multiselect keyboard behavior and safe batch confirmations.
+- [x] Loaded-page multiselect keyboard behavior and single-confirmation metadata-only bulk forget; permanent bulk deletion intentionally not offered.
 - [ ] Screen-reader and high-contrast desktop audit.
 - [ ] Complete reduced-motion/mobile/narrow visual audit.
 
 ## CI history / validation truthfulness
+
+- M10 / M11 work: `src/lib/library-selection.ts` provides deterministic range/additive selection and bounded batch favorite/collection helpers. `src/pages/library.tsx` renders the selection toolbar and keyboard controls. `src/hooks/use-jobs.ts` bulk-forgets **only indexed Library entries**, with one confirmation, per-item error reporting, and a 100-item cap; no downloaded media or job history is deleted. CI on the latest branch head is pending.
+- M12 incremental performance: `LibraryThumbnail` now gates local authenticated thumbnail blob fetches behind an `IntersectionObserver` with a 400px prefetch margin, falls back to immediate loading in unsupported WebViews, and retains native `loading=lazy` for remote art. Visual/window inspection and full-list virtualization are still outstanding.
+- Previous PR head `c58030a` passed the **CI, CodeQL and desktop builds** workflows on 2026-11-08. New M10-M12 commits require fresh checks.
 
 - Portable ZIP v2 retains `state.db` for private backups and adds only validated, tracked favorites and collections to `library.json`. v1 ZIP imports remain supported. Source `jobId:fileId` references map to deterministic imported IDs, while absent/stale entries are ignored. Merge never deletes existing favorites, merges same-name collections, and remaps colliding collection IDs. Organization and media import share one SQLite transaction; a failure rolls back both. Added round-trip, idempotency, legacy-v1, validation and 200-collection-limit rollback tests. **Latest-head CI pending**.
 
