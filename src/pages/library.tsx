@@ -194,7 +194,7 @@ export function LibraryPage({
   const artwork = (item: MediaItem, variant: "card" | "inspector" | "list") => (
     <div className={"relative overflow-hidden bg-neutral-950 " + (variant === "list" ? "w-24 shrink-0 rounded-lg" : "w-full rounded-xl")}>
       <LibraryThumbnail connection={connection} jobId={item.job.id} file={item.file}
-        audio={item.mediaType === "audio"} className="aspect-video !w-full rounded-lg bg-neutral-900 object-cover" />
+        audio={item.mediaType === "audio"} className="aspect-video w-full rounded-lg bg-neutral-900 object-cover" />
       {variant !== "list" && <>
         <span className="absolute bottom-2 right-2 rounded-md bg-black/85 px-2 py-0.5 text-[11px] font-semibold tabular-nums text-white">
           {item.file.durationSeconds ? durationLabel(item.file.durationSeconds) : item.mediaType === "audio" ? "Audio" : "Video"}
@@ -355,7 +355,7 @@ export function LibraryPage({
                     aria-label={(favorites.includes(item.key) ? "Remove favorite: " : "Add favorite: ") + item.title}
                     aria-pressed={favorites.includes(item.key)}
                     onClick={event => { event.stopPropagation(); toggleFavorite(item.key); }}
-                    className={(libraryLayout === "grid" ? "absolute" : "") + " rounded-full p-2 text-neutral-300 hover:bg-neutral-700 hover:text-rose-300 " +
+                    className={(libraryLayout === "grid" ? "absolute" : "") + " rounded-full bg-black/75 p-2 text-neutral-300 hover:bg-neutral-700 hover:text-rose-300 " +
                       (libraryLayout === "grid" ? "right-4 top-4 " : "") + (favorites.includes(item.key) ? "text-rose-400" : "")}>
                     <Heart className="size-4" fill={favorites.includes(item.key) ? "currentColor" : "none"} />
                   </button>
