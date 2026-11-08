@@ -48,13 +48,23 @@ Search and server filters work against the API's existing 50-job pagination. Sor
 
 **Remaining limitations:** organization metadata is not in Library ZIP export/import, and UI membership/count filters remain limited to loaded pages. Revision conflicts require a manual reload; automatic multi-window change broadcasting is not implemented.
 
+## Safe single-file deletion (2026-11-08)
+
+- Added a separate authenticated `DELETE /api/jobs/{jobID}/library-files/{fileID}` endpoint in `src/server/library_file_delete.go`.
+- This action verifies the selected published file (and tracked caption sidecar, if present) under a rooted filesystem handle, rejects changed files and symbolic links, and refuses operations while the job has active readers.
+- The endpoint removes the **selected file only**, then excludes that item from the Library index while leaving siblings and job history intact. Existing private thumbnails and working copies for that file are cleaned up using current helpers.
+- The Library inspector now offers **Delete selected file** and **Delete entire download** as distinct actions. The selected-file action has its own irreversible-deletion confirmation showing the media title.
+- Added Go regression tests for two-file playlists, restart/history consistency, modified/symlinked files, unknown file IDs and unauthorized access. Added frontend confirmation/routing test and updated the browser E2E selector for the newly labeled job-wide action.
+
+**Follow-up:** Review partial filesystem failures, UI feedback, and native-window tests. Automated verification for this head is pending. Export/import of favorites and collections remains a separate roadmap milestone.
+
 ## Next development passes
 
 - [ ] Real virtualized scrolling and scalable thumbnail-fetch scheduling for 10,000+ media items
 - [ ] Server-supported global file-based sorting, favorites filtering, and page cursors
 - [x] Durable SQLite-backed favorites and user-defined collections (migration v32; export/import pending)
 - [ ] Grouped channel and source-playlist browsing
-- [ ] True per-file permanent deletion with dedicated Go API and explicit confirmation
+- [x] True per-file permanent deletion with dedicated Go API and explicit confirmation (current CI pending)
 - [ ] Multi-select and safe, purpose-specific bulk actions
 - [ ] Optional richer playback experience and metadata indexing
 - [ ] Manual native-window visual acceptance on Windows, macOS, and Linux
