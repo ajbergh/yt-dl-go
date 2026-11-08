@@ -190,6 +190,52 @@ beforeEach(async () => {
     if (path === "/api/inspect") return Response.json(inspection);
     if (path === "/api/jobs" && init.method === "POST") return Response.json(job, { status: 202 });
     if (path === "/api/jobs") return Response.json({ jobs: rows });
+    if (path === "/api/library/files") {
+      const params = new URL(url).searchParams;
+      const type = params.get("type");
+      const category = params.get("category");
+      const channel = params.get("channel");
+      const search = (params.get("q") || "").toLowerCase();
+      const collection = organizationResponse.collections.find(value => value.id === params.get("collection"));
+      let items = rows.filter(job => ["completed", "partial", "failed", "cancelled"].includes(job.status))
+        .flatMap(job => (job.files || []).map(file => ({ ...job, files: [file] })))
+        .filter(job => {
+          const file = job.files[0];
+          const mediaType = file.mediaType || job.mediaType || "video";
+          const mediaCategory = job.category || file.category || "Uncategorized";
+          const mediaChannel = file.author?.trim() || "Unknown channel";
+          const key = job.id + ":" + file.id;
+          const text = [job.title, job.url, job.category, file.title, file.name, file.outputName, file.author, file.category].join(" ").toLowerCase();
+          return (!type || mediaType === type) && (!category || mediaCategory === category)
+            && (!channel || mediaChannel === channel) && (!search || text.includes(search))
+            && (params.get("favorites") !== "1" || organizationResponse.favorites.includes(key))
+            && (!params.get("collection") || collection?.itemKeys.includes(key))
+            && (params.get("playlists") !== "1" || job.kind === "playlist")
+            && (!params.get("source") || job.id === params.get("source"))
+            && (params.get("recent") !== "1" || new Date(job.createdAt).getTime() > Date.now() - 30 * 86400000);
+        });
+      const sort = params.get("sort") || "recent";
+      const compareKey = job => {
+        const file = job.files[0];
+        if (sort === "title") return (file.title || file.outputName || file.name || "").toLowerCase();
+        if (sort === "size") return file.size || 0;
+        if (sort === "duration") return file.durationSeconds || 0;
+        return job.createdAt;
+      };
+      items = items.sort((a, b) => {
+        const ka = compareKey(a), kb = compareKey(b);
+        const direction = sort === "oldest" || sort === "title" ? 1 : -1;
+        return (ka < kb ? -direction : ka > kb ? direction : 0) ||
+          (a.files[0].id < b.files[0].id ? -direction : a.files[0].id > b.files[0].id ? direction : 0);
+      });
+      const limit = Number(params.get("limit") || 50);
+      const offset = Number(params.get("cursor") || 0);
+      const paged = items.slice(offset, offset + limit);
+      return Response.json({
+        jobs: paged, totalFiles: items.length, totalJobs: new Set(items.map(job => job.id)).size,
+        nextCursor: offset + limit < items.length ? String(offset + limit) : undefined,
+      });
+    }
     if (path === "/api/library") return Response.json({ jobs: rows.filter(item => ["completed", "partial", "failed", "cancelled"].includes(item.status) && item.files?.length > 0) });
     if (path === "/api/queue/order" && init.method === "PUT") {
       const { jobIds } = JSON.parse(init.body);
