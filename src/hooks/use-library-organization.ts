@@ -70,8 +70,6 @@ export function useLibraryOrganization(connection: ServiceConnection): {
   const load = useCallback(async () => {
     const generation = ++requestGeneration.current;
     writable.current = false;
-    setReady(false);
-    setError("");
     try {
       let data = normalizeOrganization(await api<LibraryOrganization>(connection, "/api/library/organization", {
         signal: AbortSignal.timeout(10000),
@@ -96,10 +94,12 @@ export function useLibraryOrganization(connection: ServiceConnection): {
       savedChange.current = 0;
       setOrganization(data);
       mirrorLegacyCache(data);
+      setError("");
       writable.current = true;
       setReady(true);
     } catch (reason) {
       if (generation !== requestGeneration.current) return;
+      setReady(false);
       setError(reason instanceof Error ? reason.message : "Could not load library organization.");
     }
   }, [connection]);
@@ -169,6 +169,6 @@ export function useLibraryOrganization(connection: ServiceConnection): {
     error,
     toggleFavorite,
     setCollections,
-    reload: () => { void load(); },
+    reload: () => { setReady(false); setError(""); void load(); },
   };
 }
