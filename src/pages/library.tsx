@@ -64,7 +64,6 @@ type MediaItem = {
 type SortMode = "recent" | "oldest" | "title" | "size" | "duration";
 type LibrarySection = "all" | "favorites" | "recent" | "playlists";
 const sortStorageKey = "yt-dl-go:library-sort-v2";
-const recentCutoff = Date.now() - 30 * 86400000;
 
 function storedSort(): SortMode {
   try {
@@ -154,10 +153,6 @@ export function LibraryPage({
       if (collection && !collection.itemKeys.includes(item.key)) return false;
       if (section === "playlists" && (item.job.kind !== "playlist" || (selectedPlaylistID && item.job.id !== selectedPlaylistID))) return false;
       if (section === "favorites" && !favorites.includes(item.key)) return false;
-      if (section === "recent") {
-        const timestamp = new Date(item.job.createdAt).getTime();
-        if (!Number.isFinite(timestamp) || timestamp < recentCutoff) return false;
-      }
       return true;
     });
     return visible;
