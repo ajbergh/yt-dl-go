@@ -381,6 +381,7 @@ function LibraryTransferPanel({ connection, serviceReady }: Pick<SettingsPagePro
       <div>
         <h3 id="library-export-heading" className="text-sm font-bold">Library backup and import</h3>
         <p className="mt-1 max-w-2xl text-xs leading-relaxed text-neutral-400">Export library metadata, favorites, and collections as a ZIP. Media files are not included. Import adds missing items and merges favorites and collections without replacing your existing ones; settings, queues, and history stay on this device. Imported files must be downloaded again to play or save them.</p>
+        <p className="mt-2 max-w-2xl text-xs leading-relaxed text-amber-200">The ZIP also includes a private database snapshot containing saved app settings and diagnostics. Store exports securely. Import uses portable Library metadata only; it does not restore the private database.</p>
       </div>
       <div className="flex flex-wrap gap-2">
         <button type="button" className={button} onClick={() => void exportLibrary()} disabled={!serviceReady || exporting || importing}>
