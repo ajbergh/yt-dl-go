@@ -98,6 +98,21 @@ func TestDeleteSelectedLibraryFileRejectsModifiedOrMissingFiles(t *testing.T) {
 	if response := request(s, "GET", path, "", nil); response.Code != 404 {
 		t.Fatalf("unsupported GET should return 404, got %d", response.Code)
 	}
+	// Another indexed record claiming the same output must block deletion,
+	// even when that record belongs to a separate source job.
+	if _, err := s.store.db.Exec(`INSERT INTO library_items(file_id,source_job_id,source_item_index,file_json,output_path,created_at)
+		VALUES(?,?,?,?,?,?)`, "alias-probe", "other-job", 1, `{"title":"alias"}`, filePath, 1); err != nil {
+		t.Fatal(err)
+	}
+	if result := request(s, "DELETE", path, "", nil); result.Code != 409 {
+		t.Fatalf("shared tracked output should block deletion: %d %s", result.Code, result.Body.String())
+	}
+	if _, err := os.Stat(filePath); err != nil {
+		t.Fatalf("shared output was deleted: %v", err)
+	}
+	if _, err := s.store.db.Exec(`DELETE FROM library_items WHERE file_id=?`, "alias-probe"); err != nil {
+		t.Fatal(err)
+	}
 	if result := request(s, "DELETE", path, "", nil); result.Code != 204 {
 		t.Fatalf("valid deletion following rejection: %d %s", result.Code, result.Body.String())
 	}
