@@ -373,6 +373,7 @@ describe("Downloader UI and Go API integration", () => {
       expect(target).toBe("blob:library-export");
       expect(container.textContent).toContain("Library export downloaded.");
       expect(container.textContent).toContain("Media files are not included.");
+      expect(container.textContent).toContain("The ZIP also includes a private database snapshot");
     } finally {
       URL.createObjectURL = originalCreate;
       URL.revokeObjectURL = originalRevoke;
