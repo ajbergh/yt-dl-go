@@ -17,7 +17,7 @@ import (
 )
 
 const (
-	libraryExportFormatVersion = 2
+	libraryExportFormatVersion       = 2
 	libraryLegacyExportFormatVersion = 1
 )
 
