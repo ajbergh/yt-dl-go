@@ -43,7 +43,7 @@ func TestPortableOrganizationExportsOnlyIndexedReferences(t *testing.T) {
 	manifest, records := sampleLibraryImport()
 	_ = manifest
 	origin := libraryOrganization{
-		Revision: 8,
+		Revision:  8,
 		Favorites: []string{"original-job:original-file-1", "removed-job:removed-file"},
 		Collections: []libraryCollection{
 			{ID: "c_saved", Name: "Saved", ItemKeys: []string{"original-job:original-file-2", "removed-job:removed-file"}},
@@ -62,7 +62,7 @@ func TestPortableOrganizationExportsOnlyIndexedReferences(t *testing.T) {
 func TestLibraryOrganizationPortableImportMergesAndIsIdempotent(t *testing.T) {
 	s := newPersistenceTestServer(t)
 	existing := libraryOrganization{
-		Revision: 0,
+		Revision:  0,
 		Favorites: []string{"local:favorite"},
 		Collections: []libraryCollection{
 			{ID: "c_local", Name: "Watch Later", ItemKeys: []string{"local:favorite"}},
@@ -121,7 +121,7 @@ func TestPortableLibraryZIPRoundTripPreservesFavoritesAndCollections(t *testing.
 		Status: "completed", Title: "Portable video", CreatedAt: time.Date(2026, 10, 5, 12, 0, 0, 0, time.UTC).Format(time.RFC3339Nano),
 		Files: []mediaFile{{
 			ID: "portable-file", Name: "video.mp4", Size: 100, MimeType: "video/mp4", Title: "Video",
-			OutputPath: filepath.Join(source.cfg.root, "source-portable", "video.mp4"),
+			OutputPath:         filepath.Join(source.cfg.root, "source-portable", "video.mp4"),
 			OutputRelativePath: "Videos/video.mp4", ManagedAvailable: true, PublishedAvailable: true, SourceItemIndex: 1,
 		}},
 	}, dir: filepath.Join(source.cfg.root, "source-portable"), done: time.Now()}
@@ -129,7 +129,7 @@ func TestPortableLibraryZIPRoundTripPreservesFavoritesAndCollections(t *testing.
 		t.Fatal(err)
 	}
 	saved, conflict, err := source.store.saveLibraryOrganization(libraryOrganization{
-		Revision: 0,
+		Revision:  0,
 		Favorites: []string{"source-portable:portable-file", "deleted-job:deleted-file"},
 		Collections: []libraryCollection{
 			{ID: "c_videos", Name: "My Videos", ItemKeys: []string{"source-portable:portable-file"}},
@@ -229,7 +229,7 @@ func TestPortableLibraryImportRollsBackRecordsWhenCollectionLimitExceeded(t *tes
 	}
 	manifest, records := sampleLibraryImport()
 	incoming := &libraryExportOrganization{
-		Favorites: []string{"original-job:original-file-1"},
+		Favorites:   []string{"original-job:original-file-1"},
 		Collections: []libraryCollection{{ID: "c_new", Name: "Over Limit", ItemKeys: []string{"original-job:original-file-1"}}},
 	}
 	response := importPortableOrganizationArchive(t, s, portableOrganizationTestArchive(t, manifest, records, incoming))
