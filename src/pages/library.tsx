@@ -7,7 +7,8 @@ import {
 import type { DownloadFile, DownloadJob, ServiceConnection } from "../lib/downloader";
 import { userFacingMessage } from "../lib/messages";
 import { confirmAction } from "../lib/desktop";
-import { addCollection, collectionNameIsAvailable, libraryCollectionsKey, readCollections, removeCollection, renameCollection, toggleCollectionItem, type MediaCollection } from "../lib/library-collections";
+import { addCollection, collectionNameIsAvailable, removeCollection, renameCollection, toggleCollectionItem, type MediaCollection } from "../lib/library-collections";
+import { useLibraryOrganization } from "../hooks/use-library-organization";
 import {
   LibraryThumbnail, button, dateLabel, durationLabel, field, formatBytes,
   statusClass, statusLabels, type LibraryFilter,
@@ -58,16 +59,9 @@ type MediaItem = {
 };
 type SortMode = "recent" | "oldest" | "title" | "size" | "duration";
 type LibrarySection = "all" | "favorites" | "recent" | "playlists";
-const favoritesStorageKey = "yt-dl-go:library-favorites-v2";
 const sortStorageKey = "yt-dl-go:library-sort-v2";
 const recentCutoff = Date.now() - 30 * 86400000;
 
-function storedFavorites(): string[] {
-  try {
-    const value: unknown = JSON.parse(window.localStorage.getItem(favoritesStorageKey) || "[]");
-    return Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === "string") : [];
-  } catch { return []; }
-}
 function storedSort(): SortMode {
   try {
     const value = window.localStorage.getItem(sortStorageKey);
@@ -111,12 +105,11 @@ export function LibraryPage({
   loadMoreLibrary, connection, busyAction, previewFile, filesystemAction, jobAction,
 }: LibraryPageProps) {
   const [section, setSection] = useState<LibrarySection>("all");
-  const [favorites, setFavorites] = useState<string[]>(storedFavorites);
+  const { favorites, collections, ready: organizationReady, error: organizationError, toggleFavorite, setCollections, reload: reloadOrganization } = useLibraryOrganization(connection);
   const [sort, setSort] = useState<SortMode>(storedSort);
   const [selectedKey, setSelectedKey] = useState("");
   const [inspectorOpen, setInspectorOpen] = useState(true);
   const [showFilters, setShowFilters] = useState(false);
-  const [collections, setCollections] = useState<MediaCollection[]>(readCollections);
   const [activeCollectionID, setActiveCollectionID] = useState("");
   const [showCollectionForm, setShowCollectionForm] = useState(false);
   const [newCollectionName, setNewCollectionName] = useState("");
@@ -128,17 +121,9 @@ export function LibraryPage({
   const searchRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    try { window.localStorage.setItem(favoritesStorageKey, JSON.stringify(favorites)); }
-    catch { /* Favorites remain available within this session. */ }
-  }, [favorites]);
-  useEffect(() => {
     try { window.localStorage.setItem(sortStorageKey, sort); }
     catch { /* Sorting remains available within this session. */ }
   }, [sort]);
-  useEffect(() => {
-    try { window.localStorage.setItem(libraryCollectionsKey, JSON.stringify(collections)); }
-    catch { /* Collections remain editable for the current session. */ }
-  }, [collections]);
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "f") {
@@ -255,9 +240,6 @@ export function LibraryPage({
     setRenameCollectionID("");
     setCollectionError("");
   }
-  function toggleFavorite(key: string) {
-    setFavorites(previous => previous.includes(key) ? previous.filter(entry => entry !== key) : [...previous, key]);
-  }
   function openItem(item: MediaItem) {
     if (item.available) void previewFile(item.job, item.file);
   }
@@ -351,6 +333,11 @@ export function LibraryPage({
         </aside>
 
         <div className="min-w-0 space-y-4">
+          {organizationError && <div role="alert" className="flex items-center justify-between gap-3 rounded-xl border border-amber-700/60 bg-amber-950/40 px-4 py-3 text-xs text-amber-200">
+            <span>Could not save your media organization: {organizationError}. Changes are paused to prevent overwriting another window.</span>
+            <button type="button" className={button} onClick={reloadOrganization}>Reload organization</button>
+          </div>}
+          {!organizationReady && !organizationError && <p role="status" className="text-xs text-neutral-400">Loading saved collections and favorites…</p>}
           <div className="flex flex-wrap gap-2 rounded-xl border border-neutral-800 bg-neutral-900 p-2 lg:hidden">
             <label className="min-w-0 flex-1">
               <span className="sr-only">Browse media section</span>
