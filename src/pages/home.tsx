@@ -148,7 +148,7 @@ export function HomePage() {
     const text = `${job.title} ${job.url} ${job.category ?? ""} ${job.audioFormat ?? ""} ${job.subtitleLanguage ?? ""} ${job.files.map(file => `${file.title ?? ""} ${file.author ?? ""} ${file.category ?? ""} ${file.name} ${file.outputName ?? ""} ${file.outputRelativePath ?? ""} ${file.subtitle?.label ?? ""} ${file.subtitle?.languageCode ?? ""}`).join(" ")}`.toLowerCase();
     return (!query || text.includes(query))
       && (libraryFilter === "all" || job.files.some(file => (file.mediaType || job.mediaType || "video") === libraryFilter))
-      && (libraryCategory === "all" || category === libraryCategory)
+      && (libraryCategory === "all" || category === libraryCategory || job.files.some(file => file.category === libraryCategory))
       && (libraryChannel === "all" || channels.includes(libraryChannel));
   }), [libraryJobs, libraryFilter, librarySearch, libraryCategory, libraryChannel]);
   const libraryTotalJobs = libraryPage.totalJobs;
