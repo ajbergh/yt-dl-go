@@ -88,6 +88,8 @@ type itemProgress struct {
 	total         int64
 	speed         int64
 	processing    bool
+	slotReleased  bool // download slot already handed back for conversion
+	waiting       bool // downloaded, queued for a conversion slot
 	progressAt    time.Time
 	progressBytes int64
 	eventAt       time.Time
@@ -712,6 +714,11 @@ func (s *server) run(ctx context.Context, j *jobState, requested []queueItem) {
 	var nextMu, fatalMu sync.Mutex
 	nextIndex := 0
 	workerCount := min(6, len(work))
+	if j.MediaType == "audio" && j.AudioFormat == "mp3" {
+		// Items waiting for a conversion slot no longer hold a download slot, but
+		// they do occupy a worker; add headroom so downloads keep flowing.
+		workerCount = min(6+2*s.conversionLimit(), len(work))
+	}
 	var workers sync.WaitGroup
 	for range workerCount {
 		workers.Add(1)
@@ -952,11 +959,12 @@ func (s *server) acquireItemSlot(ctx context.Context, j *jobState, index int, ti
 
 func (s *server) releaseItemSlot(j *jobState, index int) {
 	s.mu.Lock()
+	progress := j.itemProgress[index]
 	delete(j.itemProgress, index)
 	if j.ActiveItemCount > 0 {
 		j.ActiveItemCount--
 	}
-	if s.activeItems > 0 {
+	if s.activeItems > 0 && (progress == nil || !progress.slotReleased) {
 		s.activeItems--
 	}
 	s.refreshQueueItemLocked(j, index)
@@ -1066,6 +1074,7 @@ func (s *server) refreshQueueItemLocked(j *jobState, index int) {
 		return
 	}
 	item := &j.Items[index-1]
+	item.WaitingToConvert = false
 	if files := itemFiles(j, index); len(files) > 0 {
 		file := files[0]
 		item.Status = "completed"
@@ -1107,6 +1116,7 @@ func (s *server) refreshQueueItemLocked(j *jobState, index int) {
 		if progress.processing {
 			item.Status = "processing"
 		}
+		item.WaitingToConvert = progress.processing && progress.waiting
 		item.Progress = nil
 		if progress.total > 0 {
 			value := min(100.0, 100*float64(progress.downloaded)/float64(progress.total))
@@ -1630,12 +1640,16 @@ func (s *server) transferAudio(ctx context.Context, j *jobState, engine nativeCl
 	if ctx.Err() != nil {
 		return result, ctx.Err()
 	}
+	s.setProcessing(j, queueIndex, true)
+	defer s.setProcessing(j, queueIndex, false)
+	if !s.beginConversion(ctx, j, queueIndex) {
+		return result, ctx.Err()
+	}
+	defer s.endConversion()
 	output, openErr := os.OpenFile(outputPart, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
 	if openErr != nil {
 		return result, errStorage
 	}
-	s.setProcessing(j, queueIndex, true)
-	defer s.setProcessing(j, queueIndex, false)
 	s.mu.Lock()
 	j.Progress = floatPointer(99)
 	s.persistJobLocked(j)

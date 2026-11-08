@@ -83,6 +83,8 @@ type queueItem struct {
 	FileID           string   `json:"fileId,omitempty"`
 	FileIDs          []string `json:"fileIds,omitempty"`
 	RetryRequested   bool     `json:"retryRequested,omitempty"`
+	// WaitingToConvert marks a downloaded source queued for a conversion slot.
+	WaitingToConvert bool `json:"waitingToConvert,omitempty"`
 }
 
 type Job struct {
@@ -171,6 +173,8 @@ type server struct {
 	scheduleChanged     chan struct{}
 	activeDownloads     int
 	activeItems         int
+	activeConversions   int
+	convertSlots        int
 	engineMu            sync.Mutex
 	ctx                 context.Context
 	stop                context.CancelFunc

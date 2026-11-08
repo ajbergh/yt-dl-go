@@ -64,6 +64,12 @@ func (s *server) transferChapterMP3(ctx context.Context, j *jobState, engine nat
 		return nil, errLimit
 	}
 	s.updateProgress(j, queueIndex, sourceSize, sourceSize+outputBudget)
+	s.setProcessing(j, queueIndex, true)
+	defer s.setProcessing(j, queueIndex, false)
+	if !s.beginConversion(ctx, j, queueIndex) {
+		return nil, ctx.Err()
+	}
+	defer s.endConversion()
 	source, err := os.Open(sourcePath)
 	if err != nil {
 		return nil, errStorage

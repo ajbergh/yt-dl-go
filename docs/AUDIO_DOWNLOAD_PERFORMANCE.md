@@ -41,6 +41,13 @@ again (which previously produced `... (2).mp3`). Reuse requires the same video, 
 MP3 bitrate, no captions, no chapter split, and a published file still on disk with its recorded
 size. The new Library entry shares that file, so deleting files from one entry removes it for both.
 
+Downloading and converting use separate queues. An item returns its download slot as soon
+its AAC source is on disk, so the next track starts downloading while finished sources wait for a
+conversion slot. Conversion concurrency defaults to half the CPU cores (1-4); set `CONVERT_SLOTS`
+(1-16) to override. Items waiting for conversion keep the `processing` status and carry `waitingToConvert: true`, which the Queue shows as "Waiting to convert". For MP3 jobs the worker pool
+is widened by twice the conversion limit so waiting sources never starve downloads; the backlog of
+waiting sources is bounded by that pool.
+
 MP3 encoding stays ordered and stateful. Original M4A skips encoding entirely.
 The MP3 bitrate controls the output, not the size or quality of the source AAC
 download. Source quality is preserved rather than silently lowered.
