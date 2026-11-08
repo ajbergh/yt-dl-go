@@ -24,7 +24,7 @@ Design target: media-first, dark, Plex-inspired desktop library.
 
 Favorites and collections are now stored in the **SQLite state database (migration v32)**, using a versioned organization document. A legacy `localStorage` compatibility cache remains, and old local preferences are migrated when the database organization document is empty and at revision zero. They are included in portable Library ZIP v2 metadata exports/imports.
 
-Search and server filters work against the API's existing 50-job pagination. Sort and favorites filter apply to the currently loaded pages; to load more, use **Load more**. The sidebar count for media types reflects loaded records, while the overall library stats use server aggregates.
+The new Library uses a separate `/api/library/files` endpoint with **50 individual media files per page**, global SQLite sorting, and server-wide type/category/channel/search/favorites/collection filters. The legacy `/api/library` job-grouped endpoint remains available for older clients. Click **Load more** to append the next 50 files. Category/channel facets and total storage statistics remain server aggregates; the sidebar media-type counts and playlist discovery buttons indicate the loaded set.
 
 ## Follow-up implementation (2026-11-08)
 
@@ -66,7 +66,7 @@ Search and server filters work against the API's existing 50-job pagination. Sor
 - Library metadata and organization changes run in **one SQLite transaction**. Conflicts or invalid merged organization abort the entire import. Repeated imports are idempotent, including organization revision tracking.
 - Settings now reports when favorites/collections were restored. Go coverage includes export filtering, round-trip ZIP restore, merge/collision semantics, v1 compatibility, duplicate/invalid metadata rejection, and rollback on collection-limit errors.
 
-**Known limitations:** ZIP import adds metadata-only media entries without copying files. The restored media remains unavailable until downloaded again. Organization data is portable, but there is no direct reconciliation of imported media with existing local media whose IDs differ; server-wide filtering and virtualization remain future work. Latest-head CI validation is pending.
+**Known limitations:** ZIP import adds metadata-only media entries without copying files. The restored media remains unavailable until downloaded again. Organization data is portable, but there is no direct reconciliation of imported media with existing local media whose IDs differ. Global media filtering is supported by `/api/library/files`; full grid virtualization remains future work.
 
 ## Safe loaded-page multi-selection and thumbnail scheduling (2026-11-08)
 
@@ -74,15 +74,26 @@ Search and server filters work against the API's existing 50-job pagination. Sor
 - Selected items can be favorited/unfavorited or added/removed from a collection in one revision-checked organization update. Favorite and collection membership limits remain enforced.
 - **Forget selected (keep files)** requests one native confirmation, removes at most 100 individual Library index entries through existing authenticated per-file endpoints, and refreshes the Library once. It reports successes and failures separately and leaves failed entries selected for retry. Actual media files and job history remain untouched.
 - **No bulk permanent delete** action is offered in this phase. Permanent deletion remains an individually confirmed, guarded single-file operation; job-wide deletion remains separately labeled and confirmed.
-- Local authenticated thumbnail requests now begin only when a card enters an IntersectionObserver viewport margin (400px). Remote images retain native lazy loading; platforms without IntersectionObserver keep the previous immediate-thumbnail behavior. This is an incremental optimization, **not** a virtualized grid or server-wide file pagination.
+- Local authenticated thumbnail requests begin only when cards approach the viewport (400px margin). Remote images retain native lazy loading; platforms without IntersectionObserver keep immediate loading. This does **not** yet virtualize the grid.
 - Unit and integration tests cover additive/shift range selection, selection clearing and search focus safety, bounded organization edits, metadata-only bulk forget with partial failures, and deferred local thumbnail fetch behavior.
 
 **Validation:** The previous head `c58030a` passed CI, CodeQL and desktop builds. Latest bulk/performance CI must be checked independently. Native desktop screen-reader/visual acceptance remains incomplete.
 
+## File-grain SQLite pagination and global ordering (2026-11-08)
+
+- Added a distinct authenticated **`GET /api/library/files`** endpoint, preserving the existing job-grouped `/api/library` API. It returns at most 100 files per page (the UI requests 50), each with its source job metadata, a source count, global matching-media count, facets, storage stats, and an opaque cursor.
+- Supports global file-level sorts **recent, oldest, title A–Z, largest first and longest first**, with stable file-ID tie-breaking. Opaque cursors encode sort and filter fingerprint and reject use with a changed filter or sort. Invalid limits, filters and methods are rejected.
+- SQLite filters now operate on individual files for media type, category, channel and search, plus global favorites and collection memberships from the persistent organization document. `playlists=1` and `source=<jobID>` constrain playlist browsing even when a playlist spans many pages. Recent-only filtering is also server-side.
+- The store loader now accepts a list of selected file IDs to avoid materializing entire 10,000-file playlists when only 50 entries are requested. The React loader appends records by composite media identity rather than job ID and lets SQLite govern cross-page ordering. Only visible loaded records may be bulk-selected.
+- **Deletion safety:** The whole-download delete confirmation and inspector warning explicitly include all files in the source job, **even files not visible on loaded pages**. The separate confirmed individual-file deletion remains unchanged.
+- Added Go regression cases for global sorting, cursor validity, per-file organization facets and 10,100-file pagination bounds, plus UI regression coverage for 102 files in one playlist and favorites located beyond the first page.
+
+**Remaining:** Grid virtualization (rendering only visible cards), backend query-plan/index tuning on very large collections, complete source-playlist discovery outside loaded pages, native desktop visual review and final CI verification.
+
 ## Next development passes
 
 - [ ] Virtualized scrolling for 10,000+ media items (local thumbnails now defer fetching until near viewport)
-- [ ] Server-supported global file-based sorting, favorites filtering, and page cursors
+- [x] Global file-level keyset pagination, sort and favorites/collection filters via `/api/library/files` (latest CI pending)
 - [x] Durable SQLite-backed favorites and user-defined collections, including portable ZIP v2 export/import (latest ZIP CI pending)
 - [ ] Grouped channel and source-playlist browsing
 - [x] True per-file permanent deletion with dedicated Go API and explicit confirmation (previous completed CI green)
