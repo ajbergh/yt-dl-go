@@ -57,7 +57,7 @@ func TestGlobalMediaPaginationReturnsOnlySelectedFilesAndStableSort(t *testing.T
 		sort string
 		want []string
 	}{
-		{"recent", []string{"global-file-b", "global-file-a", "global-file-m", "global-file-z"}},
+		{"recent", []string{"global-file-b", "global-file-z", "global-file-m", "global-file-a"}},
 		{"oldest", []string{"global-file-a", "global-file-m", "global-file-z", "global-file-b"}},
 		{"title", []string{"global-file-a", "global-file-b", "global-file-m", "global-file-z"}},
 		{"size", []string{"global-file-a", "global-file-b", "global-file-m", "global-file-z"}},
