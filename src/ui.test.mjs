@@ -6,6 +6,7 @@ import { mergeJobActionResult } from "./hooks/use-jobs";
 import { terminalNotification } from "./components/downloader/view-model";
 import { userFacingMessage } from "./lib/messages";
 import { namingTokenNames, previewFilename, sanitizeFilenameComponent } from "./lib/naming";
+import { addCollection, collectionNameIsAvailable, normalizeCollections, renameCollection, removeCollection, toggleCollectionItem } from "./lib/library-collections";
 
 describe("filename naming preview", () => {
   test("shows each token and sanitizes the single-pass preview like the publisher", () => {
@@ -20,6 +21,34 @@ describe("filename naming preview", () => {
       .toBe("{title} - CON- sample [abc123] [60] [h264] mp4.mp4");
     expect(previewFilename("sample.{ext}", values, "mp4")).toBe("sample.mp4");
     expect(sanitizeFilenameComponent("CON")).toBe("_CON");
+  });
+});
+
+
+describe("Media Library collection model", () => {
+  test("rejects corrupt or duplicate collection entries while preserving valid memberships", () => {
+    const value = [
+      { id: "c_a", name: "  Watch Later  ", itemKeys: ["job:file", "job:file", "job:other"] },
+      { id: "c_b", name: "watch later", itemKeys: [] },
+      { id: "bad id!", name: "Invalid", itemKeys: [] },
+      { id: "c_c", name: "Music", itemKeys: [null, "job:track"] },
+    ];
+    expect(normalizeCollections(value)).toEqual([
+      { id: "c_a", name: "Watch Later", itemKeys: ["job:file", "job:other"] },
+      { id: "c_c", name: "Music", itemKeys: ["job:track"] },
+    ]);
+    expect(normalizeCollections(null)).toEqual([]);
+  });
+
+  test("renaming and removing collections never alters unrelated memberships", () => {
+    const created = addCollection([], "c_a", "Watch Later");
+    expect(collectionNameIsAvailable(created, "watch later")).toBe(false);
+    expect(addCollection(created, "c_b", "WATCH LATER")).toBe(created);
+    const withFile = toggleCollectionItem(created, "c_a", "job:file", true);
+    expect(toggleCollectionItem(withFile, "c_a", "job:file", true)).toEqual(withFile);
+    const renamed = renameCollection(withFile, "c_a", "Videos");
+    expect(renamed[0]).toEqual({ id: "c_a", name: "Videos", itemKeys: ["job:file"] });
+    expect(removeCollection(renamed, "c_a")).toEqual([]);
   });
 });
 
@@ -871,6 +900,68 @@ describe("Downloader UI and Go API integration", () => {
     await click(button("Library"));
     expect(button("List").getAttribute("aria-pressed")).toBe("true");
     window.localStorage.removeItem("yt-dl-go:library-layout");
+  });
+
+
+  test("creates, renames and deletes a collection without deleting any media files", async () => {
+    rows = [{ ...job, id: "collection-job", title: "Playlist", status: "completed", completedCount: 2, totalCount: 2, files: [
+      { id: "clip-a", name: "a.mp4", title: "Clip A", size: 1024, publishedAvailable: true },
+      { id: "clip-b", name: "b.mp4", title: "Clip B", size: 2048, publishedAvailable: true },
+    ] }];
+    testWindow.localStorage.removeItem("yt-dl-go:library-collections-v2");
+    await remount();
+    await connect();
+    await click(button("Library"));
+    await click(container.querySelector('button[aria-label="New collection"]'));
+    await setInput(container.querySelector('input[aria-label="Collection name"]'), "Travel");
+    await click(button("Create collection"));
+    expect(JSON.parse(testWindow.localStorage.getItem("yt-dl-go:library-collections-v2"))[0].name).toBe("Travel");
+
+    await click(button("All media"));
+    await click(container.querySelector('[role="button"][aria-label="Select Clip B"]'));
+    const checkbox = container.querySelector('input[aria-label="Add Clip B to Travel"]');
+    expect(checkbox).toBeTruthy();
+    await click(checkbox);
+    expect(JSON.parse(testWindow.localStorage.getItem("yt-dl-go:library-collections-v2"))[0].itemKeys).toEqual(["collection-job:clip-b"]);
+
+    await click(container.querySelector('button[title="Travel"]'));
+    expect(container.querySelectorAll('section[aria-labelledby="library-heading"] article')).toHaveLength(1);
+    expect(container.textContent).toContain("Clip B");
+
+    await click(container.querySelector('button[aria-label="Rename collection Travel"]'));
+    await setInput(container.querySelector('input[aria-label="Rename collection"]'), "Sailing");
+    await click(button("Save collection name"));
+    expect(container.querySelector('button[title="Sailing"]')).toBeTruthy();
+
+    const originalConfirm = testWindow.confirm;
+    testWindow.confirm = () => true;
+    try {
+      await click(container.querySelector('button[aria-label="Delete collection Sailing"]'));
+    } finally {
+      testWindow.confirm = originalConfirm;
+    }
+    expect(JSON.parse(testWindow.localStorage.getItem("yt-dl-go:library-collections-v2"))).toEqual([]);
+    expect(requests.some(item => item.method === "DELETE")).toBe(false);
+    testWindow.localStorage.removeItem("yt-dl-go:library-collections-v2");
+  });
+
+  test("browses loaded playlist media separately from standalone videos", async () => {
+    rows = [
+      { ...job, id: "playlist-job", kind: "playlist", title: "Trip playlist", status: "completed", mediaType: "video", completedCount: 1, totalCount: 1, files: [
+        { id: "trip-clip", name: "trip.mp4", title: "Trip clip", size: 1024, publishedAvailable: true },
+      ] },
+      { ...job, id: "standalone-job", kind: "video", title: "Standalone", status: "completed", mediaType: "video", completedCount: 1, totalCount: 1, files: [
+        { id: "single-clip", name: "single.mp4", title: "Single clip", size: 1024, publishedAvailable: true },
+      ] },
+    ];
+    await remount();
+    await connect();
+    await click(button("Library"));
+    expect(container.querySelectorAll('section[aria-labelledby="library-heading"] article')).toHaveLength(2);
+    await click(button("Playlists"));
+    expect(container.querySelectorAll('section[aria-labelledby="library-heading"] article')).toHaveLength(1);
+    expect(container.textContent).toContain("Trip clip");
+    expect(container.querySelector('button[aria-pressed="false"][class*="border-rose-500"]')).toBeFalsy();
   });
 
   test("renders media files individually and persists favorites", async () => {
