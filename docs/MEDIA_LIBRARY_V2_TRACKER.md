@@ -22,15 +22,15 @@
 | M03 | Responsive grid and list | Complete | Same data with view toggle; local preference |
 | M04 | Selected-item detail inspector | Complete | File metadata and preview/reveal/copy/open-folder actions |
 | M05 | Search, category, channel and media type filters | Complete | Existing \`/api/library\` filtering reused; search input debounced in \`src/pages/home.tsx\` |
-| M06 | Sorting and favorites | Partial | Client-local sort and favorites; not server-wide/SQLite-backed |
+| M06 | Sorting and favorites | Partial | Favorites now use SQLite-backed organization API with legacy migration; sorting remains client-side and loaded-page scoped |
 | M07 | Channel and source playlist browsing | Partial | Sidebar channel facet shortcuts plus loaded source-playlist view; true server-wide playlist grouping remains |
-| M08 | User collections | Partial | Local create/rename/delete + membership controls; validated and tested; SQLite/export support remains |
+| M08 | User collections | Partial | Create/rename/delete and membership now persist through SQLite v32 API; portability via Library ZIP export/import remains |
 | M09 | Dedicated per-file permanent delete | Not started | Existing Delete remains job-wide; require Go API and confirmation semantics |
 | M10 | Multi-select and bulk file actions | Not started | Needs safe selection and backend semantics |
 | M11 | Keyboard and accessibility polish | Partial | Ctrl/Cmd+F, focusable cards, Enter preview; audit still needed |
 | M12 | High-scale performance | Partial | Existing server page cursors and thumbnail loading; virtualization and server-wide file sorting remain |
 | M13 | Desktop responsive visual acceptance | Not started | Manually compare mockup with native windows on Win/macOS/Linux |
-| M14 | Automated browser tests | In progress | Browser E2E failed on outdated heading "Download library"; expected heading updated to "Media Library"; rerun required |
+| M14 | Automated browser tests | In progress | Repaired stale Library heading and empty-library browser selectors; latest CI E2E rerun required |
 | M15 | Cross-platform desktop CI | In progress | Reverify latest branch head after changes |
 | M16 | Delivery documentation and PR | In progress | This tracker + complete prompt + feature PR, keep draft |
 
@@ -44,6 +44,8 @@
 - [x] Implement basic create/rename/delete collection and add/remove media UX without touching underlying downloads.
 - [x] Add UI regression tests for new organization flows.
 - [ ] Verify final branch CI; fix failing jobs or document reproducible blockers.
+- [x] Implement SQLite v32 organization persistence, authenticated GET/PUT endpoints, revision-based conflict rejection, and one-time legacy preference migration.
+- [x] Add Go persistence/authorization/conflict tests and frontend remount integration coverage.
 - [ ] Update PR #149 with checked features, verification, and limitations.
 
 ## Detailed acceptance / unfinished scope
@@ -59,8 +61,8 @@
 ### Organization and persistence
 - [x] Existing server-side search/type/category/channel query and pagination integration.
 - [x] Grid/list and sort preferences in local browser storage.
-- [x] Favorites in local browser storage.
-- [ ] SQLite-backed favorites, collections, and index portability across clients.
+- [x] Favorites and collection membership stored in SQLite v32; synchronized across windows when reloaded (revision conflicts prevent silent overwrites).
+- [ ] Data migration/export portability between independently installed app instances; ZIP metadata export/import support.
 - [ ] Global server-supported file sorting/pagination and favorites filtering.
 - [ ] Collection export/import.
 - [ ] Source playlist dedicated server filtering when libraries span many API pages.
@@ -76,6 +78,10 @@
 - [ ] Complete reduced-motion/mobile/narrow visual audit.
 
 ## CI history / validation truthfulness
+
+- Follow-up persistence implementation adds `src/server/library_organization.go` and v32 database migration, preserving existing jobs and files. The `/api/library/organization` GET/PUT endpoint rejects invalid entries and stale revisions (409). `src/hooks/use-library-organization.ts` loads from SQLite, migrates existing local-only preferences *only when remote revision is zero and empty*, and serializes client updates. Legacy localStorage remains a compatibility cache, not the source of truth.
+- Added Go API tests for restart persistence, unknown fields/validation, stale writes and bearer authentication; added frontend remount hydration test. These tests and latest-head platform build/E2E results need verification before marking complete.
+- The previous full CI failure on `fb968af` was at the browser E2E deletion assertion, which expected old string "Your library is empty" instead of new "Your media library is empty"; corrected in `e31f7b6`.
 
 - Added tests covering invalid collections, duplicate names/membership, collection creation/rename/delete, membership updates, and source-playlist browse filtering. These tests must pass in the newest CI run before marking M14 complete.
 
