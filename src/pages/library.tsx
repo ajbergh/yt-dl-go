@@ -300,7 +300,49 @@ export function LibraryPage({
             {sidebarButton("Audio", Music2, counts.audio, libraryFilter === "audio" && section === "all", () => navigate("audio"))}
             {sidebarButton("Favorites", Heart, counts.favorites, section === "favorites", () => navigate("all", "favorites"))}
             {sidebarButton("Recently added", Clock3, null, section === "recent", () => navigate("all", "recent"))}
+            {sidebarButton("Playlists", Layers, playlistJobs.length, section === "playlists", () => browsePlaylist(""))}
+            {sidebarButton("Channels", Users, libraryChannels.length, libraryChannel !== "all", () => setShowChannelList(previous => !previous))}
+            {showChannelList && <div aria-label="Channel shortcuts" className="max-h-48 space-y-1 overflow-y-auto pl-3">
+              {libraryChannels.slice(0, 12).map(([channel, count]) =>
+                <button type="button" key={channel} aria-pressed={libraryChannel === channel} onClick={() => browseChannel(channel)}
+                  className={"flex w-full items-center justify-between gap-2 rounded-lg px-2 py-1.5 text-left text-xs hover:bg-neutral-800 " + (libraryChannel === channel ? "text-rose-300" : "text-neutral-400")}>
+                  <span className="truncate">{channel}</span><span>{count}</span>
+                </button>)}
+              <button type="button" className="px-2 py-1 text-xs text-neutral-400 hover:text-white" onClick={() => browseChannel("all")}>All channels</button>
+            </div>}
           </nav>
+          <div className="mt-5 border-t border-neutral-800 pt-4">
+            <div className="mb-2 flex items-center justify-between px-3">
+              <p className="text-[10px] font-bold uppercase tracking-[.16em] text-neutral-500">Collections</p>
+              <button type="button" title="New collection" aria-label="New collection" onClick={() => { setShowCollectionForm(previous => !previous); setCollectionError(""); }}
+                className="rounded-md p-1.5 text-rose-400 hover:bg-neutral-800"><Plus className="size-4" /></button>
+            </div>
+            {collections.map(collection => <div key={collection.id} className="group flex items-center gap-0.5">
+              <button type="button" aria-pressed={activeCollectionID === collection.id} onClick={() => browseCollection(collection.id)}
+                title={collection.name} className={"min-w-0 flex-1 truncate rounded-lg px-3 py-2 text-left text-xs " + (activeCollectionID === collection.id ? "bg-rose-600/20 text-rose-200" : "text-neutral-400 hover:bg-neutral-800")}>
+                {collection.name}
+              </button>
+              <button type="button" aria-label={"Rename collection " + collection.name} title="Rename collection"
+                onClick={() => { setRenameCollectionID(collection.id); setRenamedCollectionName(collection.name); setCollectionError(""); }}
+                className="rounded-md p-1 text-neutral-500 hover:bg-neutral-800 hover:text-white"><Pencil className="size-3.5" /></button>
+              <button type="button" aria-label={"Delete collection " + collection.name} title="Delete collection"
+                onClick={() => void deleteCollection(collection)}
+                className="rounded-md p-1 text-neutral-500 hover:bg-red-900/40 hover:text-rose-300"><Trash2 className="size-3.5" /></button>
+            </div>)}
+            {collections.length === 0 && <p className="px-3 text-xs text-neutral-500">Create a personal collection.</p>}
+            {showCollectionForm && <form onSubmit={createCollection} className="mt-2 space-y-2 px-2">
+              <input aria-label="Collection name" autoFocus maxLength={80} value={newCollectionName} onChange={event => setNewCollectionName(event.target.value)}
+                placeholder="Collection name" className={field + " px-2 py-2 text-xs"} />
+              <button type="submit" className={button + " w-full"}><Plus className="size-3.5" />Create collection</button>
+            </form>}
+            {renameCollectionID && <form onSubmit={saveCollectionRename} className="mt-2 space-y-2 px-2">
+              <input aria-label="Rename collection" maxLength={80} value={renamedCollectionName} onChange={event => setRenamedCollectionName(event.target.value)}
+                className={field + " px-2 py-2 text-xs"} />
+              <button type="submit" className={button + " w-full"}>Save collection name</button>
+            </form>}
+            {collectionError && <p role="alert" className="mt-2 px-2 text-xs text-rose-300">{collectionError}</p>}
+            <p className="mt-3 px-3 text-[10px] leading-4 text-neutral-500">Personal collections are stored on this device. Files are never moved.</p>
+          </div>
           <div className="mt-6 border-t border-neutral-800 px-3 pt-5">
             <p className="flex items-center gap-2 text-xs font-semibold text-neutral-200"><HardDrive className="size-4 text-rose-400" />Library storage</p>
             <p className="mt-2 text-lg font-bold tabular-nums">{formatBytes(libraryStats.publishedBytes)}</p>
@@ -313,6 +355,9 @@ export function LibraryPage({
             <p className="text-[11px] font-bold uppercase tracking-[.22em] text-rose-300">Your library</p>
             <h2 id="library-heading" className="mt-1 text-2xl font-bold tracking-tight sm:text-3xl">Media Library</h2>
             <p className="mt-2 text-sm text-neutral-400">Browse, preview, and manage your downloaded videos and audio.</p>
+            {activeCollection && <p className="mt-2 text-xs text-rose-300">Collection: {activeCollection.name}</p>}
+            {libraryChannel !== "all" && <p className="mt-2 text-xs text-rose-300">Channel: {libraryChannel}</p>}
+            {section === "playlists" && <p className="mt-2 text-xs text-rose-300">Source playlist downloads · loaded pages</p>
             <div className="mt-5 grid grid-cols-2 gap-3">
               <div className="rounded-xl border border-white/10 bg-black/20 p-3">
                 <p className="flex items-center gap-2 text-xs text-neutral-400"><Film className="size-4 text-rose-400" /> Files</p>
@@ -357,6 +402,11 @@ export function LibraryPage({
                   {value === "all" ? "All media" : value}
                 </button>
               ))}
+              <button type="button" aria-pressed={section === "playlists"} onClick={() => browsePlaylist("")}
+                className={"flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-semibold " +
+                  (section === "playlists" ? "border-rose-600 bg-rose-600/20 text-rose-100" : "border-neutral-700 text-neutral-400")}>
+                <Layers className="size-3" /> Playlists
+              </button>
               <button type="button" aria-pressed={section === "favorites"} onClick={() => navigate("all", "favorites")}
                 className={"flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-semibold " +
                   (section === "favorites" ? "border-rose-600 bg-rose-600/20 text-rose-100" : "border-neutral-700 text-neutral-400")}>
@@ -383,6 +433,13 @@ export function LibraryPage({
                 {libraryChannels.map(([channel, count]) => <option key={channel} value={channel}>{channel} ({count})</option>)}
               </select>
             </div>
+            {section === "playlists" && playlistJobs.length > 0 && <div aria-label="Source playlists" className="flex flex-wrap gap-2 border-t border-neutral-800 pt-3">
+              <button type="button" aria-pressed={!selectedPlaylistID} onClick={() => browsePlaylist("")}
+                className={button}>All playlists</button>
+              {playlistJobs.map(job => <button type="button" key={job.id} aria-pressed={selectedPlaylistID === job.id}
+                className={button + (selectedPlaylistID === job.id ? " border-rose-500 text-rose-200" : "")}
+                onClick={() => browsePlaylist(job.id)}>{job.title} ({job.files.length})</button>)}
+            </div>}
             <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-neutral-500">
               <p>{visibleLibraryJobs.length} of {libraryTotalJobs} jobs visible (matching filters) · {filtered.length} loaded media items</p>
               {filtersActive && <button type="button" onClick={resetFilters} className="flex items-center gap-1 text-rose-300 hover:text-rose-200"><X className="size-3" />Reset filters</button>}
@@ -482,6 +539,19 @@ export function LibraryPage({
             <p className="mt-1 break-all text-neutral-200">{selected.file.outputRelativePath || "Not available"}</p>
             {selected.file.subtitleError && <p className="mt-3 text-amber-300">Caption warning: {userFacingMessage(selected.file.subtitleError)}</p>}
             {!selected.available && <p className="mt-3 text-amber-300">The published file is unavailable. Preview and filesystem actions are disabled.</p>}
+          </div>
+          <div className="mt-4 border-t border-neutral-800 pt-4">
+            <p className="flex items-center gap-2 text-xs font-semibold"><Layers className="size-4 text-rose-400" />Collections</p>
+            {collections.length === 0
+              ? <p className="mt-2 text-xs text-neutral-500">Create a collection from the Library sidebar to organize downloaded media.</p>
+              : <div className="mt-2 max-h-36 space-y-1 overflow-y-auto">
+                {collections.map(collection => <label key={collection.id} className="flex cursor-pointer items-center gap-2 rounded-lg px-2 py-2 text-xs text-neutral-300 hover:bg-neutral-800">
+                  <input type="checkbox" aria-label={"Add " + selected.title + " to " + collection.name} checked={collection.itemKeys.includes(selected.key)}
+                    onChange={event => setCollections(previous => toggleCollectionItem(previous, collection.id, selected.key, event.target.checked))}
+                    className="accent-rose-500" />
+                  <span className="min-w-0 flex-1 truncate">{collection.name}</span>
+                </label>)}
+              </div>}
           </div>
           <div className="mt-5 space-y-2 border-t border-neutral-800 pt-4">
             <button type="button" className="flex min-h-10 w-full items-center justify-center gap-2 rounded-xl bg-rose-600 px-4 text-sm font-bold text-white hover:bg-rose-500 disabled:opacity-40"
