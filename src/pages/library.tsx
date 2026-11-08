@@ -703,7 +703,7 @@ export function LibraryPage({
               disabled={busyAction === selected.job.id} onClick={() => void jobAction(selected.job, "delete-all")}>
               <Trash2 className="size-4" />Delete entire download
             </button>
-            {selected.job.files.length > 1 && <p className="text-xs text-amber-300">Deletes all {selected.job.files.length} files from this download job, not only the selected item.</p>}
+            <p className="text-xs text-amber-300">Deletes every file from the entire source download, including other media on unloaded Library pages. This cannot be undone.</p>
             {(selected.job.status === "partial" || selected.job.status === "failed" || selected.job.status === "cancelled") &&
               <button type="button" className={button + " w-full"} disabled={busyAction === selected.job.id} onClick={() => void jobAction(selected.job, "retry")}>
                 <RefreshCw className="size-4" />Retry job
