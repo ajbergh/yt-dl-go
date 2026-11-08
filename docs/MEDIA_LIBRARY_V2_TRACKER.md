@@ -28,7 +28,7 @@
 | M09 | Dedicated per-file permanent delete | Complete | Selected-file API, path validation and preservation tests; previous branch head `e795208` passed CI and desktop builds |
 | M10 | Multi-select and bulk file actions | Partial | Loaded-page Ctrl/Cmd, Shift and select-all; bulk favorites, collections, and confirmed metadata-only forget (100 max); permanent bulk file deletion intentionally unsupported |
 | M11 | Keyboard and accessibility polish | Partial | Ctrl/Cmd+F/A, Escape, arrow focus/selection, Shift ranges, and Enter preview; screen-reader and contrast audit still needed |
-| M12 | Partial | Partial | File-level 50/100-record database paging and viewport-gated thumbnails implemented; grid virtualization and indexed sorting performance remain to be optimized |
+| M12 | High-scale performance | Partial | File-level 50/100-record database paging and viewport-gated thumbnails implemented; grid virtualization and indexed sorting performance remain to be optimized |
 | M13 | Desktop responsive visual acceptance | Not started | Manually compare mockup with native windows on Win/macOS/Linux |
 | M14 | Automated browser tests | In progress | Repaired stale Library heading and empty-library browser selectors; latest CI E2E rerun required |
 | M15 | Cross-platform desktop CI | In progress | Reverify latest branch head after changes |
