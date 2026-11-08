@@ -88,6 +88,8 @@ type itemProgress struct {
 	total         int64
 	speed         int64
 	processing    bool
+	slotReleased  bool // download slot already handed back for conversion
+	waiting       bool // downloaded, queued for a conversion slot
 	progressAt    time.Time
 	progressBytes int64
 	eventAt       time.Time
@@ -712,6 +714,11 @@ func (s *server) run(ctx context.Context, j *jobState, requested []queueItem) {
 	var nextMu, fatalMu sync.Mutex
 	nextIndex := 0
 	workerCount := min(6, len(work))
+	if j.MediaType == "audio" && j.AudioFormat == "mp3" {
+		// Items waiting for a conversion slot no longer hold a download slot, but
+		// they do occupy a worker; add headroom so downloads keep flowing.
+		workerCount = min(6+2*s.conversionLimit(), len(work))
+	}
 	var workers sync.WaitGroup
 	for range workerCount {
 		workers.Add(1)
@@ -952,11 +959,12 @@ func (s *server) acquireItemSlot(ctx context.Context, j *jobState, index int, ti
 
 func (s *server) releaseItemSlot(j *jobState, index int) {
 	s.mu.Lock()
+	progress := j.itemProgress[index]
 	delete(j.itemProgress, index)
 	if j.ActiveItemCount > 0 {
 		j.ActiveItemCount--
 	}
-	if s.activeItems > 0 {
+	if s.activeItems > 0 && (progress == nil || !progress.slotReleased) {
 		s.activeItems--
 	}
 	s.refreshQueueItemLocked(j, index)
@@ -1066,6 +1074,7 @@ func (s *server) refreshQueueItemLocked(j *jobState, index int) {
 		return
 	}
 	item := &j.Items[index-1]
+	item.WaitingToConvert = false
 	if files := itemFiles(j, index); len(files) > 0 {
 		file := files[0]
 		item.Status = "completed"
@@ -1107,6 +1116,7 @@ func (s *server) refreshQueueItemLocked(j *jobState, index int) {
 		if progress.processing {
 			item.Status = "processing"
 		}
+		item.WaitingToConvert = progress.processing && progress.waiting
 		item.Progress = nil
 		if progress.total > 0 {
 			value := min(100.0, 100*float64(progress.downloaded)/float64(progress.total))
@@ -1287,6 +1297,13 @@ func (s *server) processItem(ctx context.Context, j *jobState, entry *youtube.Pl
 	if err != nil {
 		return err
 	}
+	splitChapters := j.MediaType == "audio" && j.SplitByChapter && j.AudioFormat == "mp3" && len(parseDescriptionChapters(video.Description, video.Duration)) > 1
+	if j.MediaType == "audio" && j.SubtitleLanguage == "" && !splitChapters {
+		if existing, ok := s.store.findPublishedAudio(j, video.ID); ok {
+			s.reuseLibraryAudio(ctx, j, existing, current)
+			return nil
+		}
+	}
 	requested := estimatedItemBudget(j, video, format, selection)
 	budget, err := tracker.reserve(ctx, requested)
 	if err != nil {
@@ -1312,7 +1329,7 @@ func (s *server) processItem(ctx context.Context, j *jobState, entry *youtube.Pl
 	}()
 	var files []mediaFile
 	if j.MediaType == "audio" {
-		if j.SplitByChapter && j.AudioFormat == "mp3" && len(parseDescriptionChapters(video.Description, video.Duration)) > 1 {
+		if splitChapters {
 			files, err = s.transferChapterMP3(transferCtx, j, engine, video, format, extension, current, outputIndex, budget)
 		} else if j.AudioFormat == "m4a" {
 			var file mediaFile
@@ -1465,6 +1482,31 @@ func (s *server) processItem(ctx context.Context, j *jobState, entry *youtube.Pl
 	return nil
 }
 
+// reuseLibraryAudio records an already published track for this item instead of
+// downloading and encoding it again. The new Library entry shares the published
+// file, so no "(2)" copy is created.
+func (s *server) reuseLibraryAudio(ctx context.Context, j *jobState, existing mediaFile, current int) {
+	file := existing
+	file.ID = randomID(16)
+	file.ManagedAvailable = false
+	file.ThumbnailLocalAvailable, file.ThumbnailMimeType = false, ""
+	file.Subtitle, file.SubtitleError = nil, ""
+	file.SourceItemIndex = current
+	if j.Category != "" {
+		file.Category = j.Category
+	}
+	s.captureThumbnail(ctx, j, &file)
+	s.updateProgress(j, current, file.Size, file.Size)
+	s.mu.Lock()
+	setItemFiles(j, current, []mediaFile{file})
+	s.rebuildFilesLocked(j)
+	s.refreshQueueItemLocked(j, current)
+	j.Progress = floatPointer(100)
+	s.persistJobLocked(j)
+	s.publishJobEventLocked("job-file-finalized", j)
+	s.mu.Unlock()
+}
+
 func itemTransferTimeout(video *youtube.Video, expectedBytes, bandwidthLimit int64) time.Duration {
 	rate := int64(defaultTransferRate)
 	if bandwidthLimit > 0 {
@@ -1557,7 +1599,6 @@ func (s *server) transferAudio(ctx context.Context, j *jobState, engine nativeCl
 	applyVideoMetadata(&result, video)
 	result.Category = j.Category
 	result.ManagedAvailable = true
-	s.captureThumbnail(ctx, j, &result)
 	defer func() {
 		if err != nil && result.ThumbnailLocalAvailable {
 			if path, pathErr := thumbnailPath(j, result); pathErr == nil {
@@ -1566,6 +1607,8 @@ func (s *server) transferAudio(ctx context.Context, j *jobState, engine nativeCl
 			result.ThumbnailLocalAvailable = false
 		}
 	}()
+	finishThumbnail := s.startAudioThumbnail(ctx, j, &result)
+	defer func() { finishThumbnail(err) }()
 	finalPath := filepath.Join(j.dir, result.Name)
 	sourcePath := filepath.Join(j.dir, fmt.Sprintf("%06d-%s.source.%s", outputIndex, video.ID, extension))
 	outputPart := finalPath + ".part"
@@ -1598,12 +1641,16 @@ func (s *server) transferAudio(ctx context.Context, j *jobState, engine nativeCl
 	if ctx.Err() != nil {
 		return result, ctx.Err()
 	}
+	s.setProcessing(j, queueIndex, true)
+	defer s.setProcessing(j, queueIndex, false)
+	if !s.beginConversion(ctx, j, queueIndex) {
+		return result, ctx.Err()
+	}
+	defer s.endConversion()
 	output, openErr := os.OpenFile(outputPart, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
 	if openErr != nil {
 		return result, errStorage
 	}
-	s.setProcessing(j, queueIndex, true)
-	defer s.setProcessing(j, queueIndex, false)
 	s.mu.Lock()
 	j.Progress = floatPointer(99)
 	s.persistJobLocked(j)
@@ -1613,6 +1660,7 @@ func (s *server) transferAudio(ctx context.Context, j *jobState, engine nativeCl
 		_ = output.Close()
 		return result, errStorage
 	}
+	finishThumbnail(nil)
 	tag, tagErr := buildID3v23Tag(mp3MetadataFor(j, result, video.ID, outputIndex))
 	if tagErr != nil {
 		tag = nil // Metadata is best-effort; never fail playable audio over tags.
@@ -1663,7 +1711,6 @@ func (s *server) transferOriginalAudio(ctx context.Context, j *jobState, engine 
 	applyVideoMetadata(&result, video)
 	result.Category = j.Category
 	result.ManagedAvailable = true
-	s.captureThumbnail(ctx, j, &result)
 	defer func() {
 		if err != nil && result.ThumbnailLocalAvailable {
 			if path, pathErr := thumbnailPath(j, result); pathErr == nil {
@@ -1673,6 +1720,8 @@ func (s *server) transferOriginalAudio(ctx context.Context, j *jobState, engine 
 		}
 	}()
 
+	finishThumbnail := s.startAudioThumbnail(ctx, j, &result)
+	defer func() { finishThumbnail(err) }()
 	finalPath := filepath.Join(j.dir, result.Name)
 	if existing, openErr := openFinal(j.dir, result.Name); openErr == nil {
 		info, statErr := existing.Stat()
@@ -2255,8 +2304,33 @@ func (s *server) transferAdaptiveMP4(ctx context.Context, j *jobState, engine na
 	var browserUsed, audioBrowserUsed bool
 	actualAudio := selection.audio
 	dualUsed := false
-	if selection.audio.AudioChannels > 0 && selection.audio.AudioChannels <= 2 {
-		videoSize, audioSize, dualUsed, err = s.captureAdaptivePair(ctx, j, engine, video, selection, videoPart, audioPart, queueIndex, budget, func(v, a int64) { s.updateProgress(j, queueIndex, v+a, progressTotal) }, browserProvider)
+	audioDone := false
+	var stereoAAC *youtube.Format
+	if selection.audio.AudioChannels > 2 {
+		stereoAAC = stereoAACFormat(video)
+	}
+	pairSelection := selection
+	if selection.audio.AudioChannels > 2 && stereoAAC != nil && browserProvider != nil && selection.video.ContentLength > 0 && budget-selection.video.ContentLength > 0 {
+		// Browser playback negotiates stereo, so the multichannel preferred track
+		// can only arrive over native ranges. Probe it first: a rejection is cheap,
+		// and the verified stereo alternate can then be captured together with the
+		// video in one browser pass instead of a second serial pass.
+		size, _, probeErr := s.downloadAdaptiveRanges(ctx, j, engine, video, selection.audio, audioPart, "audio", queueIndex, budget-selection.video.ContentLength, progress, nil)
+		switch {
+		case probeErr == nil:
+			audioSize, audioDone = size, true
+		case ctx.Err() != nil:
+			return result, ctx.Err()
+		case errors.Is(probeErr, errRead):
+			if _, statErr := os.Stat(audioPart); errors.Is(statErr, os.ErrNotExist) {
+				pairSelection.audio = stereoAAC
+			}
+		default:
+			return result, probeErr
+		}
+	}
+	if !audioDone && pairSelection.audio.AudioChannels > 0 && pairSelection.audio.AudioChannels <= 2 {
+		videoSize, audioSize, dualUsed, err = s.captureAdaptivePair(ctx, j, engine, video, pairSelection, videoPart, audioPart, queueIndex, budget, func(v, a int64) { s.updateProgress(j, queueIndex, v+a, progressTotal) }, browserProvider)
 		if ctx.Err() != nil {
 			return result, ctx.Err()
 		}
@@ -2274,6 +2348,10 @@ func (s *server) transferAdaptiveMP4(ctx context.Context, j *jobState, engine na
 	if dualUsed {
 		downloaded = videoSize
 		s.noteBrowserAdaptive(j)
+		if pairSelection.audio != selection.audio {
+			actualAudio = pairSelection.audio
+			s.noteAdaptiveMP4AudioFallback(j)
+		}
 	} else {
 		videoSize, browserUsed, err = s.downloadAdaptiveRanges(ctx, j, engine, video, selection.video, videoPart, "video", queueIndex, budget, progress, browserProvider)
 		if err != nil {
@@ -2298,31 +2376,30 @@ func (s *server) transferAdaptiveMP4(ctx context.Context, j *jobState, engine na
 		// tries browser capture then native ranges and validates per-track identity.
 		// Only a retryable read failure downgrades to the progressive AAC source.
 		var usedFallback bool
-		var stereoAAC *youtube.Format
-		if selection.audio.AudioChannels > 2 {
-			stereoAAC = stereoAACFormat(video)
-		}
-		actualAudio, usedFallback, err = downloadAdaptiveMP4Audio(selection.audio, selection.progressive, func(format *youtube.Format) error {
-			audioProvider := browserProvider
-			// Browser playback negotiates stereo; a multichannel itag may never
-			// arrive. Try that source natively, then the verified stereo alternate.
-			if format.AudioChannels > 2 {
-				audioProvider = nil
+		// When audioDone is set, the early probe already fetched the preferred track.
+		if !audioDone {
+			actualAudio, usedFallback, err = downloadAdaptiveMP4Audio(selection.audio, selection.progressive, func(format *youtube.Format) error {
+				audioProvider := browserProvider
+				// Browser playback negotiates stereo; a multichannel itag may never
+				// arrive. Try that source natively, then the verified stereo alternate.
+				if format.AudioChannels > 2 {
+					audioProvider = nil
+				}
+				size, usedBrowser, downloadErr := s.downloadAdaptiveRanges(ctx, j, engine, video, format, audioPart, "audio", queueIndex, budget-videoSize, progress, audioProvider)
+				if downloadErr == nil {
+					audioSize, audioBrowserUsed = size, usedBrowser
+				}
+				return downloadErr
+			}, stereoAAC)
+			if err != nil {
+				return result, err
 			}
-			size, usedBrowser, downloadErr := s.downloadAdaptiveRanges(ctx, j, engine, video, format, audioPart, "audio", queueIndex, budget-videoSize, progress, audioProvider)
-			if downloadErr == nil {
-				audioSize, audioBrowserUsed = size, usedBrowser
+			if usedFallback {
+				s.noteAdaptiveMP4AudioFallback(j)
 			}
-			return downloadErr
-		}, stereoAAC)
-		if err != nil {
-			return result, err
-		}
-		if usedFallback {
-			s.noteAdaptiveMP4AudioFallback(j)
-		}
-		if audioBrowserUsed {
-			s.noteBrowserAdaptive(j)
+			if audioBrowserUsed {
+				s.noteBrowserAdaptive(j)
+			}
 		}
 	}
 	downloaded += audioSize
@@ -2630,7 +2707,15 @@ func (s *server) deleteDownloadPart(j *jobState, itemIndex int, partKey string) 
 	return err
 }
 
-func (s *server) downloadAdaptiveRanges(ctx context.Context, j *jobState, engine nativeClient, video *youtube.Video, format *youtube.Format, path, partKey string, itemIndex int, budget int64, progress func(int64), browserProvider browserMediaProvider) (result int64, browserUsed bool, err error) {
+type adaptiveRangePolicy struct {
+	// A previous native attempt already exhausted its recovery. Do not replay it
+	// after browser recovery fails, or spend bandwidth downloading it twice.
+	nativeFailure    error
+	onNativeFailure  func(error)
+	onNativeProgress func(int64)
+}
+
+func (s *server) downloadAdaptiveRanges(ctx context.Context, j *jobState, engine nativeClient, video *youtube.Video, format *youtube.Format, path, partKey string, itemIndex int, budget int64, progress func(int64), browserProvider browserMediaProvider, policies ...adaptiveRangePolicy) (result int64, browserUsed bool, err error) {
 	if os.Getenv("YTDL_TRACE_PERFORMANCE") != "" {
 		log.Printf("adaptive range begin itag=%d expected_bytes=%d", format.ItagNo, format.ContentLength)
 	}
@@ -2747,6 +2832,9 @@ func (s *server) downloadAdaptiveRanges(ctx context.Context, j *jobState, engine
 			}
 		}
 	}
+	if len(policies) > 0 && policies[0].nativeFailure != nil {
+		return 0, false, policies[0].nativeFailure
+	}
 	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE, 0600)
 	if err != nil {
 		return 0, false, errStorage
@@ -2780,13 +2868,17 @@ func (s *server) downloadAdaptiveRanges(ctx context.Context, j *jobState, engine
 	if err := s.saveDownloadPart(j, video.ID, itemIndex, partKey, path, "native-range", format, start, profileID); err != nil {
 		return result, browserUsed, errStorage
 	}
+	var observer nativeRangeObserver
+	if len(policies) > 0 {
+		observer = nativeRangeObserver{failure: policies[0].onNativeFailure, progress: policies[0].onNativeProgress}
+	}
 	result, err = s.downloadNativeRangeWindows(ctx, engine, video.ID, format, f, start, profileID, func(offset int64) error {
 		if checkpointErr := s.saveDownloadPart(j, video.ID, itemIndex, partKey, path, "native-range", format, offset, profileID); checkpointErr != nil {
 			return errStorage
 		}
 		progress(offset)
 		return nil
-	})
+	}, observer)
 	if err != nil {
 		return result, browserUsed, err
 	}
@@ -2834,6 +2926,9 @@ func (s *server) downloadSource(ctx context.Context, j *jobState, engine nativeC
 	}
 	rangeFormat := s.resolveRangeFormat(ctx, engine, video, format)
 	if rangeFormat.ContentLength > 0 && rangeFormat.URL != "" {
+		if kind, _, ok := formatType(rangeFormat); ok && strings.HasPrefix(kind, "audio/") {
+			return s.downloadAudioSource(ctx, j, engine, video, rangeFormat, path, partKey, itemIndex, budget, progress)
+		}
 		result, _, err = s.downloadAdaptiveRanges(ctx, j, engine, video, rangeFormat, path, partKey, itemIndex, budget, progress, nil)
 		return result, err
 	}

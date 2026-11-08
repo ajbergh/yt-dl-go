@@ -95,7 +95,7 @@ export function LibraryPage({
                   {job.error && <p className="max-w-sm text-xs text-amber-300/80">{userFacingMessage(job.error)}</p>}
                   <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
                     {(job.status === "partial" || job.status === "failed" || job.status === "cancelled") && <button type="button" className={button} onClick={() => void jobAction(job, "retry")} disabled={busyAction === job.id}><RefreshCw className="size-3.5" aria-hidden="true" />Retry job</button>}
-                    <button type="button" className={`${button} border-red-900/70 text-red-300 hover:border-red-700 hover:bg-red-950/40`} onClick={() => void jobAction(job, "delete-all")} disabled={busyAction === job.id}><Trash2 className="size-3.5" aria-hidden="true" />Delete files</button>
+                    {!["queued", "downloading", "processing", "paused"].includes(job.status) && <button type="button" className={`${button} border-red-900/70 text-red-300 hover:border-red-700 hover:bg-red-950/40`} onClick={() => void jobAction(job, "delete-all")} disabled={busyAction === job.id}><Trash2 className="size-3.5" aria-hidden="true" />Delete files</button>}
                   </div>
                 </div>
               </article>)}

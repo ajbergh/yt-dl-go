@@ -7,7 +7,6 @@ import (
 	"io"
 	"log"
 	"os"
-	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
@@ -51,10 +50,6 @@ func TestLiveDownload(t *testing.T) {
 	s, err := newServer(c)
 	if err != nil {
 		t.Fatal(err)
-	}
-	settings := request(s, "PUT", "/api/settings", `{"storageMode":"managed-only"}`, nil)
-	if settings.Code != 200 {
-		t.Fatalf("configure isolated output: %d %s", settings.Code, settings.Body.String())
 	}
 	s.start()
 	t.Cleanup(func() {
@@ -110,7 +105,7 @@ func TestLiveDownload(t *testing.T) {
 				t.Fatalf("sample completed below 1080p without an adaptive fallback note: height=%d note=%q", current.Files[0].Height, current.Note)
 			}
 			assertFinalFiles(t, s, current)
-			assertLiveContainer(t, filepath.Join(s.cfg.root, job.ID, current.Files[0].Name), current.Files[0].MimeType, current.Files[0].Height, time.Duration(current.Files[0].DurationSeconds)*time.Second)
+			assertLiveContainer(t, liveMediaPath(t, s, job.ID, current.Files[0]), current.Files[0].MimeType, current.Files[0].Height, time.Duration(current.Files[0].DurationSeconds)*time.Second)
 			return
 		}
 		time.Sleep(250 * time.Millisecond)
@@ -185,10 +180,6 @@ func TestLiveResolutionMatrix(t *testing.T) {
 			}
 			s.start()
 			t.Cleanup(func() { s.stop(); s.wg.Wait() })
-			settings := request(s, "PUT", "/api/settings", `{"storageMode":"managed-only"}`, nil)
-			if settings.Code != 200 {
-				t.Fatalf("configure isolated output: %d %s", settings.Code, settings.Body.String())
-			}
 			inspectCtx, cancel := context.WithTimeout(s.ctx, 2*time.Minute)
 			defer cancel()
 			video, err := s.engine.GetVideoContext(inspectCtx, strings.TrimSpace(rawURL))
@@ -201,7 +192,7 @@ func TestLiveResolutionMatrix(t *testing.T) {
 					t.Logf("available itag=%d height=%d fps=%d bytes=%d mime=%q", format.ItagNo, format.Height, format.FPS, format.ContentLength, format.MimeType)
 				}
 			}
-			for _, quality := range []string{"480", "720", "1080", "1440", "2160", "best"} {
+			for _, quality := range liveMatrixQualities() {
 				t.Run(quality, func(t *testing.T) {
 					selection, err := selectFormatForStrategy(video, quality, strategy)
 					if err != nil {
@@ -253,7 +244,7 @@ func TestLiveResolutionMatrix(t *testing.T) {
 					t.Logf("throughput sample=%d quality=%s elapsed=%s output_bytes=%d output_mib_per_sec=%.3f", index+1, quality, elapsed.Round(time.Millisecond), file.Size, float64(file.Size)/(1024*1024)/elapsed.Seconds())
 					t.Logf("requested=%s expected=%dp actual=%dp bytes=%d mime=%s note=%q", quality, wantHeight, file.Height, file.Size, file.MimeType, current.Note)
 					assertFinalFiles(t, s, current)
-					assertLiveContainer(t, filepath.Join(s.cfg.root, job.ID, file.Name), file.MimeType, file.Height, video.Duration)
+					assertLiveContainer(t, liveMediaPath(t, s, job.ID, file), file.MimeType, file.Height, video.Duration)
 					if file.Height != wantHeight {
 						t.Errorf("download height=%d, selected height=%d (note=%q)", file.Height, wantHeight, current.Note)
 					}
@@ -359,4 +350,43 @@ func livePhaseWatchdog(phase string) func() {
 		log.Printf("live test phase %s exceeds 45s; goroutines:\n%s", phase, stack[:length])
 	})
 	return func() { timer.Stop() }
+}
+
+// liveMatrixQualities returns the quality ceilings TestLiveResolutionMatrix
+// exercises. Set YTDL_LIVE_MATRIX_QUALITIES (comma-separated) to run a subset.
+func liveMatrixQualities() []string {
+	all := []string{"480", "720", "1080", "1440", "2160", "best"}
+	raw := strings.TrimSpace(os.Getenv("YTDL_LIVE_MATRIX_QUALITIES"))
+	if raw == "" {
+		return all
+	}
+	var selected []string
+	for _, quality := range strings.Split(raw, ",") {
+		selected = append(selected, strings.TrimSpace(quality))
+	}
+	return selected
+}
+
+// liveMediaPath resolves where the completed job's media lives in the
+// Library, which is the download folder rather than a per-job directory.
+func liveMediaPath(t *testing.T, s *server, jobID string, file mediaFile) string {
+	t.Helper()
+	loaded, err := s.store.loadJob(s.cfg.root, jobID)
+	if err != nil || loaded == nil {
+		t.Fatalf("load job: %v", err)
+	}
+	// The API omits the on-disk location; use the stored record for it.
+	for _, stored := range loaded.job.Files {
+		if stored.ID != file.ID {
+			continue
+		}
+		f, err := openLibraryMedia(&jobState{Job: loaded.job}, stored)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer f.Close()
+		return f.Name()
+	}
+	t.Fatalf("stored job has no file %s", file.ID)
+	return ""
 }

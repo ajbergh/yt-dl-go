@@ -327,6 +327,10 @@ func newServer(c config) (*server, error) {
 		s.stop()
 		return nil, fmt.Errorf("reconcile library: %w", err)
 	}
+	if err := store.backfillLibrarySources(); err != nil {
+		s.stop()
+		return nil, fmt.Errorf("backfill library: %w", err)
+	}
 	loaded, err := store.loadActiveJobs(root)
 	if err != nil {
 		_ = store.close()

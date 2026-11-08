@@ -699,6 +699,35 @@ describe("Downloader UI and Go API integration", () => {
     expect(requests.filter(item => item.path === "/api/jobs" && !item.method)).toHaveLength(1);
   });
 
+  test("shows a downloaded track waiting for a conversion slot separately from active conversion", async () => {
+    const audioItem = { index: 1, videoId: "abcdefghijk", title: "Waiting track", status: "processing", progress: 100, downloadedBytes: 1000, totalBytes: 1000, speedBytesPerSec: 0, etaSeconds: 0 };
+    rows = [{
+      ...job,
+      id: "convert-job",
+      kind: "video",
+      title: "Convert video",
+      status: "processing",
+      mediaType: "audio",
+      audioFormat: "mp3",
+      audioBitrate: "192k",
+      progress: 100,
+      totalCount: 1,
+      items: [{ ...audioItem, waitingToConvert: true }],
+    }];
+    await remount();
+    await connect();
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 20)); });
+    expect(container.textContent).toContain("Waiting to convert");
+    expect(container.textContent).toContain("Downloaded · waiting for a conversion slot");
+    expect(container.textContent).not.toContain("Converting audio to MP3");
+    rows = [{ ...rows[0], items: [audioItem] }];
+    await remount();
+    await connect();
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 20)); });
+    expect(container.textContent).toContain("Converting audio to MP3");
+    expect(container.textContent).not.toContain("Waiting to convert");
+  });
+
   test("renders persisted queue order and moves a queued job next", async () => {
     rows = [
       { ...job, id: "job-a", title: "First queued", status: "queued", queuePosition: 1, createdAt: "2026-01-01T00:00:00Z", items: [{ index: 1, playlistIndex: 2, videoId: "abcdefghijk", title: "Item 2", status: "queued", progress: null, downloadedBytes: 0, totalBytes: 0, speedBytesPerSec: 0, etaSeconds: 0 }, { index: 2, playlistIndex: 4, videoId: "lmnopqrstuv", title: "Item 4", status: "queued", progress: null, downloadedBytes: 0, totalBytes: 0, speedBytesPerSec: 0, etaSeconds: 0 }] },

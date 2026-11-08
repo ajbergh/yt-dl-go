@@ -324,7 +324,7 @@ export function useService() {
       } else if (event.job) {
         maybeNotifyTerminal(event.job);
         mergeLiveJob(event.job);
-        if (["completed", "partial", "failed", "cancelled"].includes(event.job.status)) {
+        if (event.type === "job-file-finalized" || ["completed", "partial", "failed", "cancelled"].includes(event.job.status)) {
           void refreshLibrary().catch(error => setPollError(errorMessage(error)));
         }
       }

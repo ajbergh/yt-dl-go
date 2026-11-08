@@ -83,6 +83,8 @@ type queueItem struct {
 	FileID           string   `json:"fileId,omitempty"`
 	FileIDs          []string `json:"fileIds,omitempty"`
 	RetryRequested   bool     `json:"retryRequested,omitempty"`
+	// WaitingToConvert marks a downloaded source queued for a conversion slot.
+	WaitingToConvert bool `json:"waitingToConvert,omitempty"`
 }
 
 type Job struct {
@@ -171,6 +173,8 @@ type server struct {
 	scheduleChanged     chan struct{}
 	activeDownloads     int
 	activeItems         int
+	activeConversions   int
+	convertSlots        int
 	engineMu            sync.Mutex
 	ctx                 context.Context
 	stop                context.CancelFunc
@@ -185,6 +189,7 @@ type server struct {
 	store               *jobStore
 	persistenceWriter   *persistenceWriter
 	bandwidth           *bandwidthLimiter
+	audioTransport      audioTransportState
 	events              *eventBroker
 }
 
@@ -1493,11 +1498,11 @@ func (s *server) enqueueJobWithFallback(w http.ResponseWriter, u, kind, quality,
 }
 
 // issueTicket creates a short-lived random capability for a stopped job's ZIP
-// or one finalized file. The returned ticket URL, not a bearer token, grants
+// or one finalized file, including files from active jobs. The returned ticket URL grants
 // access to the corresponding download route.
 func (s *server) issueTicket(w http.ResponseWriter, j *jobState, fileID string, fileIDs []string, inline bool) {
-	if !terminal(j.Status) || len(j.Files) == 0 {
-		fail(w, 409, "Files are available only after the job has stopped and finalized output exists")
+	if len(j.Files) == 0 || (!terminal(j.Status) && fileID == "") {
+		fail(w, 409, "Select a finalized file, or wait until the job has stopped to download an archive")
 		return
 	}
 	if inline && fileID == "" {
