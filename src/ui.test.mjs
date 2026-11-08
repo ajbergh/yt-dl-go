@@ -134,7 +134,7 @@ beforeEach(async () => {
     if (path === "/api/health") return Response.json({ ready: missing.length === 0, missing, engine: healthEngine, version: healthVersion, commit: healthVersion === "dev" ? "unknown" : "abc123def456", buildDate: healthVersion === "dev" ? "unknown" : "2026-09-21T12:00:00Z", capabilities: { combinedStreamsOnly: false, adaptiveStreamsSupported: true, externalBinariesRequired: false, mp3AudioSupported: true } });
     if (path === "/api/diagnostics") return Response.json(diagnosticsResponse);
     if (path === "/api/library/export") return new Response("zip archive bytes", { headers: { "Content-Type": "application/zip" } });
-    if (path === "/api/library/import" && init.method === "POST") return Response.json({ imported: 3, idempotent: false });
+    if (path === "/api/library/import" && init.method === "POST") return Response.json({ imported: 3, idempotent: false, organizationUpdated: true });
     if (path === "/api/library/organization") {
       if (init.method === "PUT") {
         const body = JSON.parse(init.body);
@@ -392,7 +392,7 @@ describe("Downloader UI and Go API integration", () => {
     expect(request?.method).toBe("POST");
     expect(new Headers(request?.headers).get("Content-Type")).toBe("application/zip");
     expect(request?.body).toBe(archive);
-    expect(container.textContent).toContain("Imported 3 Library files.");
+    expect(container.textContent).toContain("Imported 3 Library files and restored favorites and collections.");
     expect(container.textContent).toContain("settings, queues, and history stay on this device");
   });
   test("rejects an incompatible backend without manual setup", async () => {
