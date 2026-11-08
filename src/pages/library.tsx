@@ -9,6 +9,7 @@ import { userFacingMessage } from "../lib/messages";
 import { confirmAction } from "../lib/desktop";
 import { addCollection, collectionNameIsAvailable, removeCollection, renameCollection, toggleCollectionItem, type MediaCollection } from "../lib/library-collections";
 import { useLibraryOrganization } from "../hooks/use-library-organization";
+import { chooseMediaKeys, setCollectionBatch } from "../lib/library-selection";
 import {
   LibraryThumbnail, button, dateLabel, durationLabel, field, formatBytes,
   statusClass, statusLabels, type LibraryFilter,
@@ -46,6 +47,7 @@ type LibraryPageProps = {
   previewFile: (job: DownloadJob, file: DownloadFile) => void | Promise<void>;
   filesystemAction: (job: DownloadJob, fileId: string, action: "copy-path" | "reveal" | "open-folder") => void | Promise<void>;
   jobAction: (job: DownloadJob, action: LibraryJobAction, fileId?: string) => void | Promise<void>;
+  bulkForgetLibraryItems: (items: { jobId: string; fileId: string }[]) => Promise<string[] | null>;
 };
 
 type MediaItem = {
@@ -102,12 +104,15 @@ export function LibraryPage({
   libraryFilter, setLibraryFilter, libraryCategory, setLibraryCategory,
   libraryChannel, setLibraryChannel, libraryCategories, libraryChannels,
   libraryLayout, setLibraryLayout, libraryStats, hasMoreLibrary, loadingLibraryMore,
-  loadMoreLibrary, connection, busyAction, previewFile, filesystemAction, jobAction,
+  loadMoreLibrary, connection, busyAction, previewFile, filesystemAction, jobAction, bulkForgetLibraryItems,
 }: LibraryPageProps) {
   const [section, setSection] = useState<LibrarySection>("all");
-  const { favorites, collections, ready: organizationReady, error: organizationError, toggleFavorite, setCollections, reload: reloadOrganization } = useLibraryOrganization(connection);
+  const { favorites, collections, ready: organizationReady, error: organizationError, toggleFavorite, setFavoritesForKeys, setCollections, reload: reloadOrganization } = useLibraryOrganization(connection);
   const [sort, setSort] = useState<SortMode>(storedSort);
   const [selectedKey, setSelectedKey] = useState("");
+  const [selectedKeys, setSelectedKeys] = useState<string[]>([]);
+  const [selectionAnchor, setSelectionAnchor] = useState("");
+  const [bulkCollectionID, setBulkCollectionID] = useState("");
   const [inspectorOpen, setInspectorOpen] = useState(true);
   const [showFilters, setShowFilters] = useState(false);
   const [activeCollectionID, setActiveCollectionID] = useState("");
@@ -119,6 +124,7 @@ export function LibraryPage({
   const [showChannelList, setShowChannelList] = useState(false);
   const [selectedPlaylistID, setSelectedPlaylistID] = useState("");
   const searchRef = useRef<HTMLInputElement>(null);
+  const mediaGridRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     try { window.localStorage.setItem(sortStorageKey, sort); }
@@ -161,7 +167,61 @@ export function LibraryPage({
     });
     return sortMedia(visible, sort);
   }, [loaded, section, favorites, sort, collections, activeCollectionID, selectedPlaylistID]);
+  const visibleKeys = filtered.map(item => item.key);
+  const selectedKeysInView = new Set(selectedKeys);
+  const bulkSelected = filtered.filter(item => selectedKeysInView.has(item.key));
+  const bulkKeys = bulkSelected.map(item => item.key);
+  const selectedCollection = collections.find(collection => collection.id === bulkCollectionID);
+  const canFavoriteBulk = organizationReady && favorites.length + bulkKeys.filter(key => !favorites.includes(key)).length <= 10000;
+  const canAddToCollection = organizationReady && Boolean(selectedCollection) &&
+    (selectedCollection?.itemKeys.length || 0) + bulkKeys.filter(key => !selectedCollection?.itemKeys.includes(key)).length <= 10000;
   const selected = filtered.find(item => item.key === selectedKey) || filtered[0];
+  useEffect(() => {
+    function onLibraryKeys(event: KeyboardEvent) {
+      const focused = document.activeElement;
+      if (focused instanceof HTMLElement && focused.closest("input, textarea, select, [contenteditable='true']")) return;
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "a") {
+        if (!filtered.length) return;
+        event.preventDefault();
+        setSelectedKeys(visibleKeys);
+        setSelectionAnchor(visibleKeys[0] || "");
+        setSelectedKey(visibleKeys[0] || "");
+      } else if (event.key === "Escape" && selectedKeys.length) {
+        event.preventDefault();
+        setSelectedKeys([]);
+        setSelectionAnchor("");
+      }
+    }
+    window.addEventListener("keydown", onLibraryKeys);
+    return () => window.removeEventListener("keydown", onLibraryKeys);
+  }, [filtered, selectedKeys.length]);
+  function chooseItem(key: string, range: boolean, additive: boolean) {
+    setSelectedKeys(previous => chooseMediaKeys(visibleKeys, previous, key, selectionAnchor || selectedKey, { range, additive }));
+    if (!range) setSelectionAnchor(key);
+    setSelectedKey(key);
+    setInspectorOpen(true);
+  }
+  function clearSelection() {
+    setSelectedKeys([]);
+    setSelectionAnchor("");
+  }
+  function updateSelectedCollection(add: boolean) {
+    if (!organizationReady || !selectedCollection || !bulkKeys.length) return;
+    if (add && !canAddToCollection) return;
+    setCollections(previous => previous.map(collection => {
+      if (collection.id !== selectedCollection.id) return collection;
+      const itemKeys = setCollectionBatch(collection.itemKeys, bulkKeys, add);
+      return itemKeys === collection.itemKeys ? collection : { ...collection, itemKeys };
+    }));
+  }
+  async function forgetSelectedMedia() {
+    if (busyAction || !bulkSelected.length || bulkSelected.length > 100) return;
+    const removed = await bulkForgetLibraryItems(bulkSelected.map(item => ({ jobId: item.job.id, fileId: item.file.id })));
+    if (!removed?.length) return;
+    const gone = new Set(removed);
+    setSelectedKeys(previous => previous.filter(key => !gone.has(key)));
+    if (gone.has(selectedKey)) setSelectedKey("");
+  }
   const filtersActive = Boolean(librarySearch || libraryFilter !== "all" || libraryCategory !== "all" || libraryChannel !== "all" || section !== "all" || activeCollectionID);
 
   function resetFilters() {
@@ -172,6 +232,7 @@ export function LibraryPage({
     setSection("all");
     setActiveCollectionID("");
     setSelectedPlaylistID("");
+    clearSelection();
   }
   function navigate(type: LibraryFilter, nextSection: LibrarySection = "all") {
     setLibraryFilter(type);
@@ -180,6 +241,7 @@ export function LibraryPage({
     setActiveCollectionID("");
     setSelectedPlaylistID("");
     setSelectedKey("");
+    clearSelection();
   }
   function browseCollection(id: string) {
     setActiveCollectionID(id);
@@ -189,6 +251,7 @@ export function LibraryPage({
     setLibraryChannel("all");
     setSection("all");
     setSelectedKey("");
+    clearSelection();
   }
   function browseChannel(channel: string) {
     setActiveCollectionID("");
@@ -198,6 +261,7 @@ export function LibraryPage({
     setSection("all");
     setLibraryChannel(channel);
     setSelectedKey("");
+    clearSelection();
   }
   function browsePlaylist(id: string) {
     setActiveCollectionID("");
@@ -207,6 +271,7 @@ export function LibraryPage({
     setLibraryChannel("all");
     setSection("playlists");
     setSelectedKey("");
+    clearSelection();
   }
   function createCollection(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
