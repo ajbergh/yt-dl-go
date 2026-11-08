@@ -22,7 +22,7 @@ Design target: media-first, dark, Plex-inspired desktop library.
 
 **Forget item** uses the preexisting single-file library-index removal endpoint. It leaves the downloaded file and job history on disk.
 
-Favorites are stored in the local frontend preferences (`localStorage`) using a composite job/file key, without a new SQLite migration. They are not included in exports or synchronized across separate browsers/devices.
+Favorites and collections are now stored in the **SQLite state database (migration v32)**, using a versioned organization document. A legacy `localStorage` compatibility cache remains, and old local preferences are migrated when the database organization document is empty and at revision zero. They are not yet included in Library ZIP exports/imports.
 
 Search and server filters work against the API's existing 50-job pagination. Sort and favorites filter apply to the currently loaded pages; to load more, use **Load more**. The sidebar count for media types reflects loaded records, while the overall library stats use server aggregates.
 
@@ -35,13 +35,24 @@ Search and server filters work against the API's existing 50-job pagination. Sor
 - Added targeted frontend regression tests for collection behaviors, playlist browsing, and collection model validation.
 - Canonical scope: [complete master prompt](YOUTUBE_VAULT_MEDIA_LIBRARY_V2_MASTER_PROMPT.md). Delivery and verification status: [tracking document](MEDIA_LIBRARY_V2_TRACKER.md).
 
-**Persistence limitation:** collections and favorites currently use per-browser localStorage; they are not part of SQLite, Library ZIP exports, or shared between Wails and a separate browser profile. Server-backed persistence remains outstanding.
+**Persistence improvement:** favorites and collections use an authenticated `GET/PUT /api/library/organization` endpoint backed by SQLite. Updates use a revision compare-and-swap to avoid silently overwriting another window. Stale updates return 409 with a reload option in the UI. Existing per-browser values migrate on first use if no server state exists. Library ZIP import/export portability remains outstanding.
+
+## SQLite organization persistence (2026-11-08)
+
+- `src/server/library_organization.go`: versioned, strictly validated database document for favorites and collections.
+- Migration v32 installs the organization table without modifying downloaded files or job history.
+- `GET /api/library/organization` and `PUT /api/library/organization` use existing bearer authorization; PUT has a 512 KiB request-body limit and returns HTTP 409 on a stale revision.
+- `src/hooks/use-library-organization.ts`: on opening the Library, loads canonical state from SQLite, migrates legacy local preferences when safe, and serializes edits to avoid same-window races.
+- Tests cover backend restart persistence and stale/invalid writes, plus frontend hydration across remounts.
+- Browser E2E assertions were updated for redesigned heading and empty-Library text. Confirm latest CI outcomes separately before merging.
+
+**Remaining limitations:** organization metadata is not in Library ZIP export/import, and UI membership/count filters remain limited to loaded pages. Revision conflicts require a manual reload; automatic multi-window change broadcasting is not implemented.
 
 ## Next development passes
 
 - [ ] Real virtualized scrolling and scalable thumbnail-fetch scheduling for 10,000+ media items
 - [ ] Server-supported global file-based sorting, favorites filtering, and page cursors
-- [ ] Durable SQLite-backed favorites and user-defined collections
+- [x] Durable SQLite-backed favorites and user-defined collections (migration v32; export/import pending)
 - [ ] Grouped channel and source-playlist browsing
 - [ ] True per-file permanent deletion with dedicated Go API and explicit confirmation
 - [ ] Multi-select and safe, purpose-specific bulk actions
@@ -53,4 +64,4 @@ Search and server filters work against the API's existing 50-job pagination. Sor
 
 The original UI tests cover the existing queue and settings workflows, thumbnails, previews, file operations, and library filters. Check the new per-file rendering regression in `src/ui.test.mjs`.
 
-No new app storage quota, native dependencies, or schema migration are introduced.
+This phase adds SQLite migration v32 without introducing any new runtime dependencies or storage quotas. The migration participates in the existing pre-migration backup strategy.
