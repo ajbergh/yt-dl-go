@@ -1089,6 +1089,32 @@ describe("Downloader UI and Go API integration", () => {
     expect(requests.filter(item => item.path === "/api/library/organization" && item.method === "PUT")).toHaveLength(4);
   });
 
+  test("Ctrl/Cmd+A and Escape select and clear loaded media without hijacking search input", async () => {
+    rows = [{ ...job, id: "keyboard-media", status: "completed", completedCount: 2, totalCount: 2, files: [
+      { id: "a", name: "a.mp4", title: "Alpha", size: 100, publishedAvailable: true },
+      { id: "b", name: "b.mp4", title: "Beta", size: 100, publishedAvailable: true },
+    ] }];
+    await remount();
+    await connect();
+    await click(button("Library"));
+    const first = container.querySelector('[role="button"][aria-label="Select Alpha"]');
+    await act(async () => {
+      first.focus();
+      testWindow.dispatchEvent(new testWindow.KeyboardEvent("keydown", { key: "a", ctrlKey: true, bubbles: true, cancelable: true }));
+    });
+    expect(container.querySelector('[role="group"][aria-label="Bulk media actions"]').textContent).toContain("2 loaded media items selected");
+    await act(async () => {
+      testWindow.dispatchEvent(new testWindow.KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+    });
+    expect(container.querySelector('[role="group"][aria-label="Bulk media actions"]')).toBeNull();
+    const search = container.querySelector('input[aria-label="Search library"]');
+    await act(async () => {
+      search.focus();
+      testWindow.dispatchEvent(new testWindow.KeyboardEvent("keydown", { key: "a", ctrlKey: true, bubbles: true, cancelable: true }));
+    });
+    expect(container.querySelector('[role="group"][aria-label="Bulk media actions"]')).toBeNull();
+  });
+
   test("bulk forgetting asks once, never deletes disk files, and leaves failed items selected", async () => {
     rows = [{ ...job, id: "bulk-forget-job", status: "completed", completedCount: 3, totalCount: 3, files: [
       { id: "one", name: "One.mp4", title: "One", size: 100, publishedAvailable: true },
