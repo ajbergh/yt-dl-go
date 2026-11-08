@@ -16,7 +16,10 @@ import (
 	"time"
 )
 
-const libraryExportFormatVersion = 1
+const (
+	libraryExportFormatVersion = 2
+	libraryLegacyExportFormatVersion = 1
+)
 
 type libraryExportManifest struct {
 	Format                 string    `json:"format"`
@@ -29,8 +32,14 @@ type libraryExportManifest struct {
 }
 
 type libraryExportDocument struct {
-	Manifest libraryExportManifest `json:"manifest"`
-	Records  []libraryExportRecord `json:"records"`
+	Manifest     libraryExportManifest      `json:"manifest"`
+	Records      []libraryExportRecord      `json:"records"`
+	Organization *libraryExportOrganization `json:"organization,omitempty"`
+}
+
+type libraryExportOrganization struct {
+	Favorites   []string            `json:"favorites"`
+	Collections []libraryCollection `json:"collections"`
 }
 
 type libraryExportRecord struct {
@@ -148,6 +157,12 @@ func (s *server) createLibraryExport() (string, func(), error) {
 		cleanup()
 		return "", nil, fmt.Errorf("read Library from exported snapshot: %w", err)
 	}
+	organization, err := reader.loadLibraryOrganization()
+	if err != nil {
+		_ = database.Close()
+		cleanup()
+		return "", nil, fmt.Errorf("read Library organization from exported snapshot: %w", err)
+	}
 	if err := database.Close(); err != nil {
 		cleanup()
 		return "", nil, fmt.Errorf("close database snapshot: %w", err)
@@ -169,7 +184,10 @@ func (s *server) createLibraryExport() (string, func(), error) {
 			})
 		}
 	}
-	document := libraryExportDocument{Manifest: manifest, Records: records}
+	document := libraryExportDocument{
+		Manifest: manifest, Records: records,
+		Organization: portableLibraryOrganization(organization, records),
+	}
 	archivePath := filepath.Join(workDir, "yt-dl-go-library-export.zip")
 	archiveFile, err := os.OpenFile(archivePath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
 	if err != nil {
