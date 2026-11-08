@@ -87,7 +87,7 @@ export function useJobs({
       if (!item || !(await confirmJobAction(`Permanently delete ONLY "${item.title || item.outputName || item.name}" from your download folder? Other files in this download and the job history will be preserved. This cannot be undone.`))) return;
     }
     if (action === "forget-history" && !(await confirmJobAction("Remove finished job history from the Queue? Library items and media files will remain available."))) return;
-    if (action === "delete-all" && !(await confirmJobAction("Delete these library files? This removes the files from your download folder and their Library history. This cannot be undone."))) return;
+    if (action === "delete-all" && !(await confirmJobAction("Permanently delete ALL files belonging to this download, including media on Library pages you have not loaded? Files and Library history will be removed. This cannot be undone."))) return;
 
     setBusyAction(job.id);
     setActionError("");
