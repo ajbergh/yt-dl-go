@@ -20,8 +20,8 @@ type libraryCollection struct {
 }
 
 type libraryOrganization struct {
-	Revision   int64               `json:"revision"`
-	Favorites  []string            `json:"favorites"`
+	Revision    int64               `json:"revision"`
+	Favorites   []string            `json:"favorites"`
 	Collections []libraryCollection `json:"collections"`
 }
 
