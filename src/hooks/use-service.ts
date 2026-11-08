@@ -11,17 +11,22 @@ import {
 const fallbackCategories = ["Tech", "Science", "Coding", "Music", "Education", "Gaming", "Podcasts", "Archival", "General"];
 
 function libraryPagePath(query: LibraryQuery, cursor?: string): string {
-  const params = new URLSearchParams({ limit: "50" });
+  const params = new URLSearchParams({ limit: "50", sort: query.sort || "recent" });
   if (query.q) params.set("q", query.q);
   if (query.type) params.set("type", query.type);
   if (query.category) params.set("category", query.category);
   if (query.channel) params.set("channel", query.channel);
+  if (query.favorites) params.set("favorites", "1");
+  if (query.collection) params.set("collection", query.collection);
+  if (query.playlists) params.set("playlists", "1");
+  if (query.source) params.set("source", query.source);
+  if (query.recent) params.set("recent", "1");
   if (cursor) params.set("cursor", cursor);
-  return `/api/library?${params.toString()}`;
+  return `/api/library/files?${params.toString()}`;
 }
 
 const emptyLibraryPage: LibraryPageResponse = {
-  jobs: [], totalJobs: 0, categories: [], channels: [],
+  jobs: [], totalJobs: 0, totalFiles: 0, categories: [], channels: [],
   stats: { files: 0, logicalBytes: 0, managedBytes: 0, publishedBytes: 0 },
 };
 
@@ -59,6 +64,7 @@ function normalizeLibraryPage(response: Partial<LibraryPageResponse>): LibraryPa
     ...response,
     jobs,
     totalJobs: response.totalJobs ?? jobs.length,
+    totalFiles: response.totalFiles ?? jobs.reduce((total, job) => total + job.files.length, 0),
     categories,
     channels,
     stats,
@@ -166,7 +172,18 @@ export function useService() {
       });
       const result = normalizeLibraryPage(response);
       if (requestID !== libraryRequestSequence.current || query !== libraryQueryRef.current) return;
-      setLibraryJobs(previous => [...previous, ...result.jobs.filter(job => !previous.some(item => item.id === job.id))]);
+      setLibraryJobs(previous => {
+        const known = new Set(previous.flatMap(job => job.files.map(file => job.id + ":" + file.id)));
+        const additions = result.jobs.filter(job => {
+          const file = job.files[0];
+          if (!file) return false;
+          const key = job.id + ":" + file.id;
+          if (known.has(key)) return false;
+          known.add(key);
+          return true;
+        });
+        return [...previous, ...additions];
+      });
       setLibraryPage(result);
     } finally {
       if (requestID === libraryRequestSequence.current) setLoadingLibraryMore(false);
