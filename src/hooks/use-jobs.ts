@@ -131,6 +131,45 @@ export function useJobs({
     }
   }
 
+  // Library-only bulk removal never unlinks downloaded files. Individual
+  // failures remain selected and are reported; successes are refreshed once.
+  async function bulkForgetLibraryItems(items: { jobId: string; fileId: string }[]): Promise<string[] | null> {
+    const unique = [...new Map(items.filter(item => item.jobId && item.fileId).map(item => [
+      item.jobId + ":" + item.fileId, item,
+    ])).values()];
+    if (!serviceReady || busyAction || unique.length === 0 || unique.length > 100) return null;
+    if (!(await confirmJobAction(`Forget ${unique.length} selected Library file${unique.length === 1 ? "" : "s"}? Only their Library index entries will be removed. Downloaded files and job history remain on disk. This cannot be undone in the Library without reimporting.`))) return null;
+    setBusyAction("bulk-library");
+    setActionError("");
+    const removed: string[] = [];
+    const failed: string[] = [];
+    try {
+      for (const item of unique) {
+        const key = item.jobId + ":" + item.fileId;
+        try {
+          await api<void>(connection, `/api/jobs/${encodeURIComponent(item.jobId)}/library-items/${encodeURIComponent(item.fileId)}`, {
+            method: "DELETE",
+            signal: AbortSignal.timeout(15000),
+          });
+          removed.push(key);
+        } catch (error) {
+          failed.push(`${key}: ${errorMessage(error)}`);
+        }
+      }
+      setNotice(`Removed ${removed.length} selected Library entr${removed.length === 1 ? "y" : "ies"}; downloaded files and job history were preserved.` +
+        (failed.length ? ` ${failed.length} could not be removed.` : ""));
+      if (failed.length) setActionError(failed.map(message => userFacingMessage(message)).join("; "));
+      try {
+        await refreshLibrary();
+      } catch (error) {
+        setActionError(errorMessage(error));
+      }
+      return removed;
+    } finally {
+      setBusyAction("");
+    }
+  }
+
   async function retryPlaylistItem(job: DownloadJob, item: QueueItem) {
     if (!serviceReady || job.kind !== "playlist" || (item.status !== "failed" && item.status !== "cancelled")) return;
     const key = `${job.id}:retry-item:${item.index}`;
@@ -434,6 +473,7 @@ export function useJobs({
     retryAllFailedItems,
     updateJobConfiguration,
     bulkJobAction,
+    bulkForgetLibraryItems,
     previewFile,
     saveFile,
     filesystemAction,
