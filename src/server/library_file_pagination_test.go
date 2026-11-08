@@ -112,8 +112,8 @@ func TestGlobalMediaFilesFilterAtFileGrainIncludingFavoritesAndCollections(t *te
 	s := newPersistenceTestServer(t)
 	seedFilePages(t, s)
 	_, conflict, err := s.store.saveLibraryOrganization(libraryOrganization{
-		Revision:    0,
-		Favorites:   []string{"global-sort-a:global-file-a", "global-sort-b:global-file-b"},
+		Revision:  0,
+		Favorites: []string{"global-sort-a:global-file-a", "global-sort-b:global-file-b"},
 		Collections: []libraryCollection{{
 			ID: "collection-media", Name: "Playlist", ItemKeys: []string{"global-sort-a:global-file-m", "global-sort-b:global-file-b"},
 		}},
