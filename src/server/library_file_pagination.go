@@ -273,7 +273,7 @@ func (s *server) handleLibraryFiles(w http.ResponseWriter, r *http.Request) {
 	query.PlaylistOnly = params.Get("playlists") == "1"
 	query.RecentOnly = params.Get("recent") == "1"
 	if query.RecentOnly {
-		query.RecentCutoff = time.Now().UTC().AddDate(0, 0, -30).Format(time.RFC3339)
+		query.RecentCutoff = time.Now().UTC().AddDate(0, 0, -30).Format("2006-01-02")
 	}
 	cursor, err := decodeLibraryFileCursor(params.Get("cursor"), query)
 	if err != nil {
