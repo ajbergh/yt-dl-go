@@ -741,6 +741,10 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.serveEvents(w, r)
 		return
 	}
+	if r.URL.Path == "/api/library/files" {
+		s.handleLibraryFiles(w, r)
+		return
+	}
 	if r.URL.Path == "/api/library" {
 		if r.Method != http.MethodGet {
 			fail(w, http.StatusMethodNotAllowed, "Method not allowed")
