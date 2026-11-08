@@ -1172,6 +1172,6 @@ describe("Downloader UI and Go API integration", () => {
     expect(button("Save all as ZIP")).toBeUndefined();
     expect(button("Save")).toBeUndefined();
     expect(button("Remove file")).toBeUndefined();
-    expect([...container.querySelectorAll("button")].filter(item => item.textContent.trim() === "Delete files")).toHaveLength(1);
+    expect([...container.querySelectorAll("button")].filter(item => item.textContent.trim() === "Delete entire download")).toHaveLength(1);
   });
 });
