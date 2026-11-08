@@ -802,7 +802,7 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/api/jobs/"), "/")
-	validLibraryItemRoute := len(parts) == 3 && parts[1] == "library-items" && r.Method == http.MethodDelete
+	validLibraryItemRoute := len(parts) == 3 && (parts[1] == "library-items" || parts[1] == "library-files") && r.Method == http.MethodDelete
 	if !strings.HasPrefix(r.URL.Path, "/api/jobs/") || (len(parts) > 2 && !validLibraryItemRoute) || parts[0] == "" {
 		fail(w, 404, "Endpoint not found")
 		return
@@ -825,6 +825,10 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if len(parts) == 3 && parts[1] == "library-items" && r.Method == http.MethodDelete {
 		s.handleLibraryItemDelete(w, parts[0], parts[2])
+		return
+	}
+	if len(parts) == 3 && parts[1] == "library-files" && r.Method == http.MethodDelete {
+		s.handleSingleLibraryFileDelete(w, parts[0], parts[2])
 		return
 	}
 	if len(parts) == 2 && parts[1] == "history" && r.Method == http.MethodDelete {
@@ -998,7 +1002,7 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 func libraryJobRoute(parts []string, method string) bool {
 	if len(parts) == 3 {
-		return parts[1] == "library-items" && method == http.MethodDelete
+		return (parts[1] == "library-items" || parts[1] == "library-files") && method == http.MethodDelete
 	}
 	if len(parts) == 1 {
 		return method == http.MethodDelete
