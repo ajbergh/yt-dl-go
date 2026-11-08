@@ -147,7 +147,7 @@ export function HomePage() {
     const channels = job.files.map(file => file.author?.trim() || "Unknown channel");
     const text = `${job.title} ${job.url} ${job.category ?? ""} ${job.audioFormat ?? ""} ${job.subtitleLanguage ?? ""} ${job.files.map(file => `${file.title ?? ""} ${file.author ?? ""} ${file.category ?? ""} ${file.name} ${file.outputName ?? ""} ${file.outputRelativePath ?? ""} ${file.subtitle?.label ?? ""} ${file.subtitle?.languageCode ?? ""}`).join(" ")}`.toLowerCase();
     return (!query || text.includes(query))
-      && (libraryFilter === "all" || (job.mediaType ?? "video") === libraryFilter)
+      && (libraryFilter === "all" || job.files.some(file => (file.mediaType || job.mediaType || "video") === libraryFilter))
       && (libraryCategory === "all" || category === libraryCategory)
       && (libraryChannel === "all" || channels.includes(libraryChannel));
   }), [libraryJobs, libraryFilter, librarySearch, libraryCategory, libraryChannel]);
@@ -162,7 +162,7 @@ export function HomePage() {
       ...libraryView,
     }), 250);
     return () => clearTimeout(timer);
-  }, [librarySearch, libraryFilter, libraryCategory, libraryChannel, setLibraryQuery]);
+  }, [librarySearch, libraryFilter, libraryCategory, libraryChannel, libraryView, setLibraryQuery]);
 
   useEffect(() => {
     try { window.localStorage.setItem(libraryLayoutKey, libraryLayout); }
