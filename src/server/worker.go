@@ -1297,8 +1297,9 @@ func (s *server) processItem(ctx context.Context, j *jobState, entry *youtube.Pl
 	if err != nil {
 		return err
 	}
-	if j.MediaType == "audio" && j.SubtitleLanguage == "" && !(j.SplitByChapter && j.AudioFormat == "mp3" && len(parseDescriptionChapters(video.Description, video.Duration)) > 1) {
-		if existing, ok := s.store.findPublishedAudio(video.ID, j.AudioFormat, j.AudioBitrate); ok {
+	splitChapters := j.MediaType == "audio" && j.SplitByChapter && j.AudioFormat == "mp3" && len(parseDescriptionChapters(video.Description, video.Duration)) > 1
+	if j.MediaType == "audio" && j.SubtitleLanguage == "" && !splitChapters {
+		if existing, ok := s.store.findPublishedAudio(j, video.ID); ok {
 			s.reuseLibraryAudio(ctx, j, existing, current)
 			return nil
 		}
@@ -1328,7 +1329,7 @@ func (s *server) processItem(ctx context.Context, j *jobState, entry *youtube.Pl
 	}()
 	var files []mediaFile
 	if j.MediaType == "audio" {
-		if j.SplitByChapter && j.AudioFormat == "mp3" && len(parseDescriptionChapters(video.Description, video.Duration)) > 1 {
+		if splitChapters {
 			files, err = s.transferChapterMP3(transferCtx, j, engine, video, format, extension, current, outputIndex, budget)
 		} else if j.AudioFormat == "m4a" {
 			var file mediaFile

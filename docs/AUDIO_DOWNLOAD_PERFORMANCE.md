@@ -38,8 +38,12 @@ size; the encoder documents a small, bounded quality cost on well under 0.1% of 
 
 A new audio job reuses an already published track instead of downloading and encoding it
 again (which previously produced `... (2).mp3`). Reuse requires the same video, output format,
-MP3 bitrate, no captions, no chapter split, and a published file still on disk with its recorded
+MP3 bitrate, the same Library folder, no captions, no chapter split, and a published file still on disk with its recorded
 size. The new Library entry shares that file, so deleting files from one entry removes it for both.
+
+Finished tracks appear in the Library while the remaining playlist items are still running.
+Preview, Reveal, and Copy path operate on those finalized files immediately; archive downloads
+and file deletion still require the job to stop.
 
 Downloading and converting use separate queues. An item returns its download slot as soon
 its AAC source is on disk, so the next track starts downloading while finished sources wait for a

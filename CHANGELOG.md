@@ -6,6 +6,7 @@ This file summarizes notable user-facing changes. Version **v0.1.0** was publicl
 
 ### Changed
 
+- Audio downloads reuse matching tracks within the selected Library folder and queue MP3 conversion separately from downloading. Finished playlist tracks appear in the Library immediately and can be previewed or revealed while the remaining items download.
 - Faster native downloads: range requests now run as a continuous pipeline instead of waiting on the slowest request in each 32 MiB window, range buffers are reused, and the HTTP client keeps all parallel connections warm. A failed range keeps already-downloaded contiguous progress. Offline benchmark throughput improved about 50%.
 - MP4 downloads whose preferred audio is multichannel AAC now probe that track first and, if it is rejected, capture the video and stereo fallback audio together in one browser pass instead of two serial passes (about 40% faster on affected videos).
 

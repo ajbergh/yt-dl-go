@@ -1498,11 +1498,11 @@ func (s *server) enqueueJobWithFallback(w http.ResponseWriter, u, kind, quality,
 }
 
 // issueTicket creates a short-lived random capability for a stopped job's ZIP
-// or one finalized file. The returned ticket URL, not a bearer token, grants
+// or one finalized file, including files from active jobs. The returned ticket URL grants
 // access to the corresponding download route.
 func (s *server) issueTicket(w http.ResponseWriter, j *jobState, fileID string, fileIDs []string, inline bool) {
-	if !terminal(j.Status) || len(j.Files) == 0 {
-		fail(w, 409, "Files are available only after the job has stopped and finalized output exists")
+	if len(j.Files) == 0 || (!terminal(j.Status) && fileID == "") {
+		fail(w, 409, "Select a finalized file, or wait until the job has stopped to download an archive")
 		return
 	}
 	if inline && fileID == "" {
