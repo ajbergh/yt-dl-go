@@ -7,6 +7,7 @@ import { terminalNotification } from "./components/downloader/view-model";
 import { userFacingMessage } from "./lib/messages";
 import { namingTokenNames, previewFilename, sanitizeFilenameComponent } from "./lib/naming";
 import { addCollection, collectionNameIsAvailable, normalizeCollections, renameCollection, removeCollection, toggleCollectionItem } from "./lib/library-collections";
+import { chooseMediaKeys, setCollectionBatch, setFavoriteBatch } from "./lib/library-selection";
 
 describe("filename naming preview", () => {
   test("shows each token and sanitizes the single-pass preview like the publisher", () => {
@@ -52,6 +53,29 @@ describe("Media Library collection model", () => {
   });
 });
 
+describe("Media Library multi-selection", () => {
+  test("handles single-click, additive toggle, range, and additive range within the visible result order", () => {
+    const keys = ["a", "b", "c", "d"];
+    expect(chooseMediaKeys(keys, [], "b", "", {})).toEqual(["b"]);
+    expect(chooseMediaKeys(keys, ["b"], "d", "b", { range: true })).toEqual(["b", "c", "d"]);
+    expect(chooseMediaKeys(keys, ["b", "c", "d"], "c", "b", { additive: true })).toEqual(["b", "d"]);
+    expect(chooseMediaKeys(keys, ["a"], "d", "b", { additive: true, range: true })).toEqual(["a", "b", "c", "d"]);
+    expect(chooseMediaKeys(["a", "c"], ["a", "b"], "c", "a", { range: true })).toEqual(["a", "c"]);
+    expect(chooseMediaKeys(keys, ["b"], "missing", "b", {})).toEqual(["b"]);
+  });
+
+  test("changes favorites and collection membership without duplicates and enforces per-batch limits", () => {
+    const keys = ["job:one", "job:two", "job:one"];
+    expect(setFavoriteBatch(["job:one"], keys, true)).toEqual(["job:one", "job:two"]);
+    expect(setFavoriteBatch(["job:one", "job:two", "other:file"], keys, false)).toEqual(["other:file"]);
+    expect(setCollectionBatch(["job:one"], keys, true)).toEqual(["job:one", "job:two"]);
+    expect(setCollectionBatch(["job:one", "job:two", "other:file"], keys, false)).toEqual(["other:file"]);
+    const full = Array.from({ length: 10000 }, (_, i) => "item:" + i);
+    expect(setFavoriteBatch(full, ["another:item"], true)).toBe(full);
+    expect(setCollectionBatch(full, ["another:item"], true)).toBe(full);
+  });
+});
+
 const testWindow = new Window({ url: "http://localhost:5173/" });
 for (const key of ["window", "document", "HTMLElement", "HTMLInputElement", "Node", "Event", "MouseEvent"]) {
   globalThis[key] = key === "window" ? testWindow : testWindow[key];
@@ -64,6 +88,7 @@ const realFetch = globalThis.fetch;
 let requests;
 let rows;
 let rejectedBulkIDs;
+let rejectedLibraryFileKeys;
 let missing;
 let healthEngine;
 let healthVersion;
@@ -103,6 +128,7 @@ beforeEach(async () => {
   requests = [];
   rows = [];
   rejectedBulkIDs = new Set();
+  rejectedLibraryFileKeys = new Set();
   testWindow.confirm = () => true;
   delete testWindow.go;
   missing = [];
@@ -240,6 +266,15 @@ beforeEach(async () => {
     if (init.method === "DELETE" && path.endsWith("/managed")) {
       const current = rows[0] ?? job;
       return Response.json({ ...current, files: (current.files ?? []).map(file => ({ ...file, managedAvailable: false })) });
+    }
+    if (init.method === "DELETE" && path.includes("/library-items/")) {
+      const parts = path.split("/");
+      const itemKey = parts[3] + ":" + parts[5];
+      if (rejectedLibraryFileKeys.has(itemKey)) return Response.json({ error: "Library item is in use" }, { status: 409 });
+      rows = rows.map(item => item.id === parts[3]
+        ? { ...item, files: (item.files ?? []).filter(file => file.id !== parts[5]) }
+        : item);
+      return new Response(null, { status: 204 });
     }
     if (init.method === "DELETE") return new Response(null, { status: 204 });
     return Response.json({ error: "Not found." }, { status: 404 });
@@ -1021,6 +1056,70 @@ describe("Downloader UI and Go API integration", () => {
     await click(card);
     expect(container.querySelector('[aria-label="Selected media details"]').textContent).toContain("Second clip");
     window.localStorage.removeItem("yt-dl-go:library-favorites-v2");
+  });
+
+  test("selects loaded media with shift and control clicks, then applies one persisted bulk organization update", async () => {
+    const files = ["Alpha", "Beta", "Gamma"].map((name, index) => ({
+      id: "file-" + index, name: name + ".mp4", title: name, size: 1024,
+      mediaType: "video", outputRelativePath: "Videos/" + name + ".mp4", publishedAvailable: true,
+    }));
+    rows = [{ ...job, id: "bulk-media-job", status: "completed", completedCount: 3, totalCount: 3, files }];
+    organizationResponse = { revision: 1, favorites: [], collections: [{ id: "c_media", name: "Watch Later", itemKeys: [] }] };
+    await remount();
+    await connect();
+    await click(button("Library"));
+    const card = name => container.querySelector('[role="button"][aria-label="Select ' + name + '"]');
+    await click(card("Alpha"));
+    await act(async () => card("Gamma").dispatchEvent(new testWindow.MouseEvent("click", { bubbles: true, shiftKey: true })));
+    expect(container.querySelector('[role="group"][aria-label="Bulk media actions"]').textContent).toContain("3 loaded media items selected");
+    await act(async () => card("Beta").dispatchEvent(new testWindow.MouseEvent("click", { bubbles: true, ctrlKey: true })));
+    expect(container.querySelector('[role="group"][aria-label="Bulk media actions"]').textContent).toContain("2 loaded media items selected");
+    await click(button("Select all loaded"));
+    await click(button("Favorite selected"));
+    expect(organizationResponse.favorites).toEqual(["bulk-media-job:file-0", "bulk-media-job:file-1", "bulk-media-job:file-2"]);
+    await setSelect(container.querySelector('select[aria-label="Bulk collection"]'), "c_media");
+    await click(button("Add to collection"));
+    expect(organizationResponse.collections[0].itemKeys).toEqual(organizationResponse.favorites);
+    await click(button("Remove favorites"));
+    expect(organizationResponse.favorites).toEqual([]);
+    await click(button("Remove from collection"));
+    expect(organizationResponse.collections[0].itemKeys).toEqual([]);
+    await click(button("Clear selection"));
+    expect(container.querySelector('[role="group"][aria-label="Bulk media actions"]')).toBeNull();
+    expect(requests.filter(item => item.path === "/api/library/organization" && item.method === "PUT")).toHaveLength(4);
+  });
+
+  test("bulk forgetting asks once, never deletes disk files, and leaves failed items selected", async () => {
+    rows = [{ ...job, id: "bulk-forget-job", status: "completed", completedCount: 3, totalCount: 3, files: [
+      { id: "one", name: "One.mp4", title: "One", size: 100, publishedAvailable: true },
+      { id: "two", name: "Two.mp4", title: "Two", size: 100, publishedAvailable: true },
+      { id: "three", name: "Three.mp4", title: "Three", size: 100, publishedAvailable: true },
+    ] }];
+    rejectedLibraryFileKeys.add("bulk-forget-job:two");
+    await remount();
+    await connect();
+    await click(button("Library"));
+    await click(button("Select all loaded"));
+    const prompts = [];
+    const originalConfirm = testWindow.confirm;
+    try {
+      testWindow.confirm = message => { prompts.push(message); return false; };
+      await click(button("Forget selected (keep files)"));
+      expect(prompts).toHaveLength(1);
+      expect(prompts[0]).toContain("Downloaded files and job history remain on disk");
+      expect(requests.some(item => item.method === "DELETE")).toBe(false);
+      testWindow.confirm = () => true;
+      await click(button("Forget selected (keep files)"));
+      const deleted = requests.filter(item => item.method === "DELETE");
+      expect(deleted).toHaveLength(3);
+      expect(deleted.every(item => item.path.includes("/library-items/"))).toBe(true);
+      expect(deleted.some(item => item.path.endsWith("/all") || item.path.includes("/library-files/"))).toBe(false);
+      expect(container.textContent).toContain("Removed 2 selected Library entries");
+      expect(container.textContent).toContain("1 could not be removed");
+      expect(container.querySelector('[role="group"][aria-label="Bulk media actions"]').textContent).toContain("1 loaded media item selected");
+    } finally {
+      testWindow.confirm = originalConfirm;
+    }
   });
 
   test("prefers authenticated local thumbnails and retains remote artwork as fallback metadata", async () => {
