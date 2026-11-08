@@ -4,7 +4,7 @@ import {
   FileText, Film, FolderOpen, Grid2X2, HardDrive, Heart, List, Music2, Plus, Pencil, Layers,
   Play, RefreshCw, Search, SlidersHorizontal, Trash2, Users, X,
 } from "lucide-react";
-import type { DownloadFile, DownloadJob, ServiceConnection } from "../lib/downloader";
+import type { DownloadFile, DownloadJob, LibraryQuery, ServiceConnection } from "../lib/downloader";
 import { userFacingMessage } from "../lib/messages";
 import { confirmAction } from "../lib/desktop";
 import { addCollection, collectionNameIsAvailable, removeCollection, renameCollection, toggleCollectionItem, type MediaCollection } from "../lib/library-collections";
@@ -26,6 +26,8 @@ type LibraryPageProps = {
   libraryJobs: DownloadJob[];
   visibleLibraryJobs: DownloadJob[];
   libraryTotalJobs: number;
+  libraryTotalFiles: number;
+  onViewChange: (view: LibraryQuery) => void;
   librarySearch: string;
   setLibrarySearch: (value: string) => void;
   libraryFilter: LibraryFilter;
@@ -86,21 +88,12 @@ function mediaFormat(file: DownloadFile): string {
   const extension = fileName.split(".").pop();
   return extension && extension !== fileName ? extension.toUpperCase() : (file.mimeType || "Media");
 }
-function sortMedia(items: MediaItem[], sort: SortMode): MediaItem[] {
-  return [...items].sort((a, b) => {
-    if (sort === "title") return a.title.localeCompare(b.title);
-    if (sort === "size") return b.file.size - a.file.size;
-    if (sort === "duration") return (b.file.durationSeconds || 0) - (a.file.durationSeconds || 0);
-    const dateComparison = b.job.createdAt.localeCompare(a.job.createdAt);
-    return sort === "oldest" ? -dateComparison : dateComparison;
-  });
-}
 function actionDisabled(item: MediaItem, busyAction: string, action: string): boolean {
   return !item.available || busyAction === item.job.id + ":" + item.file.id + ":" + action;
 }
 
 export function LibraryPage({
-  libraryJobs, visibleLibraryJobs, libraryTotalJobs, librarySearch, setLibrarySearch,
+  libraryJobs, visibleLibraryJobs, libraryTotalJobs, libraryTotalFiles, onViewChange, librarySearch, setLibrarySearch,
   libraryFilter, setLibraryFilter, libraryCategory, setLibraryCategory,
   libraryChannel, setLibraryChannel, libraryCategories, libraryChannels,
   libraryLayout, setLibraryLayout, libraryStats, hasMoreLibrary, loadingLibraryMore,
@@ -152,7 +145,9 @@ export function LibraryPage({
     favorites: allLoaded.filter(item => favorites.includes(item.key)).length,
   }), [allLoaded, favorites]);
   const activeCollection = collections.find(collection => collection.id === activeCollectionID);
-  const playlistJobs = libraryJobs.filter(job => job.kind === "playlist" && job.files.length > 0);
+  const playlistJobs = [...new Map(libraryJobs.filter(job => job.kind === "playlist" && job.files.length > 0).map(job => [job.id, job])).values()];
+  const playlistLoadedCounts = new Map<string, number>();
+  for (const job of libraryJobs) if (job.kind === "playlist") playlistLoadedCounts.set(job.id, (playlistLoadedCounts.get(job.id) ?? 0) + job.files.length);
   const filtered = useMemo(() => {
     const collection = collections.find(entry => entry.id === activeCollectionID);
     const visible = loaded.filter(item => {
@@ -165,8 +160,8 @@ export function LibraryPage({
       }
       return true;
     });
-    return sortMedia(visible, sort);
-  }, [loaded, section, favorites, sort, collections, activeCollectionID, selectedPlaylistID]);
+    return visible;
+  }, [loaded, section, favorites, collections, activeCollectionID, selectedPlaylistID]);
   const visibleKeys = useMemo(() => filtered.map(item => item.key), [filtered]);
   const selectedKeysInView = new Set(selectedKeys);
   const bulkSelected = filtered.filter(item => selectedKeysInView.has(item.key));
@@ -224,6 +219,17 @@ export function LibraryPage({
   }
   const filtersActive = Boolean(librarySearch || libraryFilter !== "all" || libraryCategory !== "all" || libraryChannel !== "all" || section !== "all" || activeCollectionID);
 
+  function updateServerView(nextSection: LibrarySection, nextCollection: string, nextPlaylist: string, nextSort: SortMode = sort) {
+    onViewChange({
+      sort: nextSort,
+      favorites: nextSection === "favorites",
+      recent: nextSection === "recent",
+      playlists: nextSection === "playlists",
+      source: nextSection === "playlists" && nextPlaylist ? nextPlaylist : undefined,
+      collection: nextCollection || undefined,
+    });
+  }
+
   function resetFilters() {
     setLibrarySearch("");
     setLibraryFilter("all");
@@ -233,6 +239,7 @@ export function LibraryPage({
     setActiveCollectionID("");
     setSelectedPlaylistID("");
     clearSelection();
+    updateServerView("all", "", "");
   }
   function navigate(type: LibraryFilter, nextSection: LibrarySection = "all") {
     setLibraryFilter(type);
@@ -242,6 +249,7 @@ export function LibraryPage({
     setSelectedPlaylistID("");
     setSelectedKey("");
     clearSelection();
+    updateServerView(nextSection, "", "");
   }
   function browseCollection(id: string) {
     setActiveCollectionID(id);
@@ -252,6 +260,7 @@ export function LibraryPage({
     setSection("all");
     setSelectedKey("");
     clearSelection();
+    updateServerView("all", id, "");
   }
   function browseChannel(channel: string) {
     setActiveCollectionID("");
@@ -262,6 +271,7 @@ export function LibraryPage({
     setLibraryChannel(channel);
     setSelectedKey("");
     clearSelection();
+    updateServerView("all", "", "");
   }
   function browsePlaylist(id: string) {
     setActiveCollectionID("");
@@ -272,6 +282,7 @@ export function LibraryPage({
     setSection("playlists");
     setSelectedKey("");
     clearSelection();
+    updateServerView("playlists", "", id);
   }
   function createCollection(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -495,7 +506,7 @@ export function LibraryPage({
               <label className="ml-auto flex items-center gap-2 text-xs text-neutral-400">
                 <ArrowDownAZ className="size-4" aria-hidden="true" />
                 <span className="sr-only">Sort media</span>
-                <select aria-label="Sort library" value={sort} onChange={event => setSort(event.target.value as SortMode)}
+                <select aria-label="Sort library" value={sort} onChange={event => { const nextSort = event.target.value as SortMode; setSort(nextSort); updateServerView(section, activeCollectionID, selectedPlaylistID, nextSort); }}
                   className="min-h-8 rounded-lg border border-neutral-700 bg-neutral-950 px-2 text-xs text-neutral-200">
                   <option value="recent">Recently added</option><option value="oldest">Oldest first</option>
                   <option value="title">Title A–Z</option><option value="size">Largest first</option>
@@ -518,10 +529,10 @@ export function LibraryPage({
                 className={button}>All playlists</button>
               {playlistJobs.map(job => <button type="button" key={job.id} aria-pressed={selectedPlaylistID === job.id}
                 className={button + (selectedPlaylistID === job.id ? " border-rose-500 text-rose-200" : "")}
-                onClick={() => browsePlaylist(job.id)}>{job.title} ({job.files.length})</button>)}
+                onClick={() => browsePlaylist(job.id)}>{job.title} ({playlistLoadedCounts.get(job.id) || 0} loaded)</button>)}
             </div>}
             <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-neutral-500">
-              <p>{visibleLibraryJobs.length} of {libraryTotalJobs} jobs visible (matching filters) · {filtered.length} loaded media items</p>
+              <p>{filtered.length} visible · {libraryJobs.length} of {libraryTotalFiles} matching media loaded across {libraryTotalJobs} sources</p>
               <button type="button" onClick={() => { setSelectedKeys(visibleKeys); setSelectionAnchor(visibleKeys[0] || ""); setSelectedKey(visibleKeys[0] || ""); }}
                 disabled={!filtered.length} aria-label="Select all visible media"
                 className="text-rose-300 hover:text-rose-200 disabled:text-neutral-600">Select all loaded</button>
@@ -623,7 +634,7 @@ export function LibraryPage({
           )}
           {hasMoreLibrary && <div className="flex justify-center py-3">
             <button type="button" className={button} onClick={loadMoreLibrary} disabled={loadingLibraryMore}>
-              {loadingLibraryMore ? "Loading…" : "Load more (" + Math.max(0, libraryTotalJobs - libraryJobs.length) + " jobs remaining)"}
+              {loadingLibraryMore ? "Loading…" : "Load more (" + Math.max(0, libraryTotalFiles - libraryJobs.length) + " media remaining)"}
             </button>
           </div>}
         </div>
