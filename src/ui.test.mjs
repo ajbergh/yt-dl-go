@@ -69,6 +69,7 @@ let healthEngine;
 let healthVersion;
 let diagnosticsResponse;
 let updateResponse;
+let organizationResponse;
 let liveEvent;
 let notificationsEnabled;
 let notificationPermission;
@@ -109,6 +110,9 @@ beforeEach(async () => {
   healthVersion = "dev";
   diagnosticsResponse = { count: 0, issues: [] };
   updateResponse = { currentVersion: "dev", updateAvailable: false, developmentBuild: true, automaticUpdate: false, note: "Development build: external update checks are skipped." };
+  organizationResponse = { revision: 0, favorites: [], collections: [] };
+  testWindow.localStorage.removeItem("yt-dl-go:library-collections-v2");
+  testWindow.localStorage.removeItem("yt-dl-go:library-favorites-v2");
   liveEvent = null;
   notificationsEnabled = false;
   notificationPermission = "granted";
@@ -131,6 +135,16 @@ beforeEach(async () => {
     if (path === "/api/diagnostics") return Response.json(diagnosticsResponse);
     if (path === "/api/library/export") return new Response("zip archive bytes", { headers: { "Content-Type": "application/zip" } });
     if (path === "/api/library/import" && init.method === "POST") return Response.json({ imported: 3, idempotent: false });
+    if (path === "/api/library/organization") {
+      if (init.method === "PUT") {
+        const body = JSON.parse(init.body);
+        if (body.revision !== organizationResponse.revision) {
+          return Response.json({ error: "Library organization was changed in another window. Reload before editing." }, { status: 409 });
+        }
+        organizationResponse = { revision: organizationResponse.revision + 1, favorites: body.favorites, collections: body.collections };
+      }
+      return Response.json(organizationResponse);
+    }
     if (path === "/api/update") return Response.json(updateResponse);
     if (path === "/api/settings" && init.method === "PUT") {
       const settings = JSON.parse(init.body);
@@ -943,6 +957,30 @@ describe("Downloader UI and Go API integration", () => {
     expect(JSON.parse(testWindow.localStorage.getItem("yt-dl-go:library-collections-v2"))).toEqual([]);
     expect(requests.some(item => item.method === "DELETE")).toBe(false);
     testWindow.localStorage.removeItem("yt-dl-go:library-collections-v2");
+  });
+
+  test("hydrates favorites and collections from the backend across remounts", async () => {
+    organizationResponse = {
+      revision: 5,
+      favorites: ["library-job:source-file"],
+      collections: [{ id: "saved-collection", name: "Saved", itemKeys: ["library-job:source-file"] }],
+    };
+    rows = [{ ...job, id: "library-job", status: "completed", completedCount: 1, totalCount: 1, files: [
+      { id: "source-file", name: "track.m4a", title: "Saved track", size: 1024, publishedAvailable: true },
+    ] }];
+    await remount();
+    await connect();
+    await click(button("Library"));
+    expect(container.querySelector('button[title="Saved"]')).toBeTruthy();
+    expect(container.querySelector('button[aria-label="Remove favorite: Saved track"]')).toBeTruthy();
+    await click(container.querySelector('button[aria-label="Remove favorite: Saved track"]'));
+    expect(organizationResponse.revision).toBe(6);
+    expect(organizationResponse.favorites).toEqual([]);
+    await remount();
+    await click(button("Library"));
+    expect(container.querySelector('button[title="Saved"]')).toBeTruthy();
+    expect(container.querySelector('button[aria-label="Add favorite: Saved track"]')).toBeTruthy();
+    expect(requests.some(item => item.path === "/api/library/organization")).toBe(true);
   });
 
   test("browses loaded playlist media separately from standalone videos", async () => {
