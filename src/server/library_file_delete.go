@@ -128,8 +128,30 @@ func (s *server) handleSingleLibraryFileDelete(w http.ResponseWriter, jobID, fil
 		fail(w, http.StatusNotFound, "Library item not found")
 		return
 	}
-	j.deleting = true
 	file := &j.Files[fileIndex]
+	// A second indexed item must never lose its file through an alias to the
+	// same destination, including case-only path differences on Windows.
+	paths := []string{file.OutputPath}
+	if file.Subtitle != nil && file.Subtitle.PublishedAvailable {
+		paths = append(paths, file.Subtitle.OutputPath)
+	}
+	for _, path := range paths {
+		if path == "" {
+			continue
+		}
+		var shared int
+		if err := s.store.db.QueryRow(`SELECT EXISTS(SELECT 1 FROM library_items
+			WHERE output_path=? COLLATE NOCASE AND (source_job_id<>? OR file_id<>?))`,
+			path, jobID, fileID).Scan(&shared); err != nil {
+			fail(w, http.StatusInternalServerError, "Could not verify library file ownership")
+			return
+		}
+		if shared != 0 {
+			fail(w, http.StatusConflict, "Another Library item refers to the same output path")
+			return
+		}
+	}
+	j.deleting = true
 	// Partial filesystem failures are persisted in the job record so a restart
 	// can reconcile the remaining file safely. Never delete another item.
 	recoverItem := func() {
