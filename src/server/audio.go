@@ -147,6 +147,9 @@ func convertAACToMP3Tagged(ctx context.Context, source io.ReadSeeker, output io.
 		SampleRate: info.SampleRate,
 		Channels:   info.Channels,
 		Bitrate:    bitrateKbps * 1000,
+		// Fast gain search is roughly an order of magnitude quicker on dense
+		// music and diverges from exact on well under 0.1% of granules.
+		RateControl: mp3.RateControlFast,
 	})
 	if err != nil {
 		return 0, errAudioConvert

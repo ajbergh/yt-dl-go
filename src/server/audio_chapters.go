@@ -130,7 +130,7 @@ func (s *server) transferChapterMP3(ctx context.Context, j *jobState, engine nat
 		}
 		outputs[index].output = output
 		outputs[index].buffered = bufio.NewWriterSize(output, audioOutputBufferSize)
-		outputs[index].encoder, err = mp3.NewEncoder(mp3.EncoderConfig{SampleRate: info.SampleRate, Channels: info.Channels, Bitrate: bitrateKbps * 1000})
+		outputs[index].encoder, err = mp3.NewEncoder(mp3.EncoderConfig{SampleRate: info.SampleRate, Channels: info.Channels, Bitrate: bitrateKbps * 1000, RateControl: mp3.RateControlFast})
 		if err != nil {
 			cleanup()
 			_ = closeSource()

@@ -1287,6 +1287,12 @@ func (s *server) processItem(ctx context.Context, j *jobState, entry *youtube.Pl
 	if err != nil {
 		return err
 	}
+	if j.MediaType == "audio" && j.SubtitleLanguage == "" && !(j.SplitByChapter && j.AudioFormat == "mp3" && len(parseDescriptionChapters(video.Description, video.Duration)) > 1) {
+		if existing, ok := s.store.findPublishedAudio(video.ID, j.AudioFormat, j.AudioBitrate); ok {
+			s.reuseLibraryAudio(ctx, j, existing, current)
+			return nil
+		}
+	}
 	requested := estimatedItemBudget(j, video, format, selection)
 	budget, err := tracker.reserve(ctx, requested)
 	if err != nil {
@@ -1463,6 +1469,31 @@ func (s *server) processItem(ctx context.Context, j *jobState, entry *youtube.Pl
 	s.mu.Unlock()
 	committed = true
 	return nil
+}
+
+// reuseLibraryAudio records an already published track for this item instead of
+// downloading and encoding it again. The new Library entry shares the published
+// file, so no "(2)" copy is created.
+func (s *server) reuseLibraryAudio(ctx context.Context, j *jobState, existing mediaFile, current int) {
+	file := existing
+	file.ID = randomID(16)
+	file.ManagedAvailable = false
+	file.ThumbnailLocalAvailable, file.ThumbnailMimeType = false, ""
+	file.Subtitle, file.SubtitleError = nil, ""
+	file.SourceItemIndex = current
+	if j.Category != "" {
+		file.Category = j.Category
+	}
+	s.captureThumbnail(ctx, j, &file)
+	s.updateProgress(j, current, file.Size, file.Size)
+	s.mu.Lock()
+	setItemFiles(j, current, []mediaFile{file})
+	s.rebuildFilesLocked(j)
+	s.refreshQueueItemLocked(j, current)
+	j.Progress = floatPointer(100)
+	s.persistJobLocked(j)
+	s.publishJobEventLocked("job-file-finalized", j)
+	s.mu.Unlock()
 }
 
 func itemTransferTimeout(video *youtube.Video, expectedBytes, bandwidthLimit int64) time.Duration {

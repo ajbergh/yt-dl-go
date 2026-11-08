@@ -32,6 +32,15 @@
   200 ms plus a final update. Independent playlist items already run concurrently
   within the configured global item-slot limit.
 
+MP3 encoding uses the encoder's `RateControlFast` gain search. On a 20-second dense stereo
+synthetic signal it took 11.5 s instead of 161 s with exact search, with identical CBR output
+size; the encoder documents a small, bounded quality cost on well under 0.1% of granules.
+
+A new audio job reuses an already published track instead of downloading and encoding it
+again (which previously produced `... (2).mp3`). Reuse requires the same video, output format,
+MP3 bitrate, no captions, no chapter split, and a published file still on disk with its recorded
+size. The new Library entry shares that file, so deleting files from one entry removes it for both.
+
 MP3 encoding stays ordered and stateful. Original M4A skips encoding entirely.
 The MP3 bitrate controls the output, not the size or quality of the source AAC
 download. Source quality is preserved rather than silently lowered.
