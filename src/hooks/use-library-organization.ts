@@ -102,7 +102,7 @@ export function useLibraryOrganization(connection: ServiceConnection): {
       if (generation !== requestGeneration.current) return;
       setError(reason instanceof Error ? reason.message : "Could not load library organization.");
     }
-  }, [connection.base, connection.token]);
+  }, [connection]);
 
   useEffect(() => {
     void load();
@@ -136,7 +136,7 @@ export function useLibraryOrganization(connection: ServiceConnection): {
     } finally {
       saving.current = false;
     }
-  }, [connection.base, connection.token]);
+  }, [connection]);
 
   const update = useCallback((fn: (previous: LibraryOrganization) => LibraryOrganization) => {
     if (!writable.current) return;
