@@ -82,7 +82,7 @@ func decodeLibraryFileCursor(value string, query libraryFileQuery) (libraryFileC
 	}
 	var cursor libraryFileCursor
 	if err := json.Unmarshal(raw, &cursor); err != nil ||
-		cursor.FileID == "" || cursor.Key == "" ||
+		cursor.FileID == "" ||
 		cursor.Sort != query.Sort || cursor.FilterHash != fileQueryHash(query) {
 		return libraryFileCursor{}, fmt.Errorf("invalid or stale media cursor")
 	}
