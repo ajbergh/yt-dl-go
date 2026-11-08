@@ -979,7 +979,7 @@ describe("Downloader UI and Go API integration", () => {
     await remount();
     await connect();
     await click(button("Library"));
-    expect(container.textContent).toContain("2 of 2 jobs visible");
+    expect(container.textContent).toContain("2 of 2 matching media loaded");
     expect(container.textContent).not.toContain("App storage");
     expect(container.textContent).toContain("Library size");
 
