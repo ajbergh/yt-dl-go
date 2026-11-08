@@ -527,7 +527,7 @@ async function main() {
     assert.match(dialog.message, /Delete these library files/i);
     await cdp.send("Page.handleJavaScriptDialog", { accept: true });
     assert.equal(await clickPromise, true);
-    await waitFor(cdp, bodyIncludes("Your library is empty"), "destructive deletion completion", 20000);
+    await waitFor(cdp, bodyIncludes("Your media library is empty"), "destructive deletion completion", 20000);
     const afterDelete = await getJSON(`${baseURL}/api/library`);
     assert.equal(afterDelete.jobs.length, 0, "confirmed delete-everywhere did not remove Library history");
 
