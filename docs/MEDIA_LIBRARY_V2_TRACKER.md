@@ -23,8 +23,8 @@
 | M04 | Selected-item detail inspector | Complete | File metadata and preview/reveal/copy/open-folder actions |
 | M05 | Search, category, channel and media type filters | Complete | Existing \`/api/library\` filtering reused; search input debounced in \`src/pages/home.tsx\` |
 | M06 | Sorting and favorites | Partial | Client-local sort and favorites; not server-wide/SQLite-backed |
-| M07 | Channel and source playlist browsing | In progress | Dedicated navigation and source association are next |
-| M08 | User collections | In progress | Implement first safe local collection workflow; durable API-backed migration is follow-up |
+| M07 | Channel and source playlist browsing | Partial | Sidebar channel facet shortcuts plus loaded source-playlist view; true server-wide playlist grouping remains |
+| M08 | User collections | Partial | Local create/rename/delete + membership controls; validated and tested; SQLite/export support remains |
 | M09 | Dedicated per-file permanent delete | Not started | Existing Delete remains job-wide; require Go API and confirmation semantics |
 | M10 | Multi-select and bulk file actions | Not started | Needs safe selection and backend semantics |
 | M11 | Keyboard and accessibility polish | Partial | Ctrl/Cmd+F, focusable cards, Enter preview; audit still needed |
@@ -40,9 +40,9 @@
 - [x] Diagnose initial CI failure: \`scripts/browser-e2e.mjs\` waited for old Library heading.
 - [x] Change browser E2E assertion to expect "Media Library".
 - [x] Add this durable tracking document.
-- [ ] Add playlist and channel browsing with truthful loaded/filtered counts.
-- [ ] Implement basic create/rename/delete collection and add/remove media UX without touching underlying downloads.
-- [ ] Add UI regression tests for new organization flows.
+- [x] Add playlist and channel browsing with truthful loaded/filtered counts.
+- [x] Implement basic create/rename/delete collection and add/remove media UX without touching underlying downloads.
+- [x] Add UI regression tests for new organization flows.
 - [ ] Verify final branch CI; fix failing jobs or document reproducible blockers.
 - [ ] Update PR #149 with checked features, verification, and limitations.
 
@@ -76,6 +76,8 @@
 - [ ] Complete reduced-motion/mobile/narrow visual audit.
 
 ## CI history / validation truthfulness
+
+- Added tests covering invalid collections, duplicate names/membership, collection creation/rename/delete, membership updates, and source-playlist browse filtering. These tests must pass in the newest CI run before marking M14 complete.
 
 - Initial PR head \`b7b0c2e\`: frontend typecheck, lint, build, Bun UI tests, Go tests, race tests and CodeQL passed; **browser E2E failed** waiting for literal "Download library" after heading changed to "Media Library".
 - Browser assertion changed in commit \`2331e8e\`. This is a test-selector correction, not proof that the browser suite passed. Verify the newest GitHub Actions run and update this section before claiming green CI.
