@@ -437,7 +437,7 @@ async function main() {
     // 5-6: completion must surface in the queue and Library.
     await waitFor(cdp, bodyIncludes("Completed"), "completed job", 30000);
     await clickButton(cdp, "Library");
-    await waitFor(cdp, bodyIncludes("Download library"), "Library page");
+    await waitFor(cdp, bodyIncludes("Media Library"), "Library page");
     await waitFor(cdp, bodyIncludes("E2E Fixture Video"), "completed Library item");
     await captureScreenshot(cdp, "library-desktop");
     await captureScreenshot(cdp, "library-mobile", 390, 844);
