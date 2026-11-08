@@ -2331,7 +2331,7 @@ func (s *jobStore) loadLibraryJobsForIDs(jobIDs []string) ([]Job, error) {
 	return s.loadLibraryDiskJobs(jobIDs, false)
 }
 
-func (s *jobStore) loadLibraryDiskJobs(jobIDs []string, includeActive bool) ([]Job, error) {
+func (s *jobStore) loadLibraryDiskJobs(jobIDs []string, includeActive bool, selectedFileIDs ...[]string) ([]Job, error) {
 	settings, err := s.loadAppSettings()
 	if err != nil {
 		return nil, err
@@ -2354,6 +2354,18 @@ func (s *jobStore) loadLibraryDiskJobs(jobIDs []string, includeActive bool) ([]J
 			args = append(args, id)
 		}
 		query += " AND j.source_job_id IN (" + strings.Join(placeholders, ",") + ")"
+	}
+	if len(selectedFileIDs) > 0 {
+		ids := selectedFileIDs[0]
+		if len(ids) == 0 {
+			return []Job{}, nil
+		}
+		placeholders := make([]string, len(ids))
+		for i, id := range ids {
+			placeholders[i] = "?"
+			args = append(args, id)
+		}
+		query += " AND li.file_id IN (" + strings.Join(placeholders, ",") + ")"
 	}
 	query += " ORDER BY j.created_at DESC,j.source_job_id DESC,li.source_item_index ASC,li.file_id ASC"
 	rows, err := s.db.Query(query, args...)
