@@ -102,27 +102,9 @@ func validateLibraryOrganization(org libraryOrganization) error {
 }
 
 func (s *jobStore) loadLibraryOrganization() (libraryOrganization, error) {
-	var result libraryOrganization
-	var favorites, collections string
-	err := s.db.QueryRow(`SELECT revision,favorites_json,collections_json FROM library_organization WHERE id=1`).Scan(
-		&result.Revision, &favorites, &collections,
-	)
-	if err != nil {
-		return result, err
-	}
-	if err := json.Unmarshal([]byte(favorites), &result.Favorites); err != nil {
-		return result, fmt.Errorf("decode stored favorites: %w", err)
-	}
-	if err := json.Unmarshal([]byte(collections), &result.Collections); err != nil {
-		return result, fmt.Errorf("decode stored collections: %w", err)
-	}
-	if result.Favorites == nil {
-		result.Favorites = []string{}
-	}
-	if result.Collections == nil {
-		result.Collections = []libraryCollection{}
-	}
-	return result, validateLibraryOrganization(result)
+	return decodeLibraryOrganizationRow(s.db.QueryRow(
+		`SELECT revision,favorites_json,collections_json FROM library_organization WHERE id=1`,
+	))
 }
 
 func (s *jobStore) saveLibraryOrganization(org libraryOrganization) (libraryOrganization, bool, error) {
