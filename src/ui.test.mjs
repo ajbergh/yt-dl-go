@@ -873,6 +873,27 @@ describe("Downloader UI and Go API integration", () => {
     window.localStorage.removeItem("yt-dl-go:library-layout");
   });
 
+  test("renders media files individually and persists favorites", async () => {
+    rows = [{ ...job, id: "playlist-library", kind: "playlist", status: "completed", title: "Weekend playlist", completedCount: 2, totalCount: 2, files: [
+      { id: "first-clip", name: "first.mp4", title: "First clip", size: 1024, mediaType: "video", publishedAvailable: true, outputRelativePath: "Channel A/first.mp4" },
+      { id: "second-clip", name: "second.mp4", title: "Second clip", size: 2048, mediaType: "video", publishedAvailable: true, outputRelativePath: "Channel A/second.mp4" },
+    ] }];
+    await remount();
+    await connect();
+    await click(button("Library"));
+    expect(container.querySelectorAll('section[aria-labelledby="library-heading"] article')).toHaveLength(2);
+    expect(container.textContent).toContain("First clip");
+    expect(container.textContent).toContain("Second clip");
+    const favorite = container.querySelector('button[aria-label="Add favorite: Second clip"]');
+    expect(favorite).toBeTruthy();
+    await click(favorite);
+    expect(JSON.parse(window.localStorage.getItem("yt-dl-go:library-favorites-v2"))).toContain("playlist-library:second-clip");
+    const card = container.querySelector('[role="button"][aria-label="Select Second clip"]');
+    await click(card);
+    expect(container.querySelector('[aria-label="Selected media details"]').textContent).toContain("Second clip");
+    window.localStorage.removeItem("yt-dl-go:library-favorites-v2");
+  });
+
   test("prefers authenticated local thumbnails and retains remote artwork as fallback metadata", async () => {
     rows = [{ ...job, status: "completed", completedCount: 1, totalCount: 1, files: [
       { id: "file-thumb", name: "001-test.mp4", size: 1024, thumbnailUrl: "https://i.ytimg.com/vi/fixture/hqdefault.jpg", thumbnailLocalAvailable: true, thumbnailMimeType: "image/jpeg", managedAvailable: true, publishedAvailable: false },
