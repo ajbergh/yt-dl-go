@@ -10,6 +10,15 @@ import {
 
 const fallbackCategories = ["Tech", "Science", "Coding", "Music", "Education", "Gaming", "Podcasts", "Archival", "General"];
 
+function initialLibraryQuery(): LibraryQuery {
+  try {
+    const sort = window.localStorage.getItem("yt-dl-go:library-sort-v2");
+    return { sort: sort === "oldest" || sort === "title" || sort === "size" || sort === "duration" ? sort : "recent" };
+  } catch {
+    return { sort: "recent" };
+  }
+}
+
 function libraryPagePath(query: LibraryQuery, cursor?: string): string {
   const params = new URLSearchParams({ limit: "50", sort: query.sort || "recent" });
   if (query.q) params.set("q", query.q);
@@ -124,7 +133,7 @@ export function useService() {
   const [jobs, setJobs] = useState<DownloadJob[]>([]);
   const [libraryJobs, setLibraryJobs] = useState<DownloadJob[]>([]);
   const [libraryPage, setLibraryPage] = useState<LibraryPageResponse>(emptyLibraryPage);
-  const [libraryQuery, setLibraryQueryState] = useState<LibraryQuery>({});
+  const [libraryQuery, setLibraryQueryState] = useState<LibraryQuery>(initialLibraryQuery);
   const [loadingLibraryMore, setLoadingLibraryMore] = useState(false);
   const [settings, setSettings] = useState<AppSettings>(defaultSettings);
   const [runtimeSettingSources, setRuntimeSettingSources] = useState<RuntimeSettingSources>({});
@@ -138,10 +147,13 @@ export function useService() {
   const [pollError, setPollError] = useState("");
   const knownJobStatuses = useRef<Map<string, DownloadJob["status"]>>(new Map());
   const notificationsEnabledRef = useRef(false);
-  const libraryQueryRef = useRef<LibraryQuery>({});
+  const libraryQueryRef = useRef<LibraryQuery>(libraryQuery);
   const libraryRequestSequence = useRef(0);
 
   const setLibraryQuery = useCallback((query: LibraryQuery) => {
+    // Applying the identical default/sort/filter query must not reset an
+    // already paginated Library view after the debounce timer expires.
+    if (JSON.stringify(libraryQueryRef.current) === JSON.stringify(query)) return;
     libraryQueryRef.current = query;
     setLibraryQueryState(query);
   }, []);
