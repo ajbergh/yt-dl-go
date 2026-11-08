@@ -139,6 +139,7 @@ beforeEach(async () => {
   organizationResponse = { revision: 0, favorites: [], collections: [] };
   testWindow.localStorage.removeItem("yt-dl-go:library-collections-v2");
   testWindow.localStorage.removeItem("yt-dl-go:library-favorites-v2");
+  testWindow.localStorage.removeItem("yt-dl-go:library-sort-v2");
   liveEvent = null;
   notificationsEnabled = false;
   notificationPermission = "granted";
