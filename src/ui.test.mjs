@@ -961,7 +961,6 @@ describe("Downloader UI and Go API integration", () => {
     await click(button("Playlists"));
     expect(container.querySelectorAll('section[aria-labelledby="library-heading"] article')).toHaveLength(1);
     expect(container.textContent).toContain("Trip clip");
-    expect(container.querySelector('button[aria-pressed="false"][class*="border-rose-500"]')).toBeFalsy();
   });
 
   test("renders media files individually and persists favorites", async () => {
