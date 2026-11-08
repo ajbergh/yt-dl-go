@@ -1081,17 +1081,18 @@ describe("Downloader UI and Go API integration", () => {
     expect(button("Save")).toBeUndefined();
     expect(button("Copy path")).toBeTruthy();
     expect(button("Preview")).toBeTruthy();
-    expect([...container.querySelectorAll("button")].filter(item => item.textContent.trim() === "Delete files")).toHaveLength(1);
+    expect([...container.querySelectorAll("button")].filter(item => item.textContent.trim() === "Delete entire download")).toHaveLength(1);
     expect(button("Delete app copy")).toBeUndefined();
     expect(button("Delete output copy")).toBeUndefined();
-    expect(button("Delete files")).toBeTruthy();
+    expect(button("Delete entire download")).toBeTruthy();
+    expect(button("Delete selected file")).toBeTruthy();
     await click(button("Reveal"));
     const filesystemRequest = requests.find(item => item.path.endsWith("/filesystem") && item.method === "POST");
     expect(JSON.parse(filesystemRequest.body)).toEqual({ fileId: "file-1", action: "reveal" });
     const originalConfirm = testWindow.confirm;
     testWindow.confirm = () => true;
     try {
-      await click(button("Delete files"));
+      await click(button("Delete entire download"));
       expect(requests.some(item => item.path.endsWith("/all") && item.method === "DELETE")).toBe(true);
       expect(container.textContent).toContain("Files and Library history deleted");
     } finally { testWindow.confirm = originalConfirm; }
