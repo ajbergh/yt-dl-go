@@ -255,7 +255,7 @@ func TestOpenJobStoreSnapshotsV20RepairBeforeRecreatingLibraryTable(t *testing.T
 	}
 	foundRepairSnapshot := false
 	for _, path := range snapshots {
-		if !strings.Contains(filepath.Base(path), "v20-from-v31-") {
+		if !strings.Contains(filepath.Base(path), "v20-from-v32-") {
 			continue
 		}
 		foundRepairSnapshot = true
