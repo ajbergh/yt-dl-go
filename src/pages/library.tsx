@@ -385,7 +385,7 @@ export function LibraryPage({
             <p className="mt-2 text-sm text-neutral-400">Browse, preview, and manage your downloaded videos and audio.</p>
             {activeCollection && <p className="mt-2 text-xs text-rose-300">Collection: {activeCollection.name}</p>}
             {libraryChannel !== "all" && <p className="mt-2 text-xs text-rose-300">Channel: {libraryChannel}</p>}
-            {section === "playlists" && <p className="mt-2 text-xs text-rose-300">Source playlist downloads · loaded pages</p>
+            {section === "playlists" && <p className="mt-2 text-xs text-rose-300">Source playlist downloads · loaded pages</p>}
             <div className="mt-5 grid grid-cols-2 gap-3">
               <div className="rounded-xl border border-white/10 bg-black/20 p-3">
                 <p className="flex items-center gap-2 text-xs text-neutral-400"><Film className="size-4 text-rose-400" /> Files</p>
