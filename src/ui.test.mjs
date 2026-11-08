@@ -1160,6 +1160,40 @@ describe("Downloader UI and Go API integration", () => {
     expect(container.querySelector('img[data-local-thumbnail="preferred"]')).toBeTruthy();
   });
 
+  test("defers local thumbnail API downloads until the card enters the viewport margin", async () => {
+    const previousObserver = globalThis.IntersectionObserver;
+    const observers = [];
+    globalThis.IntersectionObserver = class {
+      constructor(callback, options) {
+        this.callback = callback;
+        this.options = options;
+        observers.push(this);
+      }
+      observe(target) { this.target = target; }
+      disconnect() { this.disconnected = true; }
+    };
+    rows = [{ ...job, id: "lazy-thumbnails", status: "completed", completedCount: 1, totalCount: 1, files: [
+      { id: "lazy-file", name: "lazy.mp4", size: 1024, thumbnailUrl: "https://example.invalid/lazy.jpg",
+        thumbnailLocalAvailable: true, managedAvailable: true, publishedAvailable: true },
+    ] }];
+    try {
+      await remount();
+      await connect();
+      await click(button("Library"));
+      expect(observers.length).toBeGreaterThan(0);
+      expect(observers[0].options.rootMargin).toBe("400px 0px");
+      expect(requests.filter(item => item.path.endsWith("/thumbnail"))).toHaveLength(0);
+      await act(async () => {
+        observers[0].callback([{ isIntersecting: true }]);
+        await new Promise(resolve => setTimeout(resolve, 0));
+      });
+      expect(requests.filter(item => item.path.endsWith("/thumbnail"))).toHaveLength(1);
+    } finally {
+      if (previousObserver === undefined) delete globalThis.IntersectionObserver;
+      else globalThis.IntersectionObserver = previousObserver;
+    }
+  });
+
   test("waits for native confirmation before forgetting history", async () => {
     rows = [{ ...job, kind: "video", status: "failed" }];
     await remount();
