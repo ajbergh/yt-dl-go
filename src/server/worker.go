@@ -1557,7 +1557,6 @@ func (s *server) transferAudio(ctx context.Context, j *jobState, engine nativeCl
 	applyVideoMetadata(&result, video)
 	result.Category = j.Category
 	result.ManagedAvailable = true
-	s.captureThumbnail(ctx, j, &result)
 	defer func() {
 		if err != nil && result.ThumbnailLocalAvailable {
 			if path, pathErr := thumbnailPath(j, result); pathErr == nil {
@@ -1566,6 +1565,8 @@ func (s *server) transferAudio(ctx context.Context, j *jobState, engine nativeCl
 			result.ThumbnailLocalAvailable = false
 		}
 	}()
+	finishThumbnail := s.startAudioThumbnail(ctx, j, &result)
+	defer func() { finishThumbnail(err) }()
 	finalPath := filepath.Join(j.dir, result.Name)
 	sourcePath := filepath.Join(j.dir, fmt.Sprintf("%06d-%s.source.%s", outputIndex, video.ID, extension))
 	outputPart := finalPath + ".part"
@@ -1613,6 +1614,7 @@ func (s *server) transferAudio(ctx context.Context, j *jobState, engine nativeCl
 		_ = output.Close()
 		return result, errStorage
 	}
+	finishThumbnail(nil)
 	tag, tagErr := buildID3v23Tag(mp3MetadataFor(j, result, video.ID, outputIndex))
 	if tagErr != nil {
 		tag = nil // Metadata is best-effort; never fail playable audio over tags.
@@ -1663,7 +1665,6 @@ func (s *server) transferOriginalAudio(ctx context.Context, j *jobState, engine 
 	applyVideoMetadata(&result, video)
 	result.Category = j.Category
 	result.ManagedAvailable = true
-	s.captureThumbnail(ctx, j, &result)
 	defer func() {
 		if err != nil && result.ThumbnailLocalAvailable {
 			if path, pathErr := thumbnailPath(j, result); pathErr == nil {
@@ -1673,6 +1674,8 @@ func (s *server) transferOriginalAudio(ctx context.Context, j *jobState, engine 
 		}
 	}()
 
+	finishThumbnail := s.startAudioThumbnail(ctx, j, &result)
+	defer func() { finishThumbnail(err) }()
 	finalPath := filepath.Join(j.dir, result.Name)
 	if existing, openErr := openFinal(j.dir, result.Name); openErr == nil {
 		info, statErr := existing.Stat()
@@ -2658,7 +2661,15 @@ func (s *server) deleteDownloadPart(j *jobState, itemIndex int, partKey string) 
 	return err
 }
 
-func (s *server) downloadAdaptiveRanges(ctx context.Context, j *jobState, engine nativeClient, video *youtube.Video, format *youtube.Format, path, partKey string, itemIndex int, budget int64, progress func(int64), browserProvider browserMediaProvider) (result int64, browserUsed bool, err error) {
+type adaptiveRangePolicy struct {
+	// A previous native attempt already exhausted its recovery. Do not replay it
+	// after browser recovery fails, or spend bandwidth downloading it twice.
+	nativeFailure    error
+	onNativeFailure  func(error)
+	onNativeProgress func(int64)
+}
+
+func (s *server) downloadAdaptiveRanges(ctx context.Context, j *jobState, engine nativeClient, video *youtube.Video, format *youtube.Format, path, partKey string, itemIndex int, budget int64, progress func(int64), browserProvider browserMediaProvider, policies ...adaptiveRangePolicy) (result int64, browserUsed bool, err error) {
 	if os.Getenv("YTDL_TRACE_PERFORMANCE") != "" {
 		log.Printf("adaptive range begin itag=%d expected_bytes=%d", format.ItagNo, format.ContentLength)
 	}
@@ -2775,6 +2786,9 @@ func (s *server) downloadAdaptiveRanges(ctx context.Context, j *jobState, engine
 			}
 		}
 	}
+	if len(policies) > 0 && policies[0].nativeFailure != nil {
+		return 0, false, policies[0].nativeFailure
+	}
 	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE, 0600)
 	if err != nil {
 		return 0, false, errStorage
@@ -2808,13 +2822,17 @@ func (s *server) downloadAdaptiveRanges(ctx context.Context, j *jobState, engine
 	if err := s.saveDownloadPart(j, video.ID, itemIndex, partKey, path, "native-range", format, start, profileID); err != nil {
 		return result, browserUsed, errStorage
 	}
+	var observer nativeRangeObserver
+	if len(policies) > 0 {
+		observer = nativeRangeObserver{failure: policies[0].onNativeFailure, progress: policies[0].onNativeProgress}
+	}
 	result, err = s.downloadNativeRangeWindows(ctx, engine, video.ID, format, f, start, profileID, func(offset int64) error {
 		if checkpointErr := s.saveDownloadPart(j, video.ID, itemIndex, partKey, path, "native-range", format, offset, profileID); checkpointErr != nil {
 			return errStorage
 		}
 		progress(offset)
 		return nil
-	})
+	}, observer)
 	if err != nil {
 		return result, browserUsed, err
 	}
@@ -2862,6 +2880,9 @@ func (s *server) downloadSource(ctx context.Context, j *jobState, engine nativeC
 	}
 	rangeFormat := s.resolveRangeFormat(ctx, engine, video, format)
 	if rangeFormat.ContentLength > 0 && rangeFormat.URL != "" {
+		if kind, _, ok := formatType(rangeFormat); ok && strings.HasPrefix(kind, "audio/") {
+			return s.downloadAudioSource(ctx, j, engine, video, rangeFormat, path, partKey, itemIndex, budget, progress)
+		}
 		result, _, err = s.downloadAdaptiveRanges(ctx, j, engine, video, rangeFormat, path, partKey, itemIndex, budget, progress, nil)
 		return result, err
 	}

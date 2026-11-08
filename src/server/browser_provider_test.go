@@ -227,7 +227,9 @@ func TestBrowserPlaybackQualityUsesRepresentationName(t *testing.T) {
 		{"cropped label", &youtube.Format{Height: 1080, QualityLabel: "1440p60"}, "hd1440"},
 		{"360p fallback", &youtube.Format{Height: 360}, "medium"},
 		{"4K fallback", &youtube.Format{Height: 2160}, "hd2160"},
-		{"audio", &youtube.Format{Quality: "tiny"}, ""},
+		{"AAC audio", &youtube.Format{MimeType: `audio/mp4; codecs="mp4a.40.2"`}, "tiny"},
+		{"Opus audio", &youtube.Format{MimeType: `audio/webm; codecs="opus"`, Quality: "hd2160"}, "tiny"},
+		{"unknown representation", &youtube.Format{Quality: "tiny"}, ""},
 		{"untrusted quality", &youtube.Format{Height: 720, Quality: "');alert(1);//"}, "hd720"},
 		{"nil", nil, ""},
 	} {
@@ -236,6 +238,22 @@ func TestBrowserPlaybackQualityUsesRepresentationName(t *testing.T) {
 				t.Fatalf("quality=%q, want %q", got, test.want)
 			}
 		})
+	}
+}
+
+func TestBrowserAudioPlaybackKeepsVideoAtMinimumQuality(t *testing.T) {
+	format := &youtube.Format{ItagNo: 140, MimeType: `audio/mp4; codecs="mp4a.40.2"`}
+	vm := goja.New()
+	_, err := vm.RunString(`let minimum, maximum, selected; const video={currentTime:0,paused:false,ended:false,buffered:{length:0}}; const player={getPlaybackQuality:()=>"hd1080",setPlaybackQualityRange:(min,max)=>{minimum=min;maximum=max;},setPlaybackQuality:(quality)=>{selected=quality;}}; const document={querySelectorAll:()=>[],querySelector:()=>video,getElementById:()=>player};`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := vm.RunString(browserCapturePlaybackScript(0, browserPlaybackRate, browserPlaybackQuality(format))); err != nil {
+		t.Fatal(err)
+	}
+	value, err := vm.RunString("JSON.stringify([minimum,maximum,selected])")
+	if err != nil || value.String() != `["tiny","tiny","tiny"]` {
+		t.Fatalf("audio playback policy=%v error=%v", value, err)
 	}
 }
 

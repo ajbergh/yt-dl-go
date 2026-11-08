@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"os"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -77,9 +78,29 @@ type nativeHostSlot struct {
 	slots chan struct{}
 }
 
-// Bound each transfer to four 8 MiB range buffers and share the same four-request
-// host limit across concurrent jobs. Smaller sources only request what remains.
+// Share a four-request host limit across concurrent jobs. Audio uses smaller
+// ranges to make useful parallel progress even on a short track.
 const nativeRangeConcurrency = 4
+
+const audioRangeMaxChunkSize int64 = 1024 * 1024
+
+func nativeRangeChunkSize(format *youtube.Format, total int64) int64 {
+	if format == nil {
+		return adaptiveRangeChunkSize
+	}
+	kind, _, ok := formatType(format)
+	if !ok || !strings.HasPrefix(kind, "audio/") {
+		return adaptiveRangeChunkSize
+	}
+	// Avoid extra request setup for very small sources. For ordinary tracks,
+	// aim for four initial requests without producing tiny ranges on long ones.
+	if total > 0 && total <= 512*1024 {
+		return total
+	}
+	const alignment int64 = 64 * 1024
+	size := max(int64(256*1024), min(audioRangeMaxChunkSize, (total-1)/nativeRangeConcurrency+1))
+	return ((size + alignment - 1) / alignment) * alignment
+}
 
 var nativeHosts = struct {
 	sync.Mutex
@@ -118,21 +139,29 @@ type nativeRangeChunk struct {
 	elapsed    time.Duration
 }
 
-// nativeRangeBuffers recycles the 8 MiB range buffers so a long transfer does
-// not allocate (and the GC does not scan and free) a fresh buffer per chunk.
-var nativeRangeBuffers sync.Pool
+// Keep small/audio and video buffers separate so an audio worker never retains
+// an 8 MiB allocation from a previous video transfer.
+var nativeRangeBuffers, nativeAudioRangeBuffers sync.Pool
 
 func getNativeRangeBuffer(size int64) []byte {
-	if pooled, ok := nativeRangeBuffers.Get().(*[]byte); ok && int64(cap(*pooled)) >= size {
+	pool, capacity := &nativeRangeBuffers, adaptiveRangeChunkSize+1
+	if size <= audioRangeMaxChunkSize+1 {
+		pool, capacity = &nativeAudioRangeBuffers, audioRangeMaxChunkSize+1
+	}
+	if pooled, ok := pool.Get().(*[]byte); ok && int64(cap(*pooled)) >= size {
 		return (*pooled)[:size]
 	}
-	return make([]byte, size, max(size, adaptiveRangeChunkSize+1))
+	return make([]byte, size, max(size, capacity))
 }
 
 func putNativeRangeBuffer(buffer []byte) {
-	if int64(cap(buffer)) >= adaptiveRangeChunkSize+1 {
+	switch int64(cap(buffer)) {
+	case adaptiveRangeChunkSize + 1:
 		buffer = buffer[:0]
 		nativeRangeBuffers.Put(&buffer)
+	case audioRangeMaxChunkSize + 1:
+		buffer = buffer[:0]
+		nativeAudioRangeBuffers.Put(&buffer)
 	}
 }
 
@@ -206,9 +235,10 @@ func (e nativeStopError) Unwrap() error { return e.err }
 // slots and disk syncs never stall the network. Only the contiguous prefix of
 // written chunks is synced and checkpointed, preserving resume semantics. It
 // returns the durable contiguous offset even when it fails.
-func (s *server) runNativeRangePipeline(ctx context.Context, client *http.Client, profile youtubeClientProfile, format func() *youtube.Format, onSlow func(), file *os.File, start, total int64, checkpoint func(int64) error) (int64, error) {
+func (s *server) runNativeRangePipeline(ctx context.Context, client *http.Client, profile youtubeClientProfile, format func() *youtube.Format, onSlow func(), file *os.File, start, total int64, checkpoint func(int64) error, progress ...func(int64)) (int64, error) {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
+	chunkSize := nativeRangeChunkSize(format(), total)
 	type rangeResult struct {
 		start, end int64
 		elapsed    time.Duration
@@ -223,11 +253,11 @@ func (s *server) runNativeRangePipeline(ctx context.Context, client *http.Client
 		go func() {
 			defer workers.Done()
 			for ctx.Err() == nil {
-				first := cursor.Add(adaptiveRangeChunkSize) - adaptiveRangeChunkSize
+				first := cursor.Add(chunkSize) - chunkSize
 				if first >= total {
 					return
 				}
-				chunk := nativeRangeChunk{start: first, end: min(first+adaptiveRangeChunkSize, total) - 1}
+				chunk := nativeRangeChunk{start: first, end: min(first+chunkSize, total) - 1}
 				err := s.readNativeRange(ctx, client, profile, format(), &chunk)
 				if err == nil {
 					written, writeErr := file.WriteAt(chunk.data, chunk.start)
@@ -275,6 +305,7 @@ func (s *server) runNativeRangePipeline(ctx context.Context, client *http.Client
 			fail(result.err)
 			continue
 		}
+		previousPrefix := prefix
 		completed[result.start] = result.end
 		for end, ok := completed[prefix]; ok; end, ok = completed[prefix] {
 			delete(completed, prefix)
@@ -282,6 +313,11 @@ func (s *server) runNativeRangePipeline(ctx context.Context, client *http.Client
 		}
 		if firstErr != nil {
 			continue
+		}
+		// This is verified, written progress, not a durable resume checkpoint.
+		// Startup detection need not wait for a whole checkpoint window.
+		if prefix > previousPrefix && len(progress) > 0 && progress[0] != nil {
+			progress[0](prefix)
 		}
 		if !slowChecked && onSlow != nil {
 			limit := int64(0)
@@ -293,7 +329,7 @@ func (s *server) runNativeRangePipeline(ctx context.Context, client *http.Client
 				onSlow()
 			}
 		}
-		if prefix-checkpointed >= nativeRangeConcurrency*adaptiveRangeChunkSize || prefix >= total {
+		if prefix-checkpointed >= nativeRangeConcurrency*chunkSize || prefix >= total {
 			if err := flush(); err != nil {
 				fail(err)
 			}
@@ -307,7 +343,16 @@ func (s *server) runNativeRangePipeline(ctx context.Context, client *http.Client
 	return prefix, firstErr
 }
 
-func (s *server) downloadNativeRangeWindows(ctx context.Context, engine nativeClient, videoID string, selected *youtube.Format, file *os.File, start int64, profileID string, checkpoint func(int64) error) (int64, error) {
+type nativeRangeObserver struct {
+	failure  func(error)
+	progress func(int64)
+}
+
+func (s *server) downloadNativeRangeWindows(ctx context.Context, engine nativeClient, videoID string, selected *youtube.Format, file *os.File, start int64, profileID string, checkpoint func(int64) error, observers ...nativeRangeObserver) (int64, error) {
+	var observer nativeRangeObserver
+	if len(observers) > 0 {
+		observer = observers[0]
+	}
 	client := s.rangeHTTPClient
 	if client == nil {
 		client = nativeHTTPClient(0)
@@ -346,7 +391,7 @@ func (s *server) downloadNativeRangeWindows(ctx context.Context, engine nativeCl
 		if source, ok := engine.(interface{ RequestProfile() youtubeClientProfile }); ok {
 			profile = source.RequestProfile()
 		}
-		next, err := s.runNativeRangePipeline(ctx, client, profile, currentFormat, onSlow, file, start, selected.ContentLength, checkpoint)
+		next, err := s.runNativeRangePipeline(ctx, client, profile, currentFormat, onSlow, file, start, selected.ContentLength, checkpoint, observer.progress)
 		if next > start {
 			// Progress was made and checkpointed; retry budget starts over.
 			attempt = 0
@@ -354,6 +399,9 @@ func (s *server) downloadNativeRangeWindows(ctx context.Context, engine nativeCl
 		start = next
 		if err == nil {
 			continue
+		}
+		if observer.failure != nil {
+			observer.failure(err)
 		}
 		if ctx.Err() != nil {
 			return start, ctx.Err()

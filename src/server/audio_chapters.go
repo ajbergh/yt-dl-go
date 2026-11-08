@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"encoding/binary"
 	"errors"
@@ -17,14 +18,15 @@ import (
 )
 
 type chapterMP3Output struct {
-	file    mediaFile
-	part    string
-	final   string
-	output  *os.File
-	encoder *mp3.Encoder
-	pending [][]float32
-	count   int
-	bytes   int64
+	file     mediaFile
+	part     string
+	final    string
+	output   *os.File
+	buffered *bufio.Writer
+	encoder  *mp3.Encoder
+	pending  [][]float32
+	count    int
+	bytes    int64
 }
 
 // transferChapterMP3 downloads the selected AAC source once and routes decoded
@@ -66,14 +68,15 @@ func (s *server) transferChapterMP3(ctx context.Context, j *jobState, engine nat
 	if err != nil {
 		return nil, errStorage
 	}
+	closeSource := source.Close
 	decoder, info, decodeErr := aacm4a.NewDecoder(source)
 	if decodeErr != nil || decoder == nil || info.Channels < 1 || info.Channels > 2 || info.SampleRate <= 0 {
-		_ = source.Close()
+		_ = closeSource()
 		return nil, errAudioConvert
 	}
 	bitrateKbps, err := strconv.Atoi(strings.TrimSuffix(j.AudioBitrate, "k"))
 	if err != nil {
-		_ = source.Close()
+		_ = closeSource()
 		return nil, errAudioConvert
 	}
 	outputs := make([]chapterMP3Output, len(chapters))
@@ -116,7 +119,7 @@ func (s *server) transferChapterMP3(ctx context.Context, j *jobState, engine nat
 		output, openErr := os.OpenFile(part, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
 		if openErr != nil {
 			cleanup()
-			_ = source.Close()
+			_ = closeSource()
 			return nil, errStorage
 		}
 		metadata := mp3MetadataFor(j, file, video.ID, index+1)
@@ -126,10 +129,11 @@ func (s *server) transferChapterMP3(ctx context.Context, j *jobState, engine nat
 			tag = nil
 		}
 		outputs[index].output = output
+		outputs[index].buffered = bufio.NewWriterSize(output, audioOutputBufferSize)
 		outputs[index].encoder, err = mp3.NewEncoder(mp3.EncoderConfig{SampleRate: info.SampleRate, Channels: info.Channels, Bitrate: bitrateKbps * 1000})
 		if err != nil {
 			cleanup()
-			_ = source.Close()
+			_ = closeSource()
 			return nil, errAudioConvert
 		}
 		outputs[index].pending = make([][]float32, info.Channels)
@@ -137,10 +141,10 @@ func (s *server) transferChapterMP3(ctx context.Context, j *jobState, engine nat
 			outputs[index].pending[channel] = make([]float32, mp3.FrameSize)
 		}
 		if len(tag) > 0 {
-			n, writeErr := output.Write(tag)
+			n, writeErr := outputs[index].buffered.Write(tag)
 			if writeErr != nil || n != len(tag) || int64(n) > outputBudget {
 				cleanup()
-				_ = source.Close()
+				_ = closeSource()
 				return nil, errStorage
 			}
 			outputs[index].bytes = int64(n)
@@ -153,6 +157,10 @@ func (s *server) transferChapterMP3(ctx context.Context, j *jobState, engine nat
 		}
 	}()
 	frameBytes := mp3.FrameSize * info.Channels * 2
+	decoded := newAudioPCMStream(ctx, decoder, frameBytes)
+	defer decoded.Close()
+	closeSource = func() error { decoded.Close(); return source.Close() }
+	reporter := audioProgress{callback: func(value int64) { s.updateProgress(j, queueIndex, sourceSize+value, 0) }}
 	pcm := make([]byte, frameBytes)
 	frames := make([][]float32, info.Channels)
 	encoded := make([]byte, 0, 8192)
@@ -176,7 +184,7 @@ func (s *server) transferChapterMP3(ctx context.Context, j *jobState, engine nat
 		if int64(len(encoded)) > outputBudget-totalWritten {
 			return errLimit
 		}
-		n, writeErr := output.output.Write(encoded)
+		n, writeErr := output.buffered.Write(encoded)
 		if writeErr != nil || n != len(encoded) {
 			return errStorage
 		}
@@ -196,7 +204,7 @@ func (s *server) transferChapterMP3(ctx context.Context, j *jobState, engine nat
 		if int64(len(encoded)) > outputBudget-totalWritten {
 			return errLimit
 		}
-		n, writeErr := output.output.Write(encoded)
+		n, writeErr := output.buffered.Write(encoded)
 		if writeErr != nil || n != len(encoded) {
 			return errStorage
 		}
@@ -206,12 +214,16 @@ func (s *server) transferChapterMP3(ctx context.Context, j *jobState, engine nat
 	}
 	for {
 		if err := ctx.Err(); err != nil {
-			_ = source.Close()
+			_ = closeSource()
 			return nil, err
 		}
-		n, readErr := io.ReadFull(decoder, pcm)
+		n, readErr := io.ReadFull(decoded, pcm)
+		if err := ctx.Err(); err != nil {
+			_ = closeSource()
+			return nil, err
+		}
 		if n%(info.Channels*2) != 0 {
-			_ = source.Close()
+			_ = closeSource()
 			return nil, errAudioConvert
 		}
 		sampleCount := n / (info.Channels * 2)
@@ -219,7 +231,7 @@ func (s *server) transferChapterMP3(ctx context.Context, j *jobState, engine nat
 			absoluteSample := decodedSamples + int64(sample)
 			for activeChapter < len(chapters) && absoluteSample >= chapterSample(chapters[activeChapter].EndMs, info.SampleRate) {
 				if err := flushChapter(&outputs[activeChapter]); err != nil {
-					_ = source.Close()
+					_ = closeSource()
 					return nil, err
 				}
 				activeChapter++
@@ -236,41 +248,41 @@ func (s *server) transferChapterMP3(ctx context.Context, j *jobState, engine nat
 			output.count++
 			if output.count == mp3.FrameSize {
 				if err := writeFrame(output, output.count); err != nil {
-					_ = source.Close()
+					_ = closeSource()
 					return nil, err
 				}
 			}
 		}
 		decodedSamples += int64(sampleCount)
-		s.updateProgress(j, queueIndex, sourceSize+totalWritten, 0)
+		reporter.update(totalWritten)
 		switch {
 		case readErr == nil:
 			if n == 0 {
-				_ = source.Close()
+				_ = closeSource()
 				return nil, errAudioConvert
 			}
 		case errors.Is(readErr, io.EOF), errors.Is(readErr, io.ErrUnexpectedEOF):
 			if decodedSamples == 0 {
-				_ = source.Close()
+				_ = closeSource()
 				return nil, errAudioConvert
 			}
 			for activeChapter < len(chapters) {
 				if decodedSamples < chapterSample(chapters[activeChapter].EndMs, info.SampleRate) {
-					_ = source.Close()
+					_ = closeSource()
 					return nil, errLength
 				}
 				if err := flushChapter(&outputs[activeChapter]); err != nil {
-					_ = source.Close()
+					_ = closeSource()
 					return nil, err
 				}
 				activeChapter++
 			}
-			if err := source.Close(); err != nil {
+			if err := closeSource(); err != nil {
 				return nil, errStorage
 			}
 			goto finalized
 		default:
-			_ = source.Close()
+			_ = closeSource()
 			return nil, errAudioConvert
 		}
 	}
@@ -279,7 +291,7 @@ finalized:
 	files = make([]mediaFile, len(outputs))
 	for index := range outputs {
 		output := &outputs[index]
-		if output.bytes <= 0 || output.output.Sync() != nil || output.output.Close() != nil {
+		if output.bytes <= 0 || output.buffered.Flush() != nil || output.output.Sync() != nil || output.output.Close() != nil {
 			return nil, errStorage
 		}
 		output.file.Size = output.bytes

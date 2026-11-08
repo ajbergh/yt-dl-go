@@ -305,7 +305,15 @@ func browserWatchURL(id string) string {
 // Player quality names describe the representation, not its cropped pixel
 // height. A 1920x816 film can be labelled hd1080; hd816 is not a player quality.
 func browserPlaybackQuality(format *youtube.Format) string {
-	if format == nil || format.Height <= 0 {
+	if format == nil {
+		return ""
+	}
+	if kind, _, ok := formatType(format); ok && strings.HasPrefix(kind, "audio/") && format.Height == 0 && format.Width == 0 {
+		// Browser fallback still needs a playing video element. Minimize its
+		// discarded video traffic without changing the requested audio track.
+		return "tiny"
+	}
+	if format.Height <= 0 {
 		return ""
 	}
 	valid := map[string]bool{"tiny": true, "small": true, "medium": true, "large": true, "hd720": true, "hd1080": true, "hd1440": true, "hd2160": true, "highres": true}

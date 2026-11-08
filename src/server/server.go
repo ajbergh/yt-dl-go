@@ -185,6 +185,7 @@ type server struct {
 	store               *jobStore
 	persistenceWriter   *persistenceWriter
 	bandwidth           *bandwidthLimiter
+	audioTransport      audioTransportState
 	events              *eventBroker
 }
 
