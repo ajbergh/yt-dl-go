@@ -351,6 +351,34 @@ export function LibraryPage({
         </aside>
 
         <div className="min-w-0 space-y-4">
+          <div className="flex flex-wrap gap-2 rounded-xl border border-neutral-800 bg-neutral-900 p-2 lg:hidden">
+            <label className="min-w-0 flex-1">
+              <span className="sr-only">Browse media section</span>
+              <select aria-label="Browse media section" className={field + " py-2 text-xs"}
+                value={activeCollectionID ? "collection:" + activeCollectionID : section === "playlists" ? "playlists" : section === "favorites" ? "favorites" : section === "recent" ? "recent" : libraryFilter}
+                onChange={event => {
+                  const value = event.target.value;
+                  if (value.startsWith("collection:")) browseCollection(value.slice("collection:".length));
+                  else if (value === "playlists") browsePlaylist("");
+                  else if (value === "favorites" || value === "recent") navigate("all", value);
+                  else navigate(value as LibraryFilter);
+                }}>
+                <option value="all">All media</option><option value="video">Videos</option><option value="audio">Audio</option>
+                <option value="favorites">Favorites</option><option value="recent">Recently added</option>
+                <option value="playlists">Playlists</option>
+                {collections.map(collection => <option key={collection.id} value={"collection:" + collection.id}>{collection.name}</option>)}
+              </select>
+            </label>
+            <button type="button" className={button} onClick={() => { setShowCollectionForm(previous => !previous); setCollectionError(""); }}>
+              <Plus className="size-4" />Collection
+            </button>
+            {showCollectionForm && <form onSubmit={createCollection} className="flex w-full items-center gap-2">
+              <input aria-label="Collection name on mobile" autoFocus maxLength={80} value={newCollectionName}
+                onChange={event => setNewCollectionName(event.target.value)} placeholder="New collection name" className={field + " min-w-0 py-2"} />
+              <button type="submit" className={button}>Create</button>
+            </form>}
+            {collectionError && <p role="alert" className="w-full text-xs text-rose-300">{collectionError}</p>}
+          </div>
           <div className="overflow-hidden rounded-2xl border border-neutral-800/80 bg-[radial-gradient(ellipse_at_top_right,rgba(224,28,79,.22),transparent_65%),linear-gradient(120deg,#1c1922,#101114_70%)] p-5 sm:p-6">
             <p className="text-[11px] font-bold uppercase tracking-[.22em] text-rose-300">Your library</p>
             <h2 id="library-heading" className="mt-1 text-2xl font-bold tracking-tight sm:text-3xl">Media Library</h2>
