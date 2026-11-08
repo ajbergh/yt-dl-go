@@ -108,6 +108,12 @@ export interface LibraryQuery {
   type?: "video" | "audio";
   category?: string;
   channel?: string;
+  sort?: "recent" | "oldest" | "title" | "size" | "duration";
+  favorites?: boolean;
+  collection?: string;
+  playlists?: boolean;
+  source?: string;
+  recent?: boolean;
 }
 
 export interface LibraryFacet {
@@ -126,6 +132,7 @@ export interface LibraryPageResponse {
   jobs: DownloadJob[];
   nextCursor?: string;
   totalJobs: number;
+  totalFiles?: number;
   categories: LibraryFacet[];
   channels: LibraryFacet[];
   stats: LibraryStats;
