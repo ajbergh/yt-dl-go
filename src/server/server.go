@@ -713,6 +713,10 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		reply(w, http.StatusOK, diagnostics)
 		return
 	}
+	if r.URL.Path == "/api/library/organization" {
+		s.handleLibraryOrganization(w, r)
+		return
+	}
 	if r.URL.Path == "/api/library/export" {
 		if r.Method != http.MethodGet {
 			fail(w, http.StatusMethodNotAllowed, "Method not allowed")
