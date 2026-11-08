@@ -17,7 +17,7 @@ import {
   type QueueRow,
 } from "../components/downloader/view-model";
 
-export type JobAction = "pause" | "resume" | "cancel" | "retry" | "remove" | "remove-library-item" | "forget-history" | "delete-all";
+export type JobAction = "pause" | "resume" | "cancel" | "retry" | "remove" | "remove-library-item" | "delete-library-file" | "forget-history" | "delete-all";
 export type JobConfigurationPatch = Partial<Pick<DownloadJob, "quality" | "videoStrategy" | "audioFormat" | "audioBitrate" | "category">>;
 
 export function mergeJobActionResult(current: DownloadJob, result: DownloadJob, action: JobAction): DownloadJob {
@@ -82,19 +82,25 @@ export function useJobs({
     if (action === "retry" && !(await confirmJobAction("Retry this URL? Confirm that you own the content or have permission to download it."))) return;
     if (action === "remove" && !(await confirmJobAction("Remove this item from the Library? History will be removed. Files in your download folder will be preserved."))) return;
     if (action === "remove-library-item" && !(await confirmJobAction("Remove this file from the Library? The file in your download folder and the job history will remain."))) return;
+    if (action === "delete-library-file") {
+      const item = job.files.find(file => file.id === fileId);
+      if (!item || !(await confirmJobAction(`Permanently delete ONLY "${item.title || item.outputName || item.name}" from your download folder? Other files in this download and the job history will be preserved. This cannot be undone.`))) return;
+    }
     if (action === "forget-history" && !(await confirmJobAction("Remove finished job history from the Queue? Library items and media files will remain available."))) return;
     if (action === "delete-all" && !(await confirmJobAction("Delete these library files? This removes the files from your download folder and their Library history. This cannot be undone."))) return;
 
     setBusyAction(job.id);
     setActionError("");
     try {
-      if (action === "remove-library-item") {
+      if (action === "remove-library-item" || action === "delete-library-file") {
         if (!fileId) throw new Error("A Library file ID is required.");
-        await api<void>(connection, `/api/jobs/${encodeURIComponent(job.id)}/library-items/${encodeURIComponent(fileId)}`, {
+        await api<void>(connection, `/api/jobs/${encodeURIComponent(job.id)}/${action === "delete-library-file" ? "library-files" : "library-items"}/${encodeURIComponent(fileId)}`, {
           method: "DELETE",
           signal: AbortSignal.timeout(15000),
         });
-        setNotice("Removed this file from the Library. Job history and downloaded files were preserved.");
+        setNotice(action === "delete-library-file"
+          ? "Selected file permanently deleted. Other media in this download and job history were preserved."
+          : "Removed this file from the Library. Job history and downloaded files were preserved.");
       } else if (action === "remove" || action === "forget-history" || action === "delete-all") {
         const suffix = action === "delete-all" ? "/all" : action === "forget-history" ? "/history" : "";
         await api<void>(connection, `/api/jobs/${encodeURIComponent(job.id)}${suffix}`, {
