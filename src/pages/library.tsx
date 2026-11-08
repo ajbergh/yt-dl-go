@@ -167,7 +167,7 @@ export function LibraryPage({
     });
     return sortMedia(visible, sort);
   }, [loaded, section, favorites, sort, collections, activeCollectionID, selectedPlaylistID]);
-  const visibleKeys = filtered.map(item => item.key);
+  const visibleKeys = useMemo(() => filtered.map(item => item.key), [filtered]);
   const selectedKeysInView = new Set(selectedKeys);
   const bulkSelected = filtered.filter(item => selectedKeysInView.has(item.key));
   const bulkKeys = bulkSelected.map(item => item.key);
@@ -194,7 +194,7 @@ export function LibraryPage({
     }
     window.addEventListener("keydown", onLibraryKeys);
     return () => window.removeEventListener("keydown", onLibraryKeys);
-  }, [filtered, selectedKeys.length]);
+  }, [filtered, selectedKeys.length, visibleKeys]);
   function chooseItem(key: string, range: boolean, additive: boolean) {
     setSelectedKeys(previous => chooseMediaKeys(visibleKeys, previous, key, selectionAnchor || selectedKey, { range, additive }));
     if (!range) setSelectionAnchor(key);
@@ -522,10 +522,41 @@ export function LibraryPage({
             </div>}
             <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-neutral-500">
               <p>{visibleLibraryJobs.length} of {libraryTotalJobs} jobs visible (matching filters) · {filtered.length} loaded media items</p>
+              <button type="button" onClick={() => { setSelectedKeys(visibleKeys); setSelectionAnchor(visibleKeys[0] || ""); setSelectedKey(visibleKeys[0] || ""); }}
+                disabled={!filtered.length} aria-label="Select all visible media"
+                className="text-rose-300 hover:text-rose-200 disabled:text-neutral-600">Select all loaded</button>
               {filtersActive && <button type="button" onClick={resetFilters} className="flex items-center gap-1 text-rose-300 hover:text-rose-200"><X className="size-3" />Reset filters</button>}
             </div>
           </div>
 
+          {bulkSelected.length > 0 && <div role="group" aria-label="Bulk media actions" className="space-y-3 rounded-2xl border border-rose-700/40 bg-rose-950/15 p-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <p role="status" className="text-xs font-semibold text-rose-200">{bulkSelected.length} loaded media item{bulkSelected.length === 1 ? "" : "s"} selected</p>
+              <button type="button" onClick={clearSelection} className="flex items-center gap-1 text-xs text-neutral-400 hover:text-white"><X className="size-3" />Clear selection</button>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <button type="button" className={button} aria-label="Favorite selected media"
+                disabled={!canFavoriteBulk || Boolean(busyAction)}
+                onClick={() => setFavoritesForKeys(bulkKeys, true)}><Heart className="size-3.5" />Favorite selected</button>
+              <button type="button" className={button} aria-label="Unfavorite selected media"
+                disabled={!organizationReady || Boolean(busyAction)}
+                onClick={() => setFavoritesForKeys(bulkKeys, false)}>Remove favorites</button>
+              <select aria-label="Bulk collection" className={field + " w-auto min-w-40 py-2 text-xs"}
+                value={bulkCollectionID} onChange={event => setBulkCollectionID(event.target.value)}>
+                <option value="">Choose a collection</option>
+                {collections.map(collection => <option key={collection.id} value={collection.id}>{collection.name}</option>)}
+              </select>
+              <button type="button" className={button} disabled={!canAddToCollection || Boolean(busyAction)}
+                onClick={() => updateSelectedCollection(true)}>Add to collection</button>
+              <button type="button" className={button} disabled={!selectedCollection || !organizationReady || Boolean(busyAction)}
+                onClick={() => updateSelectedCollection(false)}>Remove from collection</button>
+              <button type="button" className={button + " border-red-900/70 text-red-300 hover:bg-red-950/40"}
+                disabled={Boolean(busyAction) || bulkSelected.length > 100}
+                title="Only removes Library index entries. Downloaded files and download history remain intact."
+                onClick={() => void forgetSelectedMedia()}><X className="size-3.5" />Forget selected (keep files)</button>
+            </div>
+            <p className="text-[11px] text-neutral-400">Operations affect only the {bulkSelected.length} loaded, visible selected items. Bulk forgetting is limited to 100 items per operation and never deletes files from disk.</p>
+          </div>}
           {libraryStats.files === 0 && !filtersActive ? (
             <div className="rounded-2xl border border-neutral-800 bg-neutral-900/60 px-6 py-16 text-center">
               <Film className="mx-auto size-9 text-rose-400" aria-hidden="true" />
@@ -539,21 +570,27 @@ export function LibraryPage({
               <button type="button" onClick={resetFilters} className={button + " mt-4"}>Clear filters</button>
             </div>
           ) : (
-            <div aria-label="Saved media" className={libraryLayout === "grid"
+            <div ref={mediaGridRef} aria-label="Saved media" className={libraryLayout === "grid"
               ? "grid grid-cols-[repeat(auto-fill,minmax(min(100%,205px),1fr))] items-stretch gap-4"
               : "flex flex-col gap-2"}>
-              {filtered.map(item => {
-                const active = selected?.key === item.key;
-                return <article key={item.key} role="button" tabIndex={0} aria-pressed={active}
+              {filtered.map((item, index) => {
+                const active = selectedKeys.length ? selectedKeysInView.has(item.key) : selected?.key === item.key;
+                return <article key={item.key} data-media-card role="button" tabIndex={0} aria-pressed={active}
                   aria-label={"Select " + item.title}
-                  onClick={() => { setSelectedKey(item.key); setInspectorOpen(true); }}
+                  onClick={event => chooseItem(item.key, event.shiftKey, event.ctrlKey || event.metaKey)}
                   onDoubleClick={() => openItem(item)}
                   onKeyDown={event => {
-                    if (event.key === "Enter" || event.key === " ") {
+                    if (event.target !== event.currentTarget) return;
+                    if (event.key === "ArrowRight" || event.key === "ArrowDown" || event.key === "ArrowLeft" || event.key === "ArrowUp") {
                       event.preventDefault();
-                      setSelectedKey(item.key);
-                      setInspectorOpen(true);
-                      if (event.key === "Enter") openItem(item);
+                      const nextIndex = Math.max(0, Math.min(filtered.length - 1,
+                        index + (event.key === "ArrowLeft" || event.key === "ArrowUp" ? -1 : 1)));
+                      chooseItem(filtered[nextIndex].key, event.shiftKey, event.ctrlKey || event.metaKey);
+                      mediaGridRef.current?.querySelectorAll<HTMLElement>("[data-media-card]")[nextIndex]?.focus();
+                    } else if (event.key === "Enter" || event.key === " ") {
+                      event.preventDefault();
+                      chooseItem(item.key, event.shiftKey, event.ctrlKey || event.metaKey);
+                      if (event.key === "Enter" && !event.shiftKey && !event.ctrlKey && !event.metaKey) openItem(item);
                     }
                   }}
                   className={"group relative min-w-0 cursor-pointer rounded-2xl border bg-[#191a20] p-2.5 transition-colors focus-visible:outline-2 focus-visible:outline-rose-400 " +
@@ -671,7 +708,7 @@ export function LibraryPage({
       {!inspectorOpen && selected && <button type="button" className={button + " fixed bottom-5 right-5 z-20 shadow-xl"} onClick={() => setInspectorOpen(true)}>
         <Activity className="size-4" />Show details
       </button>}
-      <p className="sr-only">Keyboard shortcuts: Control or Command F to search. Select a card and press Enter to preview it.</p>
+      <p className="sr-only">Library shortcuts: Control or Command F to search. Control or Command A selects all visible media. Shift selects ranges, Control or Command toggles individual items, arrows navigate, Enter previews, and Escape clears selection.</p>
     </section>
   );
 }
