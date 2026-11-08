@@ -25,7 +25,7 @@
 | M06 | Sorting and favorites | Partial | Favorites now use SQLite-backed organization API with legacy migration; sorting remains client-side and loaded-page scoped |
 | M07 | Channel and source playlist browsing | Partial | Sidebar channel facet shortcuts plus loaded source-playlist view; true server-wide playlist grouping remains |
 | M08 | User collections | Partial | Create/rename/delete and membership now persist through SQLite v32 API; portability via Library ZIP export/import remains |
-| M09 | Dedicated per-file permanent delete | Not started | Existing Delete remains job-wide; require Go API and confirmation semantics |
+| M09 | Dedicated per-file permanent delete | In progress | New `DELETE /api/jobs/:id/library-files/:fileId` and native-confirmed selected-file UI; added regression tests, CI validation pending |
 | M10 | Multi-select and bulk file actions | Not started | Needs safe selection and backend semantics |
 | M11 | Keyboard and accessibility polish | Partial | Ctrl/Cmd+F, focusable cards, Enter preview; audit still needed |
 | M12 | High-scale performance | Partial | Existing server page cursors and thumbnail loading; virtualization and server-wide file sorting remain |
@@ -44,6 +44,8 @@
 - [x] Implement basic create/rename/delete collection and add/remove media UX without touching underlying downloads.
 - [x] Add UI regression tests for new organization flows.
 - [ ] Verify final branch CI; fix failing jobs or document reproducible blockers.
+- [x] Separate `Delete selected file` from `Delete entire download`; reject modified/symlinked paths and preserve sibling files and history.
+- [x] Add backend and frontend regression tests for single-file deletion and refresh browser E2E button text.
 - [x] Implement SQLite v32 organization persistence, authenticated GET/PUT endpoints, revision-based conflict rejection, and one-time legacy preference migration.
 - [x] Add Go persistence/authorization/conflict tests and frontend remount integration coverage.
 - [ ] Update PR #149 with checked features, verification, and limitations.
@@ -72,12 +74,15 @@
 - [x] Existing native preview, reveal, copy-path and open-folder API integration.
 - [x] Explicit job-wide Delete label; warning for multi-file jobs.
 - [x] Existing confirmation for job-wide Delete.
-- [ ] Dedicated single-file permanent deletion endpoint and UI.
+- [x] Dedicated single-file permanent deletion endpoint and UI, guarded by tracked-path validation and native confirmation (latest CI to verify).
 - [ ] Standard multiselect keyboard behavior and safe batch confirmations.
 - [ ] Screen-reader and high-contrast desktop audit.
 - [ ] Complete reduced-motion/mobile/narrow visual audit.
 
 ## CI history / validation truthfulness
+
+- Last completed pre-deletion PR head `7fafd83` passed **CI, CodeQL and desktop builds**. Current selected-file deletion changes are new commits and must be independently validated; do not claim the new head is green without checking its own workflow runs.
+- Selected-file deletion only operates on tracked, regular-sized published output under the configured library root. It does not delete a sibling media entry, media associated with another job, or whole-job history. Refuses modified or symlinked output, and active readers. The operation is not an undoable trash move; documented confirmation is mandatory. Partial caption/media filesystem deletion errors are reported and the job state is persisted for recovery.
 
 - Follow-up persistence implementation adds `src/server/library_organization.go` and v32 database migration, preserving existing jobs and files. The `/api/library/organization` GET/PUT endpoint rejects invalid entries and stale revisions (409). `src/hooks/use-library-organization.ts` loads from SQLite, migrates existing local-only preferences *only when remote revision is zero and empty*, and serializes client updates. Legacy localStorage remains a compatibility cache, not the source of truth.
 - Added Go API tests for restart persistence, unknown fields/validation, stale writes and bearer authentication; added frontend remount hydration test. These tests and latest-head platform build/E2E results need verification before marking complete.
