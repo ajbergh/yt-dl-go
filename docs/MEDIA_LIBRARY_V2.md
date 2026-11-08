@@ -68,14 +68,25 @@ Search and server filters work against the API's existing 50-job pagination. Sor
 
 **Known limitations:** ZIP import adds metadata-only media entries without copying files. The restored media remains unavailable until downloaded again. Organization data is portable, but there is no direct reconciliation of imported media with existing local media whose IDs differ; server-wide filtering and virtualization remain future work. Latest-head CI validation is pending.
 
+## Safe loaded-page multi-selection and thumbnail scheduling (2026-11-08)
+
+- Card selection now supports plain click, Ctrl/Cmd-click toggling, Shift-click ranges, Ctrl/Cmd+A (visible loaded items only), arrow navigation, and Escape to clear a selection. The toolbar exposes an explicit **Select all loaded** action; it does not silently select unseen paginated media.
+- Selected items can be favorited/unfavorited or added/removed from a collection in one revision-checked organization update. Favorite and collection membership limits remain enforced.
+- **Forget selected (keep files)** requests one native confirmation, removes at most 100 individual Library index entries through existing authenticated per-file endpoints, and refreshes the Library once. It reports successes and failures separately and leaves failed entries selected for retry. Actual media files and job history remain untouched.
+- **No bulk permanent delete** action is offered in this phase. Permanent deletion remains an individually confirmed, guarded single-file operation; job-wide deletion remains separately labeled and confirmed.
+- Local authenticated thumbnail requests now begin only when a card enters an IntersectionObserver viewport margin (400px). Remote images retain native lazy loading; platforms without IntersectionObserver keep the previous immediate-thumbnail behavior. This is an incremental optimization, **not** a virtualized grid or server-wide file pagination.
+- Unit and integration tests cover additive/shift range selection, selection clearing and search focus safety, bounded organization edits, metadata-only bulk forget with partial failures, and deferred local thumbnail fetch behavior.
+
+**Validation:** The previous head `c58030a` passed CI, CodeQL and desktop builds. Latest bulk/performance CI must be checked independently. Native desktop screen-reader/visual acceptance remains incomplete.
+
 ## Next development passes
 
-- [ ] Real virtualized scrolling and scalable thumbnail-fetch scheduling for 10,000+ media items
+- [ ] Virtualized scrolling for 10,000+ media items (local thumbnails now defer fetching until near viewport)
 - [ ] Server-supported global file-based sorting, favorites filtering, and page cursors
 - [x] Durable SQLite-backed favorites and user-defined collections, including portable ZIP v2 export/import (latest ZIP CI pending)
 - [ ] Grouped channel and source-playlist browsing
 - [x] True per-file permanent deletion with dedicated Go API and explicit confirmation (previous completed CI green)
-- [ ] Multi-select and safe, purpose-specific bulk actions
+- [x] Loaded-page multi-select and safe, purpose-specific bulk actions (full-library bulk and physical bulk deletion not implemented)
 - [ ] Optional richer playback experience and metadata indexing
 - [ ] Manual native-window visual acceptance on Windows, macOS, and Linux
 - [ ] Confirm browser, Go and desktop CI checks on this branch
