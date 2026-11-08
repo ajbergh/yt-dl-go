@@ -1194,6 +1194,52 @@ describe("Downloader UI and Go API integration", () => {
     }
   });
 
+  test("paginates more than 100 files from one playlist without dropping repeated source IDs", async () => {
+    const files = Array.from({ length: 102 }, (_, i) => ({
+      id: "media-" + String(i).padStart(3, "0"), name: "media-" + String(i).padStart(3, "0") + ".mp4",
+      title: "Media " + String(i).padStart(3, "0"), size: 100 + i, publishedAvailable: true,
+    }));
+    rows = [{ ...job, id: "one-large-playlist", status: "completed", completedCount: 102, totalCount: 102, files }];
+    await remount();
+    await connect();
+    await click(button("Library"));
+    const cards = () => container.querySelectorAll('[data-media-card]');
+    expect(cards()).toHaveLength(50);
+    expect(container.textContent).toContain("50 of 102 matching media loaded");
+    await click(button("Load more"));
+    expect(cards()).toHaveLength(100);
+    await click(button("Load more"));
+    expect(cards()).toHaveLength(102);
+    expect(button("Load more")).toBeUndefined();
+    expect(new Set([...cards()].map(card => card.getAttribute("aria-label"))).size).toBe(102);
+    await setSelect(container.querySelector('select[aria-label="Sort library"]'), "title");
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 320)); });
+    expect(cards()).toHaveLength(50);
+    expect(cards()[0].getAttribute("aria-label")).toBe("Select Media 000");
+    expect(container.textContent).toContain("50 of 102 matching media loaded");
+    expect(requests.some(req => req.path === "/api/library/files" && req.url.includes("sort=title"))).toBe(true);
+  });
+
+  test("favorite browse loads only matching files from across server pages", async () => {
+    const files = Array.from({ length: 60 }, (_, i) => ({
+      id: "favorite-file-" + String(i).padStart(3, "0"), name: "f" + i + ".mp4",
+      title: "Clip " + i, size: 1024, publishedAvailable: true,
+    }));
+    rows = [{ ...job, id: "favorites-deep", status: "completed", completedCount: 60, totalCount: 60, files }];
+    organizationResponse = {
+      revision: 4, favorites: ["favorites-deep:favorite-file-000", "favorites-deep:favorite-file-059"], collections: [],
+    };
+    await remount();
+    await connect();
+    await click(button("Library"));
+    await click(button("Favorites"));
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 320)); });
+    const cards = container.querySelectorAll('[data-media-card]');
+    expect(cards).toHaveLength(2);
+    expect([...cards].map(card => card.getAttribute("aria-label")).sort()).toEqual(["Select Clip 0", "Select Clip 59"]);
+    expect(requests.some(req => req.path === "/api/library/files" && req.url.includes("favorites=1"))).toBe(true);
+  });
+
   test("prefers authenticated local thumbnails and retains remote artwork as fallback metadata", async () => {
     rows = [{ ...job, status: "completed", completedCount: 1, totalCount: 1, files: [
       { id: "file-thumb", name: "001-test.mp4", size: 1024, thumbnailUrl: "https://i.ytimg.com/vi/fixture/hqdefault.jpg", thumbnailLocalAvailable: true, thumbnailMimeType: "image/jpeg", managedAvailable: true, publishedAvailable: false },
