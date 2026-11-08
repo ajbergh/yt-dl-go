@@ -90,6 +90,9 @@ function mediaFormat(file: DownloadFile): string {
 function actionDisabled(item: MediaItem, busyAction: string, action: string): boolean {
   return !item.available || busyAction === item.job.id + ":" + item.file.id + ":" + action;
 }
+function stoppedJob(job: DownloadJob): boolean {
+  return ["completed", "partial", "failed", "cancelled"].includes(job.status);
+}
 
 export function LibraryPage({
   libraryJobs, visibleLibraryJobs, libraryTotalJobs, libraryTotalFiles, onViewChange, librarySearch, setLibrarySearch,
@@ -161,6 +164,7 @@ export function LibraryPage({
   const selectedKeysInView = new Set(selectedKeys);
   const bulkSelected = filtered.filter(item => selectedKeysInView.has(item.key));
   const bulkKeys = bulkSelected.map(item => item.key);
+  const canForgetBulk = bulkSelected.length > 0 && bulkSelected.length <= 100 && bulkSelected.every(item => stoppedJob(item.job));
   const selectedCollection = collections.find(collection => collection.id === bulkCollectionID);
   const canFavoriteBulk = organizationReady && favorites.length + bulkKeys.filter(key => !favorites.includes(key)).length <= 10000;
   const canAddToCollection = organizationReady && Boolean(selectedCollection) &&
@@ -205,7 +209,7 @@ export function LibraryPage({
     }));
   }
   async function forgetSelectedMedia() {
-    if (busyAction || !bulkSelected.length || bulkSelected.length > 100) return;
+    if (busyAction || !canForgetBulk) return;
     const removed = await bulkForgetLibraryItems(bulkSelected.map(item => ({ jobId: item.job.id, fileId: item.file.id })));
     if (!removed?.length) return;
     const gone = new Set(removed);
@@ -557,7 +561,7 @@ export function LibraryPage({
               <button type="button" className={button} disabled={!selectedCollection || !organizationReady || Boolean(busyAction)}
                 onClick={() => updateSelectedCollection(false)}>Remove from collection</button>
               <button type="button" className={button + " border-red-900/70 text-red-300 hover:bg-red-950/40"}
-                disabled={Boolean(busyAction) || bulkSelected.length > 100}
+                disabled={Boolean(busyAction) || !canForgetBulk}
                 title="Only removes Library index entries. Downloaded files and download history remain intact."
                 onClick={() => void forgetSelectedMedia()}><X className="size-3.5" />Forget selected (keep files)</button>
             </div>
@@ -688,22 +692,23 @@ export function LibraryPage({
                 onClick={() => fileAction(selected, "copy-path")}><Copy className="size-3.5" />Copy path</button>
               <button type="button" className={button} disabled={actionDisabled(selected, busyAction, "open-folder") || !selected.file.outputRelativePath}
                 onClick={() => fileAction(selected, "open-folder")}><FolderOpen className="size-3.5" />Open folder</button>
-              <button type="button" className={button} disabled={busyAction === selected.job.id}
+              <button type="button" className={button} disabled={busyAction === selected.job.id || !stoppedJob(selected.job)}
                 title="Remove only this file from the library index; keep the downloaded file"
                 onClick={() => void jobAction(selected.job, "remove-library-item", selected.file.id)}><X className="size-3.5" />Forget item</button>
             </div>
             <button type="button" className={button + " w-full border-red-900/70 text-red-300 hover:border-red-700 hover:bg-red-950/40"}
               title="Permanently delete only the selected file"
-              disabled={busyAction === selected.job.id || !selected.available || !selected.file.outputRelativePath}
+              disabled={busyAction === selected.job.id || !stoppedJob(selected.job) || !selected.available || !selected.file.outputRelativePath}
               onClick={() => void jobAction(selected.job, "delete-library-file", selected.file.id)}>
               <Trash2 className="size-4" />Delete selected file
             </button>
             <button type="button" className={button + " w-full border-red-900/70 text-red-300 hover:border-red-700 hover:bg-red-950/40"}
               title="Permanently delete every file belonging to this download job"
-              disabled={busyAction === selected.job.id} onClick={() => void jobAction(selected.job, "delete-all")}>
+              disabled={busyAction === selected.job.id || !stoppedJob(selected.job)} onClick={() => void jobAction(selected.job, "delete-all")}>
               <Trash2 className="size-4" />Delete entire download
             </button>
             <p className="text-xs text-amber-300">Deletes every file from the entire source download, including other media on unloaded Library pages. This cannot be undone.</p>
+            {!stoppedJob(selected.job) && <p className="text-xs text-neutral-400">Finished files are ready to preview. Stop the download before deleting or forgetting files.</p>}
             {(selected.job.status === "partial" || selected.job.status === "failed" || selected.job.status === "cancelled") &&
               <button type="button" className={button + " w-full"} disabled={busyAction === selected.job.id} onClick={() => void jobAction(selected.job, "retry")}>
                 <RefreshCw className="size-4" />Retry job

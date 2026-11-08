@@ -149,27 +149,51 @@ export function useService() {
   const notificationsEnabledRef = useRef(false);
   const libraryQueryRef = useRef<LibraryQuery>(libraryQuery);
   const libraryRequestSequence = useRef(0);
+  const libraryLoadedPages = useRef(1);
 
   const setLibraryQuery = useCallback((query: LibraryQuery) => {
     // Applying the identical default/sort/filter query must not reset an
     // already paginated Library view after the debounce timer expires.
     if (JSON.stringify(libraryQueryRef.current) === JSON.stringify(query)) return;
+    libraryLoadedPages.current = 1;
     libraryQueryRef.current = query;
     setLibraryQueryState(query);
   }, []);
 
   const refreshLibrary = useCallback(async () => {
     const requestID = ++libraryRequestSequence.current;
-    const response = await api<LibraryPageResponse>(connection, libraryPagePath(libraryQueryRef.current), {
-      signal: AbortSignal.timeout(10000),
-    });
-    const result = normalizeLibraryPage(response);
-    if (requestID === libraryRequestSequence.current) {
+    const query = libraryQueryRef.current;
+    const pages = libraryLoadedPages.current;
+    const jobs: DownloadJob[] = [];
+    const known = new Set<string>();
+    let result: LibraryPageResponse;
+    let cursor: string | undefined;
+    let loadedPages = 0;
+    do {
+      const response = await api<LibraryPageResponse>(connection, libraryPagePath(query, cursor), {
+        signal: AbortSignal.timeout(10000),
+      });
+      if (requestID !== libraryRequestSequence.current || query !== libraryQueryRef.current) return [];
+      result = normalizeLibraryPage(response);
+      for (const job of result.jobs) {
+        const files = job.files.filter(file => {
+          const key = job.id + ":" + file.id;
+          if (known.has(key)) return false;
+          known.add(key);
+          return true;
+        });
+        if (files.length) jobs.push({ ...job, files });
+      }
+      loadedPages++;
+      cursor = result.nextCursor || undefined;
+    } while (cursor && loadedPages < pages);
+    if (requestID === libraryRequestSequence.current && query === libraryQueryRef.current) {
+      libraryLoadedPages.current = loadedPages;
       setLoadingLibraryMore(false);
-      setLibraryJobs(result.jobs);
+      setLibraryJobs(jobs);
       setLibraryPage(result);
     }
-    return result.jobs;
+    return jobs;
   }, [connection]);
 
   const loadMoreLibrary = useCallback(async () => {
@@ -184,6 +208,7 @@ export function useService() {
       });
       const result = normalizeLibraryPage(response);
       if (requestID !== libraryRequestSequence.current || query !== libraryQueryRef.current) return;
+      libraryLoadedPages.current++;
       setLibraryJobs(previous => {
         const known = new Set(previous.flatMap(job => job.files.map(file => job.id + ":" + file.id)));
         const additions = result.jobs.filter(job => {
@@ -353,7 +378,7 @@ export function useService() {
       } else if (event.job) {
         maybeNotifyTerminal(event.job);
         mergeLiveJob(event.job);
-        if (["completed", "partial", "failed", "cancelled"].includes(event.job.status)) {
+        if (event.type === "job-file-finalized" || ["completed", "partial", "failed", "cancelled"].includes(event.job.status)) {
           void refreshLibrary().catch(error => setPollError(errorMessage(error)));
         }
       }

@@ -129,7 +129,7 @@ func (s *jobStore) loadLibraryFilePage(limit int, cursor libraryFileCursor, quer
 		return libraryFilePage{}, fmt.Errorf("unsupported sort")
 	}
 	filterClause, filterArgs := libraryFileFilterClause(query)
-	base := ` FROM library_items li JOIN library_sources j ON j.source_job_id=li.source_job_id WHERE j.status IN ('completed','partial','failed','cancelled')` + filterClause
+	base := ` FROM library_items li JOIN library_sources j ON j.source_job_id=li.source_job_id WHERE 1=1` + filterClause
 	var totalFiles, totalJobs int
 	if err := s.db.QueryRow("SELECT COUNT(*),COUNT(DISTINCT j.source_job_id)"+base, filterArgs...).Scan(&totalFiles, &totalJobs); err != nil {
 		return libraryFilePage{}, err

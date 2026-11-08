@@ -96,6 +96,8 @@ let diagnosticsResponse;
 let updateResponse;
 let organizationResponse;
 let liveEvent;
+let keepEventsOpen;
+let emitLiveEvent;
 let notificationsEnabled;
 let notificationPermission;
 let notificationPermissionRequests;
@@ -141,6 +143,8 @@ beforeEach(async () => {
   testWindow.localStorage.removeItem("yt-dl-go:library-favorites-v2");
   testWindow.localStorage.removeItem("yt-dl-go:library-sort-v2");
   liveEvent = null;
+  keepEventsOpen = false;
+  emitLiveEvent = null;
   notificationsEnabled = false;
   notificationPermission = "granted";
   notificationPermissionRequests = 0;
@@ -186,6 +190,15 @@ beforeEach(async () => {
       const settingsEffective = { retention: "never", maxJobBytes: 10737418240, jobTimeout: "none", chromePath: "", downloadSlots: 4 };
       const events = [{ type: "snapshot", jobs: rows, settings, settingsSources, settingsEffective }, ...(liveEvent ? [liveEvent] : [])];
       const body = events.map((event, index) => `id: ${index + 1}\nevent: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`).join("");
+      if (keepEventsOpen) {
+        let eventID = events.length;
+        return new Response(new ReadableStream({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode(body));
+            emitLiveEvent = event => controller.enqueue(new TextEncoder().encode(`id: ${++eventID}\nevent: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`));
+          },
+        }), { headers: { "Content-Type": "text/event-stream" } });
+      }
       return new Response(body, { headers: { "Content-Type": "text/event-stream" } });
     }
     if (path === "/api/inspect") return Response.json(inspection);
@@ -198,7 +211,7 @@ beforeEach(async () => {
       const channel = params.get("channel");
       const search = (params.get("q") || "").toLowerCase();
       const collection = organizationResponse.collections.find(value => value.id === params.get("collection"));
-      let items = rows.filter(job => ["completed", "partial", "failed", "cancelled"].includes(job.status))
+      let items = rows
         .flatMap(job => (job.files || []).map(file => ({ ...job, files: [file] })))
         .filter(job => {
           const file = job.files[0];
@@ -825,6 +838,35 @@ describe("Downloader UI and Go API integration", () => {
     expect(requests.filter(item => item.path === "/api/jobs" && !item.method)).toHaveLength(1);
   });
 
+  test("shows a downloaded track waiting for a conversion slot separately from active conversion", async () => {
+    const audioItem = { index: 1, videoId: "abcdefghijk", title: "Waiting track", status: "processing", progress: 100, downloadedBytes: 1000, totalBytes: 1000, speedBytesPerSec: 0, etaSeconds: 0 };
+    rows = [{
+      ...job,
+      id: "convert-job",
+      kind: "video",
+      title: "Convert video",
+      status: "processing",
+      mediaType: "audio",
+      audioFormat: "mp3",
+      audioBitrate: "192k",
+      progress: 100,
+      totalCount: 1,
+      items: [{ ...audioItem, waitingToConvert: true }],
+    }];
+    await remount();
+    await connect();
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 20)); });
+    expect(container.textContent).toContain("Waiting to convert");
+    expect(container.textContent).toContain("Downloaded · waiting for a conversion slot");
+    expect(container.textContent).not.toContain("Converting audio to MP3");
+    rows = [{ ...rows[0], items: [audioItem] }];
+    await remount();
+    await connect();
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 20)); });
+    expect(container.textContent).toContain("Converting audio to MP3");
+    expect(container.textContent).not.toContain("Waiting to convert");
+  });
+
   test("renders persisted queue order and moves a queued job next", async () => {
     rows = [
       { ...job, id: "job-a", title: "First queued", status: "queued", queuePosition: 1, createdAt: "2026-01-01T00:00:00Z", items: [{ index: 1, playlistIndex: 2, videoId: "abcdefghijk", title: "Item 2", status: "queued", progress: null, downloadedBytes: 0, totalBytes: 0, speedBytesPerSec: 0, etaSeconds: 0 }, { index: 2, playlistIndex: 4, videoId: "lmnopqrstuv", title: "Item 4", status: "queued", progress: null, downloadedBytes: 0, totalBytes: 0, speedBytesPerSec: 0, etaSeconds: 0 }] },
@@ -1221,6 +1263,50 @@ describe("Downloader UI and Go API integration", () => {
     expect(cards()[0].getAttribute("aria-label")).toBe("Select Media 000");
     expect(container.textContent).toContain("50 of 102 matching media loaded");
     expect(requests.some(req => req.path === "/api/library/files" && req.url.includes("sort=title"))).toBe(true);
+  });
+
+  test("refreshes finalized active files without losing loaded pages or the selected sort", async () => {
+    keepEventsOpen = true;
+    rows = [{ ...job, id: "live-playlist", status: "downloading", files: Array.from({ length: 102 }, (_, i) => ({
+      id: "live-" + i, name: `track-${String(i).padStart(3, "0")}.mp4`, title: `Track ${String(i).padStart(3, "0")}`,
+      size: 1024, publishedAvailable: true,
+    })) }];
+    await remount();
+    await connect();
+    await click(button("Library"));
+    await setSelect(container.querySelector('select[aria-label="Sort library"]'), "title");
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 320)); });
+    await click(button("Load more"));
+    await click(button("Load more"));
+    expect(container.querySelectorAll('[data-media-card]')).toHaveLength(102);
+    rows[0] = { ...rows[0], files: [...rows[0].files, { id: "new-live", name: "new.mp4", title: "Track 103", size: 2048, publishedAvailable: true }] };
+    await act(async () => {
+      emitLiveEvent({ type: "job-file-finalized", job: rows[0] });
+      await new Promise(resolve => setTimeout(resolve, 30));
+    });
+    const cards = [...container.querySelectorAll('[data-media-card]')];
+    expect(cards).toHaveLength(103);
+    expect(new Set(cards.map(card => card.getAttribute("aria-label"))).size).toBe(103);
+    expect(cards.at(-1).getAttribute("aria-label")).toBe("Select Track 103");
+    expect(container.querySelector('select[aria-label="Sort library"]').value).toBe("title");
+    expect(button("Load more")).toBeUndefined();
+  });
+
+  test("keeps active finalized files playable while disabling stopped-job mutations and mixed bulk forget", async () => {
+    const file = { id: "active-file", name: "active.mp4", title: "Active file", size: 1024, publishedAvailable: true, outputRelativePath: "active.mp4" };
+    rows = [
+      { ...job, id: "active-job", status: "processing", files: [file] },
+      { ...job, id: "stopped-job", status: "completed", files: [{ ...file, id: "stopped-file", title: "Stopped file" }] },
+    ];
+    await remount();
+    await connect();
+    await click(button("Library"));
+    await click(container.querySelector('[data-media-card][aria-label="Select Active file"]'));
+    for (const label of ["Preview", "Reveal", "Copy path", "Open folder"]) expect(button(label).disabled).toBe(false);
+    for (const label of ["Forget item", "Delete selected file", "Delete entire download"]) expect(button(label).disabled).toBe(true);
+    await click(container.querySelector('button[aria-label="Select all visible media"]'));
+    expect(button("Forget selected (keep files)").disabled).toBe(true);
+    expect(requests.some(item => item.method === "DELETE")).toBe(false);
   });
 
   test("favorite browse loads only matching files from across server pages", async () => {

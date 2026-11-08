@@ -69,6 +69,8 @@ export interface QueueItem {
   fileId?: string;
   fileIds?: string[];
   retryRequested?: boolean;
+  /** Source downloaded; queued for a conversion slot. */
+  waitingToConvert?: boolean;
 }
 export interface DownloadJob {
   id: string;

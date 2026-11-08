@@ -1615,7 +1615,9 @@ func (s *jobStore) saveJob(j *jobState) error {
 	if _, err := tx.Exec(`DELETE FROM library_sources WHERE source_job_id=?`, j.ID); err != nil {
 		return err
 	}
-	if j.Status == "completed" || j.Status == "partial" || j.Status == "failed" || j.Status == "cancelled" {
+	// Finalized files are Library entries as soon as they are published, even
+	// while the rest of a long playlist is still downloading.
+	{
 		if _, err := tx.Exec(`INSERT OR REPLACE INTO library_sources (
 			source_job_id,url,kind,quality,video_strategy,allow_360p_fallback,media_type,audio_format,audio_bitrate,subtitle_language,subtitle_format,split_by_chapter,status,title,progress,current_item,completed_count,total_count,error,created_at,note,category,storage_mode,queue_position,search_text,download_location
 		)
@@ -1678,6 +1680,18 @@ func (s *jobStore) saveJob(j *jobState) error {
 	s.libraryItemsCache[j.ID] = newLibrarySignatures
 	j.librarySignatures = newLibrarySignatures
 	return nil
+}
+
+// backfillLibrarySources publishes library rows for jobs that still run but
+// already finalized files. Earlier versions only listed terminal jobs.
+func (s *jobStore) backfillLibrarySources() error {
+	_, err := s.db.Exec(`INSERT OR IGNORE INTO library_sources (
+		source_job_id,url,kind,quality,video_strategy,allow_360p_fallback,media_type,audio_format,audio_bitrate,subtitle_language,subtitle_format,split_by_chapter,status,title,progress,current_item,completed_count,total_count,error,created_at,note,category,storage_mode,queue_position,search_text,download_location
+	)
+	SELECT id,url,kind,quality,video_strategy,allow_360p_fallback,media_type,audio_format,audio_bitrate,subtitle_language,subtitle_format,split_by_chapter,status,title,progress,current_item,completed_count,total_count,error,created_at,note,category,storage_mode,queue_position,
+		COALESCE(title,'')||' '||COALESCE(url,'')||' '||COALESCE(category,'')||' '||COALESCE(audio_format,'')||' '||COALESCE(subtitle_language,''),output_location
+	FROM jobs WHERE EXISTS (SELECT 1 FROM library_items li WHERE li.source_job_id=jobs.id)`)
+	return err
 }
 
 func syncLibraryItems(tx *sql.Tx, j *jobState, groups map[int][]mediaFile, createdAt int64) (map[string][32]byte, error) {
@@ -2338,11 +2352,8 @@ func (s *jobStore) loadLibraryDiskJobs(jobIDs []string, includeActive bool, sele
 	}
 	query := `SELECT j.source_job_id,j.url,j.kind,j.quality,j.video_strategy,j.allow_360p_fallback,j.media_type,j.audio_format,j.audio_bitrate,j.subtitle_language,j.subtitle_format,j.split_by_chapter,j.status,j.title,j.progress,j.current_item,j.completed_count,j.total_count,j.error,j.created_at,j.note,j.category,j.storage_mode,j.queue_position,j.download_location,li.file_id,li.file_json,li.output_path
 		FROM library_items li JOIN library_sources j ON j.source_job_id=li.source_job_id
-		WHERE j.status IN ('completed','partial','failed','cancelled')
 		`
-	if includeActive {
-		query = strings.Replace(query, "WHERE j.status IN ('completed','partial','failed','cancelled')", "WHERE 1=1", 1)
-	}
+	_ = includeActive // Library rows exist for any job with finalized files.
 	args := []any{}
 	if jobIDs != nil {
 		if len(jobIDs) == 0 {

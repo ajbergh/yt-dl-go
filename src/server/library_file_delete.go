@@ -6,7 +6,43 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 )
+
+// libraryPathSharedLocked checks both durable owners and active jobs whose
+// finalized files may still be waiting for persistence. An empty fileID excludes
+// the entire target job; otherwise only the selected item is excluded.
+func (s *server) libraryPathSharedLocked(jobID, fileID, path string) (bool, error) {
+	key := strings.ReplaceAll(filepath.Clean(path), `\`, "/")
+	for _, job := range s.jobs {
+		for _, file := range job.Files {
+			if job.ID == jobID && (fileID == "" || file.ID == fileID) {
+				continue
+			}
+			paths := []string{file.OutputPath}
+			if file.Subtitle != nil {
+				captionPath := file.Subtitle.OutputPath
+				if captionPath == "" && file.Subtitle.OutputRelativePath != "" {
+					captionPath = filepath.Join(job.DownloadLocation, filepath.FromSlash(file.Subtitle.OutputRelativePath))
+				}
+				paths = append(paths, captionPath)
+			}
+			for _, candidate := range paths {
+				if candidate != "" && strings.EqualFold(strings.ReplaceAll(filepath.Clean(candidate), `\`, "/"), key) {
+					return true, nil
+				}
+			}
+		}
+	}
+	var shared bool
+	err := s.store.db.QueryRow(`SELECT EXISTS(SELECT 1 FROM library_items li
+		LEFT JOIN library_sources j ON j.source_job_id=li.source_job_id
+		WHERE (li.source_job_id<>? OR (?<>'' AND li.file_id<>?)) AND (
+			replace(li.output_path,char(92),'/')=? COLLATE NOCASE OR
+			(rtrim(replace(j.download_location,char(92),'/'),'/') || '/' || json_extract(li.file_json,'$.subtitle.outputRelativePath'))=? COLLATE NOCASE))`,
+		jobID, fileID, fileID, key, key).Scan(&shared)
+	return shared, err
+}
 
 // verifyTrackedFileForRemoval verifies a regular file with the recorded size
 // using a rooted filesystem handle. Neither a symbolic link nor an escaped
@@ -139,14 +175,12 @@ func (s *server) handleSingleLibraryFileDelete(w http.ResponseWriter, jobID, fil
 		if path == "" {
 			continue
 		}
-		var shared int
-		if err := s.store.db.QueryRow(`SELECT EXISTS(SELECT 1 FROM library_items
-			WHERE output_path=? COLLATE NOCASE AND (source_job_id<>? OR file_id<>?))`,
-			path, jobID, fileID).Scan(&shared); err != nil {
+		shared, err := s.libraryPathSharedLocked(jobID, fileID, path)
+		if err != nil {
 			fail(w, http.StatusInternalServerError, "Could not verify library file ownership")
 			return
 		}
-		if shared != 0 {
+		if shared {
 			fail(w, http.StatusConflict, "Another Library item refers to the same output path")
 			return
 		}

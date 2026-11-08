@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strconv"
+	"sync"
 	"time"
 )
 
@@ -162,6 +163,31 @@ func (s *server) captureThumbnail(ctx context.Context, j *jobState, file *mediaF
 	}
 	file.ThumbnailMimeType = mimeType
 	file.ThumbnailLocalAvailable = true
+}
+
+// Audio artwork and media acquisition are independent. Keep the worker's
+// mediaFile private until the fetch joins, and cancel/join before error cleanup
+// so a late thumbnail cannot be left behind after a failed transfer.
+func (s *server) startAudioThumbnail(ctx context.Context, j *jobState, file *mediaFile) func(error) {
+	thumbnail := *file
+	thumbnailCtx, cancel := context.WithCancel(ctx)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		s.captureThumbnail(thumbnailCtx, j, &thumbnail)
+	}()
+	var once sync.Once
+	return func(transferErr error) {
+		once.Do(func() {
+			if transferErr != nil {
+				cancel()
+			}
+			<-done
+			cancel()
+			file.ThumbnailLocalAvailable = thumbnail.ThumbnailLocalAvailable
+			file.ThumbnailMimeType = thumbnail.ThumbnailMimeType
+		})
+	}
 }
 
 func (s *server) serveThumbnail(w http.ResponseWriter, r *http.Request, jobID string) {

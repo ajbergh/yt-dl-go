@@ -83,6 +83,8 @@ type queueItem struct {
 	FileID           string   `json:"fileId,omitempty"`
 	FileIDs          []string `json:"fileIds,omitempty"`
 	RetryRequested   bool     `json:"retryRequested,omitempty"`
+	// WaitingToConvert marks a downloaded source queued for a conversion slot.
+	WaitingToConvert bool `json:"waitingToConvert,omitempty"`
 }
 
 type Job struct {
@@ -171,6 +173,8 @@ type server struct {
 	scheduleChanged     chan struct{}
 	activeDownloads     int
 	activeItems         int
+	activeConversions   int
+	convertSlots        int
 	engineMu            sync.Mutex
 	ctx                 context.Context
 	stop                context.CancelFunc
@@ -185,6 +189,7 @@ type server struct {
 	store               *jobStore
 	persistenceWriter   *persistenceWriter
 	bandwidth           *bandwidthLimiter
+	audioTransport      audioTransportState
 	events              *eventBroker
 }
 
@@ -964,6 +969,28 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			fail(w, 409, "This job has an active file transfer")
 			return
 		}
+		// Preflight every path before unlinking anything. Reused audio can be
+		// owned by multiple jobs, including one still publishing its state.
+		for _, file := range j.Files {
+			var paths []string
+			if file.PublishedAvailable {
+				paths = append(paths, file.OutputPath)
+			}
+			if file.Subtitle != nil && file.Subtitle.PublishedAvailable {
+				paths = append(paths, file.Subtitle.OutputPath)
+			}
+			for _, path := range paths {
+				shared, err := s.libraryPathSharedLocked(j.ID, "", path)
+				if err != nil {
+					fail(w, 500, "Could not verify library file ownership")
+					return
+				}
+				if shared {
+					fail(w, 409, "Another Library item refers to the same output path. Forget the other Library entry before deleting this download.")
+					return
+				}
+			}
+		}
 		if err := removeOutputCopies(j); err != nil {
 			_ = s.persistJobLocked(j)
 			fail(w, 500, "Could not delete the library files")
@@ -1505,11 +1532,11 @@ func (s *server) enqueueJobWithFallback(w http.ResponseWriter, u, kind, quality,
 }
 
 // issueTicket creates a short-lived random capability for a stopped job's ZIP
-// or one finalized file. The returned ticket URL, not a bearer token, grants
+// or one finalized file, including files from active jobs. The returned ticket URL grants
 // access to the corresponding download route.
 func (s *server) issueTicket(w http.ResponseWriter, j *jobState, fileID string, fileIDs []string, inline bool) {
-	if !terminal(j.Status) || len(j.Files) == 0 {
-		fail(w, 409, "Files are available only after the job has stopped and finalized output exists")
+	if len(j.Files) == 0 || (!terminal(j.Status) && fileID == "") {
+		fail(w, 409, "Select a finalized file, or wait until the job has stopped to download an archive")
 		return
 	}
 	if inline && fileID == "" {
