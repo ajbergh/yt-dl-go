@@ -310,7 +310,7 @@ func nativeHTTPClient(timeout time.Duration) *http.Client {
 			TLSClientConfig:     &tls.Config{MinVersion: tls.VersionTLS12},
 			TLSHandshakeTimeout: 10 * time.Second, ResponseHeaderTimeout: 20 * time.Second,
 			ExpectContinueTimeout: time.Second, IdleConnTimeout: 90 * time.Second,
-			MaxIdleConns: 8, MaxIdleConnsPerHost: 2, MaxConnsPerHost: 4,
+			MaxIdleConns: 8, MaxIdleConnsPerHost: nativeRangeConcurrency, MaxConnsPerHost: 4,
 		}
 	} else {
 		transport = &http.Transport{
@@ -318,7 +318,7 @@ func nativeHTTPClient(timeout time.Duration) *http.Client {
 			TLSClientConfig:     &tls.Config{MinVersion: tls.VersionTLS12},
 			TLSHandshakeTimeout: 10 * time.Second, ResponseHeaderTimeout: 20 * time.Second,
 			ExpectContinueTimeout: time.Second, IdleConnTimeout: 90 * time.Second,
-			MaxIdleConns: 8, MaxIdleConnsPerHost: 2, MaxConnsPerHost: 4,
+			MaxIdleConns: 8, MaxIdleConnsPerHost: nativeRangeConcurrency, MaxConnsPerHost: 4,
 		}
 	}
 	return &http.Client{

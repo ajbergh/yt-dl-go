@@ -2255,8 +2255,33 @@ func (s *server) transferAdaptiveMP4(ctx context.Context, j *jobState, engine na
 	var browserUsed, audioBrowserUsed bool
 	actualAudio := selection.audio
 	dualUsed := false
-	if selection.audio.AudioChannels > 0 && selection.audio.AudioChannels <= 2 {
-		videoSize, audioSize, dualUsed, err = s.captureAdaptivePair(ctx, j, engine, video, selection, videoPart, audioPart, queueIndex, budget, func(v, a int64) { s.updateProgress(j, queueIndex, v+a, progressTotal) }, browserProvider)
+	audioDone := false
+	var stereoAAC *youtube.Format
+	if selection.audio.AudioChannels > 2 {
+		stereoAAC = stereoAACFormat(video)
+	}
+	pairSelection := selection
+	if selection.audio.AudioChannels > 2 && stereoAAC != nil && browserProvider != nil && selection.video.ContentLength > 0 && budget-selection.video.ContentLength > 0 {
+		// Browser playback negotiates stereo, so the multichannel preferred track
+		// can only arrive over native ranges. Probe it first: a rejection is cheap,
+		// and the verified stereo alternate can then be captured together with the
+		// video in one browser pass instead of a second serial pass.
+		size, _, probeErr := s.downloadAdaptiveRanges(ctx, j, engine, video, selection.audio, audioPart, "audio", queueIndex, budget-selection.video.ContentLength, progress, nil)
+		switch {
+		case probeErr == nil:
+			audioSize, audioDone = size, true
+		case ctx.Err() != nil:
+			return result, ctx.Err()
+		case errors.Is(probeErr, errRead):
+			if _, statErr := os.Stat(audioPart); errors.Is(statErr, os.ErrNotExist) {
+				pairSelection.audio = stereoAAC
+			}
+		default:
+			return result, probeErr
+		}
+	}
+	if !audioDone && pairSelection.audio.AudioChannels > 0 && pairSelection.audio.AudioChannels <= 2 {
+		videoSize, audioSize, dualUsed, err = s.captureAdaptivePair(ctx, j, engine, video, pairSelection, videoPart, audioPart, queueIndex, budget, func(v, a int64) { s.updateProgress(j, queueIndex, v+a, progressTotal) }, browserProvider)
 		if ctx.Err() != nil {
 			return result, ctx.Err()
 		}
@@ -2274,6 +2299,10 @@ func (s *server) transferAdaptiveMP4(ctx context.Context, j *jobState, engine na
 	if dualUsed {
 		downloaded = videoSize
 		s.noteBrowserAdaptive(j)
+		if pairSelection.audio != selection.audio {
+			actualAudio = pairSelection.audio
+			s.noteAdaptiveMP4AudioFallback(j)
+		}
 	} else {
 		videoSize, browserUsed, err = s.downloadAdaptiveRanges(ctx, j, engine, video, selection.video, videoPart, "video", queueIndex, budget, progress, browserProvider)
 		if err != nil {
@@ -2298,31 +2327,30 @@ func (s *server) transferAdaptiveMP4(ctx context.Context, j *jobState, engine na
 		// tries browser capture then native ranges and validates per-track identity.
 		// Only a retryable read failure downgrades to the progressive AAC source.
 		var usedFallback bool
-		var stereoAAC *youtube.Format
-		if selection.audio.AudioChannels > 2 {
-			stereoAAC = stereoAACFormat(video)
-		}
-		actualAudio, usedFallback, err = downloadAdaptiveMP4Audio(selection.audio, selection.progressive, func(format *youtube.Format) error {
-			audioProvider := browserProvider
-			// Browser playback negotiates stereo; a multichannel itag may never
-			// arrive. Try that source natively, then the verified stereo alternate.
-			if format.AudioChannels > 2 {
-				audioProvider = nil
+		// When audioDone is set, the early probe already fetched the preferred track.
+		if !audioDone {
+			actualAudio, usedFallback, err = downloadAdaptiveMP4Audio(selection.audio, selection.progressive, func(format *youtube.Format) error {
+				audioProvider := browserProvider
+				// Browser playback negotiates stereo; a multichannel itag may never
+				// arrive. Try that source natively, then the verified stereo alternate.
+				if format.AudioChannels > 2 {
+					audioProvider = nil
+				}
+				size, usedBrowser, downloadErr := s.downloadAdaptiveRanges(ctx, j, engine, video, format, audioPart, "audio", queueIndex, budget-videoSize, progress, audioProvider)
+				if downloadErr == nil {
+					audioSize, audioBrowserUsed = size, usedBrowser
+				}
+				return downloadErr
+			}, stereoAAC)
+			if err != nil {
+				return result, err
 			}
-			size, usedBrowser, downloadErr := s.downloadAdaptiveRanges(ctx, j, engine, video, format, audioPart, "audio", queueIndex, budget-videoSize, progress, audioProvider)
-			if downloadErr == nil {
-				audioSize, audioBrowserUsed = size, usedBrowser
+			if usedFallback {
+				s.noteAdaptiveMP4AudioFallback(j)
 			}
-			return downloadErr
-		}, stereoAAC)
-		if err != nil {
-			return result, err
-		}
-		if usedFallback {
-			s.noteAdaptiveMP4AudioFallback(j)
-		}
-		if audioBrowserUsed {
-			s.noteBrowserAdaptive(j)
+			if audioBrowserUsed {
+				s.noteBrowserAdaptive(j)
+			}
 		}
 	}
 	downloaded += audioSize
