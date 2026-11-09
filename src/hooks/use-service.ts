@@ -8,6 +8,8 @@ import {
   builtInServiceConnection, errorMessage, notificationAPI, terminalNotification,
 } from "../components/downloader/view-model";
 
+type StorageWarning = { path: string; freeBytes: number; totalBytes: number; freePercent: number };
+
 const fallbackCategories = ["Tech", "Science", "Coding", "Music", "Education", "Gaming", "Podcasts", "Archival", "General"];
 
 function initialLibraryQuery(): LibraryQuery {
@@ -95,7 +97,6 @@ const defaultSettings: AppSettings = {
   defaultCategory: "General",
   userCategories: fallbackCategories,
   retention: "never",
-  maxJobBytes: 10 * 1024 * 1024 * 1024,
   jobTimeout: "none",
   chromePath: "",
   downloadSlots: 4,
@@ -117,7 +118,6 @@ function hydratedSettings(settings: AppSettings, previous: AppSettings = default
     defaultCategory: settings.defaultCategory || "General",
     userCategories: settings.userCategories?.length ? settings.userCategories : previous.userCategories,
     retention: settings.retention || "never",
-    maxJobBytes: settings.maxJobBytes || 10 * 1024 * 1024 * 1024,
     jobTimeout: settings.jobTimeout || "none",
     chromePath: settings.chromePath ?? "",
     downloadSlots: settings.downloadSlots || 4,
@@ -144,6 +144,7 @@ export function useService() {
   const [updateError, setUpdateError] = useState("");
   const [checkingUpdates, setCheckingUpdates] = useState(false);
   const [serviceError, setServiceError] = useState("");
+  const [storageWarnings, setStorageWarnings] = useState<StorageWarning[]>([]);
   const [pollError, setPollError] = useState("");
   const knownJobStatuses = useRef<Map<string, DownloadJob["status"]>>(new Map());
   const notificationsEnabledRef = useRef(false);
@@ -422,6 +423,21 @@ export function useService() {
     };
   }, [connection, refreshLibrary, serviceReady]);
 
+  useEffect(() => {
+    if (!serviceReady) return;
+    const controller = new AbortController();
+    let timer: ReturnType<typeof setTimeout>;
+    async function checkStorage() {
+      try {
+        const response = await api<{ warnings: StorageWarning[] }>(connection, "/api/storage", { signal: AbortSignal.any([controller.signal, AbortSignal.timeout(10000)]) });
+        if (!controller.signal.aborted) setStorageWarnings(response.warnings ?? []);
+      } catch { /* Disk inspection is advisory; keep download controls available. */ }
+      if (!controller.signal.aborted) timer = setTimeout(() => void checkStorage(), 10000);
+    }
+    void checkStorage();
+    return () => { controller.abort(); clearTimeout(timer); };
+  }, [connection, serviceReady, settings.downloadLocation]);
+
   return {
     connection,
     serviceReady,
@@ -450,5 +466,6 @@ export function useService() {
     serviceError,
     setServiceError,
     pollError,
+    storageWarnings,
   };
 }

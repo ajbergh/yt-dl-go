@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"math"
 	"math/rand/v2"
 	"mime"
 	"net/http"
@@ -47,7 +48,7 @@ var (
 	errLength            = errors.New("media stream is empty or does not match its declared size")
 	errMux               = errors.New("video and audio streams could not be combined into a complete file")
 	errStorage           = errors.New("private media storage could not be safely written or cleaned")
-	errLimit             = errors.New("Job storage limit reached; remaining entries were not downloaded")
+	errLimit             = errors.New("Media exceeds the supported file size")
 	errItemReservation   = errors.New("selected media exceeded its reserved item size; retry the item")
 	errNative            = errors.New("native engine failed unexpectedly; completeness could not be verified")
 	errNoAudio           = errors.New("no compatible standalone audio stream is available")
@@ -700,15 +701,7 @@ func (s *server) run(ctx context.Context, j *jobState, requested []queueItem) {
 	}
 	s.rebuildFilesLocked(j)
 	s.refreshAllQueueItemsLocked(j)
-	var used int64
-	for _, file := range j.Files {
-		used += file.Size
-		if file.Subtitle != nil {
-			used += file.Subtitle.Size
-		}
-	}
 	s.mu.Unlock()
-	tracker := newJobBudget(s.cfg.maxBytes, used)
 	workCtx, stopWork := context.WithCancel(ctx)
 	defer stopWork()
 	var nextMu, fatalMu sync.Mutex
@@ -755,7 +748,7 @@ func (s *server) run(ctx context.Context, j *jobState, requested []queueItem) {
 				if !s.acquireItemSlot(workCtx, j, current, title) {
 					return
 				}
-				err := s.safeProcessItem(workCtx, j, entry, current, outputIndex, tracker)
+				err := s.safeProcessItem(workCtx, j, entry, current, outputIndex)
 				s.releaseItemSlot(j, current)
 				if err == nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 					continue
@@ -780,84 +773,6 @@ func (s *server) run(ctx context.Context, j *jobState, requested []queueItem) {
 }
 
 func floatPointer(value float64) *float64 { return &value }
-
-type jobBudget struct {
-	mu       sync.Mutex
-	limit    int64
-	used     int64
-	reserved int64
-	changed  chan struct{}
-}
-
-func newJobBudget(limit, used int64) *jobBudget {
-	return &jobBudget{limit: limit, used: used, changed: make(chan struct{})}
-}
-
-func (b *jobBudget) reserve(ctx context.Context, requested int64) (int64, error) {
-	for {
-		b.mu.Lock()
-		if b.used > b.limit {
-			log.Printf("job quota exceeded: used_bytes=%d limit_bytes=%d", b.used, b.limit)
-			b.mu.Unlock()
-			return 0, errLimit
-		}
-		amount := requested
-		if amount <= 0 {
-			amount = b.limit - b.used
-		}
-		if amount <= 0 || amount > b.limit-b.used {
-			log.Printf("job quota reservation rejected: requested_bytes=%d used_bytes=%d limit_bytes=%d", amount, b.used, b.limit)
-			b.mu.Unlock()
-			return 0, errLimit
-		}
-		if amount <= b.limit-b.used-b.reserved {
-			b.reserved += amount
-			b.mu.Unlock()
-			return amount, nil
-		}
-		changed := b.changed
-		b.mu.Unlock()
-		select {
-		case <-ctx.Done():
-			return 0, ctx.Err()
-		case <-changed:
-		}
-	}
-}
-
-func (b *jobBudget) release(amount, completed int64) error {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	b.reserved -= amount
-	if b.reserved < 0 {
-		b.reserved = 0
-	}
-	if completed > amount || completed > b.limit-b.used {
-		log.Printf("job quota commit rejected: output_bytes=%d reservation_bytes=%d used_bytes=%d limit_bytes=%d", completed, amount, b.used, b.limit)
-		close(b.changed)
-		b.changed = make(chan struct{})
-		return errLimit
-	}
-	b.used += completed
-	close(b.changed)
-	b.changed = make(chan struct{})
-	return nil
-}
-
-func (b *jobBudget) reserveOptional(maximum int64) int64 {
-	if maximum <= 0 {
-		return 0
-	}
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	available := b.limit - b.used - b.reserved
-	if available <= 0 {
-		return 0
-	}
-	amount := min(maximum, available)
-	b.reserved += amount
-	return amount
-}
 
 func estimatedItemBudget(j *jobState, video *youtube.Video, format *youtube.Format, selection streamSelection) int64 {
 	var estimated int64
@@ -1226,7 +1141,7 @@ func (s *server) updateProgress(j *jobState, index int, downloaded, total int64)
 	}
 }
 
-func (s *server) processItem(ctx context.Context, j *jobState, entry *youtube.PlaylistEntry, current, outputIndex int, tracker *jobBudget) error {
+func (s *server) processItem(ctx context.Context, j *jobState, entry *youtube.PlaylistEntry, current, outputIndex int) error {
 	s.mu.Lock()
 	if completed := itemFiles(j, current); len(completed) > 0 {
 		valid := true
@@ -1306,28 +1221,14 @@ func (s *server) processItem(ctx context.Context, j *jobState, entry *youtube.Pl
 		}
 	}
 	requested := estimatedItemBudget(j, video, format, selection)
-	budget, err := tracker.reserve(ctx, requested)
-	if err != nil {
-		return err
-	}
-	if requested <= 0 {
-		requested = s.cfg.maxBytes
-	}
-	if os.Getenv("YTDL_TRACE_PERFORMANCE") != "" {
-		log.Printf("item reservation job_id=%s item=%d requested_bytes=%d reserved_bytes=%d job_limit_bytes=%d", j.ID, current, requested, budget, s.cfg.maxBytes)
-	}
+	// Transfer helpers retain signed file-size bounds, without a job quota.
+	budget := int64(math.MaxInt64)
 	bandwidthLimit := int64(0)
 	if s.bandwidth != nil {
 		bandwidthLimit = s.bandwidth.Limit()
 	}
 	transferCtx, cancelTransfer := context.WithTimeout(ctx, itemTransferTimeout(video, requested, bandwidthLimit))
 	defer cancelTransfer()
-	leaseOpen := true
-	defer func() {
-		if leaseOpen {
-			_ = tracker.release(budget, 0)
-		}
-	}()
 	var files []mediaFile
 	if j.MediaType == "audio" {
 		if splitChapters {
@@ -1372,7 +1273,6 @@ func (s *server) processItem(ctx context.Context, j *jobState, entry *youtube.Pl
 			}
 		}
 	}()
-	var outputSize int64
 	formatForName := format
 	if j.MediaType != "audio" {
 		formatForName = selection.video
@@ -1391,20 +1291,13 @@ func (s *server) processItem(ctx context.Context, j *jobState, entry *youtube.Pl
 			file.SourceItemIndex = current
 		}
 		if supportsContainerMetadata(file.MimeType) {
-			metadataExtra := tracker.reserveOptional(containerMetadataHeadroom)
-			if taggedSize, tagErr := rewriteContainerMetadata(transferCtx, j, *file, video.ID, budget+metadataExtra); tagErr != nil {
-				if metadataExtra > 0 {
-					_ = tracker.release(metadataExtra, 0)
-				}
+			if taggedSize, tagErr := rewriteContainerMetadata(transferCtx, j, *file, video.ID, budget); tagErr != nil {
 				if errors.Is(tagErr, errStorage) || errors.Is(tagErr, context.Canceled) || errors.Is(tagErr, context.DeadlineExceeded) {
 					return tagErr
 				}
 				log.Printf("container metadata was not embedded for %s: %v", file.Name, tagErr)
-			} else if taggedSize > file.Size {
-				budget += metadataExtra
+			} else {
 				file.Size = taggedSize
-			} else if metadataExtra > 0 {
-				_ = tracker.release(metadataExtra, 0)
 			}
 		}
 		file.naming.ID = video.ID
@@ -1429,40 +1322,20 @@ func (s *server) processItem(ctx context.Context, j *jobState, entry *youtube.Pl
 			return errStorage
 		}
 		file.ManagedAvailable = false
-		outputSize += file.Size
 	}
-	if err := tracker.release(budget, outputSize); err != nil {
-		return err
-	}
-	leaseOpen = false
 	if j.SubtitleLanguage != "" && len(files) == 1 {
 		file := &files[0]
-		captionBudget := tracker.reserveOptional(maxCaptionBytes)
-		if captionBudget == 0 {
-			file.SubtitleError = "Caption sidecar was skipped because the job storage limit is exhausted"
-		} else {
-			subtitleSize := s.captureSubtitle(ctx, j, file, video, captionBudget)
-			if file.Subtitle != nil && file.Subtitle.ManagedAvailable {
-				if err := publishSubtitleOutput(j, file); err != nil {
-					file.SubtitleError = "Caption sidecar could not be saved next to the media file"
-				}
+		s.captureSubtitle(ctx, j, file, video, maxCaptionBytes)
+		if file.Subtitle != nil && file.Subtitle.ManagedAvailable {
+			if err := publishSubtitleOutput(j, file); err != nil {
+				file.SubtitleError = "Caption sidecar could not be saved next to the media file"
 			}
-			if file.Subtitle != nil && file.Subtitle.ManagedAvailable {
-				if err := os.Remove(filepath.Join(j.dir, file.Subtitle.Name)); err != nil && !errors.Is(err, os.ErrNotExist) {
-					file.SubtitleError = "Caption temporary file could not be removed"
-				} else {
-					file.Subtitle.ManagedAvailable = false
-				}
-			}
-			if releaseErr := tracker.release(captionBudget, subtitleSize); releaseErr != nil {
-				if file.Subtitle != nil && file.Subtitle.ManagedAvailable {
-					_ = os.Remove(filepath.Join(j.dir, file.Subtitle.Name))
-				}
-				if file.Subtitle != nil && file.Subtitle.PublishedAvailable {
-					_ = os.Remove(file.Subtitle.OutputPath)
-				}
-				file.Subtitle = nil
-				file.SubtitleError = "Caption sidecar was skipped because the job storage limit was exceeded"
+		}
+		if file.Subtitle != nil && file.Subtitle.ManagedAvailable {
+			if err := os.Remove(filepath.Join(j.dir, file.Subtitle.Name)); err != nil && !errors.Is(err, os.ErrNotExist) {
+				file.SubtitleError = "Caption temporary file could not be removed"
+			} else {
+				file.Subtitle.ManagedAvailable = false
 			}
 		}
 	} else if j.SubtitleLanguage != "" {
@@ -1539,13 +1412,13 @@ func itemTransferTimeout(video *youtube.Video, expectedBytes, bandwidthLimit int
 	return time.Duration(seconds * float64(time.Second))
 }
 
-func (s *server) safeProcessItem(ctx context.Context, j *jobState, entry *youtube.PlaylistEntry, current, outputIndex int, tracker *jobBudget) (err error) {
+func (s *server) safeProcessItem(ctx context.Context, j *jobState, entry *youtube.PlaylistEntry, current, outputIndex int) (err error) {
 	defer func() {
 		if recover() != nil {
 			err = errNative
 		}
 	}()
-	return s.processItem(ctx, j, entry, current, outputIndex, tracker)
+	return s.processItem(ctx, j, entry, current, outputIndex)
 }
 
 func (s *server) rebuildFilesLocked(j *jobState) {
@@ -1652,7 +1525,7 @@ func (s *server) transferAudio(ctx context.Context, j *jobState, engine nativeCl
 	if outputBudget <= 0 {
 		return result, errLimit
 	}
-	s.updateProgress(j, queueIndex, sourceSize, sourceSize+outputBudget)
+	s.updateProgress(j, queueIndex, sourceSize, estimatedItemBudget(j, video, format, streamSelection{}))
 	if ctx.Err() != nil {
 		return result, ctx.Err()
 	}

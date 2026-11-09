@@ -89,6 +89,7 @@ let requests;
 let rows;
 let rejectedBulkIDs;
 let rejectedLibraryFileKeys;
+let storageWarnings = [];
 let missing;
 let healthEngine;
 let healthVersion;
@@ -134,6 +135,7 @@ beforeEach(async () => {
   testWindow.confirm = () => true;
   delete testWindow.go;
   missing = [];
+  storageWarnings = [];
   healthEngine = "native-go";
   healthVersion = "dev";
   diagnosticsResponse = { count: 0, issues: [] };
@@ -180,14 +182,15 @@ beforeEach(async () => {
     if (path === "/api/settings" && init.method === "PUT") {
       const settings = JSON.parse(init.body);
       notificationsEnabled = settings.notificationsEnabled === true;
-      return Response.json({ settings, sources: { retention: "SQLite (active)", maxJobBytes: "SQLite (active)", jobTimeout: "SQLite (active)", chromePath: "SQLite (active)", downloadSlots: "SQLite (active)" }, effective: { retention: "never", maxJobBytes: 10737418240, jobTimeout: "none", chromePath: "", downloadSlots: 4 } });
+      return Response.json({ settings, sources: { retention: "SQLite (active)", jobTimeout: "SQLite (active)", chromePath: "SQLite (active)", downloadSlots: "SQLite (active)" }, effective: { retention: "never", jobTimeout: "none", chromePath: "", downloadSlots: 4 } });
     }
     if (path === "/api/folders/select" && init.method === "POST") return Response.json({ path: "C:\\Media\\YouTube" });
-    if (path === "/api/settings") return Response.json({ settings: { defaultQuality: "best", defaultVideoStrategy: "best", allow360pFallback: false, maxConcurrentDownloads: 3, bandwidthLimitBytesPerSec: 0, notificationsEnabled, downloadLocation: "C:\\Downloads\\YouTube_Vault", namingPattern: "{channel} - {title} [{resolution}]", subfolderSorting: "channel", defaultCategory: "General", userCategories: ["General", "Music"], outputFileMode: "0600", outputFolderMode: "0700", retention: "never", maxJobBytes: 10737418240, jobTimeout: "none", chromePath: "", downloadSlots: 4 }, sources: { retention: "SQLite (active)", maxJobBytes: "SQLite (active)", jobTimeout: "SQLite (active)", chromePath: "SQLite (active)", downloadSlots: "SQLite (active)" }, effective: { retention: "never", maxJobBytes: 10737418240, jobTimeout: "none", chromePath: "", downloadSlots: 4 } });
+    if (path === "/api/storage") return Response.json({ warnings: storageWarnings });
+    if (path === "/api/settings") return Response.json({ settings: { defaultQuality: "best", defaultVideoStrategy: "best", allow360pFallback: false, maxConcurrentDownloads: 3, bandwidthLimitBytesPerSec: 0, notificationsEnabled, downloadLocation: "C:\\Downloads\\YouTube_Vault", namingPattern: "{channel} - {title} [{resolution}]", subfolderSorting: "channel", defaultCategory: "General", userCategories: ["General", "Music"], outputFileMode: "0600", outputFolderMode: "0700", retention: "never", jobTimeout: "none", chromePath: "", downloadSlots: 4 }, sources: { retention: "SQLite (active)", jobTimeout: "SQLite (active)", chromePath: "SQLite (active)", downloadSlots: "SQLite (active)" }, effective: { retention: "never", jobTimeout: "none", chromePath: "", downloadSlots: 4 } });
     if (path === "/api/events") {
-      const settings = { defaultQuality: "best", defaultVideoStrategy: "best", allow360pFallback: false, maxConcurrentDownloads: 3, bandwidthLimitBytesPerSec: 0, notificationsEnabled, downloadLocation: "C:\\Downloads\\YouTube_Vault", namingPattern: "{channel} - {title} [{resolution}]", subfolderSorting: "channel", defaultCategory: "General", userCategories: ["General", "Music"], outputFileMode: "0600", outputFolderMode: "0700", retention: "never", maxJobBytes: 10737418240, jobTimeout: "none", chromePath: "", downloadSlots: 4 };
-      const settingsSources = { retention: "SQLite (active)", maxJobBytes: "SQLite (active)", jobTimeout: "SQLite (active)", chromePath: "SQLite (active)", downloadSlots: "SQLite (active)" };
-      const settingsEffective = { retention: "never", maxJobBytes: 10737418240, jobTimeout: "none", chromePath: "", downloadSlots: 4 };
+      const settings = { defaultQuality: "best", defaultVideoStrategy: "best", allow360pFallback: false, maxConcurrentDownloads: 3, bandwidthLimitBytesPerSec: 0, notificationsEnabled, downloadLocation: "C:\\Downloads\\YouTube_Vault", namingPattern: "{channel} - {title} [{resolution}]", subfolderSorting: "channel", defaultCategory: "General", userCategories: ["General", "Music"], outputFileMode: "0600", outputFolderMode: "0700", retention: "never", jobTimeout: "none", chromePath: "", downloadSlots: 4 };
+      const settingsSources = { retention: "SQLite (active)", jobTimeout: "SQLite (active)", chromePath: "SQLite (active)", downloadSlots: "SQLite (active)" };
+      const settingsEffective = { retention: "never", jobTimeout: "none", chromePath: "", downloadSlots: 4 };
       const events = [{ type: "snapshot", jobs: rows, settings, settingsSources, settingsEffective }, ...(liveEvent ? [liveEvent] : [])];
       const body = events.map((event, index) => `id: ${index + 1}\nevent: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`).join("");
       if (keepEventsOpen) {
@@ -668,12 +671,23 @@ describe("Downloader UI and Go API integration", () => {
     expect(saved.storageMode).toBeUndefined();
   });
 
+  test("warns about low destination disk space without blocking downloads", async () => {
+    storageWarnings = [{ path: "C:\\Downloads\\YouTube_Vault", freeBytes: 4, totalBytes: 100, freePercent: 4 }];
+    await remount();
+    expect(container.textContent).toContain("Low disk space:");
+    expect(container.textContent).toContain("less than 5% free. Downloads will continue.");
+    expect(container.textContent).toContain("C:\\Downloads\\YouTube_Vault");
+    storageWarnings = [];
+    await remount();
+    expect(container.textContent).not.toContain("Low disk space:");
+  });
+
   test("persists only a supported preference through the service API", async () => {
     await click(button("Settings"));
     await click(container.querySelector('button[aria-label="Advanced settings"]'));
     expect(container.textContent).toContain("Performance and limits");
     expect(container.textContent).toContain("Currently applied:");
-    expect(container.textContent).toContain("Currently applied: 10737418240");
+    expect(container.querySelector('input[aria-label="Maximum bytes per job"]')).toBeNull();
     const quality = container.querySelector('select[aria-label="Default maximum video quality"]');
     await act(async () => {
       Object.getOwnPropertyDescriptor(testWindow.HTMLSelectElement.prototype, "value").set.call(quality, "720");
@@ -684,7 +698,7 @@ describe("Downloader UI and Go API integration", () => {
     await setSelect(videoFormat, "av1");
     await click(button("Save preferences"));
     const save = requests.find(item => item.path === "/api/settings" && item.method === "PUT");
-    expect(JSON.parse(save.body)).toEqual({ defaultQuality: "720", defaultVideoStrategy: "av1", allow360pFallback: false, maxConcurrentDownloads: 3, bandwidthLimitBytesPerSec: 0, notificationsEnabled: false, downloadLocation: "C:\\Downloads\\YouTube_Vault", namingPattern: "{channel} - {title} [{resolution}]", subfolderSorting: "channel", defaultCategory: "General", userCategories: ["General", "Music"], outputFileMode: "0600", outputFolderMode: "0700", retention: "never", maxJobBytes: 10737418240, jobTimeout: "none", chromePath: "", downloadSlots: 4 });
+    expect(JSON.parse(save.body)).toEqual({ defaultQuality: "720", defaultVideoStrategy: "av1", allow360pFallback: false, maxConcurrentDownloads: 3, bandwidthLimitBytesPerSec: 0, notificationsEnabled: false, downloadLocation: "C:\\Downloads\\YouTube_Vault", namingPattern: "{channel} - {title} [{resolution}]", subfolderSorting: "channel", defaultCategory: "General", userCategories: ["General", "Music"], outputFileMode: "0600", outputFolderMode: "0700", retention: "never", jobTimeout: "none", chromePath: "", downloadSlots: 4 });
     expect(container.textContent).toContain("Saved");
   });
   test("keeps 360p recovery disabled unless the user opts in", async () => {

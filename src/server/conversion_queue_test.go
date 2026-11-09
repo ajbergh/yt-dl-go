@@ -104,7 +104,7 @@ func TestMP3PlaylistCompletesWithSingleConversionSlot(t *testing.T) {
 	fake.streamFn = func(context.Context, *youtube.Video, *youtube.Format) (io.ReadCloser, int64, error) {
 		return io.NopCloser(bytes.NewReader(data)), int64(len(data)), nil
 	}
-	s := testServer(t, fake, func(c *config) { c.maxBytes = 64 << 20 })
+	s := testServer(t, fake, nil)
 	s.convertSlots = 1
 	body := `{"url":"` + testPlaylist + `","quality":"best","mediaType":"audio","audioFormat":"mp3","audioBitrate":"192k","rightsConfirmed":true}`
 	response := request(s, "POST", "/api/jobs", body, nil)

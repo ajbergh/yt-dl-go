@@ -20,7 +20,7 @@ func TestLibraryPaginationHandlesMoreThanTenThousandFilesWithoutRetainingFinishe
 	config := config{
 		addr: "127.0.0.1:8080", root: root, token: "",
 		origins: map[string]bool{}, hosts: map[string]bool{"127.0.0.1:8080": true},
-		maxJobs: 8, maxBytes: 1 << 20, timeout: time.Minute, retain: time.Minute,
+		maxJobs: 8, timeout: time.Minute, retain: time.Minute,
 	}
 	s, err := newServer(config)
 	if err != nil {
@@ -203,7 +203,7 @@ func BenchmarkLibraryAPIAt10100Files(b *testing.B) {
 	config := config{
 		addr: "127.0.0.1:8080", root: root, token: "",
 		origins: map[string]bool{}, hosts: map[string]bool{"127.0.0.1:8080": true},
-		maxJobs: 8, maxBytes: 1 << 20, timeout: time.Minute, retain: time.Minute,
+		maxJobs: 8, timeout: time.Minute, retain: time.Minute,
 	}
 	s, err := newServer(config)
 	if err != nil {

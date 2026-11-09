@@ -63,7 +63,7 @@ func (s *server) transferChapterMP3(ctx context.Context, j *jobState, engine nat
 	if outputBudget <= 0 {
 		return nil, errLimit
 	}
-	s.updateProgress(j, queueIndex, sourceSize, sourceSize+outputBudget)
+	s.updateProgress(j, queueIndex, sourceSize, estimatedItemBudget(j, video, format, streamSelection{}))
 	s.setProcessing(j, queueIndex, true)
 	defer s.setProcessing(j, queueIndex, false)
 	if !s.beginConversion(ctx, j, queueIndex) {

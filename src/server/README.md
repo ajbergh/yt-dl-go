@@ -96,7 +96,6 @@ Managed sidecars use the finalized media basename plus `.<language>.vtt` or `.<l
 | `ALLOWED_ORIGINS` | own loopback listener origin; Vite origins with `-tags=dev` | Exact comma-separated HTTP(S) origins; no wildcards or trailing slash. Release builds require an explicit setting for cross-origin access. |
 | `ALLOWED_HOSTS` | loopback authorities at listener port | Additional exact `host[:port]` authorities |
 | `MAX_JOBS` | `32` | 1 through 1000 queued, downloading, processing, and paused jobs; finished Library records do not count |
-| `MAX_JOB_BYTES` | `10737418240` | Positive per-job media byte budget (10 GiB by default) |
 | `JOB_TIMEOUT` | `none` | Optional overall job deadline; accepts `none`, `0`, or a duration of at least one second. Items have separate size- and duration-aware deadlines, and network reads fail after 60 seconds without data. |
 | `RETENTION` | `never` | Keep finished Library records by default. An explicit duration of at least five minutes expires only records whose finalized files have verified published copies; empty failed/cancelled jobs are cleaned after 24h by default. |
 | `CHROME_PATH` | unset | Chrome/Chromium/Edge executable for adaptive capture |
@@ -241,3 +240,9 @@ go test -run TestLiveDownload -count=1 -v
 Live behavior depends on YouTube's current service and can change; a successful run does not guarantee future availability or a particular resolution.
 
 See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) before distributing a build. AAC decoding uses an LGPL-2.1-or-later Go module; include its license and satisfy the applicable source and relinking terms when distributing binaries.
+
+### Destination disk space
+
+Downloads have no per-job byte cap. The retired `MAX_JOB_BYTES` environment variable and saved `max_job_bytes` values are ignored. The old database column is retained for upgrade compatibility; `maxJobBytes` is no longer part of the settings API.
+
+`GET /api/storage` returns advisory warnings for the configured download folder and captured destinations of queued, active, and paused jobs. The UI checks immediately on connection/folder changes and every 10 seconds, and shows a warning when available space is strictly below 5% of total disk capacity. Warnings clear when space recovers and never pause or reject downloads. Windows uses `GetDiskFreeSpaceEx`; macOS and Linux use `statfs`, counting space available to the current process. New folders use their nearest existing ancestor. Disk-stat failures do not block downloads; actual write failures still fail the affected job.

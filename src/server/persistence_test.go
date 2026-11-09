@@ -22,7 +22,7 @@ func newPersistenceTestServer(t *testing.T) *server {
 	s, err := newServer(config{
 		addr: "127.0.0.1:8080", root: root, token: "",
 		origins: map[string]bool{}, hosts: map[string]bool{"127.0.0.1:8080": true},
-		maxJobs: 8, maxBytes: 1 << 20, timeout: time.Minute, retain: time.Minute,
+		maxJobs: 8, timeout: time.Minute, retain: time.Minute,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -89,7 +89,6 @@ func TestPersistenceFailuresAreLoggedAndExposeDegradedHealth(t *testing.T) {
 
 func TestRuntimeSettingsPersistAndReportEffectiveSource(t *testing.T) {
 	s := newPersistenceTestServer(t)
-	s.cfg.maxBytes = 10 << 30
 	s.cfg.timeout = 0
 	s.cfg.retain = 0
 	s.cfg.browserPath = ""
@@ -104,19 +103,19 @@ func TestRuntimeSettingsPersistAndReportEffectiveSource(t *testing.T) {
 	if get.Code != http.StatusOK || json.Unmarshal(get.Body.Bytes(), &response) != nil {
 		t.Fatalf("get runtime settings: %d %s", get.Code, get.Body.String())
 	}
-	if response.Settings.Retention != "never" || response.Settings.MaxJobBytes != 10<<30 || response.Settings.JobTimeout != "none" || response.Settings.DownloadSlots != 4 {
+	if response.Settings.Retention != "never" || response.Settings.JobTimeout != "none" || response.Settings.DownloadSlots != 4 {
 		t.Fatalf("runtime setting defaults = %+v", response.Settings)
 	}
-	for _, key := range []string{"retention", "maxJobBytes", "jobTimeout", "chromePath", "downloadSlots"} {
+	for _, key := range []string{"retention", "jobTimeout", "chromePath", "downloadSlots"} {
 		if response.Sources[key] != "SQLite (active)" {
 			t.Fatalf("default %s source = %q", key, response.Sources[key])
 		}
 	}
-	if response.Effective["retention"] != "never" || response.Effective["maxJobBytes"] != float64(10<<30) || response.Effective["jobTimeout"] != "none" || response.Effective["downloadSlots"] != float64(4) {
+	if response.Effective["retention"] != "never" || response.Effective["jobTimeout"] != "none" || response.Effective["downloadSlots"] != float64(4) {
 		t.Fatalf("default effective runtime settings = %+v", response.Effective)
 	}
 
-	body := `{"retention":"720h","maxJobBytes":123456789,"jobTimeout":"2h","chromePath":"C:\\Tools\\Chrome\\chrome.exe","downloadSlots":8}`
+	body := `{"retention":"720h","jobTimeout":"2h","chromePath":"C:\\Tools\\Chrome\\chrome.exe","downloadSlots":8}`
 	put := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPut, "http://127.0.0.1:8080/api/settings", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
@@ -127,18 +126,18 @@ func TestRuntimeSettingsPersistAndReportEffectiveSource(t *testing.T) {
 	if err := json.Unmarshal(put.Body.Bytes(), &response); err != nil {
 		t.Fatal(err)
 	}
-	if response.Settings.Retention != "720h0m0s" || response.Settings.MaxJobBytes != 123456789 || response.Settings.JobTimeout != "2h0m0s" || response.Settings.DownloadSlots != 8 {
+	if response.Settings.Retention != "720h0m0s" || response.Settings.JobTimeout != "2h0m0s" || response.Settings.DownloadSlots != 8 {
 		t.Fatalf("saved runtime settings = %+v", response.Settings)
 	}
-	if response.Effective["maxJobBytes"] != float64(10<<30) || response.Effective["downloadSlots"] != float64(4) {
+	if response.Effective["downloadSlots"] != float64(4) {
 		t.Fatalf("saving restart-required settings changed active values: %+v", response.Effective)
 	}
-	for _, key := range []string{"retention", "maxJobBytes", "jobTimeout", "chromePath", "downloadSlots"} {
+	for _, key := range []string{"retention", "jobTimeout", "chromePath", "downloadSlots"} {
 		if response.Sources[key] != "SQLite (restart required)" {
 			t.Fatalf("edited %s source = %q, want restart required", key, response.Sources[key])
 		}
 	}
-	if s.cfg.maxBytes != 10<<30 || s.cfg.timeout != 0 || s.cfg.retain != 0 || s.cfg.browserPath != "" || s.cfg.downloadSlots != 4 {
+	if s.cfg.timeout != 0 || s.cfg.retain != 0 || s.cfg.browserPath != "" || s.cfg.downloadSlots != 4 {
 		t.Fatalf("runtime values changed before restart: %+v", s.cfg)
 	}
 	persisted, err := s.store.loadAppSettings()
@@ -171,20 +170,20 @@ func TestRuntimeSettingsPersistAndReportEffectiveSource(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer restarted.stop()
-	if restarted.cfg.maxBytes != persisted.MaxJobBytes || restarted.cfg.timeout != 2*time.Hour || restarted.cfg.retain != 720*time.Hour || restarted.cfg.browserPath != persisted.ChromePath || restarted.cfg.downloadSlots != persisted.DownloadSlots {
+	if restarted.cfg.timeout != 2*time.Hour || restarted.cfg.retain != 720*time.Hour || restarted.cfg.browserPath != persisted.ChromePath || restarted.cfg.downloadSlots != persisted.DownloadSlots {
 		t.Fatalf("saved runtime settings did not activate after restart: cfg=%+v settings=%+v", restarted.cfg, persisted)
 	}
 
 	envConfig := s.cfg
-	envConfig.retainEnv, envConfig.maxBytesEnv, envConfig.timeoutEnv, envConfig.browserPathEnv, envConfig.downloadSlotsEnv = true, true, true, true, true
+	envConfig.retainEnv, envConfig.timeoutEnv, envConfig.browserPathEnv, envConfig.downloadSlotsEnv = true, true, true, true
 	sources := runtimeSettingSources(persisted, envConfig)
-	for key, variable := range map[string]string{"retention": "RETENTION", "maxJobBytes": "MAX_JOB_BYTES", "jobTimeout": "JOB_TIMEOUT", "chromePath": "CHROME_PATH", "downloadSlots": "DOWNLOAD_SLOTS"} {
+	for key, variable := range map[string]string{"retention": "RETENTION", "jobTimeout": "JOB_TIMEOUT", "chromePath": "CHROME_PATH", "downloadSlots": "DOWNLOAD_SLOTS"} {
 		if sources[key] != "Environment variable "+variable {
 			t.Fatalf("%s environment source = %q", key, sources[key])
 		}
 	}
 	for _, invalid := range []string{
-		`{"retention":"3m"}`, `{"maxJobBytes":0}`, `{"jobTimeout":"500ms"}`, `{"downloadSlots":17}`,
+		`{"retention":"3m"}`, `{"jobTimeout":"500ms"}`, `{"downloadSlots":17}`,
 	} {
 		bad := httptest.NewRecorder()
 		badRequest := httptest.NewRequest(http.MethodPut, "http://127.0.0.1:8080/api/settings", strings.NewReader(invalid))

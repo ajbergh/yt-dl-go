@@ -1015,11 +1015,11 @@ func TestAdaptiveRangesDiscardCheckpointForDifferentSource(t *testing.T) {
 	}
 }
 
-func TestHardStorageLimitAndEOF(t *testing.T) {
-	s := testServer(t, fixtureClient(2), func(c *config) { c.maxBytes = int64(len(fixtureData)) })
+func TestUnlimitedPlaylistAndEOF(t *testing.T) {
+	s := testServer(t, fixtureClient(2), nil)
 	j := waitTerminal(t, s, createJob(t, s, testPlaylist).ID)
-	if j.Status != "partial" || j.CompletedCount != 1 || !strings.Contains(j.Error, "storage limit") {
-		t.Fatalf("aggregate budget not enforced: %+v", j)
+	if j.Status != "completed" || j.CompletedCount != 2 || j.Error != "" {
+		t.Fatalf("playlist did not complete: %+v", j)
 	}
 	assertFinalFiles(t, s, j)
 	for _, data := range []string{"1234", "12345", ""} {
@@ -1041,10 +1041,10 @@ func TestHardStorageLimitAndEOF(t *testing.T) {
 	fake.streamFn = func(context.Context, *youtube.Video, *youtube.Format) (io.ReadCloser, int64, error) {
 		return io.NopCloser(strings.NewReader(fixtureData)), 0, nil
 	}
-	s2 := testServer(t, fake, func(c *config) { c.maxBytes = 4 })
+	s2 := testServer(t, fake, nil)
 	failed := waitTerminal(t, s2, createJob(t, s2, testVideo).ID)
-	if failed.Status != "failed" || failed.CompletedCount != 0 {
-		t.Fatalf("unknown-length overflow finalized: %+v", failed)
+	if failed.Status != "completed" || failed.CompletedCount != 1 {
+		t.Fatalf("unknown-length download did not complete: %+v", failed)
 	}
 	assertFinalFiles(t, s2, failed)
 }

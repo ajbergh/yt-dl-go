@@ -166,11 +166,6 @@ export function SettingsPage({
                   <span className="mt-1 block text-xs leading-relaxed text-neutral-400">Use “never” to keep finished downloads in your history, or enter a duration such as 720h (30 days). The minimum is 5m (5 minutes).</span>
                   <RuntimeSettingSource source={runtimeSettingSources.retention} activeValue={runtimeSettingValues.retention} />
                 </label>
-                <label className="block text-xs font-medium text-neutral-300">Maximum bytes per job
-                  <input aria-label="Maximum bytes per job" type="number" min="1" max="9007199254740991" step="1" className={`${field} mt-1.5`} value={settings.maxJobBytes} onChange={event => changeSetting("maxJobBytes", Number(event.target.value))} />
-                  <span className="mt-1 block text-xs leading-relaxed text-neutral-400">Default: 10 GiB. This limit applies to each new job after restart.</span>
-                  <RuntimeSettingSource source={runtimeSettingSources.maxJobBytes} activeValue={runtimeSettingValues.maxJobBytes} />
-                </label>
                 <label className="block text-xs font-medium text-neutral-300">Overall job timeout
                   <input aria-label="Overall job timeout" type="text" className={`${field} mt-1.5`} value={settings.jobTimeout} onChange={event => changeSetting("jobTimeout", event.target.value)} placeholder="none or 2h" />
                   <span className="mt-1 block text-xs leading-relaxed text-neutral-400">Use “none” or “0” to disable the overall deadline, or enter at least 1s. Item transfers keep their own deadlines.</span>

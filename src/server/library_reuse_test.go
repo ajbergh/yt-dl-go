@@ -95,7 +95,7 @@ func TestRepeatedMP3JobReusesOnlyMatchingBitrate(t *testing.T) {
 	fake.streamFn = func(context.Context, *youtube.Video, *youtube.Format) (io.ReadCloser, int64, error) {
 		return io.NopCloser(bytes.NewReader(data)), int64(len(data)), nil
 	}
-	s := testServer(t, fake, func(c *config) { c.maxBytes = 64 << 20 })
+	s := testServer(t, fake, nil)
 	run := func(bitrate string) {
 		t.Helper()
 		body := `{"url":"` + testVideo + `","quality":"best","mediaType":"audio","audioFormat":"mp3","audioBitrate":"` + bitrate + `","rightsConfirmed":true}`
@@ -139,7 +139,7 @@ func TestRepeatedAudioJobPublishesInChangedLibraryFolder(t *testing.T) {
 			fake.streamFn = func(context.Context, *youtube.Video, *youtube.Format) (io.ReadCloser, int64, error) {
 				return io.NopCloser(bytes.NewReader(data)), int64(len(data)), nil
 			}
-			s := testServer(t, fake, func(c *config) { c.maxBytes = 64 << 20 })
+			s := testServer(t, fake, nil)
 			run := func() Job {
 				t.Helper()
 				body := `{"url":"` + testVideo + `","quality":"best","mediaType":"audio","audioFormat":"` + format + `","rightsConfirmed":true}`

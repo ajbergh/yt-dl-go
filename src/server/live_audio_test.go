@@ -29,7 +29,7 @@ func TestLiveAudioDownload(t *testing.T) {
 	c := config{
 		addr: "127.0.0.1:8080", root: t.TempDir(), browserPath: os.Getenv("CHROME_PATH"),
 		origins: map[string]bool{"http://127.0.0.1:8080": true}, hosts: map[string]bool{"127.0.0.1:8080": true},
-		maxJobs: 1, maxBytes: 1024 * 1024 * 1024, timeout: 10 * time.Minute, retain: 10 * time.Minute,
+		maxJobs: 1, timeout: 10 * time.Minute, retain: 10 * time.Minute,
 	}
 	prepareTestDataDir(t, c.root)
 	s, err := newServer(c)
