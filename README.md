@@ -38,20 +38,23 @@ Play saved media inside the app without leaving your Vault.
 ## Get the app
 
 Choose **AMD64** for Intel/AMD computers or **ARM64** for Windows on ARM and Apple
-Silicon. Each target has both a no-install portable package and an installer:
+Silicon. Download [v0.4.0](https://github.com/ajbergh/yt-dl-go/releases/tag/v0.4.0)
+using the direct links below. Each target has both a no-install portable package
+and an installer:
 
 | Platform | Portable package | Installer |
 | --- | --- | --- |
-| Windows 10/11 | `youtube-vault-windows-<arch>.exe` and companion `.zip` with notices | `youtube-vault-windows-<arch>-setup.exe` |
-| macOS | `youtube-vault-darwin-<arch>.tar.gz`, containing `YouTube Vault.app` | `youtube-vault-darwin-<arch>.pkg` |
-| Linux | `youtube-vault-linux-<arch>.tar.gz` | `youtube-vault-linux-<arch>.deb` |
+| Windows 10/11 — AMD64 | [EXE](https://github.com/ajbergh/yt-dl-go/releases/download/v0.4.0/youtube-vault-windows-amd64.exe) and [ZIP with notices](https://github.com/ajbergh/yt-dl-go/releases/download/v0.4.0/youtube-vault-windows-amd64.zip) | [Setup EXE](https://github.com/ajbergh/yt-dl-go/releases/download/v0.4.0/youtube-vault-windows-amd64-setup.exe) |
+| Windows 10/11 — ARM64 | [EXE](https://github.com/ajbergh/yt-dl-go/releases/download/v0.4.0/youtube-vault-windows-arm64.exe) and [ZIP with notices](https://github.com/ajbergh/yt-dl-go/releases/download/v0.4.0/youtube-vault-windows-arm64.zip) | [Setup EXE](https://github.com/ajbergh/yt-dl-go/releases/download/v0.4.0/youtube-vault-windows-arm64-setup.exe) |
+| macOS — Intel (AMD64) | [App archive (.tar.gz)](https://github.com/ajbergh/yt-dl-go/releases/download/v0.4.0/youtube-vault-darwin-amd64.tar.gz), containing `YouTube Vault.app` | [PKG](https://github.com/ajbergh/yt-dl-go/releases/download/v0.4.0/youtube-vault-darwin-amd64.pkg) |
+| macOS — Apple Silicon (ARM64) | [App archive (.tar.gz)](https://github.com/ajbergh/yt-dl-go/releases/download/v0.4.0/youtube-vault-darwin-arm64.tar.gz), containing `YouTube Vault.app` | [PKG](https://github.com/ajbergh/yt-dl-go/releases/download/v0.4.0/youtube-vault-darwin-arm64.pkg) |
+| Linux — AMD64 | [Portable archive (.tar.gz)](https://github.com/ajbergh/yt-dl-go/releases/download/v0.4.0/youtube-vault-linux-amd64.tar.gz) | [DEB](https://github.com/ajbergh/yt-dl-go/releases/download/v0.4.0/youtube-vault-linux-amd64.deb) |
+| Linux — ARM64 | [Portable archive (.tar.gz)](https://github.com/ajbergh/yt-dl-go/releases/download/v0.4.0/youtube-vault-linux-arm64.tar.gz) | [DEB](https://github.com/ajbergh/yt-dl-go/releases/download/v0.4.0/youtube-vault-linux-arm64.deb) |
 
-The desktop packages are currently validated on this branch through
-[GitHub Actions](https://github.com/ajbergh/yt-dl-go/actions/workflows/desktop.yml).
-The published [v0.1.0 release](https://github.com/ajbergh/yt-dl-go/releases/tag/v0.1.0)
-contains the earlier browser/server edition (`youtube-downloader-*`), not these
-Wails installers. Check the asset names and release notes before downloading.
-CI artifacts and release dry runs are validation builds, not a published desktop release.
+The [release page](https://github.com/ajbergh/yt-dl-go/releases/tag/v0.4.0) also
+includes the separate browser/server edition (`youtube-downloader-*`), source,
+checksums, and release notes. CI artifacts and release dry runs are validation
+builds, not published releases.
 
 - **Windows:** run the setup EXE for Start menu/desktop shortcuts and an uninstaller,
   or run the standalone portable EXE. WebView2 is required; setup provisions it
@@ -66,7 +69,7 @@ CI artifacts and release dry runs are validation builds, not a published desktop
   libraries; it is not a self-contained AppImage. See [runtime requirements](docs/DESKTOP.md).
 
 All distributables have SHA-256 sidecars. The release pipeline also produces a
-combined checksum manifest and build provenance. These do not replace native OS
+combined [checksum manifest](https://github.com/ajbergh/yt-dl-go/releases/download/v0.4.0/SHA256SUMS.txt) and build provenance. These do not replace native OS
 signing. Windows Authenticode and credentialed macOS signing verification remain
 release work.
 
