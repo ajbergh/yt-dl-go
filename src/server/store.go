@@ -83,7 +83,6 @@ type AppSettings struct {
 	UserCategories            []string `json:"userCategories"`
 	StorageMode               string   `json:"-"`
 	Retention                 string   `json:"retention"`
-	MaxJobBytes               int64    `json:"maxJobBytes"`
 	JobTimeout                string   `json:"jobTimeout"`
 	ChromePath                string   `json:"chromePath"`
 	DownloadSlots             int      `json:"downloadSlots"`
@@ -1369,8 +1368,8 @@ func (s *jobStore) loadAppSettings() (AppSettings, error) {
 		&settings.SubfolderSorting, &settings.DefaultCategory, &categories, &settings.StorageMode, &settings.OutputFileMode, &settings.OutputFolderMode,
 	}
 	if hasRuntimeSettings {
-		query = `SELECT default_quality,default_video_strategy,allow_360p_fallback,max_concurrent_downloads,bandwidth_limit_bytes_per_sec,notifications_enabled,download_location,naming_pattern,subfolder_sorting,default_category,user_categories,storage_mode,output_file_mode,output_folder_mode,retention,max_job_bytes,job_timeout,chrome_path,download_slots FROM app_settings WHERE id=1`
-		args = append(args, &settings.Retention, &settings.MaxJobBytes, &settings.JobTimeout, &settings.ChromePath, &settings.DownloadSlots)
+		query = `SELECT default_quality,default_video_strategy,allow_360p_fallback,max_concurrent_downloads,bandwidth_limit_bytes_per_sec,notifications_enabled,download_location,naming_pattern,subfolder_sorting,default_category,user_categories,storage_mode,output_file_mode,output_folder_mode,retention,job_timeout,chrome_path,download_slots FROM app_settings WHERE id=1`
+		args = append(args, &settings.Retention, &settings.JobTimeout, &settings.ChromePath, &settings.DownloadSlots)
 	}
 	if err := s.db.QueryRow(query).Scan(args...); err != nil {
 		return settings, err
@@ -1399,10 +1398,10 @@ func (s *jobStore) saveAppSettings(settings AppSettings) error {
 	if err != nil {
 		return err
 	}
-	_, err = s.db.Exec(`UPDATE app_settings SET default_quality=?,default_video_strategy=?,allow_360p_fallback=?,max_concurrent_downloads=?,bandwidth_limit_bytes_per_sec=?,notifications_enabled=?,download_location=?,naming_pattern=?,subfolder_sorting=?,default_category=?,user_categories=?,storage_mode=?,output_file_mode=?,output_folder_mode=?,retention=?,max_job_bytes=?,job_timeout=?,chrome_path=?,download_slots=?,updated_at=? WHERE id=1`,
+	_, err = s.db.Exec(`UPDATE app_settings SET default_quality=?,default_video_strategy=?,allow_360p_fallback=?,max_concurrent_downloads=?,bandwidth_limit_bytes_per_sec=?,notifications_enabled=?,download_location=?,naming_pattern=?,subfolder_sorting=?,default_category=?,user_categories=?,storage_mode=?,output_file_mode=?,output_folder_mode=?,retention=?,job_timeout=?,chrome_path=?,download_slots=?,updated_at=? WHERE id=1`,
 		settings.DefaultQuality, settings.DefaultVideoStrategy, settings.Allow360pFallback, settings.MaxConcurrentDownloads, settings.BandwidthLimitBytesPerSec, settings.NotificationsEnabled, settings.DownloadLocation, settings.NamingPattern,
 		settings.SubfolderSorting, settings.DefaultCategory, string(categories), settings.StorageMode, settings.OutputFileMode, settings.OutputFolderMode,
-		settings.Retention, settings.MaxJobBytes, settings.JobTimeout, settings.ChromePath, settings.DownloadSlots, time.Now().UnixNano())
+		settings.Retention, settings.JobTimeout, settings.ChromePath, settings.DownloadSlots, time.Now().UnixNano())
 	return err
 }
 

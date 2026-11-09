@@ -4,6 +4,7 @@
  */
 export type SelectionModifiers = { range?: boolean; additive?: boolean };
 
+/** Restrict selection to orderedKeys, then apply single, additive, or anchored range selection. */
 export function chooseMediaKeys(
   orderedKeys: string[],
   selectedKeys: string[],
@@ -27,6 +28,10 @@ export function chooseMediaKeys(
   return [targetKey];
 }
 
+/**
+ * Add/remove distinct keys without mutation. Return the original array on a
+ * no-op or when the complete addition would exceed 10,000 favorites.
+ */
 export function setFavoriteBatch(favorites: string[], selectedKeys: string[], add: boolean): string[] {
   const selected = new Set(selectedKeys);
   if (!selected.size) return favorites;
@@ -45,6 +50,7 @@ export function setFavoriteBatch(favorites: string[], selectedKeys: string[], ad
   return next.length === favorites.length ? favorites : next;
 }
 
+/** Apply a batch with the same identity/no-op contract and 10,000-key cap as favorites. */
 export function setCollectionBatch(
   itemKeys: string[],
   selectedKeys: string[],

@@ -1,3 +1,8 @@
+/**
+ * Service connection, health/settings bootstrap, live job updates, and Vault
+ * pagination. Request generations prevent older queries from replacing newer
+ * views; loaded media pages and whole-Vault metadata are kept separately.
+ */
 import { useCallback, useEffect, useRef, useState } from "react";
 import { desktopBridge, reportDesktopSmokeStage } from "../lib/desktop";
 import {
@@ -5,8 +10,10 @@ import {
   type AppSettings, type BuildInfo, type DownloadJob, type LibraryPageResponse, type LibraryQuery, type RuntimeSettingSources, type RuntimeSettingValues, type ServiceConnection, type ServiceEvent, type ServiceHealth, type UpdateStatus,
 } from "../lib/downloader";
 import {
-  builtInServiceConnection, errorMessage, notificationAPI, terminalNotification,
+  builtInServiceConnection, errorMessage, notificationAPI, queueItemsFor, terminalNotification,
 } from "../components/downloader/view-model";
+
+type StorageWarning = { path: string; freeBytes: number; totalBytes: number; freePercent: number };
 
 const fallbackCategories = ["Tech", "Science", "Coding", "Music", "Education", "Gaming", "Podcasts", "Archival", "General"];
 
@@ -19,6 +26,7 @@ function initialLibraryQuery(): LibraryQuery {
   }
 }
 
+/** Serialize the server view and its opaque cursor for a 50-file page. */
 function libraryPagePath(query: LibraryQuery, cursor?: string): string {
   const params = new URLSearchParams({ limit: "50", sort: query.sort || "recent" });
   if (query.q) params.set("q", query.q);
@@ -35,10 +43,16 @@ function libraryPagePath(query: LibraryQuery, cursor?: string): string {
 }
 
 const emptyLibraryPage: LibraryPageResponse = {
+  mediaCounts: { video: 0, audio: 0, favorites: 0, playlists: 0 },
   jobs: [], totalJobs: 0, totalFiles: 0, categories: [], channels: [],
   stats: { files: 0, logicalBytes: 0, managedBytes: 0, publishedBytes: 0 },
 };
 
+/**
+ * Preserve server aggregates and supply defaults for incomplete responses.
+ * Fallback facets/storage stats describe only the supplied jobs; missing global
+ * media counts remain zero rather than being inferred from a filtered page.
+ */
 function normalizeLibraryPage(response: Partial<LibraryPageResponse>): LibraryPageResponse {
   const jobs = response.jobs ?? [];
   const categories = response.categories ?? (() => {
@@ -95,7 +109,6 @@ const defaultSettings: AppSettings = {
   defaultCategory: "General",
   userCategories: fallbackCategories,
   retention: "never",
-  maxJobBytes: 10 * 1024 * 1024 * 1024,
   jobTimeout: "none",
   chromePath: "",
   downloadSlots: 4,
@@ -117,7 +130,6 @@ function hydratedSettings(settings: AppSettings, previous: AppSettings = default
     defaultCategory: settings.defaultCategory || "General",
     userCategories: settings.userCategories?.length ? settings.userCategories : previous.userCategories,
     retention: settings.retention || "never",
-    maxJobBytes: settings.maxJobBytes || 10 * 1024 * 1024 * 1024,
     jobTimeout: settings.jobTimeout || "none",
     chromePath: settings.chromePath ?? "",
     downloadSlots: settings.downloadSlots || 4,
@@ -144,8 +156,9 @@ export function useService() {
   const [updateError, setUpdateError] = useState("");
   const [checkingUpdates, setCheckingUpdates] = useState(false);
   const [serviceError, setServiceError] = useState("");
+  const [storageWarnings, setStorageWarnings] = useState<StorageWarning[]>([]);
   const [pollError, setPollError] = useState("");
-  const knownJobStatuses = useRef<Map<string, DownloadJob["status"]>>(new Map());
+  const knownTaskStatuses = useRef<Map<string, Map<number, DownloadJob["status"]>>>(new Map());
   const notificationsEnabledRef = useRef(false);
   const libraryQueryRef = useRef<LibraryQuery>(libraryQuery);
   const libraryRequestSequence = useRef(0);
@@ -160,6 +173,8 @@ export function useService() {
     setLibraryQueryState(query);
   }, []);
 
+  // Reload the previously loaded depth, deduplicating job:file identities.
+  // A newer request or changed query invalidates the entire pending refresh.
   const refreshLibrary = useCallback(async () => {
     const requestID = ++libraryRequestSequence.current;
     const query = libraryQueryRef.current;
@@ -196,6 +211,7 @@ export function useService() {
     return jobs;
   }, [connection]);
 
+  // Append one file page only if its request generation and query remain current.
   const loadMoreLibrary = useCallback(async () => {
     const cursor = libraryPage.nextCursor;
     if (!cursor || loadingLibraryMore) return;
@@ -291,7 +307,9 @@ export function useService() {
         setJobs(jobResult.jobs);
         setLibraryJobs(libraryResult.jobs);
         setLibraryPage(normalizeLibraryPage(libraryResult));
-        knownJobStatuses.current = new Map(jobResult.jobs.map(job => [job.id, job.status]));
+        knownTaskStatuses.current = new Map(jobResult.jobs.map(job => [
+          job.id, new Map(queueItemsFor(job).map(item => [item.index, item.status])),
+        ]));
         setSettings(previous => hydratedSettings(settingResult.settings, previous));
         setRuntimeSettingSources(settingResult.sources ?? {});
         setRuntimeSettingValues(settingResult.effective ?? {});
@@ -332,20 +350,27 @@ export function useService() {
     };
 
     const maybeNotifyTerminal = (job: DownloadJob) => {
-      const previousStatus = knownJobStatuses.current.get(job.id);
-      const changed = previousStatus !== undefined && previousStatus !== job.status;
-      knownJobStatuses.current.set(job.id, job.status);
-      if (!changed || !notificationsEnabledRef.current) return;
-      const notification = terminalNotification(job);
-      const NotificationAPI = notificationAPI();
-      if (!notification || !NotificationAPI || NotificationAPI.permission !== "granted") return;
-      try {
-        new NotificationAPI(notification.title, {
-          body: notification.body,
-          tag: `yt-dl-go:${job.id}:${job.status}`,
+      const statuses = knownTaskStatuses.current.get(job.id) ?? new Map();
+      knownTaskStatuses.current.set(job.id, statuses);
+      for (const item of queueItemsFor(job)) {
+        const previousStatus = statuses.get(item.index);
+        statuses.set(item.index, item.status);
+        // Seed initial snapshots silently and avoid repeats on reconnect/polling.
+        if (previousStatus === undefined || previousStatus === item.status || !notificationsEnabledRef.current) continue;
+        const notification = terminalNotification({
+          ...job, kind: "video", title: item.title, status: item.status,
+          error: item.error || (job.kind === "video" ? job.error : ""),
         });
-      } catch {
-        // Notification support is optional; job state remains authoritative.
+        const NotificationAPI = notificationAPI();
+        if (!notification || !NotificationAPI || NotificationAPI.permission !== "granted") continue;
+        try {
+          new NotificationAPI(notification.title, {
+            body: notification.body,
+            tag: `yt-dl-go:${job.id}:${item.index}:${item.status}`,
+          });
+        } catch {
+          // Notification support is optional; task state remains authoritative.
+        }
       }
     };
 
@@ -363,7 +388,7 @@ export function useService() {
         if (event.settingsSources) setRuntimeSettingSources(event.settingsSources);
         if (event.settingsEffective) setRuntimeSettingValues(event.settingsEffective);
       } else if (event.type === "job-deleted" && event.jobId) {
-        knownJobStatuses.current.delete(event.jobId);
+        knownTaskStatuses.current.delete(event.jobId);
         setJobs(previous => previous.filter(job => job.id !== event.jobId));
         void refreshLibrary().catch(error => setPollError(errorMessage(error)));
       } else if (event.type === "settings-changed" && event.settings) {
@@ -422,6 +447,21 @@ export function useService() {
     };
   }, [connection, refreshLibrary, serviceReady]);
 
+  useEffect(() => {
+    if (!serviceReady) return;
+    const controller = new AbortController();
+    let timer: ReturnType<typeof setTimeout>;
+    async function checkStorage() {
+      try {
+        const response = await api<{ warnings: StorageWarning[] }>(connection, "/api/storage", { signal: AbortSignal.any([controller.signal, AbortSignal.timeout(10000)]) });
+        if (!controller.signal.aborted) setStorageWarnings(response.warnings ?? []);
+      } catch { /* Disk inspection is advisory; keep download controls available. */ }
+      if (!controller.signal.aborted) timer = setTimeout(() => void checkStorage(), 10000);
+    }
+    void checkStorage();
+    return () => { controller.abort(); clearTimeout(timer); };
+  }, [connection, serviceReady, settings.downloadLocation]);
+
   return {
     connection,
     serviceReady,
@@ -450,5 +490,6 @@ export function useService() {
     serviceError,
     setServiceError,
     pollError,
+    storageWarnings,
   };
 }

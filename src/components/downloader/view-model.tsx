@@ -1,4 +1,9 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+/**
+ * Shared downloader display types, labels, formatters, and small UI primitives.
+ * Compatibility helpers adapt older job records; persistent mutations belong
+ * to the hooks/API rather than these presentation helpers.
+ */
+import { useEffect, useRef, useState, type HTMLAttributes, type ReactNode } from "react";
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { Activity, Film, GripVertical } from "lucide-react";
@@ -148,9 +153,9 @@ export function statusClass(status: DownloadJob["status"]): string {
   return "border-neutral-700 bg-neutral-800 text-neutral-300";
 }
 
-export function SortableQueueOrderRow({ id, label, detail, children, below }: { id: string; label: string; detail?: string; children?: ReactNode; below?: ReactNode }) {
+export function SortableQueueOrderRow({ id, label, detail, children, below, onContextMenu, onKeyDown }: { id: string; label: string; detail?: string; children?: ReactNode; below?: ReactNode } & Pick<HTMLAttributes<HTMLDivElement>, "onContextMenu" | "onKeyDown">) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id });
-  return <div ref={setNodeRef} style={{ transform: CSS.Transform.toString(transform), transition }} className={`rounded-lg border border-neutral-800 bg-neutral-950/80 p-2 ${isDragging ? "z-20 opacity-70 shadow-xl" : ""}`}>
+  return <div ref={setNodeRef} onContextMenu={onContextMenu} onKeyDown={onKeyDown} style={{ transform: CSS.Transform.toString(transform), transition }} className={`rounded-lg border border-neutral-800 bg-neutral-950/80 p-2 ${isDragging ? "z-20 opacity-70 shadow-xl" : ""}`}>
     <div className="flex items-center gap-2">
       <button type="button" aria-label={`Drag ${label}`} title="Drag to reorder" className="grid size-8 shrink-0 cursor-grab place-items-center rounded-md border border-neutral-800 bg-neutral-900 text-neutral-500 hover:text-neutral-200 active:cursor-grabbing" {...attributes} {...listeners}><GripVertical className="size-4" aria-hidden="true" /></button>
       <div className="min-w-0 flex-1"><p className="truncate text-[11px] font-semibold text-neutral-200">{label}</p>{detail && <p className="mt-0.5 truncate text-[10px] text-neutral-500">{detail}</p>}</div>
@@ -166,6 +171,9 @@ export function LibraryThumbnail({ connection, jobId, file, audio, className }: 
   const containerRef = useRef<HTMLDivElement>(null);
   const [nearViewport, setNearViewport] = useState(() => typeof IntersectionObserver === "undefined");
   const source = localSource?.requestKey === requestKey ? localSource.url : file.thumbnailUrl ?? "";
+  const [imageState, setImageState] = useState<{ source: string; status: "loaded" | "failed" } | null>(null);
+  const imageLoaded = imageState?.source === source && imageState.status === "loaded";
+  const imageFailed = imageState?.source === source && imageState.status === "failed";
 
   useEffect(() => {
     // Remote artwork uses native image lazy loading. Defer authenticated local
@@ -203,9 +211,14 @@ export function LibraryThumbnail({ connection, jobId, file, audio, className }: 
 
   const mediaClassName = className ?? "aspect-video w-24 shrink-0 rounded-md bg-neutral-900 object-cover";
   return <div ref={containerRef} className="w-full">
-    {source
-      ? <img loading="lazy" src={source} alt="" referrerPolicy="no-referrer" data-local-thumbnail={file.thumbnailLocalAvailable ? "preferred" : undefined} className={mediaClassName} />
-      : <div className={"grid place-items-center text-neutral-600 " + mediaClassName}>{audio ? <Activity className="size-5" aria-hidden="true" /> : <Film className="size-5" aria-hidden="true" />}</div>}
+    <div className={"relative isolate overflow-hidden " + mediaClassName}>
+      <div aria-hidden="true" data-thumbnail-placeholder={imageLoaded ? undefined : "true"} className={`absolute inset-0 grid place-items-center bg-gradient-to-br from-rose-950 via-neutral-800 to-neutral-950 text-rose-200/80 ${source && !imageLoaded && !imageFailed ? "motion-safe:animate-pulse" : ""}`}>
+        {audio ? <Activity className="size-8" /> : <Film className="size-8" />}
+      </div>
+      {source && !imageFailed && <img loading="lazy" src={source} alt="" referrerPolicy="no-referrer" data-local-thumbnail={file.thumbnailLocalAvailable ? "preferred" : undefined}
+        onLoad={() => setImageState({ source, status: "loaded" })} onError={() => setImageState({ source, status: "failed" })}
+        className={`absolute inset-0 h-full w-full object-cover transition-opacity ${imageLoaded ? "opacity-100" : "opacity-0"}`} />}
+    </div>
   </div>;
 }
 
@@ -214,6 +227,7 @@ export function durationMetric(job: DownloadJob): string {
   return `${job.completedCount} / ${job.totalCount} files`;
 }
 
+/** Prefer recorded queue items; synthesize display rows for older jobs lacking them. */
 export function queueItemsFor(job: DownloadJob): QueueItem[] {
   if (job.items?.length) return job.items;
   if (job.kind === "playlist" && job.files.length) {
@@ -257,6 +271,7 @@ export function etaLabel(seconds: number): string {
   return minutes > 0 ? `${minutes}m ${seconds % 60}s left` : `${seconds}s left`;
 }
 
+/** Prefer native bootstrap, then the fixed Vite development API, then the page origin. */
 export function builtInServiceConnection(): ServiceConnection {
   const desktop = desktopConnection();
   if (desktop) return desktop;

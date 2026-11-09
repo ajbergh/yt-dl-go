@@ -78,7 +78,7 @@ func appendID3UserTextFrame(dst *bytes.Buffer, description, value string) {
 	payload = append(payload, 0, 0)
 	encodedValue := id3UTF16(value)
 	if len(encodedValue) >= 3 {
-		encodedValue = encodedValue[3:] // one frame encoding marker/BOM is enough.
+		encodedValue = encodedValue[1:] // One encoding marker per frame; each UTF-16 string needs its own BOM.
 	}
 	payload = append(payload, encodedValue...)
 	appendID3Frame(dst, "TXXX", payload)

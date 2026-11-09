@@ -31,9 +31,7 @@ type config struct {
 	browserPathEnv        bool
 	origins, hosts        map[string]bool
 	maxJobs               int
-	maxBytes              int64
 	timeout, retain       time.Duration
-	maxBytesEnv           bool
 	timeoutEnv            bool
 	retainEnv             bool
 	downloadSlots         int
@@ -151,7 +149,7 @@ func loadConfig() (config, error) {
 		addr: env("ADDR", "127.0.0.1:8080"), root: root, legacyRoot: legacyRoot, dataDirOverridden: dataDirOverridden,
 		runtimeSettingsFromDB: true,
 		browserPath:           os.Getenv("CHROME_PATH"), browserPathEnv: os.Getenv("CHROME_PATH") != "",
-		maxBytesEnv: os.Getenv("MAX_JOB_BYTES") != "", timeoutEnv: os.Getenv("JOB_TIMEOUT") != "", retainEnv: os.Getenv("RETENTION") != "",
+		timeoutEnv: os.Getenv("JOB_TIMEOUT") != "", retainEnv: os.Getenv("RETENTION") != "",
 		downloadSlots: 4, downloadSlotsEnv: os.Getenv("DOWNLOAD_SLOTS") != "",
 		token: os.Getenv("API_TOKEN"), origins: map[string]bool{}, hosts: map[string]bool{},
 	}
@@ -210,10 +208,6 @@ func loadConfig() (config, error) {
 	if err != nil || c.maxJobs < 1 || c.maxJobs > 1000 {
 		return c, errors.New("MAX_JOBS must be between 1 and 1000")
 	}
-	c.maxBytes, err = strconv.ParseInt(env("MAX_JOB_BYTES", "10737418240"), 10, 64)
-	if err != nil || c.maxBytes < 1 {
-		return c, errors.New("MAX_JOB_BYTES must be a positive byte count")
-	}
 	jobTimeout := strings.TrimSpace(os.Getenv("JOB_TIMEOUT"))
 	c.timeout, err = parseJobTimeoutSetting(jobTimeout)
 	if err != nil {
@@ -267,9 +261,6 @@ func newServer(c config) (*server, error) {
 		return nil, errors.New("cannot load application preferences")
 	}
 	if c.runtimeSettingsFromDB {
-		if !c.maxBytesEnv {
-			c.maxBytes = settings.MaxJobBytes
-		}
 		if !c.timeoutEnv {
 			c.timeout, err = parseJobTimeoutSetting(settings.JobTimeout)
 			if err != nil {
@@ -291,9 +282,6 @@ func newServer(c config) (*server, error) {
 			c.downloadSlots = settings.DownloadSlots
 		}
 	} else {
-		if c.maxBytes < 1 {
-			c.maxBytes = settings.MaxJobBytes
-		}
 		if c.downloadSlots < 1 {
 			c.downloadSlots = settings.DownloadSlots
 		}

@@ -95,7 +95,7 @@ func TestRepeatedMP3JobReusesOnlyMatchingBitrate(t *testing.T) {
 	fake.streamFn = func(context.Context, *youtube.Video, *youtube.Format) (io.ReadCloser, int64, error) {
 		return io.NopCloser(bytes.NewReader(data)), int64(len(data)), nil
 	}
-	s := testServer(t, fake, func(c *config) { c.maxBytes = 64 << 20 })
+	s := testServer(t, fake, nil)
 	run := func(bitrate string) {
 		t.Helper()
 		body := `{"url":"` + testVideo + `","quality":"best","mediaType":"audio","audioFormat":"mp3","audioBitrate":"` + bitrate + `","rightsConfirmed":true}`
@@ -139,7 +139,7 @@ func TestRepeatedAudioJobPublishesInChangedLibraryFolder(t *testing.T) {
 			fake.streamFn = func(context.Context, *youtube.Video, *youtube.Format) (io.ReadCloser, int64, error) {
 				return io.NopCloser(bytes.NewReader(data)), int64(len(data)), nil
 			}
-			s := testServer(t, fake, func(c *config) { c.maxBytes = 64 << 20 })
+			s := testServer(t, fake, nil)
 			run := func() Job {
 				t.Helper()
 				body := `{"url":"` + testVideo + `","quality":"best","mediaType":"audio","audioFormat":"` + format + `","rightsConfirmed":true}`
@@ -167,8 +167,15 @@ func TestRepeatedAudioJobPublishesInChangedLibraryFolder(t *testing.T) {
 			for _, job := range []Job{first, second} {
 				path := ticketPath(t, s, job.ID, `{"fileId":"`+job.Files[0].ID+`","inline":true}`)
 				response := request(s, "GET", path, "", nil)
-				if response.Code != 200 || int64(response.Body.Len()) != job.Files[0].Size {
-					t.Fatalf("published audio cannot be played: %d %s", response.Code, response.Body.String())
+				if response.Code != 200 {
+					t.Fatalf("published audio cannot be played: status=%d", response.Code)
+				}
+				if job.Files[0].MimeType == "audio/mpeg" {
+					if response.Header().Get("Content-Type") != "audio/wav" || response.Body.Len() <= 44 || !bytes.HasPrefix(response.Body.Bytes(), []byte("RIFF")) {
+						t.Fatal("MP3 preview did not contain decoded WAV audio")
+					}
+				} else if int64(response.Body.Len()) != job.Files[0].Size {
+					t.Fatal("original M4A preview length changed")
 				}
 			}
 		})

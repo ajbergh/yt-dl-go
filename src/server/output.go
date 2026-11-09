@@ -28,7 +28,7 @@ func defaultAppSettings() AppSettings {
 		OutputFileMode: "0600", OutputFolderMode: "0700",
 		DefaultCategory: "General", UserCategories: append([]string(nil), defaultUserCategories...),
 		StorageMode: "published-only",
-		Retention:   "never", MaxJobBytes: 10 << 30, JobTimeout: "none", DownloadSlots: 4,
+		Retention:   "never", JobTimeout: "none", DownloadSlots: 4,
 	}
 }
 
@@ -69,9 +69,6 @@ func mergeAppSettings(defaults, settings AppSettings) AppSettings {
 	if settings.Retention == "" {
 		settings.Retention = defaults.Retention
 	}
-	if settings.MaxJobBytes == 0 {
-		settings.MaxJobBytes = defaults.MaxJobBytes
-	}
 	if settings.JobTimeout == "" {
 		settings.JobTimeout = defaults.JobTimeout
 	}
@@ -96,9 +93,6 @@ func resolveJobCategory(settings AppSettings, requested string) (string, error) 
 }
 
 func validateAppSettings(settings AppSettings) error {
-	if settings.MaxJobBytes < 1 {
-		return errors.New("maxJobBytes must be a positive byte count")
-	}
 	if _, err := parseJobTimeoutSetting(settings.JobTimeout); err != nil {
 		return err
 	}
@@ -375,7 +369,14 @@ func (s *server) finalizeLibraryOutput(j *jobState, file *mediaFile, moveSource 
 				}
 				if err := publishTemporary(temporaryPath, destination); err != nil {
 					_ = os.Chmod(temporaryPath, 0600)
-					_ = durableRename(temporaryPath, sourcePath)
+					if restoreErr := durableRename(temporaryPath, sourcePath); restoreErr != nil {
+						return fmt.Errorf("restore unpublished download output: %w", errors.Join(err, restoreErr))
+					}
+					// Concurrent playlist items can choose the same filename.
+					// Restore the source and try the next suffix without losing it.
+					if errors.Is(err, os.ErrExist) {
+						continue
+					}
 					return fmt.Errorf("publish moved download output: %w", err)
 				}
 				publishedByMove = true

@@ -180,6 +180,10 @@ func (s *server) download(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		defer f.Close()
+		if t.inline && files[0].MimeType == "audio/mpeg" {
+			s.serveMP3Preview(w, r, f, libraryFilename(files[0]))
+			return
+		}
 		if !validRange(r.Header.Get("Range"), files[0].Size) {
 			w.Header().Set("Content-Range", "bytes */"+strconv.FormatInt(files[0].Size, 10))
 			fail(w, 416, "Only one valid byte range is supported")

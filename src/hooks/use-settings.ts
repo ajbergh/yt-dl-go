@@ -1,3 +1,8 @@
+/**
+ * Preference draft editing and persistence. The first edit captures a baseline
+ * for dirty tracking; successful saves adopt server-normalized preferences and
+ * runtime metadata. Folder/notification choices remain drafts until saved.
+ */
 import { useState, type Dispatch, type FormEvent, type SetStateAction } from "react";
 import { api, type AppSettings, type RuntimeSettingSources, type RuntimeSettingValues, type ServiceConnection } from "../lib/downloader";
 import { errorMessage, notificationAPI } from "../components/downloader/view-model";
@@ -19,8 +24,11 @@ export function useSettings({
   const [newCategoryInput, setNewCategoryInput] = useState("");
   const [savingSettings, setSavingSettings] = useState(false);
   const [settingsSaved, setSettingsSaved] = useState(false);
+  const [settingsBeforeEdits, setSettingsBeforeEdits] = useState<AppSettings | null>(null);
+  const settingsDirty = settingsBeforeEdits !== null && JSON.stringify(settingsBeforeEdits) !== JSON.stringify(settings);
 
   function changeSetting<K extends keyof AppSettings>(key: K, value: AppSettings[K]) {
+    setSettingsBeforeEdits(previous => previous ?? settings);
     setSettings(previous => ({ ...previous, [key]: value }));
     setSettingsSaved(false);
   }
@@ -42,6 +50,7 @@ export function useSettings({
     }
   }
 
+  // Submit the full draft and clear its baseline only after the server accepts it.
   async function savePreferences(event: FormEvent) {
     event.preventDefault();
     if (!serviceReady) {
@@ -58,6 +67,7 @@ export function useSettings({
         signal: AbortSignal.timeout(10000),
       });
       setSettings(result.settings);
+      setSettingsBeforeEdits(null);
       setRuntimeSettingSources(result.sources ?? {});
       setRuntimeSettingValues(result.effective ?? {});
       setSettingsSaved(true);
@@ -68,6 +78,7 @@ export function useSettings({
     }
   }
 
+  // Ask for system permission only on explicit enable; persist the preference on Save.
   async function toggleNotifications() {
     if (settings.notificationsEnabled) {
       changeSetting("notificationsEnabled", false);
@@ -108,6 +119,7 @@ export function useSettings({
 
   function removeCategory(category: string) {
     if (settings.userCategories.length <= 1) return;
+    setSettingsBeforeEdits(previous => previous ?? settings);
     const remaining = settings.userCategories.filter(value => value !== category);
     setSettings(previous => ({
       ...previous,
@@ -122,6 +134,7 @@ export function useSettings({
     setNewCategoryInput,
     savingSettings,
     settingsSaved,
+    settingsDirty,
     changeSetting,
     selectDownloadFolder,
     savePreferences,

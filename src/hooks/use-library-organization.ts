@@ -1,3 +1,9 @@
+/**
+ * Persist Vault favorites/collections through the revisioned SQLite API.
+ * localStorage supplies legacy migration data and a compatibility cache;
+ * it is not the authoritative organization store.
+ */
+import { userFacingMessage } from "../lib/messages";
 import { useCallback, useEffect, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import { api, type ServiceConnection } from "../lib/downloader";
 import { libraryCollectionsKey, normalizeCollections, readCollections, type MediaCollection } from "../lib/library-collections";
@@ -42,11 +48,14 @@ function mirrorLegacyCache(organization: LibraryOrganization) {
 }
 
 /**
- * A serialized, revision-checked persistence queue. Concurrent UI edits in one
- * window are saved in order. External-window conflicts surface an error rather
- * than silently overwriting another user's collections or favorites.
+ * A revision-checked persistence queue. Writes are serialized; edits made during
+ * a write are coalesced into the next snapshot. External-window conflicts surface
+ * an error rather than silently overwriting another window's organization.
+ * onSaved runs after each queued PUT succeeds and updates the revision/cache,
+ * allowing callers to refresh server-derived counts. Initial reads and the
+ * one-time legacy migration do not invoke this callback.
  */
-export function useLibraryOrganization(connection: ServiceConnection): {
+export function useLibraryOrganization(connection: ServiceConnection, onSaved?: () => void): {
   favorites: string[];
   collections: MediaCollection[];
   ready: boolean;
@@ -69,6 +78,7 @@ export function useLibraryOrganization(connection: ServiceConnection): {
   const writable = useRef(false);
   const requestGeneration = useRef(0);
 
+  // Pause edits while loading; migrate local data only into an untouched row.
   const load = useCallback(async () => {
     const generation = ++requestGeneration.current;
     writable.current = false;
@@ -102,7 +112,7 @@ export function useLibraryOrganization(connection: ServiceConnection): {
     } catch (reason) {
       if (generation !== requestGeneration.current) return;
       setReady(false);
-      setError(reason instanceof Error ? reason.message : "Could not load library organization.");
+      setError(reason instanceof Error ? userFacingMessage(reason.message) : "Could not load vault organization.");
     }
   }, [connection]);
 
@@ -113,6 +123,8 @@ export function useLibraryOrganization(connection: ServiceConnection): {
     return () => { requestGeneration.current += 1; writable.current = false; };
   }, [load]);
 
+  // Serialize pending snapshots against the last acknowledged revision. On a
+  // failed write, block further edits until an explicit reload resolves state.
   const flush = useCallback(async () => {
     if (saving.current || !writable.current) return;
     saving.current = true;
@@ -131,16 +143,17 @@ export function useLibraryOrganization(connection: ServiceConnection): {
         savedChange.current = change;
         mirrorLegacyCache(snapshot);
         setError("");
+        onSaved?.();
       }
     } catch (reason) {
       if (generation !== requestGeneration.current) return;
       writable.current = false;
       setReady(false);
-      setError(reason instanceof Error ? reason.message : "Could not save library organization.");
+      setError(reason instanceof Error ? userFacingMessage(reason.message) : "Could not save vault organization.");
     } finally {
       saving.current = false;
     }
-  }, [connection]);
+  }, [connection, onSaved]);
 
   const update = useCallback((fn: (previous: LibraryOrganization) => LibraryOrganization) => {
     if (!writable.current) return;

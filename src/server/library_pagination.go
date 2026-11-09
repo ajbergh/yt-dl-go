@@ -1,3 +1,6 @@
+// Legacy source-job pagination for /api/library and shared Library filter/facet
+// helpers. The file-oriented UI uses /api/library/files; both endpoints report
+// whole-Vault facets/storage metadata separately from their filtered page totals.
 package main
 
 import (
@@ -48,6 +51,8 @@ type libraryFilter struct {
 	Channel   string
 }
 
+// decodeLibraryCursor reads an opaque base64 JSON (createdAt, jobId) pair.
+// An empty value starts the first page; unlike file cursors, it is not query-bound.
 func decodeLibraryCursor(value string) (libraryCursor, error) {
 	var cursor libraryCursor
 	if value == "" {
@@ -68,6 +73,9 @@ func encodeLibraryCursor(cursor libraryCursor) string {
 	return base64.RawURLEncoding.EncodeToString(data)
 }
 
+// loadLibraryPage selects source jobs in descending (created_at, source_job_id)
+// order. A matching file qualifies its source; returned jobs retain their files.
+// TotalJobs counts matching sources before the cursor; facets/stats are global.
 func (s *jobStore) loadLibraryPage(limit int, cursor libraryCursor, filters ...libraryFilter) (libraryPage, error) {
 	filter := libraryFilter{}
 	if len(filters) > 0 {
@@ -133,6 +141,9 @@ func (s *jobStore) loadLibraryPage(limit int, cursor libraryCursor, filters ...l
 	return page, nil
 }
 
+// libraryFilterClause returns an AND suffix and bound values for a trusted table
+// alias. Media type is source-level here; the file endpoint replaces that check.
+// Search uses an FTS prefilter when possible, followed by a substring check.
 func libraryFilterClause(filter libraryFilter, itemAlias string) (string, []any) {
 	var clauses []string
 	var args []any
@@ -165,6 +176,8 @@ func libraryFilterClause(filter libraryFilter, itemAlias string) (string, []any)
 	return " AND " + strings.Join(clauses, " AND "), args
 }
 
+// loadLibraryMetadata fills global file-grain facets and storage totals without
+// applying the active view's filters or cursor. Subtitle bytes contribute to size.
 func (s *jobStore) loadLibraryMetadata(page *libraryPage) error {
 	rows, err := s.db.Query(`SELECT COALESCE(NULLIF(j.category,''),NULLIF(json_extract(li.file_json,'$.category'),''),'Uncategorized'),COUNT(*)
 		FROM library_items li JOIN library_sources j ON j.source_job_id=li.source_job_id

@@ -1,8 +1,10 @@
 /**
- * Production downloader screen. The bundled page connects to the Go API served
- * by the same executable, then uses that API for jobs and SQLite preferences.
+ * Shared desktop/browser screen coordinator. Service and action hooks own API
+ * state; this page owns navigation, inspection drafts, filters, and previews.
+ * Library rows are loaded file pages; navigation totals come from server metadata.
  */
 import { useEffect, useMemo, useRef, useState } from "react";
+import { MP3Preview } from "../components/downloader/mp3-preview";
 import { LibraryPage } from "./library";
 import { QueuePage } from "./queue";
 import { SettingsPage } from "./settings";
@@ -30,7 +32,7 @@ export function HomePage() {
   const {
     connection, serviceReady, jobs, setJobs, libraryJobs, libraryPage, setLibraryQuery, loadMoreLibrary, loadingLibraryMore, refreshLibrary, settings, setSettings, runtimeSettingSources, setRuntimeSettingSources, runtimeSettingValues, setRuntimeSettingValues, mp3Supported,
     buildInfo, updateStatus, updateError, checkingUpdates, checkForUpdates,
-    serviceError, setServiceError, pollError,
+    serviceError, setServiceError, pollError, storageWarnings,
   } = useService();
   const [url, setUrl] = useState("");
   const [batchMode, setBatchMode] = useState(false);
@@ -42,7 +44,7 @@ export function HomePage() {
   const [formError, setFormError] = useState("");
   const [notice, setNotice] = useState("");
   const {
-    newCategoryInput, setNewCategoryInput, savingSettings, settingsSaved, changeSetting,
+    newCategoryInput, setNewCategoryInput, savingSettings, settingsSaved, settingsDirty, changeSetting,
     selectDownloadFolder, savePreferences, toggleNotifications, addCategory, removeCategory,
   } = useSettings({
     connection, serviceReady, settings, setSettings, setRuntimeSettingSources, setRuntimeSettingValues, setServiceError, setNotice,
@@ -141,6 +143,8 @@ export function HomePage() {
   const libraryCategories = useMemo(() => libraryPage.categories.map(facet => [facet.value, facet.count] as [string, number]), [libraryPage.categories]);
   const libraryChannels = useMemo(() => libraryPage.channels.map(facet => [facet.value, facet.count] as [string, number]), [libraryPage.channels]);
   const libraryStats = libraryPage.stats;
+  // Filter the loaded rows immediately while the debounced server query catches
+  // up. This subset must never be used to calculate whole-Vault Browse counts.
   const visibleLibraryJobs = useMemo(() => libraryJobs.filter(job => {
     const query = librarySearch.trim().toLowerCase();
     const category = job.category || job.files.find(file => file.category)?.category || "Uncategorized";
@@ -300,9 +304,8 @@ export function HomePage() {
         added.push(job);
       }
       setJobs(previous => [...added, ...previous.filter(item => !added.some(value => value.id === item.id))]);
-      setNotice(added.length === 1 && added[0].kind === "playlist"
-        ? `Playlist added with ${drafts[0].selectedPlaylistIndexes.length} selected item${drafts[0].selectedPlaylistIndexes.length === 1 ? "" : "s"}; original playlist positions are preserved.`
-        : `${added.length} download${added.length === 1 ? "" : "s"} added to the queue.`);
+      const addedTasks = drafts.reduce((count, draft) => count + (draft.kind === "playlist" ? selectedPlaylistEntries(draft).length : 1), 0);
+      setNotice(`${addedTasks} download${addedTasks === 1 ? "" : "s"} added to the queue.`);
       setUrl("");
       setDrafts([]);
       setRightsConfirmed(false);
@@ -341,19 +344,18 @@ export function HomePage() {
 
           <nav aria-label="Main navigation" className="order-3 flex w-full items-center gap-1 rounded-xl border border-neutral-800 bg-neutral-900 p-1 sm:order-none sm:w-auto">
             {([
-              ["queue", Layers, "Queue"], ["library", Film, "Library"], ["settings", Settings, "Settings"],
+              ["queue", Layers, "Queue"], ["library", Film, "Vault"], ["settings", Settings, "Settings"],
             ] as const).map(([value, Icon, label]) => (
               <button key={value} type="button" onClick={() => setTab(value)} aria-current={tab === value ? "page" : undefined}
                 className={`flex min-w-0 flex-1 items-center justify-center gap-1.5 rounded-lg px-2 py-2 sm:px-3 text-xs font-semibold transition-colors sm:flex-none ${tab === value ? "bg-neutral-800 text-white shadow-sm" : "text-neutral-400 hover:text-neutral-200"}`}>
                 <Icon className="hidden size-3.5 shrink-0 text-rose-400 min-[360px]:block" aria-hidden="true" />{label}
                 {value === "queue" && visibleQueueRows.length > 0 && <span className="rounded-full bg-rose-600 px-1.5 text-xs text-white">{visibleQueueRows.length}</span>}
-                {value === "library" && libraryTotalJobs > 0 && <span className="rounded-full bg-neutral-700 px-1.5 text-xs text-neutral-200">{libraryTotalJobs}</span>}
               </button>
             ))}
           </nav>
 
           <div className="flex items-center gap-2">
-            <div className="hidden items-center gap-2 rounded-lg border border-neutral-800 bg-neutral-900/70 px-2.5 py-2 text-xs sm:flex">
+            <div role="status" aria-label={serviceReady ? "App ready" : serviceError ? "App reconnecting" : "App starting"} className="flex items-center gap-1.5 rounded-lg border border-neutral-800 bg-neutral-900/70 px-2 py-2 text-xs">
               {serviceReady ? <><Activity className="size-3.5 text-emerald-400" aria-hidden="true" /><span className="text-emerald-300">Ready</span></>
                 : <><AlertCircle className="size-3.5 text-amber-400" aria-hidden="true" /><span className="text-neutral-300">{serviceError ? "Retrying…" : "Starting…"}</span></>}
             </div>
@@ -367,6 +369,7 @@ export function HomePage() {
       <main className={"mx-auto w-full space-y-6 px-4 py-6 sm:px-6 " + (tab === "library" ? "max-w-[1800px]" : "max-w-7xl")}>
         {notice && <div role="status" className="flex items-center gap-2 rounded-xl border border-emerald-800/60 bg-emerald-950/40 px-4 py-3 text-sm text-emerald-200"><Check className="size-4 shrink-0" aria-hidden="true" /><span className="flex-1">{notice}</span><button type="button" aria-label="Dismiss notification" className="grid size-9 shrink-0 place-items-center rounded-lg hover:bg-emerald-900/50" onClick={() => setNotice("")}><X className="size-4" aria-hidden="true" /></button></div>}
         {!serviceReady && tab !== "settings" && <div role={serviceError ? "alert" : "status"} className="flex items-start gap-2 rounded-xl border border-amber-800/60 bg-amber-950/40 px-4 py-3 text-sm text-amber-200"><AlertCircle className="mt-0.5 size-4 shrink-0" aria-hidden="true" />{serviceError ? `${serviceError} The app will retry automatically.` : "Starting the app…"}</div>}
+        {storageWarnings.map(warning => <div key={warning.path} role="alert" className="flex items-start gap-2 rounded-xl border border-amber-800/60 bg-amber-950/40 px-4 py-3 text-sm text-amber-200"><HardDrive className="mt-0.5 size-4 shrink-0" aria-hidden="true" /><span className="min-w-0 break-words">Low disk space: {warning.path} has less than 5% free. Downloads will continue. Free up space on this disk.</span></div>)}
         {pollError && <div role="alert" className="flex items-start gap-2 rounded-xl border border-amber-800/60 bg-amber-950/40 px-4 py-3 text-sm text-amber-200"><AlertCircle className="mt-0.5 size-4 shrink-0" aria-hidden="true" />{pollError}</div>}
         {actionError && <div role="alert" className="flex items-start gap-2 rounded-xl border border-red-900 bg-red-950/40 px-4 py-3 text-sm text-red-200"><X className="mt-0.5 size-4 shrink-0" aria-hidden="true" />{actionError}</div>}
 
@@ -425,6 +428,7 @@ export function HomePage() {
         />}
 
         {tab === "library" && <LibraryPage
+          serviceReady={serviceReady}
           libraryJobs={libraryJobs}
           visibleLibraryJobs={visibleLibraryJobs}
           libraryTotalJobs={libraryTotalJobs}
@@ -441,6 +445,8 @@ export function HomePage() {
           libraryLayout={libraryLayout}
           setLibraryLayout={setLibraryLayout}
           libraryStats={libraryStats}
+          mediaCounts={libraryPage.mediaCounts}
+          onOrganizationSaved={() => { void refreshLibrary().catch(error => setServiceError(errorMessage(error))); }}
           libraryTotalFiles={libraryPage.totalFiles ?? 0}
           onViewChange={setLibraryView}
           hasMoreLibrary={Boolean(libraryPage.nextCursor)}
@@ -463,6 +469,7 @@ export function HomePage() {
           runtimeSettingValues={runtimeSettingValues}
           savingSettings={savingSettings}
           settingsSaved={settingsSaved}
+          settingsDirty={settingsDirty}
           mp3Supported={mp3Supported}
           buildInfo={buildInfo}
           updateStatus={updateStatus}
@@ -483,7 +490,8 @@ export function HomePage() {
         <div className="w-full max-w-4xl overflow-hidden rounded-2xl border border-neutral-700 bg-neutral-950 shadow-2xl">
           <div className="flex items-center justify-between gap-3 border-b border-neutral-800 px-4 py-3"><div className="min-w-0"><p className="text-xs font-bold uppercase tracking-wider text-rose-400">Local preview</p><h2 id="media-preview-title" className="truncate text-sm font-semibold text-white">{preview.title}</h2></div><button type="button" className={button} onClick={() => setPreview(null)} aria-label="Close media preview"><X className="size-4" aria-hidden="true" />Close</button></div>
           <div className="bg-black p-3 sm:p-5">
-            {preview.mimeType.startsWith("audio/") ? <audio ref={element => { previewMedia.current = element; }} controls preload="metadata" src={preview.url} className="w-full">This audio format cannot be played here.</audio>
+            {preview.mimeType === "audio/mpeg" ? <MP3Preview key={preview.url} url={preview.url} mediaRef={element => { previewMedia.current = element; }} />
+              : preview.mimeType.startsWith("audio/") ? <audio ref={element => { previewMedia.current = element; }} controls preload="metadata" src={preview.url} className="w-full">This audio format cannot be played here.</audio>
               : <video ref={element => { previewMedia.current = element; }} controls preload="metadata" src={preview.url} className="max-h-[70vh] w-full rounded-lg bg-black">This video format cannot be played here.</video>}
             {preview.chapters.length > 0 && <div className="mt-4 max-h-48 overflow-y-auto rounded-lg border border-neutral-800 p-2">
               <h3 className="px-2 pb-2 text-xs font-semibold text-neutral-300">Chapters</h3>
@@ -498,7 +506,7 @@ export function HomePage() {
           </div>
         </div>
       </div>}
-      <footer className="mx-auto flex max-w-7xl items-center justify-between gap-3 px-4 pb-8 text-xs text-neutral-400 sm:px-6"><span className="flex items-center gap-1.5"><Clock3 className="size-3" aria-hidden="true" />Live download updates</span><span className="flex items-center gap-1.5"><HardDrive className="size-3" aria-hidden="true" />Saved history</span></footer>
+      <footer className="mx-auto flex max-w-7xl items-center justify-between gap-3 px-4 pb-8 text-xs text-neutral-400 sm:px-6"><span tabIndex={0} title="Download progress updates automatically while the app is connected." className="flex items-center gap-1.5"><Clock3 className="size-3" aria-hidden="true" />Live download updates</span><span tabIndex={0} title="Completed downloads are kept in your Vault between app sessions." className="flex items-center gap-1.5"><HardDrive className="size-3" aria-hidden="true" />Saved history</span></footer>
     </div>
   );
 }

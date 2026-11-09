@@ -6,7 +6,7 @@
 
 A local desktop app for Windows, macOS, and Linux. Save permitted YouTube videos
 and playlists, manage a persistent queue, and organize your media in a searchable
-Library. The Wails desktop edition opens in its own native window and uses native
+Vault. The Wails desktop edition opens in its own native window and uses native
 save, folder, and confirmation dialogs.
 
 Download only content you own or have permission to save, in accordance with
@@ -15,13 +15,25 @@ and live-stream recording are unsupported.
 
 ## Screenshots
 
-Actual Windows Wails interface, captured from its embedded WebView2 using
-Playwright with a separate demonstration Library containing synthetic fixture
-data. The native window frame is outside the captured content.
+### Download queue
 
-![YouTube Vault download queue in the Windows Wails WebView](docs/assets/screenshots/wails-windows-queue.png)
+Track each selected playlist entry as an individual download, with progress,
+transfer speed, and time remaining.
 
-![YouTube Vault Library in the Windows Wails WebView](docs/assets/screenshots/wails-windows-library.png)
+![Download queue showing individual playlist downloads, active and queued counts, and per-download progress](docs/assets/screenshots/Queue-screenshot1.png)
+
+### Media Vault
+
+Browse saved videos and audio, filter your collection, and select a file to view
+its details, preview it, or find it on disk.
+
+![Media Vault showing the media grid, navigation sidebar, filters, and selected-file details](docs/assets/screenshots/Vault-screenshot1.png)
+
+### Local preview
+
+Play saved media inside the app without leaving your Vault.
+
+![Local video preview open over the Media Vault](docs/assets/screenshots/Preview-screenshot1.png)
 
 ## Get the app
 
@@ -60,16 +72,36 @@ release work.
 
 ## Use YouTube Vault
 
-1. Paste an authorized video or playlist URL and inspect it.
-2. Choose video or audio, a maximum quality, and any available captions.
-3. Confirm your rights and add it to the queue. Pause, resume, reorder, or retry
-   items as needed.
-4. Open **Library** to search, preview, reveal, copy paths, or delete downloaded
-   files. Use **Settings** to choose the Library folder, naming rules, and defaults.
+1. Paste an authorized video or playlist URL and choose **View options**. Use
+   **Multiple links** to inspect several links at once.
+2. Choose video or audio, a maximum quality, and any available captions. For a
+   playlist, select the entries you want to download.
+3. Confirm your rights and add the downloads to **Queue**. Each selected playlist
+   entry is an individual download task with its own progress, speed, and status.
+   Pause, resume, reorder, or retry downloads as needed.
+4. Open **Vault** to browse saved media in a grid or list. Search and filter by
+   media type, category, or channel; use favorites and personal collections to
+   organize files without moving them.
+5. Select a media card to open its details. **Preview** plays the saved local
+   video or audio inside the app. **Reveal**, **Copy path**, and **Open folder**
+   help you find the file on disk.
 
-**Delete files** removes the files from disk and their Library record after
-confirmation. **Forget history** in the Queue keeps Library files and entries.
-Desktop confirmations use native Yes/No dialogs, with No selected by default.
+The Queue badge counts visible download tasks, including individual playlist
+entries. **Clear completed** hides finished tasks from Queue while keeping their
+files in the Vault. Enable **System notifications** in Settings and grant permission
+to receive completion or failure alerts for individual downloads.
+
+The Vault's **Forget item** action removes the selected entry from the Vault while
+keeping its file on disk. **Delete selected file** permanently removes that file;
+**Delete entire download** removes every file from the source download, including
+playlist files on unloaded Vault pages. Both deletion actions require confirmation.
+**Forget history** in Queue keeps Vault files and entries. Desktop confirmations
+use native Yes/No dialogs, with No selected by default.
+
+Use **Settings** to choose the download folder, naming rules, and defaults.
+An **Unsaved changes** indicator tracks edits; choose **Save preferences** to apply
+them. Format, transfer, and naming controls are under **Advanced settings**;
+version information and update checks are under **About & updates**.
 Use **File → Exit** to close the desktop app and **Help → About** for build details.
 
 Quality choices are ceilings, not upscaling requests or guarantees. **Compatibility
@@ -85,15 +117,15 @@ an executable. The embedded desktop WebView does not replace that dependency.
 Temporary capture sessions do not import your normal browser's cookies or credentials.
 YouTube delivery changes can affect availability and completion.
 
-Closing the desktop window stops the app and its workers. The queue and Library
+Closing the desktop window stops the app and its workers. The queue and Vault
 persist for the next launch. No login item, background service, or tray process is installed.
 
 ## Your files and saved data
 
-Your download folder is your library. Downloads default to
+Your download folder is your Vault. Downloads default to
 `~/Downloads/YouTube_Vault`, organized by channel; change this in Settings.
 The app keeps one media file and plays/previews it directly from that folder.
-At startup, missing files are removed from the Library. An unavailable Library
+At startup, missing files are removed from the Vault. An unavailable download
 folder (for example, a disconnected drive) preserves its entries. Existing
 app-only media is moved into its recorded download folder when upgrading.
 
@@ -106,7 +138,7 @@ Saved preferences and history live separately from the executable:
 | Linux | `$XDG_DATA_HOME/yt-dl-go`, or `~/.local/share/yt-dl-go` |
 
 Set `DATA_DIR` before launch to choose another private location. Back up both
-this data directory and your Library folder with the app closed before migration
+this data directory and your download folder with the app closed before migration
 or rollback. Installers retain saved data and downloads when removed. Both
 editions share this data; run one edition at a time.
 Never store application data under the repository's generated `dist` directory.

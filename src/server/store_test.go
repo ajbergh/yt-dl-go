@@ -34,7 +34,7 @@ func persistentTestConfig(t *testing.T, root string) config {
 	return config{
 		addr: "127.0.0.1:8080", root: root, token: strings.Repeat("a", 32),
 		origins: map[string]bool{"http://localhost:5173": true}, hosts: map[string]bool{"127.0.0.1:8080": true},
-		maxJobs: 8, maxBytes: 1024 * 1024, timeout: 10 * time.Second, retain: 10 * time.Minute,
+		maxJobs: 8, timeout: 10 * time.Second, retain: 10 * time.Minute,
 	}
 }
 

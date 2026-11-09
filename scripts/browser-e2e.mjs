@@ -214,6 +214,24 @@ async function clickSelector(cdp, selector) {
   assert.equal(result, true, `enabled element not found: ${selector}`);
 }
 
+async function rightClickSelector(cdp, selector) {
+  const point = await cdp.evaluate(`(() => {
+    const element = document.querySelector(${JSON.stringify(selector)});
+    if (!element) return null;
+    element.scrollIntoView({ block: "center" });
+    const bounds = element.getBoundingClientRect();
+    return { x: bounds.left + bounds.width / 2, y: bounds.top + bounds.height / 2 };
+  })()`);
+  assert.ok(point, `context-menu surface not found: ${selector}`);
+  await cdp.send("Input.dispatchMouseEvent", { type: "mousePressed", ...point, button: "right", buttons: 2, clickCount: 1 });
+  await cdp.send("Input.dispatchMouseEvent", { type: "mouseReleased", ...point, button: "right", buttons: 0, clickCount: 1 });
+  await waitFor(cdp, `Boolean(document.querySelector('[role="menu"]'))`, "context menu");
+  assert.equal(await cdp.evaluate(`(() => {
+    const bounds = document.querySelector('[role="menu"]').getBoundingClientRect();
+    return bounds.left >= 0 && bounds.top >= 0 && bounds.right <= innerWidth && bounds.bottom <= innerHeight;
+  })()`), true, "context menu extends outside the viewport");
+}
+
 async function waitForEnabledSelector(cdp, selector, label, timeoutMs = 15000) {
   return waitFor(
     cdp,
@@ -393,7 +411,8 @@ async function main() {
     await clickButton(cdp, "Add 1 to queue");
     await waitForBackendJobStatus(baseURL, "paused");
     await waitForEnabledSelector(cdp, '[aria-label^="Edit queued settings for "]', "paused configuration editor");
-    await clickSelector(cdp, '[aria-label^="Edit queued settings for "]');
+    await rightClickSelector(cdp, 'article[id^="queue-job-"]');
+    await clickButton(cdp, "Edit queued settings");
     await setValue(cdp, 'select[aria-label^="Quality for "]', "480");
     await captureScreenshot(cdp, "queue-editor");
     await captureScreenshot(cdp, "queue-editor-mobile", 390, 844);
@@ -424,7 +443,8 @@ async function main() {
       params => params?.response?.url?.endsWith("/pause") === true,
       15000,
     );
-    await clickSelector(cdp, pauseSelector);
+    await rightClickSelector(cdp, 'article[id^="queue-job-"]');
+    await clickSelector(cdp, '[role="menuitem"]');
     const pauseRequest = await pauseRequestPromise;
     assert.equal(pauseRequest.request.method, "POST", `pause request used ${pauseRequest.request.method}`);
     const pauseResponse = await pauseResponsePromise;
@@ -436,16 +456,25 @@ async function main() {
 
     // 5-6: completion must surface in the queue and Library.
     await waitFor(cdp, bodyIncludes("Completed"), "completed job", 30000);
-    await clickButton(cdp, "Library");
-    await waitFor(cdp, bodyIncludes("Media Library"), "Library page");
-    await waitFor(cdp, bodyIncludes("E2E Fixture Video"), "completed Library item");
+    await clickButton(cdp, "Vault");
+    await waitFor(cdp, bodyIncludes("Media Vault"), "Vault page");
+    await waitFor(cdp, bodyIncludes("E2E Fixture Video"), "completed Vault item");
     await captureScreenshot(cdp, "library-desktop");
     await captureScreenshot(cdp, "library-mobile", 390, 844);
     await captureScreenshot(cdp, "library-narrow", 320, 720);
+    await rightClickSelector(cdp, '[data-media-card]');
+    if (process.env.E2E_SCREENSHOT_DIR) {
+      // Capture the current viewport without the layout helper's resize/scroll,
+      // which intentionally dismisses an open context menu.
+      const { data } = await cdp.send("Page.captureScreenshot", { format: "png", captureBeyondViewport: false });
+      await writeFile(path.join(process.env.E2E_SCREENSHOT_DIR, "library-context-menu.png"), Buffer.from(data, "base64"));
+    }
+    await clickButton(cdp, "Add favorite");
+    await waitFor(cdp, `Boolean(document.querySelector('[data-media-card] button[aria-label^="Remove favorite:"]'))`, "favorite from context menu");
 
     const beforeRestart = await getJSON(`${baseURL}/api/library`);
-    assert.equal(beforeRestart.jobs.length, 1, "completed Library item was not persisted");
-    assert.equal(beforeRestart.jobs[0].status, "completed", "fixture Library item did not complete");
+    assert.equal(beforeRestart.jobs.length, 1, "completed Vault item was not persisted");
+    assert.equal(beforeRestart.jobs[0].status, "completed", "fixture Vault item did not complete");
 
     // 7: save settings through the real UI/API.
     await clickButton(cdp, "Settings");
@@ -479,8 +508,8 @@ async function main() {
     await waitFor(cdp, `document.querySelector("#naming-pattern")?.value === "E2E {title}"`, "persisted naming pattern");
     assert.equal(await readValue(cdp, 'select[aria-label="Default video format"]'), "av1");
     assert.equal(await readValue(cdp, 'input[aria-label="Maximum concurrent downloads"]'), "2");
-    await clickButton(cdp, "Library");
-    await waitFor(cdp, bodyIncludes("E2E Fixture Video"), "persisted Library item after restart");
+    await clickButton(cdp, "Vault");
+    await waitFor(cdp, bodyIncludes("E2E Fixture Video"), "persisted Vault item after restart");
 
     settings = (await getJSON(`${baseURL}/api/settings`)).settings;
     assert.equal(settings.namingPattern, "E2E {title}");
@@ -511,8 +540,8 @@ async function main() {
     assert.deepEqual(reconciled.jobs.map(job => job.id), [beforeRestart.jobs[0].id]);
     await cdp.send("Page.reload", { ignoreCache: true });
     await waitFor(cdp, bodyIncludes("Ready"), "service reconnect after reconciliation", 30000);
-    await clickButton(cdp, "Library");
-    await waitFor(cdp, bodyIncludes("E2E Fixture Video"), "surviving Library item");
+    await clickButton(cdp, "Vault");
+    await waitFor(cdp, bodyIncludes("E2E Fixture Video"), "surviving Vault item");
 
     // 9: destructive browser actions must surface an explicit confirmation
     // before the API mutation is allowed.
@@ -528,7 +557,7 @@ async function main() {
     try {
       assert.equal(dialog.type, "confirm");
       assert.match(dialog.message, /permanently delete ALL files belonging to this download/i);
-      assert.match(dialog.message, /including media on Library pages you have not loaded/i);
+      assert.match(dialog.message, /including media on Vault pages you have not loaded/i);
       assert.match(dialog.message, /cannot be undone/i);
       acceptDeletion = true;
     } finally {
@@ -537,11 +566,11 @@ async function main() {
       await cdp.send("Page.handleJavaScriptDialog", { accept: acceptDeletion });
       assert.equal(await clickPromise, true);
     }
-    await waitFor(cdp, bodyIncludes("Your media library is empty"), "destructive deletion completion", 20000);
+    await waitFor(cdp, bodyIncludes("Your media vault is empty"), "destructive deletion completion", 20000);
     const afterDelete = await getJSON(`${baseURL}/api/library`);
-    assert.equal(afterDelete.jobs.length, 0, "confirmed delete-everywhere did not remove Library history");
+    assert.equal(afterDelete.jobs.length, 0, "confirmed delete-everywhere did not remove Vault history");
 
-    console.log("Browser E2E passed: startup, inspect, add-as-paused, configuration editing, bulk resume, pause/resume, completion, Library, settings, restart persistence, deleted-file reconciliation, confirmation.");
+    console.log("Browser E2E passed: startup, inspect, add-as-paused, configuration editing, bulk resume, pause/resume, completion, Vault, settings, restart persistence, deleted-file reconciliation, confirmation.");
   } catch (error) {
     console.error(error?.stack || error);
     if (cdp) {

@@ -20,7 +20,7 @@ func TestDesktopServiceUsesPrivateAuthenticatedStreamingTransport(t *testing.T) 
 		t.Fatal(err)
 	}
 	prepareTestDataDir(t, root)
-	desktop, err := newDesktopService(config{root: root, maxJobs: 8, maxBytes: 1024 * 1024})
+	desktop, err := newDesktopService(config{root: root, maxJobs: 8})
 	if err != nil {
 		t.Fatal(err)
 	}

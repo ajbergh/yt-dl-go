@@ -158,6 +158,7 @@ type ticket struct {
 }
 
 type server struct {
+	diskSpaceReader     func(string) (diskSpace, error)
 	cfg                 config
 	settings            AppSettings
 	settingsRevision    uint64
@@ -207,7 +208,6 @@ func runtimeSettingSources(settings AppSettings, cfg config) map[string]string {
 	retention, _ := parseRetentionSetting(settings.Retention)
 	return map[string]string{
 		"retention":     source(cfg.retainEnv, "RETENTION", cfg.retainEnv || retention == cfg.retain),
-		"maxJobBytes":   source(cfg.maxBytesEnv, "MAX_JOB_BYTES", cfg.maxBytesEnv || settings.MaxJobBytes == cfg.maxBytes),
 		"jobTimeout":    source(cfg.timeoutEnv, "JOB_TIMEOUT", cfg.timeoutEnv || timeout == cfg.timeout),
 		"chromePath":    source(cfg.browserPathEnv, "CHROME_PATH", cfg.browserPathEnv || settings.ChromePath == cfg.browserPath),
 		"downloadSlots": source(cfg.downloadSlotsEnv, "DOWNLOAD_SLOTS", cfg.downloadSlotsEnv || settings.DownloadSlots == cfg.downloadSlots),
@@ -224,7 +224,7 @@ func runtimeSettingEffectiveValues(cfg config) map[string]any {
 		retention = cfg.retain.String()
 	}
 	return map[string]any{
-		"retention": retention, "maxJobBytes": cfg.maxBytes, "jobTimeout": jobTimeout,
+		"retention": retention, "jobTimeout": jobTimeout,
 		"chromePath": cfg.browserPath, "downloadSlots": cfg.downloadSlots,
 	}
 }
@@ -738,6 +738,10 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.handleLibraryImport(w, r)
 		return
 	}
+	if r.URL.Path == "/api/storage" {
+		s.handleStorage(w, r)
+		return
+	}
 	if r.URL.Path == "/api/settings" {
 		s.handleSettings(w, r)
 		return
@@ -1156,7 +1160,6 @@ func (s *server) handleSettings(w http.ResponseWriter, r *http.Request) {
 			DefaultCategory           *string   `json:"defaultCategory"`
 			UserCategories            *[]string `json:"userCategories"`
 			Retention                 *string   `json:"retention"`
-			MaxJobBytes               *int64    `json:"maxJobBytes"`
 			JobTimeout                *string   `json:"jobTimeout"`
 			ChromePath                *string   `json:"chromePath"`
 			DownloadSlots             *int      `json:"downloadSlots"`
@@ -1207,9 +1210,6 @@ func (s *server) handleSettings(w http.ResponseWriter, r *http.Request) {
 		}
 		if patch.Retention != nil {
 			settings.Retention = strings.TrimSpace(*patch.Retention)
-		}
-		if patch.MaxJobBytes != nil {
-			settings.MaxJobBytes = *patch.MaxJobBytes
 		}
 		if patch.JobTimeout != nil {
 			settings.JobTimeout = strings.TrimSpace(*patch.JobTimeout)

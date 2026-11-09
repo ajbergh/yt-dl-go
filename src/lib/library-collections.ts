@@ -1,9 +1,10 @@
 /**
- * Client-side collection model for Media Library 2.0.
+ * Immutable collection helpers and legacy-cache decoding for the Media Vault.
  * This is intentionally separate from download jobs: deleting a collection
  * cannot delete, move, rename, or forget any downloaded media.
  *
- * TODO: migrate to the Go/SQLite API with export/import support.
+ * useLibraryOrganization owns persistence through the Go/SQLite API; the
+ * localStorage reader remains for migration and compatibility caching.
  */
 export const libraryCollectionsKey = "yt-dl-go:library-collections-v2";
 export const maxCollectionNameLength = 80;
@@ -14,6 +15,7 @@ export interface MediaCollection {
   itemKeys: string[];
 }
 
+/** Salvage valid entries, trim names, discard duplicate IDs/names, and deduplicate keys. */
 export function normalizeCollections(value: unknown): MediaCollection[] {
   if (!Array.isArray(value)) return [];
   const ids = new Set<string>();

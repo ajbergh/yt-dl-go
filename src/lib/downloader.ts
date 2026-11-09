@@ -1,7 +1,7 @@
 /**
  * Shared frontend types and helpers for the Go download API. The executable's
- * React UI uses its own origin for the service; address selection lives in the
- * page bootstrap, not in this client module.
+ * browser UI uses its page origin, while desktop bootstrapping supplies a
+ * private API origin/token. Address selection lives outside this client module.
  */
 export type Quality = "best" | "2160" | "1440" | "1080" | "720" | "480";
 export type VideoStrategy = "best" | "compatibility" | "vp9" | "av1";
@@ -131,9 +131,13 @@ export interface LibraryStats {
 }
 
 export interface LibraryPageResponse {
+  /** Whole-Vault totals, independent of view filters/cursor; playlists count sources. */
+  mediaCounts: { video: number; audio: number; favorites: number; playlists: number };
   jobs: DownloadJob[];
   nextCursor?: string;
+  /** Matching source count before cursor pagination. */
   totalJobs: number;
+  /** Matching file count before cursor pagination. */
   totalFiles?: number;
   categories: LibraryFacet[];
   channels: LibraryFacet[];
@@ -205,7 +209,7 @@ export interface ServiceEvent {
   settingsEffective?: RuntimeSettingValues;
 }
 
-export type RuntimeSettingKey = "retention" | "maxJobBytes" | "jobTimeout" | "chromePath" | "downloadSlots";
+export type RuntimeSettingKey = "retention" | "jobTimeout" | "chromePath" | "downloadSlots";
 export type RuntimeSettingSources = Partial<Record<RuntimeSettingKey, string>>;
 export type RuntimeSettingValues = Partial<Record<RuntimeSettingKey, string | number>>;
 
@@ -224,7 +228,6 @@ export interface AppSettings {
   defaultCategory: string;
   userCategories: string[];
   retention: string;
-  maxJobBytes: number;
   jobTimeout: string;
   chromePath: string;
   downloadSlots: number;
@@ -273,13 +276,16 @@ const videoID = /^[A-Za-z0-9_-]{11}$/;
 const playlistID = /^[A-Za-z0-9_-]{2,200}$/;
 const hosts = new Set(["youtube.com", "www.youtube.com", "m.youtube.com", "music.youtube.com", "youtu.be", "www.youtu.be"]);
 
-/** Validate a supported HTTPS YouTube link and return its canonical video or playlist URL. */
+/**
+ * Validate a supported HTTPS YouTube URL and remove unrelated parameters.
+ * A valid list parameter takes precedence over a video ID, preserving playlist intent.
+ */
 export function parseYouTubeURL(value: string): { canonical: string; kind: "video" | "playlist" } {
   let url: URL;
   try {
     url = new URL(value.trim());
   } catch {
-    throw new Error("Enter a complete YouTube URL beginning with https://.");
+    throw new Error("Enter a complete YouTube link, including https://");
   }
   if (url.protocol !== "https:" || !hosts.has(url.hostname) || url.username || url.password || url.port) {
     throw new Error("Use an HTTPS link from youtube.com or youtu.be.");

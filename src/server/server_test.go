@@ -90,7 +90,7 @@ func testServer(t *testing.T, engine nativeClient, change func(*config), configu
 	c := config{
 		addr: "127.0.0.1:8080", root: filepath.Join(t.TempDir(), "private"), token: strings.Repeat("a", 32),
 		origins: map[string]bool{"http://localhost:5173": true}, hosts: map[string]bool{"127.0.0.1:8080": true},
-		maxJobs: 8, maxBytes: 1024 * 1024, timeout: 10 * time.Second, retain: 10 * time.Minute,
+		maxJobs: 8, timeout: 10 * time.Second, retain: 10 * time.Minute,
 	}
 	if change != nil {
 		change(&c)
@@ -295,7 +295,6 @@ func assertFinalFiles(t *testing.T, s *server, j Job) {
 			t.Fatalf("temporary or duplicate media retained: %s", entry.Name())
 		}
 	}
-	var size int64
 	for _, file := range loaded.job.Files {
 		f, err := openLibraryMedia(&jobState{Job: loaded.job}, file)
 		if err != nil {
@@ -306,10 +305,6 @@ func assertFinalFiles(t *testing.T, s *server, j Job) {
 		if err != nil || info.Size() != file.Size || file.Height <= 0 || (file.MimeType != "video/mp4" && file.MimeType != "video/webm") {
 			t.Fatalf("invalid finalized media: %+v", file)
 		}
-		size += file.Size
-	}
-	if size > s.cfg.maxBytes {
-		t.Fatal("finalized bytes exceed the hard job limit")
 	}
 }
 
@@ -1101,7 +1096,7 @@ func TestPauseDuringActiveStreamRead(t *testing.T) {
 		return io.NopCloser(bytes.NewReader(bytes.Repeat([]byte{0x2a}, size))), size, nil
 	}
 
-	s := testServer(t, fake, func(c *config) { c.maxBytes = 4 << 20 })
+	s := testServer(t, fake, nil)
 	job := createJob(t, s, testVideo)
 	select {
 	case <-started:
