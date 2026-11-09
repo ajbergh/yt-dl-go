@@ -278,7 +278,7 @@ export function parseYouTubeURL(value: string): { canonical: string; kind: "vide
   try {
     url = new URL(value.trim());
   } catch {
-    throw new Error("Enter a complete YouTube URL beginning with https://.");
+    throw new Error("Enter a complete YouTube link, including https://");
   }
   if (url.protocol !== "https:" || !hosts.has(url.hostname) || url.username || url.password || url.port) {
     throw new Error("Use an HTTPS link from youtube.com or youtu.be.");

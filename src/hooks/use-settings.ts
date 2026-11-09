@@ -19,8 +19,11 @@ export function useSettings({
   const [newCategoryInput, setNewCategoryInput] = useState("");
   const [savingSettings, setSavingSettings] = useState(false);
   const [settingsSaved, setSettingsSaved] = useState(false);
+  const [settingsBeforeEdits, setSettingsBeforeEdits] = useState<AppSettings | null>(null);
+  const settingsDirty = settingsBeforeEdits !== null && JSON.stringify(settingsBeforeEdits) !== JSON.stringify(settings);
 
   function changeSetting<K extends keyof AppSettings>(key: K, value: AppSettings[K]) {
+    setSettingsBeforeEdits(previous => previous ?? settings);
     setSettings(previous => ({ ...previous, [key]: value }));
     setSettingsSaved(false);
   }
@@ -58,6 +61,7 @@ export function useSettings({
         signal: AbortSignal.timeout(10000),
       });
       setSettings(result.settings);
+      setSettingsBeforeEdits(null);
       setRuntimeSettingSources(result.sources ?? {});
       setRuntimeSettingValues(result.effective ?? {});
       setSettingsSaved(true);
@@ -108,6 +112,7 @@ export function useSettings({
 
   function removeCategory(category: string) {
     if (settings.userCategories.length <= 1) return;
+    setSettingsBeforeEdits(previous => previous ?? settings);
     const remaining = settings.userCategories.filter(value => value !== category);
     setSettings(previous => ({
       ...previous,
@@ -122,6 +127,7 @@ export function useSettings({
     setNewCategoryInput,
     savingSettings,
     settingsSaved,
+    settingsDirty,
     changeSetting,
     selectDownloadFolder,
     savePreferences,

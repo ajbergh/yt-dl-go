@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type Dispatch, type FormEvent, type SetStateAction } from "react";
 import {
-	Check, Download, ExternalLink, FileText, Folder, FolderTree, Gauge, HardDrive, LoaderCircle, Plus, RefreshCw, ShieldCheck, Sparkles, X,
+	Check, Download, ExternalLink, FileText, Folder, FolderTree, HardDrive, LoaderCircle, Plus, RefreshCw, Sparkles, X,
 } from "lucide-react";
 import { api, apiBlob, type AppSettings, type BuildInfo, type CorruptionDiagnostics, type Quality, type RuntimeSettingSources, type RuntimeSettingValues, type ServiceConnection, type UpdateStatus, type VideoStrategy } from "../lib/downloader";
 import { namingTokenNames, previewFilename, sanitizeFilenameComponent, type NamingValues } from "../lib/naming";
@@ -19,6 +19,7 @@ type SettingsPageProps = {
   runtimeSettingValues: RuntimeSettingValues;
   savingSettings: boolean;
   settingsSaved: boolean;
+  settingsDirty: boolean;
   mp3Supported: boolean;
   buildInfo: BuildInfo;
   updateStatus: UpdateStatus | null;
@@ -36,7 +37,7 @@ type SettingsPageProps = {
 };
 
 export function SettingsPage({
-  connection, serviceReady, serviceError, settings, runtimeSettingSources, runtimeSettingValues, savingSettings, settingsSaved, mp3Supported,
+  connection, serviceReady, serviceError, settings, runtimeSettingSources, runtimeSettingValues, savingSettings, settingsSaved, settingsDirty, mp3Supported,
   buildInfo, updateStatus, updateError, checkingUpdates, checkForUpdates,
   newCategoryInput, setNewCategoryInput, savePreferences, selectDownloadFolder, changeSetting,
   addCategory, removeCategory, toggleNotifications,
@@ -52,7 +53,7 @@ export function SettingsPage({
             <section className={`${panel} space-y-4 p-5 sm:p-6`}>
               <div className="flex flex-wrap items-start justify-between gap-3 border-b border-neutral-800 pb-4">
                 <div><h3 className="text-sm font-bold">Download preferences</h3><p className="mt-1 text-xs text-neutral-400">Choose where finished files go, how they are named, and how folders are organized.</p></div>
-                <button type="submit" className={primaryButton} disabled={!serviceReady || savingSettings}>{savingSettings && <LoaderCircle className="size-4 animate-spin" aria-hidden="true" />}{settingsSaved ? <Check className="size-4" aria-hidden="true" /> : null}{savingSettings ? "Saving…" : settingsSaved ? "Saved" : "Save preferences"}</button>
+                <p role="status" className={`text-xs ${settingsDirty ? "text-amber-300" : "text-neutral-400"}`}>{settingsDirty ? "Unsaved changes" : "Preferences are up to date"}</p>
               </div>
 
               <div className="rounded-xl border border-neutral-800 bg-neutral-950/60 p-4">
@@ -214,22 +215,18 @@ export function SettingsPage({
                 </p>
               </div>
               {serviceError && <p role="alert" className="text-xs text-red-300">{userFacingMessage(serviceError)}</p>}
-              <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-neutral-700 bg-neutral-900 p-4">
-                <p className="max-w-lg text-xs leading-relaxed text-neutral-400">Save changes to apply them to new downloads.</p>
+              <div className="sticky bottom-3 z-10 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-neutral-700 bg-neutral-900 p-4 shadow-xl">
+                <p className={`max-w-lg text-xs leading-relaxed ${settingsDirty ? "text-amber-300" : "text-neutral-400"}`}>{settingsDirty ? "Unsaved changes — save to apply your preferences." : "Changes apply to new downloads after saving."}</p>
                 <button type="submit" className={primaryButton} disabled={!serviceReady || savingSettings}>{savingSettings && <LoaderCircle className="size-4 animate-spin" aria-hidden="true" />}{settingsSaved ? <Check className="size-4" aria-hidden="true" /> : null}{savingSettings ? "Saving…" : settingsSaved ? "Saved" : "Save preferences"}</button>
               </div>
             </section>
           </form>
 
-          <section className={`${panel} p-5 sm:p-6`} aria-labelledby="service-heading">
-            <div className="mb-4 flex items-start justify-between gap-3"><div><h3 id="service-heading" className="text-sm font-bold">App status</h3><p className="mt-1 max-w-2xl text-xs leading-relaxed text-neutral-400">Your downloads and saved vault are available when the app is ready.</p></div><span className={`rounded-full border px-2.5 py-1 text-xs font-semibold ${serviceReady ? "border-emerald-700/60 bg-emerald-950/40 text-emerald-300" : "border-amber-700/60 bg-amber-950/40 text-amber-200"}`}>{serviceReady ? "Ready" : serviceError ? "Retrying" : "Starting"}</span></div>
-            {serviceError && <p role="alert" className="mt-3 text-xs text-red-300">{userFacingMessage(serviceError)}</p>}
-            {!serviceReady && <p className="mt-2 text-xs text-neutral-400">The app will retry automatically while your vault loads.</p>}
-          </section>
-
           <LibraryTransferPanel connection={connection} serviceReady={serviceReady} />
 
-          <section className={`${panel} p-5 sm:p-6`} aria-labelledby="updates-heading">
+          <details className={`${panel} p-5 sm:p-6`}>
+            <summary className="min-h-11 cursor-pointer text-sm font-bold">About & updates</summary>
+            <div className="mt-4 space-y-4">
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div>
                 <h3 id="updates-heading" className="text-sm font-bold">Version & updates</h3>
@@ -248,9 +245,10 @@ export function SettingsPage({
             </div>}
             {updateStatus && !updateStatus.developmentBuild && !updateStatus.updateAvailable && updateStatus.latestVersion && <p className="mt-3 text-xs text-emerald-300">You are on the latest stable release ({updateStatus.latestVersion}).</p>}
             <p className="mt-3 text-xs leading-relaxed text-neutral-400">Updates are installed manually. Your saved vault and preferences stay on this device.</p>
-          </section>
-
-            <section className={`${panel} p-5`}><div className="flex items-start gap-3"><div className="grid size-9 shrink-0 place-items-center rounded-xl border border-blue-800/50 bg-blue-950/30 text-blue-300"><Gauge className="size-4" aria-hidden="true" /></div><div><h3 className="text-xs font-bold">Download features</h3><ul className="mt-2 space-y-1.5 text-xs leading-relaxed text-neutral-400"><li>Download videos and playlists as MP4 or WebM, convert supported audio to MP3, or save original M4A audio.</li><li>Download up to six items at once, set a shared speed limit, pause and resume downloads, and see progress and time remaining.</li><li>Quality ceilings: best, 2160p (4K), 1440p, 1080p, 720p, or 480p, plus Best/Compatibility MP4/VP9/AV1 video strategies. Actual output quality and container are reported after completion.</li><li>Finished files are saved to your chosen folder and listed in your vault.</li></ul>{!mp3Supported && <p className="mt-3 flex items-start gap-1.5 text-xs leading-relaxed text-amber-300"><ShieldCheck className="mt-0.5 size-3 shrink-0" aria-hidden="true" />MP3 conversion is unavailable in this version.</p>}</div></div></section>
+              <p className="text-xs leading-relaxed text-neutral-300">Save videos and playlists as MP4 or WebM, or audio as {mp3Supported ? "MP3 or M4A" : "M4A"}. Finished downloads stay in your chosen folder and appear in the Vault.</p>
+              {!mp3Supported && <p className="text-xs text-amber-300">MP3 conversion is unavailable in this version.</p>}
+            </div>
+          </details>
         </div>
   );
 }

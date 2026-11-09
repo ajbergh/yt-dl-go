@@ -5,7 +5,7 @@ import {
   type AppSettings, type BuildInfo, type DownloadJob, type LibraryPageResponse, type LibraryQuery, type RuntimeSettingSources, type RuntimeSettingValues, type ServiceConnection, type ServiceEvent, type ServiceHealth, type UpdateStatus,
 } from "../lib/downloader";
 import {
-  builtInServiceConnection, errorMessage, notificationAPI, terminalNotification,
+  builtInServiceConnection, errorMessage, notificationAPI, queueItemsFor, terminalNotification,
 } from "../components/downloader/view-model";
 
 type StorageWarning = { path: string; freeBytes: number; totalBytes: number; freePercent: number };
@@ -146,7 +146,7 @@ export function useService() {
   const [serviceError, setServiceError] = useState("");
   const [storageWarnings, setStorageWarnings] = useState<StorageWarning[]>([]);
   const [pollError, setPollError] = useState("");
-  const knownJobStatuses = useRef<Map<string, DownloadJob["status"]>>(new Map());
+  const knownTaskStatuses = useRef<Map<string, Map<number, DownloadJob["status"]>>>(new Map());
   const notificationsEnabledRef = useRef(false);
   const libraryQueryRef = useRef<LibraryQuery>(libraryQuery);
   const libraryRequestSequence = useRef(0);
@@ -292,7 +292,9 @@ export function useService() {
         setJobs(jobResult.jobs);
         setLibraryJobs(libraryResult.jobs);
         setLibraryPage(normalizeLibraryPage(libraryResult));
-        knownJobStatuses.current = new Map(jobResult.jobs.map(job => [job.id, job.status]));
+        knownTaskStatuses.current = new Map(jobResult.jobs.map(job => [
+          job.id, new Map(queueItemsFor(job).map(item => [item.index, item.status])),
+        ]));
         setSettings(previous => hydratedSettings(settingResult.settings, previous));
         setRuntimeSettingSources(settingResult.sources ?? {});
         setRuntimeSettingValues(settingResult.effective ?? {});
@@ -333,20 +335,27 @@ export function useService() {
     };
 
     const maybeNotifyTerminal = (job: DownloadJob) => {
-      const previousStatus = knownJobStatuses.current.get(job.id);
-      const changed = previousStatus !== undefined && previousStatus !== job.status;
-      knownJobStatuses.current.set(job.id, job.status);
-      if (!changed || !notificationsEnabledRef.current) return;
-      const notification = terminalNotification(job);
-      const NotificationAPI = notificationAPI();
-      if (!notification || !NotificationAPI || NotificationAPI.permission !== "granted") return;
-      try {
-        new NotificationAPI(notification.title, {
-          body: notification.body,
-          tag: `yt-dl-go:${job.id}:${job.status}`,
+      const statuses = knownTaskStatuses.current.get(job.id) ?? new Map();
+      knownTaskStatuses.current.set(job.id, statuses);
+      for (const item of queueItemsFor(job)) {
+        const previousStatus = statuses.get(item.index);
+        statuses.set(item.index, item.status);
+        // Seed initial snapshots silently and avoid repeats on reconnect/polling.
+        if (previousStatus === undefined || previousStatus === item.status || !notificationsEnabledRef.current) continue;
+        const notification = terminalNotification({
+          ...job, kind: "video", title: item.title, status: item.status,
+          error: item.error || (job.kind === "video" ? job.error : ""),
         });
-      } catch {
-        // Notification support is optional; job state remains authoritative.
+        const NotificationAPI = notificationAPI();
+        if (!notification || !NotificationAPI || NotificationAPI.permission !== "granted") continue;
+        try {
+          new NotificationAPI(notification.title, {
+            body: notification.body,
+            tag: `yt-dl-go:${job.id}:${item.index}:${item.status}`,
+          });
+        } catch {
+          // Notification support is optional; task state remains authoritative.
+        }
       }
     };
 
@@ -364,7 +373,7 @@ export function useService() {
         if (event.settingsSources) setRuntimeSettingSources(event.settingsSources);
         if (event.settingsEffective) setRuntimeSettingValues(event.settingsEffective);
       } else if (event.type === "job-deleted" && event.jobId) {
-        knownJobStatuses.current.delete(event.jobId);
+        knownTaskStatuses.current.delete(event.jobId);
         setJobs(previous => previous.filter(job => job.id !== event.jobId));
         void refreshLibrary().catch(error => setPollError(errorMessage(error)));
       } else if (event.type === "settings-changed" && event.settings) {

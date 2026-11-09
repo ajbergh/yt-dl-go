@@ -23,6 +23,7 @@ type LibraryStats = {
 };
 type LibraryJobAction = "retry" | "delete-all" | "remove-library-item" | "delete-library-file";
 type LibraryPageProps = {
+  serviceReady: boolean;
   libraryJobs: DownloadJob[];
   visibleLibraryJobs: DownloadJob[];
   libraryTotalJobs: number;
@@ -95,7 +96,7 @@ function stoppedJob(job: DownloadJob): boolean {
 }
 
 export function LibraryPage({
-  libraryJobs, visibleLibraryJobs, libraryTotalJobs, libraryTotalFiles, onViewChange, librarySearch, setLibrarySearch,
+  serviceReady, libraryJobs, visibleLibraryJobs, libraryTotalJobs, libraryTotalFiles, onViewChange, librarySearch, setLibrarySearch,
   libraryFilter, setLibraryFilter, libraryCategory, setLibraryCategory,
   libraryChannel, setLibraryChannel, libraryCategories, libraryChannels,
   libraryLayout, setLibraryLayout, libraryStats, hasMoreLibrary, loadingLibraryMore,
@@ -328,7 +329,7 @@ export function LibraryPage({
         (active ? "bg-rose-600/20 font-semibold text-rose-100 ring-1 ring-rose-500/30" : "text-neutral-400 hover:bg-neutral-800 hover:text-white")}>
       <Icon className={"size-4 shrink-0 " + (active ? "text-rose-400" : "")} aria-hidden="true" />
       <span className="min-w-0 flex-1 truncate">{label}</span>
-      {count !== null && <span className="rounded-full bg-neutral-800 px-1.5 py-0.5 text-[10px] text-neutral-300">{count}</span>}
+      {count !== null && <span className="rounded-full bg-neutral-800 px-1.5 py-0.5 text-xs text-neutral-300">{count}</span>}
     </button>
   );
 
@@ -337,7 +338,7 @@ export function LibraryPage({
       <LibraryThumbnail connection={connection} jobId={item.job.id} file={item.file}
         audio={item.mediaType === "audio"} className="aspect-video w-full rounded-lg bg-neutral-900 object-cover" />
       {variant !== "list" && <>
-        <span className="absolute bottom-2 right-2 rounded-md bg-black/85 px-2 py-0.5 text-[11px] font-semibold tabular-nums text-white">
+        <span className="absolute bottom-2 right-2 rounded-md bg-black/85 px-2 py-0.5 text-xs font-semibold tabular-nums text-white">
           {item.file.durationSeconds ? durationLabel(item.file.durationSeconds) : item.mediaType === "audio" ? "Audio" : "Video"}
         </span>
         {item.mediaType === "audio" && <span className="absolute left-2 top-2 rounded-md bg-black/80 p-1.5 text-rose-300"><Music2 className="size-4" aria-hidden="true" /></span>}
@@ -350,7 +351,7 @@ export function LibraryPage({
       <div className={"grid items-start gap-4 lg:grid-cols-[188px_minmax(0,1fr)] " +
         (inspectorOpen && selected ? "xl:grid-cols-[188px_minmax(0,1fr)_310px]" : "")}>
         <aside aria-label="Vault navigation" className="hidden rounded-2xl border border-neutral-800/80 bg-[#111216] p-3 lg:block">
-          <p className="px-3 pb-3 pt-2 text-[10px] font-bold uppercase tracking-[.2em] text-neutral-500">Browse</p>
+          <p className="px-3 pb-3 pt-2 text-xs font-bold uppercase tracking-[.2em] text-neutral-500">Browse</p>
           <nav className="space-y-1" aria-label="Media sections">
             {sidebarButton("All media", Grid2X2, libraryStats.files, libraryFilter === "all" && section === "all", () => navigate("all"))}
             {sidebarButton("Videos", Film, counts.video, libraryFilter === "video" && section === "all", () => navigate("video"))}
@@ -370,7 +371,7 @@ export function LibraryPage({
           </nav>
           <div className="mt-5 border-t border-neutral-800 pt-4">
             <div className="mb-2 flex items-center justify-between px-3">
-              <p className="text-[10px] font-bold uppercase tracking-[.16em] text-neutral-500">Collections</p>
+              <p className="text-xs font-bold uppercase tracking-[.16em] text-neutral-500">Collections</p>
               <button type="button" title="New collection" aria-label="New collection" onClick={() => { setShowCollectionForm(previous => !previous); setCollectionError(""); }}
                 className="rounded-md p-1.5 text-rose-400 hover:bg-neutral-800"><Plus className="size-4" /></button>
             </div>
@@ -398,7 +399,7 @@ export function LibraryPage({
               <button type="submit" className={button + " w-full"}>Save collection name</button>
             </form>}
             {collectionError && <p role="alert" className="mt-2 px-2 text-xs text-rose-300">{collectionError}</p>}
-            <p className="mt-3 px-3 text-[10px] leading-4 text-neutral-500">Personal collections are stored on this device. Files are never moved.</p>
+            <p className="mt-3 px-3 text-xs leading-5 text-neutral-300">Personal collections are stored on this device. Files are never moved.</p>
           </div>
           <div className="mt-6 border-t border-neutral-800 px-3 pt-5">
             <p className="flex items-center gap-2 text-xs font-semibold text-neutral-200"><HardDrive className="size-4 text-rose-400" />Vault storage</p>
@@ -442,7 +443,7 @@ export function LibraryPage({
             {collectionError && <p role="alert" className="w-full text-xs text-rose-300">{collectionError}</p>}
           </div>
           <div className="overflow-hidden rounded-2xl border border-neutral-800/80 bg-[radial-gradient(ellipse_at_top_right,rgba(224,28,79,.22),transparent_65%),linear-gradient(120deg,#1c1922,#101114_70%)] p-5 sm:p-6">
-            <p className="text-[11px] font-bold uppercase tracking-[.22em] text-rose-300">Your vault</p>
+            <p className="text-xs font-bold uppercase tracking-[.22em] text-rose-300">Your vault</p>
             <h2 id="library-heading" className="mt-1 text-2xl font-bold tracking-tight sm:text-3xl">Media Vault</h2>
             <p className="mt-2 text-sm text-neutral-400">Browse, preview, and manage your downloaded videos and audio.</p>
             {activeCollection && <p className="mt-2 text-xs text-rose-300">Collection: {activeCollection.name}</p>}
@@ -474,11 +475,11 @@ export function LibraryPage({
               </button>
               <div role="group" aria-label="Vault view" className="flex rounded-lg border border-neutral-700 bg-neutral-950 p-1">
                 <button type="button" aria-label="Grid" aria-pressed={libraryLayout === "grid"} onClick={() => setLibraryLayout("grid")}
-                  className={"flex items-center gap-1 rounded-md px-2.5 py-1.5 text-xs " + (libraryLayout === "grid" ? "bg-rose-700 text-white" : "text-neutral-400")}>
+                  className={"flex min-h-11 min-w-11 items-center justify-center gap-1 rounded-md px-2.5 py-1.5 text-xs " + (libraryLayout === "grid" ? "bg-rose-700 text-white" : "text-neutral-400")}>
                   <Grid2X2 className="size-4" /> <span className="hidden sm:inline">Grid</span>
                 </button>
                 <button type="button" aria-label="List" aria-pressed={libraryLayout === "list"} onClick={() => setLibraryLayout("list")}
-                  className={"flex items-center gap-1 rounded-md px-2.5 py-1.5 text-xs " + (libraryLayout === "list" ? "bg-rose-700 text-white" : "text-neutral-400")}>
+                  className={"flex min-h-11 min-w-11 items-center justify-center gap-1 rounded-md px-2.5 py-1.5 text-xs " + (libraryLayout === "list" ? "bg-rose-700 text-white" : "text-neutral-400")}>
                   <List className="size-4" /> <span className="hidden sm:inline">List</span>
                 </button>
               </div>
@@ -487,18 +488,18 @@ export function LibraryPage({
             <div className="flex flex-wrap items-center gap-1.5">
               {(["all", "video", "audio"] as const).map(value => (
                 <button type="button" key={value} onClick={() => navigate(value)} aria-pressed={libraryFilter === value && section === "all"}
-                  className={"rounded-full border px-3 py-1.5 text-xs font-semibold capitalize transition-colors " +
+                  className={"min-h-11 rounded-full border px-3 py-1.5 text-xs font-semibold capitalize transition-colors " +
                     (libraryFilter === value && section === "all" ? "border-rose-600 bg-rose-600/20 text-rose-100" : "border-neutral-700 text-neutral-400 hover:text-white")}>
                   {value === "all" ? "All media" : value}
                 </button>
               ))}
               <button type="button" aria-pressed={section === "playlists"} onClick={() => browsePlaylist("")}
-                className={"flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-semibold " +
+                className={"flex items-center gap-1.5 min-h-11 rounded-full border px-3 py-1.5 text-xs font-semibold " +
                   (section === "playlists" ? "border-rose-600 bg-rose-600/20 text-rose-100" : "border-neutral-700 text-neutral-400")}>
                 <Layers className="size-3" /> Playlists
               </button>
               <button type="button" aria-pressed={section === "favorites"} onClick={() => navigate("all", "favorites")}
-                className={"flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-semibold " +
+                className={"flex items-center gap-1.5 min-h-11 rounded-full border px-3 py-1.5 text-xs font-semibold " +
                   (section === "favorites" ? "border-rose-600 bg-rose-600/20 text-rose-100" : "border-neutral-700 text-neutral-400")}>
                 <Heart className="size-3" /> Favorites
               </button>
@@ -506,7 +507,7 @@ export function LibraryPage({
                 <ArrowDownAZ className="size-4" aria-hidden="true" />
                 <span className="sr-only">Sort media</span>
                 <select aria-label="Sort vault" value={sort} onChange={event => { const nextSort = event.target.value as SortMode; setSort(nextSort); updateServerView(section, activeCollectionID, selectedPlaylistID, nextSort); }}
-                  className="min-h-8 rounded-lg border border-neutral-700 bg-neutral-950 px-2 text-xs text-neutral-200">
+                  className="min-h-11 rounded-lg border border-neutral-700 bg-neutral-950 px-2 text-xs text-neutral-200">
                   <option value="recent">Recently added</option><option value="oldest">Oldest first</option>
                   <option value="title">Title A–Z</option><option value="size">Largest first</option>
                   <option value="duration">Longest first</option>
@@ -534,8 +535,8 @@ export function LibraryPage({
               <p>{filtered.length} visible · {libraryJobs.length} of {libraryTotalFiles} matching media loaded across {libraryTotalJobs} sources</p>
               <button type="button" onClick={() => { setSelectedKeys(visibleKeys); setSelectionAnchor(visibleKeys[0] || ""); setSelectedKey(visibleKeys[0] || ""); }}
                 disabled={!filtered.length} aria-label="Select all visible media"
-                className="text-rose-300 hover:text-rose-200 disabled:text-neutral-600">Select all loaded</button>
-              {filtersActive && <button type="button" onClick={resetFilters} className="flex items-center gap-1 text-rose-300 hover:text-rose-200"><X className="size-3" />Reset filters</button>}
+                className="min-h-11 rounded-lg px-3 text-rose-300 hover:bg-neutral-800 hover:text-rose-200 disabled:text-neutral-600">Select all loaded</button>
+              {filtersActive && <button type="button" onClick={resetFilters} className="flex min-h-11 items-center gap-1 rounded-lg px-3 text-rose-300 hover:text-rose-200"><X className="size-3" />Reset filters</button>}
             </div>
           </div>
 
@@ -565,10 +566,16 @@ export function LibraryPage({
                 title="Only removes Vault index entries. Downloaded files and download history remain intact."
                 onClick={() => void forgetSelectedMedia()}><X className="size-3.5" />Forget selected (keep files)</button>
             </div>
-            <p className="text-[11px] text-neutral-400">Operations affect only the {bulkSelected.length} loaded, visible selected items. Bulk forgetting is limited to 100 items per operation and never deletes files from disk.</p>
+            <p className="text-xs text-neutral-400">Operations affect only the {bulkSelected.length} loaded, visible selected items. Bulk forgetting is limited to 100 items per operation and never deletes files from disk.</p>
           </div>}
-          {libraryStats.files === 0 && !filtersActive ? (
-            <div className="rounded-2xl border border-neutral-800 bg-neutral-900/60 px-6 py-16 text-center">
+          {!serviceReady ? (
+            <div role="status" className="rounded-2xl border border-neutral-800 bg-gradient-to-br from-rose-950/30 to-neutral-950 px-6 py-16 text-center">
+              <RefreshCw className="mx-auto size-8 motion-safe:animate-spin text-rose-300" aria-hidden="true" />
+              <h3 className="mt-3 font-semibold">Loading your Vault</h3>
+              <p className="mt-1 text-sm text-neutral-300">Your saved media will appear when the app is ready.</p>
+            </div>
+          ) : libraryStats.files === 0 && !filtersActive ? (
+            <div className="rounded-2xl border border-neutral-800 bg-gradient-to-br from-rose-950/30 via-neutral-900 to-neutral-950 px-6 py-16 text-center">
               <Film className="mx-auto size-9 text-rose-400" aria-hidden="true" />
               <h3 className="mt-3 font-semibold">Your media vault is empty</h3>
               <p className="mt-1 text-sm text-neutral-400">Finished downloads appear here automatically.</p>
@@ -611,7 +618,7 @@ export function LibraryPage({
                     <h3 className={"font-semibold leading-snug text-white " + (libraryLayout === "list" ? "truncate text-sm" : "line-clamp-2 min-h-10 text-[13px]")}
                       title={item.title}>{item.title}</h3>
                     <p className="mt-1 truncate text-xs text-neutral-400" title={item.channel}>{item.channel}</p>
-                    <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px] text-neutral-400">
+                    <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-neutral-400">
                       {item.mediaType === "audio" ? <FileAudio className="size-3.5 text-rose-400" aria-label="Audio" /> : <Film className="size-3.5 text-rose-400" aria-label="Video" />}
                       {item.file.height ? <span>{item.file.height}p</span> : null}
                       <span>{formatBytes(item.file.size)}</span>
@@ -696,18 +703,21 @@ export function LibraryPage({
                 title="Remove only this file from the vault index; keep the downloaded file"
                 onClick={() => void jobAction(selected.job, "remove-library-item", selected.file.id)}><X className="size-3.5" />Forget item</button>
             </div>
-            <button type="button" className={button + " w-full border-red-900/70 text-red-300 hover:border-red-700 hover:bg-red-950/40"}
+            <div role="group" aria-label="Permanent deletion" className="!mt-6 space-y-3 border-t border-red-900/50 pt-5">
+            <p className="text-xs font-semibold text-red-300">Permanent deletion</p>
+            <button type="button" className={button + " min-h-11 w-full border-red-900/70 text-red-300 hover:border-red-700 hover:bg-red-950/40"}
               title="Permanently delete only the selected file"
               disabled={busyAction === selected.job.id || !stoppedJob(selected.job) || !selected.available || !selected.file.outputRelativePath}
               onClick={() => void jobAction(selected.job, "delete-library-file", selected.file.id)}>
               <Trash2 className="size-4" />Delete selected file
             </button>
-            <button type="button" className={button + " w-full border-red-900/70 text-red-300 hover:border-red-700 hover:bg-red-950/40"}
+            <button type="button" className={button + " min-h-11 w-full border-red-900/70 text-red-300 hover:border-red-700 hover:bg-red-950/40"}
               title="Permanently delete every file belonging to this download job"
               disabled={busyAction === selected.job.id || !stoppedJob(selected.job)} onClick={() => void jobAction(selected.job, "delete-all")}>
               <Trash2 className="size-4" />Delete entire download
             </button>
-            <p className="text-xs text-amber-300">Deletes every file from the entire source download, including other media on unloaded Vault pages. This cannot be undone.</p>
+            <p className="text-xs text-amber-300">Deleting the selected file affects only that file. Deleting the entire download removes every file from that source, including media on unloaded Vault pages. Both actions require confirmation and cannot be undone.</p>
+            </div>
             {!stoppedJob(selected.job) && <p className="text-xs text-neutral-400">Finished files are ready to preview. Stop the download before deleting or forgetting files.</p>}
             {(selected.job.status === "partial" || selected.job.status === "failed" || selected.job.status === "cancelled") &&
               <button type="button" className={button + " w-full"} disabled={busyAction === selected.job.id} onClick={() => void jobAction(selected.job, "retry")}>

@@ -398,6 +398,56 @@ async function remount() {
 }
 
 describe("Downloader UI and Go API integration", () => {
+  test("associates inline link feedback with single and multiple link fields", async () => {
+    for (const multiple of [false, true]) {
+      if (multiple) await click(button("Multiple links"));
+      const input = container.querySelector("#video-url");
+      expect(button("View options").disabled).toBe(true);
+      expect(input.getAttribute("aria-describedby")).toBe("video-url-feedback");
+      expect(container.querySelector("#video-url-feedback").textContent).toContain("Paste a YouTube link");
+      await (multiple ? setTextarea : setInput)(input, "not-a-link");
+      await click(button("View options"));
+      expect(input.getAttribute("aria-invalid")).toBe("true");
+      expect(container.querySelector("#video-url-feedback").textContent).toBe("Enter a complete YouTube link, including https://");
+      expect(requests.some(item => item.path === "/api/inspect")).toBe(false);
+      await (multiple ? setTextarea : setInput)(input, "");
+      expect(input.getAttribute("aria-invalid")).toBe("false");
+    }
+  });
+
+  test("shows unsaved preferences across tabs and clears the indicator after revert or save", async () => {
+    await click(button("Settings"));
+    expect(container.querySelectorAll('button[type="submit"]')).toHaveLength(1);
+    const about = [...container.querySelectorAll("details")].find(node => node.querySelector("summary")?.textContent === "About & updates");
+    expect(about.open).toBe(false);
+    const originalPath = container.querySelector("#download-location").value;
+    await setInput(container.querySelector("#download-location"), originalPath + "-new");
+    expect(container.textContent).toContain("Unsaved changes");
+    await click(button("Queue"));
+    await click(button("Settings"));
+    expect(container.textContent).toContain("Unsaved changes");
+    await setInput(container.querySelector("#download-location"), originalPath);
+    expect(container.textContent).not.toContain("Unsaved changes");
+    await setInput(container.querySelector("#download-location"), originalPath + "-saved");
+    await click(button("Save preferences"));
+    expect(container.textContent).not.toContain("Unsaved changes");
+    expect(button("Saved")).toBeTruthy();
+  });
+
+  test("retains a thumbnail placeholder when artwork is missing or fails", async () => {
+    rows = [{ ...job, status: "completed", files: [
+      { id: "missing-art", name: "missing.mp4", size: 1000, publishedAvailable: true },
+      { id: "broken-art", name: "broken.mp4", size: 1000, publishedAvailable: true, thumbnailUrl: "https://i.ytimg.com/vi/broken/hqdefault.jpg" },
+    ] }];
+    await remount();
+    await click(button("Vault"));
+    expect(container.querySelectorAll("[data-media-card] [data-thumbnail-placeholder]")).toHaveLength(2);
+    const image = container.querySelector('[data-media-card] img');
+    await act(async () => image.dispatchEvent(new testWindow.Event("error")));
+    expect(container.querySelector('[data-media-card] img')).toBeNull();
+    expect(container.querySelectorAll("[data-media-card] [data-thumbnail-placeholder]")).toHaveLength(2);
+  });
+
   test("uses desktop app language across the main screens and advanced settings", async () => {
     const assertProductCopy = () => {
       const copy = container.textContent + [...container.querySelectorAll("[title], [aria-label]")].map(element => `${element.getAttribute("title") || ""} ${element.getAttribute("aria-label") || ""}`).join(" ");
@@ -437,7 +487,7 @@ describe("Downloader UI and Go API integration", () => {
     await remount();
     await click(button("Settings"));
     expect(container.querySelector('[role="alert"]').textContent).toContain("writable storage");
-    expect(container.querySelector("#service-heading")).toBeTruthy();
+    expect(container.querySelector('[role="status"][aria-label="App reconnecting"]')).toBeTruthy();
     expect(requests.some(item => item.path === "/api/jobs")).toBe(false);
   });
   test("shows saved corruption diagnostics without exposing quarantined payloads", async () => {
@@ -508,7 +558,7 @@ describe("Downloader UI and Go API integration", () => {
     expect(requests.some(item => item.path === "/api/inspect" && JSON.parse(item.body).url === inspection.url)).toBe(true);
     expect(container.textContent).toContain("Test playlist");
     expect(container.textContent).toContain("2 of 2 selectable playlist items selected");
-    expect(button("Add 1 to queue").disabled).toBe(true);
+    expect(button("Add 2 to queue").disabled).toBe(true);
     await click(button("Choose items"));
     await click(container.querySelector('input[aria-label="Select playlist item 2"]'));
     expect(container.textContent).toContain("1 of 2 selectable playlist items selected");
@@ -524,7 +574,7 @@ describe("Downloader UI and Go API integration", () => {
       url: inspection.url, quality: "best", videoStrategy: "vp9", mediaType: "video", category: "Music", rightsConfirmed: true,
       items: [playlistEntries[0]],
     });
-    expect(container.textContent).toContain("Playlist added with 1 selected item");
+    expect(container.textContent).toContain("1 download added to the queue.");
   });
   test("queues a selected caption language and SRT sidecar format", async () => {
     await connect();
@@ -539,7 +589,8 @@ describe("Downloader UI and Go API integration", () => {
     expect(format).toBeTruthy();
     await setSelect(format, "srt");
     await click(container.querySelector('input[aria-label="Confirm download rights"]'));
-    await click(button("Add 1 to queue"));
+    await click(button("Add 2 to queue"));
+    expect(container.textContent).toContain("2 downloads added to the queue.");
     const creates = requests.filter(item => item.path === "/api/jobs" && item.method === "POST");
     const body = JSON.parse(creates.at(-1).body);
     expect(body.subtitleLanguage).toBe("en");
@@ -576,7 +627,7 @@ describe("Downloader UI and Go API integration", () => {
     await click(button("Choose items"));
     await click(button("Clear all"));
     expect(container.textContent).toContain("0 of 2 selectable playlist items selected");
-    expect(button("Add 1 to queue").disabled).toBe(true);
+    expect(button("Add 0 to queue").disabled).toBe(true);
     await click(button("Select all"));
     expect(container.textContent).toContain("2 of 2 selectable playlist items selected");
     await setSelect(container.querySelector('select[aria-label^="Media type for"]'), "audio");
@@ -591,7 +642,7 @@ describe("Downloader UI and Go API integration", () => {
     await setSelect(container.querySelector('select[aria-label^="Audio format for"]'), "m4a");
     expect(container.querySelector('select[aria-label^="MP3 bitrate for"]')).toBeFalsy();
     await click(container.querySelector('input[aria-label="Confirm download rights"]'));
-    await click(button("Add 1 to queue"));
+    await click(button("Add 2 to queue"));
     const creates = requests.filter(item => item.path === "/api/jobs" && item.method === "POST");
     const body = JSON.parse(creates.at(-1).body);
     expect(body.audioFormat).toBe("m4a");
@@ -803,6 +854,45 @@ describe("Downloader UI and Go API integration", () => {
     expect(notifications[0].options.body).toContain("Notification fixture");
   });
 
+  test("counts playlist downloads only on Queue and notifies each task once", async () => {
+    notificationsEnabled = true;
+    keepEventsOpen = true;
+    const items = ["First task", "Second task", "Previously completed task"].map((title, index) => ({
+      index: index + 1, title, status: index === 2 ? "completed" : "downloading",
+      progress: 50, downloadedBytes: 500, totalBytes: 1000, speedBytesPerSec: 100, etaSeconds: 5,
+    }));
+    rows = [{ ...job, id: "playlist-tasks", status: "downloading", totalCount: 3, items,
+      files: [{ id: "existing-file", name: "existing.mp4", size: 1000 }] }];
+    await remount();
+    await connect();
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 20)); });
+    const nav = container.querySelector('nav[aria-label="Main navigation"]');
+    expect([...nav.querySelectorAll("button")].find(node => node.textContent.startsWith("Queue")).textContent).toBe("Queue3");
+    expect([...nav.querySelectorAll("button")].find(node => node.textContent.startsWith("Vault")).textContent).toBe("Vault");
+    expect(notifications).toHaveLength(0);
+
+    const completed = { ...rows[0], items: items.map(item => item.index === 1 ? { ...item, status: "completed" } : item) };
+    await act(async () => {
+      emitLiveEvent({ type: "job-file-finalized", job: completed });
+      emitLiveEvent({ type: "snapshot", jobs: [completed] });
+      await new Promise(resolve => setTimeout(resolve, 20));
+    });
+    expect(notifications).toHaveLength(1);
+    expect(notifications[0].title).toBe("Download completed");
+    expect(notifications[0].options.body).toContain("First task");
+
+    const finished = { ...completed, status: "partial", items: completed.items.map(item => item.index === 2 ? { ...item, status: "failed", error: "Network request failed." } : item) };
+    await act(async () => {
+      emitLiveEvent({ type: "job-status", job: finished });
+      emitLiveEvent({ type: "job-status", job: finished });
+      await new Promise(resolve => setTimeout(resolve, 20));
+    });
+    expect(notifications).toHaveLength(2);
+    expect(notifications[1].title).toBe("Download failed");
+    expect(notifications[1].options.body).toContain("Second task");
+    expect(notifications[0].options.tag).not.toBe(notifications[1].options.tag);
+  });
+
   test("uses the native folder picker for download location", async () => {
     await click(button("Settings"));
     await click(button("Browse"));
@@ -1000,7 +1090,7 @@ describe("Downloader UI and Go API integration", () => {
     await click(button("View options"));
     await click(container.querySelector('input[aria-label="Confirm download rights"]'));
     await click(container.querySelector('input[aria-label="Add as paused"]'));
-    await click(button("Add 1 to queue"));
+    await click(button("Add 2 to queue"));
     const request = requests.find(item => item.path === "/api/jobs" && item.method === "POST");
     expect(JSON.parse(request.body).startPaused).toBe(true);
   });

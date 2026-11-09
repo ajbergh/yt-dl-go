@@ -3,7 +3,7 @@ import { SortableContext, sortableKeyboardCoordinates, verticalListSortingStrate
 import { useState, type Dispatch, type FormEvent, type SetStateAction } from "react";
 import {
   AlertCircle, ArrowDownToLine, ChevronDown, CircleHelp, DownloadCloud, Film, Layers, ListVideo,
-  LoaderCircle, Pause, Play, Plus, RefreshCw, Search, Trash2, X,
+  LoaderCircle, Pause, Play, RefreshCw, Search, Trash2, X,
 } from "lucide-react";
 import { formatBytes, isActive, type AppSettings, type DownloadJob, type QueueItem, type Quality, type VideoStrategy } from "../lib/downloader";
 import {
@@ -80,6 +80,7 @@ export function QueuePage({
   setQueueFilter, search, setSearch, filteredQueue, retryPlaylistItem, retryAllFailedItems, updateJobConfiguration,
   bulkJobAction, saveFile, jobAction,
 }: QueuePageProps) {
+  const draftTaskCount = drafts.reduce((count, draft) => count + (draft.kind === "playlist" ? selectedPlaylistEntries(draft).length : 1), 0);
   const [selectedJobIDs, setSelectedJobIDs] = useState<string[]>([]);
   const [editingJobID, setEditingJobID] = useState("");
   const queueSensors = useSensors(
@@ -95,7 +96,6 @@ export function QueuePage({
                 <form onSubmit={addDownloads} className="min-w-0 p-5 sm:p-7">
                   <div className="mb-5 flex flex-wrap items-start justify-between gap-3">
                     <div>
-                      <p className="mb-1 flex items-center gap-2 text-xs font-bold uppercase tracking-[0.16em] text-rose-400"><Plus className="size-3.5" aria-hidden="true" />Add downloads</p>
                       <h2 id="new-download-heading" className="text-2xl font-bold tracking-tight">New download</h2>
                       <p className="mt-1 text-xs text-neutral-400">Choose a video or playlist, then pick the quality and format.</p>
                     </div>
@@ -105,25 +105,27 @@ export function QueuePage({
                     </div>
                   </div>
 
-                  <div className="grid items-start gap-3 sm:grid-cols-[1fr_auto]">
+                   <div className="grid items-center gap-x-3 sm:grid-cols-[1fr_auto]">
+                     <div className="min-w-0">
                     <label className="min-w-0 text-xs font-semibold text-neutral-300" htmlFor="video-url">Video or playlist link{batchMode ? "s" : ""}
-                      {batchMode ? <textarea id="video-url" rows={3} value={url} onChange={event => { setUrl(event.target.value); setFormError(""); }} placeholder="One YouTube link per line" autoComplete="off" spellCheck={false} className={`${field} mt-2 resize-y font-mono text-xs`} />
-                        : <input id="video-url" type="url" value={url} onChange={event => { setUrl(event.target.value); setFormError(""); }} placeholder="https://www.youtube.com/watch?v=..." autoComplete="off" spellCheck={false} className={`${field} mt-2 min-h-12`} />}
+                       {batchMode ? <textarea id="video-url" aria-invalid={Boolean(formError)} aria-describedby="video-url-feedback" rows={3} value={url} onChange={event => { setUrl(event.target.value); setFormError(""); }} placeholder="One YouTube link per line" autoComplete="off" spellCheck={false} className={`${field} mt-2 resize-y font-mono text-xs ${formError ? "border-red-400 focus:border-red-400" : ""}`} />
+                         : <input id="video-url" aria-invalid={Boolean(formError)} aria-describedby="video-url-feedback" type="url" value={url} onChange={event => { setUrl(event.target.value); setFormError(""); }} placeholder="Paste a YouTube video or playlist URL" autoComplete="off" spellCheck={false} className={`${field} mt-2 min-h-12 ${formError ? "border-red-400 focus:border-red-400" : ""}`} />}
                     </label>
-                    <button type="button" onClick={() => void inspectLinks()} disabled={!serviceReady || inspecting || !url.trim()} className={`${button} min-h-12 px-4 sm:mt-5`}>
+                     <p id="video-url-feedback" aria-live="polite" className={`min-h-12 py-1 text-xs leading-5 ${formError ? "text-red-300" : "text-neutral-400"}`}>{formError || (!url.trim() ? "Paste a YouTube link to enable View options." : "Use a complete YouTube link, including https://")}</p>
+                     </div>
+                     <button type="button" aria-describedby="video-url-feedback" onClick={() => void inspectLinks()} disabled={!serviceReady || inspecting || !url.trim()} className={`${button} min-h-12 px-4 sm:-mt-6`}>
                       {inspecting ? <LoaderCircle className="size-4 animate-spin" aria-hidden="true" /> : <Search className="size-4 text-rose-400" aria-hidden="true" />}
                       {inspecting ? "Loading…" : "View options"}
                     </button>
-                  </div>
+                   </div>
                   <p className="mt-2 flex items-start gap-1.5 text-xs text-neutral-400"><CircleHelp className="mt-0.5 size-3 shrink-0" aria-hidden="true" />Playlist items download in order. Private or unavailable videos may be skipped.</p>
 
                   {!serviceReady && <div className="mt-4 rounded-xl border border-amber-800/60 bg-amber-950/30 p-3 text-xs text-amber-200">The app is starting. You can add downloads in a moment.</div>}
-                  {formError && <p role="alert" className="mt-4 text-sm text-red-300">{formError}</p>}
 
                   {drafts.length > 0 && <div className="mt-5 space-y-3 border-t border-neutral-800 pt-4">
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <div><h3 className="text-xs font-bold uppercase tracking-wider text-neutral-300">Download options</h3><p className="mt-1 text-xs text-neutral-400">Choose the quality, format, and items you want to download.</p></div>
-                      <span className="rounded-full bg-neutral-800 px-2 py-1 text-xs text-neutral-300">{drafts.length} item{drafts.length === 1 ? "" : "s"}</span>
+                      <span className="rounded-full bg-neutral-800 px-2 py-1 text-xs text-neutral-300">{draftTaskCount} download{draftTaskCount === 1 ? "" : "s"}</span>
                     </div>
                     {drafts.length > 1 && <div className="rounded-xl border border-neutral-800 bg-neutral-900/70 p-3">
                       <div className="mb-2 flex items-center justify-between gap-2"><div><p className="text-xs font-bold text-neutral-200">Apply to all inspected items</p><p className="mt-0.5 text-xs text-neutral-400">Batch values update eligible items now; each card can still be overridden afterward.</p></div><Layers className="size-4 text-rose-400" aria-hidden="true" /></div>
@@ -242,13 +244,13 @@ export function QueuePage({
                     </label>
                     <label className="flex cursor-pointer items-start gap-2.5 pt-2 text-xs text-neutral-300">
                       <input type="checkbox" aria-label="Add as paused" checked={startPaused} onChange={event => setStartPaused(event.target.checked)} className="mt-0.5 size-4 shrink-0 accent-rose-600" />
-                      <span>Add as paused. The job stays in the queue until you resume it.</span>
+                      <span>Add as paused. Downloads stay in the queue until you resume them.</span>
                     </label>
                     <div className="flex flex-wrap items-center justify-between gap-3">
                       <button type="button" onClick={() => { setDrafts([]); setRightsConfirmed(false); }} className="px-2 py-2 text-xs text-neutral-400 hover:text-white">Clear options</button>
                       <button type="submit" disabled={submitting || !serviceReady || !rightsConfirmed || drafts.some(draft => draft.kind === "playlist" && draft.selectedPlaylistIndexes.length === 0)} className={primaryButton}>
                         {submitting && <LoaderCircle className="size-4 animate-spin" aria-hidden="true" />}
-                        {submitting ? "Adding…" : `Add ${drafts.length} to queue`}<ChevronDown className="size-3.5 -rotate-90" aria-hidden="true" />
+                        {submitting ? "Adding…" : `Add ${draftTaskCount} to queue`}<ChevronDown className="size-3.5 -rotate-90" aria-hidden="true" />
                       </button>
                     </div>
                   </div>}
@@ -258,7 +260,7 @@ export function QueuePage({
 
             <section aria-labelledby="queue-heading" className="space-y-3">
               <div className="flex flex-wrap items-end justify-between gap-3">
-                <div><p className="mb-1 text-xs font-bold uppercase tracking-[0.16em] text-neutral-400">Downloads</p><h2 id="queue-heading" className="text-xl font-bold">Active downloads & batch queue <span className="ml-1 text-sm font-medium text-neutral-400">({visibleQueueRows.length})</span></h2><p className="mt-1 text-xs text-neutral-400">{activeCount} / {settings.maxConcurrentDownloads} active · {formatBytes(totalCurrentSpeed)}/s combined</p></div>
+                 <div><h2 id="queue-heading" className="text-xl font-bold">Downloads <span className="ml-1 text-sm font-medium text-neutral-400">({visibleQueueRows.length})</span></h2><p className="mt-1 text-xs text-neutral-400">{activeCount} / {settings.maxConcurrentDownloads} active · {formatBytes(totalCurrentSpeed)}/s combined</p></div>
                 <div className="flex flex-wrap gap-2">
                   <button type="button" className={button} onClick={() => void batchAction("pause")} disabled={!serviceReady || !jobs.some(job => job.status === "queued" || job.status === "downloading" || job.status === "processing")}><Pause className="size-3.5" aria-hidden="true" />Pause all</button>
                   <button type="button" className={button} onClick={() => void batchAction("resume")} disabled={!serviceReady || !jobs.some(job => job.status === "paused")}><Play className="size-3.5" aria-hidden="true" />Resume all</button>
@@ -281,7 +283,7 @@ export function QueuePage({
               </div>
 
               {queuedJobsOrdered.length > 0 && <div className={`${panel} space-y-3 p-3`}>
-                <div className="flex flex-wrap items-start justify-between gap-2"><div><p className="text-xs font-bold uppercase tracking-wider text-neutral-300">Queued work order</p><p className="mt-1 text-xs text-neutral-400">Drag queued jobs or playlist items. Active downloads stay in place.</p></div><span className="rounded-full bg-neutral-800 px-2 py-1 text-xs text-neutral-300">{queuedJobsOrdered.length} queued job{queuedJobsOrdered.length === 1 ? "" : "s"}</span></div>
+                <div className="flex flex-wrap items-start justify-between gap-2"><div><p className="text-xs font-bold uppercase tracking-wider text-neutral-300">Queued work order</p><p className="mt-1 text-xs text-neutral-400">Drag queued jobs or playlist items. Active downloads stay in place.</p></div><span className="rounded-full bg-neutral-800 px-2 py-1 text-xs text-neutral-300">{queuedCount} queued download{queuedCount === 1 ? "" : "s"}</span></div>
                 <DndContext sensors={queueSensors} collisionDetection={closestCenter} onDragEnd={event => void reorderQueuedJobs(event)}>
                   <SortableContext items={queuedJobsOrdered.map(job => `job:${job.id}`)} strategy={verticalListSortingStrategy}>
                     <div className="space-y-2">
@@ -318,8 +320,7 @@ export function QueuePage({
               {filteredQueue.length === 0 ? <div className={`${panel} px-5 py-12 text-center`}>
                 <div className="mx-auto mb-3 grid size-12 place-items-center rounded-2xl bg-neutral-800 text-neutral-400"><Layers className="size-5" aria-hidden="true" /></div>
                 <h3 className="text-sm font-semibold text-neutral-200">{jobs.length === 0 ? "No downloads yet" : visibleQueueRows.length === 0 ? "Queue is clear" : "No videos match this filter"}</h3>
-                <p className="mx-auto mt-1 max-w-md text-xs leading-relaxed text-neutral-400">{visibleQueueRows.length === 0 && jobs.length > 0 ? "Cleared downloads remain in your vault. Paste another YouTube link above to start a download." : serviceReady ? "Paste a YouTube link above to add a download. Progress will appear here." : "Your saved history is loading. Downloads will be available shortly."}</p>
-                {jobs.length === 0 && <p className="mt-2 text-xs text-neutral-400">Download videos, convert to MP3, or save original M4A audio.</p>}
+                <p className="mx-auto mt-1 max-w-md text-xs leading-relaxed text-neutral-400">{visibleQueueRows.length === 0 && jobs.length > 0 ? "Cleared downloads remain in your vault. Add another link to start a download." : serviceReady ? "Add a link to start downloading. Progress will appear here." : "Your saved history is loading. Downloads will be available shortly."}</p>
               </div> : <div className="space-y-2.5">
                 {filteredQueue.map(({ job, item }) => {
                   const itemActive = item.status === "downloading" || item.status === "processing";

@@ -1,0 +1,115 @@
+bun test v1.4.4 (38afee6c8)
+
+src\downloader.test.mjs:
+(pass) desktop bootstrap > uses native confirmations without opening a WebView dialog [0.43ms]
+(pass) desktop bootstrap > propagates native dialog errors instead of falling back to WebView confirmation [0.13ms]
+(pass) desktop bootstrap > keeps confirmations available in ordinary browser builds [0.07ms]
+(pass) desktop bootstrap > uses the private connection supplied by Wails before mounting the UI [0.16ms]
+(pass) desktop bootstrap > does not turn ordinary browser builds into desktop clients [0.04ms]
+(pass) desktop bootstrap > rejects an incomplete bridge connection without falling back to HTTP [0.07ms]
+(pass) YouTube URLs > normalizes a video: https://www.youtube.com/watch?v=abcdefghijk [0.29ms]
+(pass) YouTube URLs > normalizes a video: https://youtu.be/abcdefghijk?t=10 [0.01ms]
+(pass) YouTube URLs > normalizes a video: https://m.youtube.com/shorts/abcdefghijk
+(pass) YouTube URLs > normalizes a video: https://youtube.com/live/abcdefghijk
+(pass) YouTube URLs > normalizes a video: https://youtube.com/embed/abcdefghijk
+(pass) YouTube URLs > selects the ENTIRE playlist: https://youtube.com/playlist?list=PL_example [0.05ms]
+(pass) YouTube URLs > selects the ENTIRE playlist: https://youtube.com/watch?v=abcdefghijk&list=PL_example&index=4
+(pass) YouTube URLs > selects the ENTIRE playlist: https://youtu.be/abcdefghijk?list=PL_example
+(pass) YouTube URLs > selects the ENTIRE playlist: https://www.youtube.com/show/VLPLrpqCP1_qdKhShZPqyWk9xJp0HIqRKc-t?sbp=Kgs5NllzeXJJNEt2OEAB [0.01ms]
+(pass) YouTube URLs > rejects unsupported input: http://youtube.com/watch?v=abcdefghijk [0.03ms]
+(pass) YouTube URLs > rejects unsupported input: https://youtube.com.evil.invalid/watch?v=abcdefghijk
+(pass) YouTube URLs > rejects unsupported input: https://user:pass@youtube.com/watch?v=abcdefghijk
+(pass) YouTube URLs > rejects unsupported input: https://youtube.com:444/watch?v=abcdefghijk
+(pass) YouTube URLs > rejects unsupported input: https://youtube.com/redirect?list=PL_example
+(pass) YouTube URLs > rejects unsupported input: https://youtube.com/playlist?list=bad%20id [0.01ms]
+(pass) YouTube URLs > rejects unsupported input: https://youtube.com/watch?v=short
+(pass) YouTube URLs > rejects unsupported input: file:///etc/passwd
+(pass) YouTube URLs > rejects unsupported input: --exec malicious [0.02ms]
+(pass) YouTube URLs > rejects unsupported input: https://youtube.com/@channel
+(pass) YouTube URLs > rejects unsupported input: https://www.youtube.com/show/PLrpqCP1_qdKhShZPqyWk9xJp0HIqRKc-t
+(pass) Download service > allows local HTTP and remote HTTPS [0.07ms]
+(pass) Download service > rejects unsafe service origin: http://downloads.example.invalid [0.03ms]
+(pass) Download service > rejects unsafe service origin: https://user:pass@example.invalid
+(pass) Download service > rejects unsafe service origin: https://example.invalid/api
+(pass) Download service > rejects unsafe service origin: https://example.invalid?token=secret
+(pass) Download service > sends token only in the authorization header [0.30ms]
+(pass) Download service > surfaces service errors [0.08ms]
+(pass) Download service > rejects non-JSON success [0.07ms]
+(pass) human-readable file sizes [0.06ms]
+
+src\ui.test.mjs:
+(pass) filename naming preview > shows each token and sanitizes the single-pass preview like the publisher [132.40ms]
+(pass) Media Vault collection model > rejects corrupt or duplicate collection entries while preserving valid memberships [40.15ms]
+(pass) Media Vault collection model > renaming and removing collections never alters unrelated memberships [103.23ms]
+(pass) Media Vault multi-selection > handles single-click, additive toggle, range, and additive range within the visible result order [260.87ms]
+(pass) Media Vault multi-selection > changes favorites and collection membership without duplicates and enforces per-batch limits [163.33ms]
+(pass) Downloader UI and Go API integration > associates inline link feedback with single and multiple link fields [260.49ms]
+(pass) Downloader UI and Go API integration > shows unsaved preferences across tabs and clears the indicator after revert or save [735.76ms]
+(pass) Downloader UI and Go API integration > retains a thumbnail placeholder when artwork is missing or fails [105.48ms]
+(pass) Downloader UI and Go API integration > uses desktop app language across the main screens and advanced settings [102.83ms]
+(pass) Downloader UI and Go API integration > turns internal data failures into actionable app messages without changing media errors [260.62ms]
+(pass) Downloader UI and Go API integration > connects to the built-in Go service automatically [114.14ms]
+(pass) Downloader UI and Go API integration > does not hide service readiness failures [339.28ms]
+(pass) Downloader UI and Go API integration > shows saved corruption diagnostics without exposing quarantined payloads [182.38ms]
+(pass) Downloader UI and Go API integration > downloads the Vault export archive from Settings [522.83ms]
+(pass) Downloader UI and Go API integration > uploads a Vault export ZIP from Settings [218.38ms]
+(pass) Downloader UI and Go API integration > rejects an incompatible backend without manual setup [155.30ms]
+(pass) Downloader UI and Go API integration > inspects a playlist and submits it only after permission confirmation [261.98ms]
+(pass) Downloader UI and Go API integration > queues a selected caption language and SRT sidecar format [256.78ms]
+(pass) Downloader UI and Go API integration > applies batch inspection settings without removing per-item controls [179.28ms]
+(pass) Downloader UI and Go API integration > supports Select all, Clear all, and MP3 aggregate estimates for playlists [302.47ms]
+(pass) Downloader UI and Go API integration > queues original M4A audio without an MP3 bitrate [263.57ms]
+(pass) Downloader UI and Go API integration > shows build metadata and an available stable release [285.34ms]
+(pass) Downloader UI and Go API integration > shows development build update state without pretending self-update is available [205.97ms]
+(pass) Downloader UI and Go API integration > hides advanced tweaks initially and preserves edits when collapsed [250.76ms]
+(pass) Downloader UI and Go API integration > restores automatic video selection while preserving output and transfer preferences [257.59ms]
+(pass) Downloader UI and Go API integration > warns about low destination disk space without blocking downloads [543.27ms]
+(pass) Downloader UI and Go API integration > persists only a supported preference through the service API [258.75ms]
+(pass) Downloader UI and Go API integration > keeps 360p recovery disabled unless the user opts in [94.02ms]
+(pass) Downloader UI and Go API integration > persists a global bandwidth limit in MiB per second [258.05ms]
+(pass) Downloader UI and Go API integration > maps all roadmap terminal notification classes to concise system alerts [256.12ms]
+(pass) Downloader UI and Go API integration > requests notification permission only when explicitly enabled and persists the choice [257.90ms]
+(pass) Downloader UI and Go API integration > emits a system notification only for a live terminal transition [184.87ms]
+(pass) Downloader UI and Go API integration > counts playlist downloads only on Queue and notifies each task once [521.92ms]
+(pass) Downloader UI and Go API integration > uses the native folder picker for download location [373.91ms]
+(pass) Downloader UI and Go API integration > uses the download folder as the only vault location [262.03ms]
+(pass) Downloader UI and Go API integration > applies live SSE job progress without repeated full-list polling [185.89ms]
+(pass) Downloader UI and Go API integration > shows a downloaded track waiting for a conversion slot separately from active conversion [559.96ms]
+(pass) Downloader UI and Go API integration > renders persisted queue order and moves a queued job next [262.20ms]
+(pass) Downloader UI and Go API integration > retries only one failed playlist item and preserves successful siblings [355.02ms]
+(pass) Downloader UI and Go API integration > retries every failed playlist item in one request [375.73ms]
+(pass) Downloader UI and Go API integration > edits a queued job's quality and category [257.17ms]
+(pass) Downloader UI and Go API integration > bulk pause uses one job-ID request [374.47ms]
+(pass) Downloader UI and Go API integration > resumes more than 100 jobs in bounded batches [702.56ms]
+(pass) Downloader UI and Go API integration > retains failed selections after partial and all-failed bulk deletion [369.33ms]
+(pass) Downloader UI and Go API integration > submits a new job with the add-as-paused choice [333.13ms]
+(pass) Downloader UI and Go API integration > does not regress newer SSE lifecycle state with stale action acknowledgements [109.48ms]
+(pass) Downloader UI and Go API integration > pauses a running job through the backend [387.16ms]
+(pass) Downloader UI and Go API integration > filters the Vault by category and channel and persists layout preference [504.06ms]
+(pass) Downloader UI and Go API integration > creates, renames and deletes a collection without deleting any media files [375.47ms]
+(pass) Downloader UI and Go API integration > hydrates favorites and collections from the backend across remounts [183.80ms]
+(pass) Downloader UI and Go API integration > browses loaded playlist media separately from standalone videos [305.48ms]
+(pass) Downloader UI and Go API integration > renders media files individually and persists favorites [242.82ms]
+(pass) Downloader UI and Go API integration > selects loaded media with shift and control clicks, then applies one persisted bulk organization update [391.74ms]
+(pass) Downloader UI and Go API integration > Ctrl/Cmd+A and Escape select and clear loaded media without hijacking search input [340.97ms]
+(pass) Downloader UI and Go API integration > bulk forgetting asks once, never deletes disk files, and leaves failed items selected [161.00ms]
+(pass) Downloader UI and Go API integration > paginates more than 100 files from one playlist without dropping repeated source IDs [1010.16ms]
+(pass) Downloader UI and Go API integration > refreshes finalized active files without losing loaded pages or the selected sort [869.96ms]
+(pass) Downloader UI and Go API integration > keeps active finalized files playable while disabling stopped-job mutations and mixed bulk forget [239.06ms]
+(pass) Downloader UI and Go API integration > favorite browse loads only matching files from across server pages [853.70ms]
+(pass) Downloader UI and Go API integration > prefers authenticated local thumbnails and retains remote artwork as fallback metadata [142.95ms]
+(pass) Downloader UI and Go API integration > defers local thumbnail API downloads until the card enters the viewport margin [544.17ms]
+(pass) Downloader UI and Go API integration > waits for native confirmation before forgetting history [349.02ms]
+(pass) Downloader UI and Go API integration > shows a native confirmation failure without performing the action [181.60ms]
+(pass) Downloader UI and Go API integration > offers scoped selected-file and whole-download actions [126.12ms]
+(pass) Downloader UI and Go API integration > confirms and deletes only the selected file without deleting its playlist siblings [323.02ms]
+(pass) Downloader UI and Go API integration > previews download-folder media through an inline scoped ticket without autoplay [373.25ms]
+(pass) Downloader UI and Go API integration > plays server-decoded WAV preview bytes locally, supports seeking, and releases the buffer on close [305.21ms]
+(pass) Downloader UI and Go API integration > cancels a pending MP3 preview when closed and ignores late responses [374.97ms]
+(pass) Downloader UI and Go API integration > offers a retry after an MP3 preview transfer fails [317.88ms]
+(pass) Downloader UI and Go API integration > does not offer extra saves for a playlist already on disk [361.95ms]
+
+ 105 pass
+ 0 fail
+ 627 expect() calls
+Ran 105 tests across 2 files. [22.48s]

@@ -43,7 +43,7 @@ export function HomePage() {
   const [formError, setFormError] = useState("");
   const [notice, setNotice] = useState("");
   const {
-    newCategoryInput, setNewCategoryInput, savingSettings, settingsSaved, changeSetting,
+    newCategoryInput, setNewCategoryInput, savingSettings, settingsSaved, settingsDirty, changeSetting,
     selectDownloadFolder, savePreferences, toggleNotifications, addCategory, removeCategory,
   } = useSettings({
     connection, serviceReady, settings, setSettings, setRuntimeSettingSources, setRuntimeSettingValues, setServiceError, setNotice,
@@ -301,9 +301,8 @@ export function HomePage() {
         added.push(job);
       }
       setJobs(previous => [...added, ...previous.filter(item => !added.some(value => value.id === item.id))]);
-      setNotice(added.length === 1 && added[0].kind === "playlist"
-        ? `Playlist added with ${drafts[0].selectedPlaylistIndexes.length} selected item${drafts[0].selectedPlaylistIndexes.length === 1 ? "" : "s"}; original playlist positions are preserved.`
-        : `${added.length} download${added.length === 1 ? "" : "s"} added to the queue.`);
+      const addedTasks = drafts.reduce((count, draft) => count + (draft.kind === "playlist" ? selectedPlaylistEntries(draft).length : 1), 0);
+      setNotice(`${addedTasks} download${addedTasks === 1 ? "" : "s"} added to the queue.`);
       setUrl("");
       setDrafts([]);
       setRightsConfirmed(false);
@@ -348,13 +347,12 @@ export function HomePage() {
                 className={`flex min-w-0 flex-1 items-center justify-center gap-1.5 rounded-lg px-2 py-2 sm:px-3 text-xs font-semibold transition-colors sm:flex-none ${tab === value ? "bg-neutral-800 text-white shadow-sm" : "text-neutral-400 hover:text-neutral-200"}`}>
                 <Icon className="hidden size-3.5 shrink-0 text-rose-400 min-[360px]:block" aria-hidden="true" />{label}
                 {value === "queue" && visibleQueueRows.length > 0 && <span className="rounded-full bg-rose-600 px-1.5 text-xs text-white">{visibleQueueRows.length}</span>}
-                {value === "library" && libraryTotalJobs > 0 && <span className="rounded-full bg-neutral-700 px-1.5 text-xs text-neutral-200">{libraryTotalJobs}</span>}
               </button>
             ))}
           </nav>
 
           <div className="flex items-center gap-2">
-            <div className="hidden items-center gap-2 rounded-lg border border-neutral-800 bg-neutral-900/70 px-2.5 py-2 text-xs sm:flex">
+            <div role="status" aria-label={serviceReady ? "App ready" : serviceError ? "App reconnecting" : "App starting"} className="flex items-center gap-1.5 rounded-lg border border-neutral-800 bg-neutral-900/70 px-2 py-2 text-xs">
               {serviceReady ? <><Activity className="size-3.5 text-emerald-400" aria-hidden="true" /><span className="text-emerald-300">Ready</span></>
                 : <><AlertCircle className="size-3.5 text-amber-400" aria-hidden="true" /><span className="text-neutral-300">{serviceError ? "Retrying…" : "Starting…"}</span></>}
             </div>
@@ -427,6 +425,7 @@ export function HomePage() {
         />}
 
         {tab === "library" && <LibraryPage
+          serviceReady={serviceReady}
           libraryJobs={libraryJobs}
           visibleLibraryJobs={visibleLibraryJobs}
           libraryTotalJobs={libraryTotalJobs}
@@ -465,6 +464,7 @@ export function HomePage() {
           runtimeSettingValues={runtimeSettingValues}
           savingSettings={savingSettings}
           settingsSaved={settingsSaved}
+          settingsDirty={settingsDirty}
           mp3Supported={mp3Supported}
           buildInfo={buildInfo}
           updateStatus={updateStatus}
@@ -501,7 +501,7 @@ export function HomePage() {
           </div>
         </div>
       </div>}
-      <footer className="mx-auto flex max-w-7xl items-center justify-between gap-3 px-4 pb-8 text-xs text-neutral-400 sm:px-6"><span className="flex items-center gap-1.5"><Clock3 className="size-3" aria-hidden="true" />Live download updates</span><span className="flex items-center gap-1.5"><HardDrive className="size-3" aria-hidden="true" />Saved history</span></footer>
+      <footer className="mx-auto flex max-w-7xl items-center justify-between gap-3 px-4 pb-8 text-xs text-neutral-400 sm:px-6"><span tabIndex={0} title="Download progress updates automatically while the app is connected." className="flex items-center gap-1.5"><Clock3 className="size-3" aria-hidden="true" />Live download updates</span><span tabIndex={0} title="Completed downloads are kept in your Vault between app sessions." className="flex items-center gap-1.5"><HardDrive className="size-3" aria-hidden="true" />Saved history</span></footer>
     </div>
   );
 }

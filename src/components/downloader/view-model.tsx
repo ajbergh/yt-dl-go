@@ -166,6 +166,9 @@ export function LibraryThumbnail({ connection, jobId, file, audio, className }: 
   const containerRef = useRef<HTMLDivElement>(null);
   const [nearViewport, setNearViewport] = useState(() => typeof IntersectionObserver === "undefined");
   const source = localSource?.requestKey === requestKey ? localSource.url : file.thumbnailUrl ?? "";
+  const [imageState, setImageState] = useState<{ source: string; status: "loaded" | "failed" } | null>(null);
+  const imageLoaded = imageState?.source === source && imageState.status === "loaded";
+  const imageFailed = imageState?.source === source && imageState.status === "failed";
 
   useEffect(() => {
     // Remote artwork uses native image lazy loading. Defer authenticated local
@@ -203,9 +206,14 @@ export function LibraryThumbnail({ connection, jobId, file, audio, className }: 
 
   const mediaClassName = className ?? "aspect-video w-24 shrink-0 rounded-md bg-neutral-900 object-cover";
   return <div ref={containerRef} className="w-full">
-    {source
-      ? <img loading="lazy" src={source} alt="" referrerPolicy="no-referrer" data-local-thumbnail={file.thumbnailLocalAvailable ? "preferred" : undefined} className={mediaClassName} />
-      : <div className={"grid place-items-center text-neutral-600 " + mediaClassName}>{audio ? <Activity className="size-5" aria-hidden="true" /> : <Film className="size-5" aria-hidden="true" />}</div>}
+    <div className={"relative isolate overflow-hidden " + mediaClassName}>
+      <div aria-hidden="true" data-thumbnail-placeholder={imageLoaded ? undefined : "true"} className={`absolute inset-0 grid place-items-center bg-gradient-to-br from-rose-950 via-neutral-800 to-neutral-950 text-rose-200/80 ${source && !imageLoaded && !imageFailed ? "motion-safe:animate-pulse" : ""}`}>
+        {audio ? <Activity className="size-8" /> : <Film className="size-8" />}
+      </div>
+      {source && !imageFailed && <img loading="lazy" src={source} alt="" referrerPolicy="no-referrer" data-local-thumbnail={file.thumbnailLocalAvailable ? "preferred" : undefined}
+        onLoad={() => setImageState({ source, status: "loaded" })} onError={() => setImageState({ source, status: "failed" })}
+        className={`absolute inset-0 h-full w-full object-cover transition-opacity ${imageLoaded ? "opacity-100" : "opacity-0"}`} />}
+    </div>
   </div>;
 }
 
