@@ -188,7 +188,7 @@ not expose the desktop service. Data/output preferences and other engine setting
 continue to apply.
 
 SSE and ranged previews use real authenticated HTTP rather than Wails' buffering
-asset handler. File/ZIP saves and Library exports use native save dialogs and
+asset handler. File/ZIP saves and Vault exports use native save dialogs and
 stream to a temporary file beside the selected destination; a failed transfer
 does not overwrite an existing file. Tokens are not stored in local storage or
 URLs. Folder selection uses the Wails native picker. Confirmation prompts use
@@ -198,9 +198,14 @@ browser/server edition retains browser confirmations.
 
 File → Exit follows the normal shutdown path; Help → About displays version,
 commit, and build date. macOS also retains its application and Edit menus.
-Library playback reads the user-selected download folder directly. For MP3 previews the service decodes the saved file with its Go decoder into a private temporary PCM/WAV file, avoiding silent gaps in Chromium MP3 decoding. The temporary WAV is deleted after the response; the saved MP3 remains unchanged. The player buffers this WAV before enabling the standard playback controls. Closing the preview cancels a pending fetch and releases its Blob. Videos and M4A retain streamed previews. Library
-cards provide Reveal, Copy path, Preview, and a single Delete files action;
-Queue saves and Settings Library exports remain available.
+Vault playback reads the user-selected download folder directly. For MP3 previews the service decodes the saved file with its Go decoder into a private temporary PCM/WAV file, avoiding silent gaps in Chromium MP3 decoding. The temporary WAV is deleted after the response; the saved MP3 remains unchanged. The player buffers this WAV before enabling the standard playback controls. Closing the preview cancels a pending fetch and releases its Blob. Videos and M4A retain streamed previews.
+
+Vault cards and media details provide Preview, Reveal, Copy path, and Open folder.
+Forget item removes the selected Vault index entry while preserving the file and
+job history. Delete selected file permanently deletes only that file; Delete
+entire download permanently deletes all files belonging to the source, including
+files on unloaded Vault pages. Both deletion actions use native confirmation.
+Queue saves and Settings Vault exports remain available.
 
 For development, rebuild with `npm run build:desktop`. This deliberately uses
 static production assets rather than Wails' dynamic Vite integration. Existing

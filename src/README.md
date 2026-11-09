@@ -76,12 +76,16 @@ HTTP. It calls:
 
 The quality choices are maximum heights. A completed file reports its actual `height` and `mimeType`; the job `note` discloses adaptive-HD or progressive-fallback behavior. The full request and response contract is in [server/README.md](server/README.md).
 
-## Library and confirmation behavior
+## Vault and confirmation behavior
 
-The download folder is the sole media location. Library playback uses scoped
+The download folder is the sole media location. Vault playback uses scoped
 HTTP tickets to read the tracked folder file; it does not require a second app
-copy. Library cards expose Reveal, Copy path, Preview, and one Delete files
-operation for the job's files. Queue history removal preserves Library files.
+copy. Vault cards and media details expose Preview, Reveal, Copy path, and Open
+folder. Forget item removes only the selected file's Vault index entry while
+preserving its downloaded file and job history. Delete selected file permanently
+deletes only that file; Delete entire download permanently deletes every file
+belonging to the source, including files on unloaded Vault pages. Both deletion
+actions require confirmation. Queue history removal preserves Vault files.
 Settings no longer exposes a storage policy.
 
 All action confirmations go through `confirmAction` in `lib/desktop.ts`. It
@@ -98,7 +102,7 @@ the WebView updates only the frontend.
 | --- | --- |
 | `pages/home.tsx` | Top-level orchestration, derived queue/library state, inspection submission, navigation, and page composition |
 | `pages/queue.tsx` | Add/inspect workflow, batch controls, queue filters, queue cards, and drag/drop presentation |
-| `pages/library.tsx` | Library filtering/layout, file cards, preview/Reveal/Copy path controls, and file-deletion presentation |
+| `pages/library.tsx` | Vault filtering/layout, file cards, preview/filesystem controls, and scoped file-deletion presentation |
 | `pages/settings.tsx` | Preferences, download location, advanced settings, and application diagnostics |
 | `hooks/use-service.ts` | Backend bootstrap, SQLite hydration, SSE updates, reconciliation, readiness/errors, and terminal notifications |
 | `hooks/use-jobs.ts` | Job mutations, retries, tickets, filesystem actions, queue/playlist ordering, batch actions, and cleared-queue persistence |
