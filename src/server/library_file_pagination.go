@@ -1,3 +1,6 @@
+// File-grain Vault queries for /api/library/files. Stable keyset cursors bind
+// each page to its sort/filter query; Browse badges remain whole-Vault totals
+// regardless of the selected section, search, or loaded page depth.
 package main
 
 import (
@@ -73,12 +76,16 @@ func libraryFileSortSpec(sort string) (fileSortSpec, bool) {
 	return fileSortSpec{}, false
 }
 
+// fileQueryHash binds file cursors to the complete sort/filter query, including
+// the resolved recent cutoff. It is a consistency check, not an authentication tag.
 func fileQueryHash(query libraryFileQuery) string {
 	data, _ := json.Marshal(query)
 	hash := sha256.Sum256(data)
 	return fmt.Sprintf("%x", hash[:8])
 }
 
+// decodeLibraryFileCursor accepts an empty first-page cursor and rejects malformed
+// cursors or those issued for another sort/filter query.
 func decodeLibraryFileCursor(value string, query libraryFileQuery) (libraryFileCursor, error) {
 	if value == "" {
 		return libraryFileCursor{}, nil
@@ -104,6 +111,8 @@ func encodeLibraryFileCursor(cursor libraryFileCursor) string {
 	return base64.RawURLEncoding.EncodeToString(raw)
 }
 
+// libraryFileFilterClause applies file media-type overrides and persisted
+// organization membership on top of the shared search/category/channel filters.
 func libraryFileFilterClause(query libraryFileQuery) (string, []any) {
 	withoutType := query.Filter
 	withoutType.MediaType = ""
@@ -133,6 +142,10 @@ func libraryFileFilterClause(query libraryFileQuery) (string, []any) {
 	return clause, args
 }
 
+// loadLibraryFilePage orders matching files by (sort value, file_id), using the
+// same direction for both keys. Each returned job row contains one selected file;
+// repeated source IDs across rows/pages are expected. Totals precede the cursor,
+// while facets, storage stats, and navigation counts ignore the entire view query.
 func (s *jobStore) loadLibraryFilePage(limit int, cursor libraryFileCursor, query libraryFileQuery) (libraryFilePage, error) {
 	spec, valid := libraryFileSortSpec(query.Sort)
 	if !valid {
@@ -215,6 +228,8 @@ func (s *jobStore) loadLibraryFilePage(limit int, cursor libraryFileCursor, quer
 		return libraryFilePage{}, err
 	}
 	page.Categories, page.Channels, page.Stats = metadata.Categories, metadata.Channels, metadata.Stats
+	// Keep this query unfiltered: loaded/visible rows cannot supply Browse totals.
+	// EXISTS excludes stale favorite keys; playlists count distinct source jobs.
 	if err := s.db.QueryRow(`SELECT
 		COALESCE(SUM(CASE WHEN COALESCE(NULLIF(json_extract(li.file_json,'$.mediaType'),''),NULLIF(j.media_type,''),'video')='video' THEN 1 ELSE 0 END),0),
 		COALESCE(SUM(CASE WHEN COALESCE(NULLIF(json_extract(li.file_json,'$.mediaType'),''),NULLIF(j.media_type,''),'video')='audio' THEN 1 ELSE 0 END),0),

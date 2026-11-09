@@ -1,3 +1,8 @@
+/**
+ * New-download options, queued work order, and per-item progress/actions.
+ * Draft/queue mutations are supplied by the parent; local state tracks bulk
+ * selection and the open settings editor. Playlist rows share job-level commands.
+ */
 import { useSensor, useSensors, KeyboardSensor, PointerSensor, DndContext, closestCenter, type DragEndEvent } from "@dnd-kit/core";
 import { SortableContext, sortableKeyboardCoordinates, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { useState, type Dispatch, type FormEvent, type SetStateAction } from "react";
@@ -89,6 +94,8 @@ export function QueuePage({
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
   );
 
+  // Include lifecycle commands for the job and save/retry commands for an
+  // optional item. Work-order rows omit item commands; callbacks own mutations.
   function jobMenu(job: DownloadJob, item?: QueueItem): ContextMenuItem[] {
     const disabled = !serviceReady || Boolean(busyAction);
     const batch = job.kind === "playlist";

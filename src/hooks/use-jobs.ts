@@ -1,3 +1,8 @@
+/**
+ * Queue and Vault commands shared by visible controls and context menus.
+ * Owns action feedback, native/browser confirmations, scoped API mutations,
+ * download/preview tickets, and reconciliation with live job/library state.
+ */
 import { userFacingMessage } from "../lib/messages";
 import { useRef, useState, type Dispatch, type SetStateAction } from "react";
 import type { DragEndEvent } from "@dnd-kit/core";
@@ -20,6 +25,7 @@ import {
 export type JobAction = "pause" | "resume" | "cancel" | "retry" | "remove" | "remove-library-item" | "delete-library-file" | "forget-history" | "delete-all";
 export type JobConfigurationPatch = Partial<Pick<DownloadJob, "quality" | "videoStrategy" | "audioFormat" | "audioBitrate" | "category">>;
 
+/** Keep newer live lifecycle states when applying an older action acknowledgement. */
 export function mergeJobActionResult(current: DownloadJob, result: DownloadJob, action: JobAction): DownloadJob {
   // Pause/cancel responses are acknowledgements: the worker reaches its final
   // state asynchronously and can publish that newer state over SSE before the
@@ -77,6 +83,8 @@ export function useJobs({
     }
   }
 
+  // Centralize confirmations and mutation scope: file actions require fileId;
+  // history/index removal preserves media, while delete actions unlink files.
   async function jobAction(job: DownloadJob, action: JobAction, fileId?: string) {
     if (!serviceReady) return;
     if (action === "retry" && !(await confirmJobAction("Retry this URL? Confirm that you own the content or have permission to download it."))) return;
@@ -131,8 +139,9 @@ export function useJobs({
     }
   }
 
-  // Library-only bulk removal never unlinks downloaded files. Individual
-  // failures remain selected and are reported; successes are refreshed once.
+  // Forget at most 100 distinct Vault entries using sequential, file-scoped
+  // deletes; downloaded files and job history are preserved. Return successful
+  // job:file keys so callers can keep failures selected; null means no attempt.
   async function bulkForgetLibraryItems(items: { jobId: string; fileId: string }[]): Promise<string[] | null> {
     const unique = [...new Map(items.filter(item => item.jobId && item.fileId).map(item => [
       item.jobId + ":" + item.fileId, item,
@@ -232,6 +241,9 @@ export function useJobs({
     }
   }
 
+  // Deduplicate IDs and submit batches of at most 100 jobs. Report partial
+  // failures and return successful deletions, or null when nothing was attempted
+  // or the outer operation failed. "delete" preserves downloaded files.
   async function bulkJobAction(action: "pause" | "resume" | "cancel" | "delete", jobIds: string[]): Promise<string[] | null> {
     const uniqueIDs = [...new Set(jobIds)];
     if (!serviceReady || uniqueIDs.length === 0) return null;
@@ -281,6 +293,7 @@ export function useJobs({
     }
   }
 
+  // Request a scoped inline ticket; the preview component owns playback lifetime.
   async function previewFile(job: DownloadJob, file: DownloadFile) {
     if (!serviceReady || file.publishedAvailable === false) return;
     const key = `${job.id}:${file.id}:preview`;
@@ -306,6 +319,8 @@ export function useJobs({
     }
   }
 
+  // Save one file, a selected chapter set, or the job archive through a scoped
+  // ticket. Desktop uses the native save bridge; browsers follow the ticket URL.
   async function saveFile(job: DownloadJob, fileId?: string | string[]) {
     if (!serviceReady) return;
     const key = `${job.id}:${fileId ?? "zip"}`;

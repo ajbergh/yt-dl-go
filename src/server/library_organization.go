@@ -1,3 +1,6 @@
+// SQLite-backed Vault organization and its revision-checked HTTP API. Favorites
+// and collections reference job:file keys independently of queue/history state;
+// editing organization does not mutate downloaded media.
 package main
 
 import (
@@ -63,6 +66,9 @@ func validLibraryItemKey(value string) bool {
 	return value != "" && len(value) <= 256 && utf8.ValidString(value) && !strings.ContainsAny(value, "\x00\r\n")
 }
 
+// validateLibraryOrganization checks the whole document without repairing it.
+// Names must be trimmed and unique ignoring case; keys/IDs and collection sizes
+// must satisfy the limits shared by persistence and portable import.
 func validateLibraryOrganization(org libraryOrganization) error {
 	if org.Revision < 0 {
 		return errors.New("invalid organization revision")
@@ -107,6 +113,9 @@ func (s *jobStore) loadLibraryOrganization() (libraryOrganization, error) {
 	))
 }
 
+// saveLibraryOrganization validates and replaces the document only when its
+// revision matches the stored row. A mismatch returns conflict=true without a
+// write; success increments the revision and normalizes nil slices in the result.
 func (s *jobStore) saveLibraryOrganization(org libraryOrganization) (libraryOrganization, bool, error) {
 	if err := validateLibraryOrganization(org); err != nil {
 		return libraryOrganization{}, false, err

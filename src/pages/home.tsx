@@ -1,6 +1,7 @@
 /**
- * Production downloader screen. The bundled page connects to the Go API served
- * by the same executable, then uses that API for jobs and SQLite preferences.
+ * Shared desktop/browser screen coordinator. Service and action hooks own API
+ * state; this page owns navigation, inspection drafts, filters, and previews.
+ * Library rows are loaded file pages; navigation totals come from server metadata.
  */
 import { useEffect, useMemo, useRef, useState } from "react";
 import { MP3Preview } from "../components/downloader/mp3-preview";
@@ -142,6 +143,8 @@ export function HomePage() {
   const libraryCategories = useMemo(() => libraryPage.categories.map(facet => [facet.value, facet.count] as [string, number]), [libraryPage.categories]);
   const libraryChannels = useMemo(() => libraryPage.channels.map(facet => [facet.value, facet.count] as [string, number]), [libraryPage.channels]);
   const libraryStats = libraryPage.stats;
+  // Filter the loaded rows immediately while the debounced server query catches
+  // up. This subset must never be used to calculate whole-Vault Browse counts.
   const visibleLibraryJobs = useMemo(() => libraryJobs.filter(job => {
     const query = librarySearch.trim().toLowerCase();
     const category = job.category || job.files.find(file => file.category)?.category || "Uncategorized";

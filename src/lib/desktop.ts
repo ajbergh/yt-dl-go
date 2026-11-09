@@ -1,3 +1,7 @@
+/**
+ * Optional Wails bridge and per-launch API bootstrap. Ordinary browser sessions
+ * have no bridge; desktop capability credentials stay in memory for this launch.
+ */
 import type { ServiceConnection } from "./downloader";
 
 type DesktopBridge = {
@@ -16,6 +20,7 @@ declare global {
 
 let connection: ServiceConnection | undefined;
 
+/** No-op in browsers; validate the native loopback origin/token before UI startup. */
 export async function initializeDesktop(): Promise<void> {
   connection = undefined;
   const bridge = window.go?.main?.DesktopApp;
@@ -37,6 +42,7 @@ export function desktopBridge(): DesktopBridge | undefined {
   return window.go?.main?.DesktopApp;
 }
 
+/** Use native confirmation when available; bridge failures propagate without browser fallback. */
 export async function confirmAction(message: string, title = "YouTube Vault"): Promise<boolean> {
   const bridge = desktopBridge();
   if (bridge) return bridge.Confirm(title, message);

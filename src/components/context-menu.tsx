@@ -1,3 +1,7 @@
+/**
+ * Shared context menus for desktop and browser surfaces. Menus render in a
+ * body portal, stay within the viewport, and support keyboard navigation.
+ */
 import { useEffect, useLayoutEffect, useRef, useState, type HTMLAttributes, type ReactElement } from "react";
 import { createPortal } from "react-dom";
 
@@ -8,8 +12,13 @@ export type ContextMenuItem = {
   danger?: boolean;
 };
 
-// Attach to the surface itself so grid placement and sibling spacing stay intact.
-// Editable fields and native media controls keep their browser/WebView menus.
+/**
+ * Reuses the child's element type and props without adding a layout wrapper.
+ * Custom child components must forward onContextMenu/onKeyDown to their surface.
+ * Existing handlers run first and can opt out with preventDefault; editable
+ * fields and native media controls retain their browser/WebView menus.
+ * Outside interaction, scrolling outside the menu, resize, and blur dismiss it.
+ */
 export function ContextMenuArea({ label, items, children, onOpen }: {
   label: string;
   items: ContextMenuItem[];
@@ -19,10 +28,13 @@ export function ContextMenuArea({ label, items, children, onOpen }: {
   const [position, setPosition] = useState<{ x: number; y: number } | null>(null);
   const trigger = useRef<HTMLElement | null>(null);
   const menu = useRef<HTMLDivElement>(null);
+  // Keyboard dismissal and commands restore the trigger without scrolling;
+  // outside interactions leave focus management to the clicked surface.
   function close(restoreFocus = false) {
     setPosition(null);
     if (restoreFocus && trigger.current?.isConnected) trigger.current.focus({ preventScroll: true });
   }
+  // Record a focus-return target before onOpen can update the page selection.
   function open(target: EventTarget, x: number, y: number) {
     const element = target as HTMLElement;
     trigger.current = element.closest<HTMLElement>('button, [tabindex], a[href]') || element;

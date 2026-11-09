@@ -1,3 +1,6 @@
+// Portable favorites/collections for metadata ZIP export and transactional
+// import. Export omits stale references; import remaps media identities and
+// merges organization without removing existing memberships.
 package main
 
 import (
@@ -41,6 +44,8 @@ func portableLibraryOrganization(org libraryOrganization, records []libraryExpor
 	return portable
 }
 
+// decodeLibraryOrganizationRow decodes stored JSON, normalizes null arrays to
+// empty slices, and validates the resulting document before returning it.
 func decodeLibraryOrganizationRow(row *sql.Row) (libraryOrganization, error) {
 	var result libraryOrganization
 	var favorites, collections string
@@ -92,6 +97,8 @@ func (s *jobStore) importLibraryDocument(manifest libraryExportManifest, documen
 	return count, organizationChanged, nil
 }
 
+// importedCollectionID preserves an unused ID or resolves collisions with a
+// deterministic SHA-256-derived ID and salt against the reserved set.
 func importedCollectionID(collection libraryCollection, reserved map[string]bool) string {
 	if !reserved[collection.ID] {
 		return collection.ID

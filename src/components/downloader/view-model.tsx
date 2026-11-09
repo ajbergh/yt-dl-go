@@ -1,3 +1,8 @@
+/**
+ * Shared downloader display types, labels, formatters, and small UI primitives.
+ * Compatibility helpers adapt older job records; persistent mutations belong
+ * to the hooks/API rather than these presentation helpers.
+ */
 import { useEffect, useRef, useState, type HTMLAttributes, type ReactNode } from "react";
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
@@ -222,6 +227,7 @@ export function durationMetric(job: DownloadJob): string {
   return `${job.completedCount} / ${job.totalCount} files`;
 }
 
+/** Prefer recorded queue items; synthesize display rows for older jobs lacking them. */
 export function queueItemsFor(job: DownloadJob): QueueItem[] {
   if (job.items?.length) return job.items;
   if (job.kind === "playlist" && job.files.length) {
@@ -265,6 +271,7 @@ export function etaLabel(seconds: number): string {
   return minutes > 0 ? `${minutes}m ${seconds % 60}s left` : `${seconds}s left`;
 }
 
+/** Prefer native bootstrap, then the fixed Vite development API, then the page origin. */
 export function builtInServiceConnection(): ServiceConnection {
   const desktop = desktopConnection();
   if (desktop) return desktop;

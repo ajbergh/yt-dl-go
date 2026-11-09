@@ -1,3 +1,8 @@
+/**
+ * File-oriented Vault browsing, visible-page selection, and media organization.
+ * The parent supplies paginated rows and global metadata; this view owns local
+ * selection/inspector state and delegates filesystem/job mutations to callbacks.
+ */
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import {
   Activity, ArrowDownAZ, Clock3, Copy, FileAudio,
@@ -75,6 +80,10 @@ function storedSort(): SortMode {
     return value === "oldest" || value === "title" || value === "size" || value === "duration" ? value : "recent";
   } catch { return "recent"; }
 }
+/**
+ * Flatten loaded rows into stable job:file identities. Prefer file metadata over
+ * job defaults; availability follows the published file, not the managed copy.
+ */
 function mediaItems(jobs: DownloadJob[]): MediaItem[] {
   return jobs.flatMap(job => job.files.map(file => ({
     key: job.id + ":" + file.id,
@@ -206,6 +215,7 @@ export function LibraryPage({
       return itemKeys === collection.itemKeys ? collection : { ...collection, itemKeys };
     }));
   }
+  // Remove only successful file keys from selection so partial failures can be retried.
   async function forgetSelectedMedia() {
     if (busyAction || !canForgetBulk) return;
     const removed = await bulkForgetLibraryItems(bulkSelected.map(item => ({ jobId: item.job.id, fileId: item.file.id })));
@@ -216,6 +226,8 @@ export function LibraryPage({
   }
   const filtersActive = Boolean(librarySearch || libraryFilter !== "all" || libraryCategory !== "all" || libraryChannel !== "all" || section !== "all" || activeCollectionID);
 
+  // Send section/sort constraints to the parent; it combines the remaining
+  // search/type/category/channel filters before requesting a fresh first page.
   function updateServerView(nextSection: LibrarySection, nextCollection: string, nextPlaylist: string, nextSort: SortMode = sort) {
     onViewChange({
       sort: nextSort,
@@ -320,6 +332,8 @@ export function LibraryPage({
     void filesystemAction(item.job, item.file.id, action);
   }
 
+  // File actions retain the inspector's availability/stopped-job guards and
+  // reuse callbacks that own confirmations and API feedback.
   function mediaMenu(item: MediaItem): ContextMenuItem[] {
     const busy = !serviceReady || Boolean(busyAction);
     return [
@@ -342,6 +356,7 @@ export function LibraryPage({
       { label: "Delete entire download", disabled: busy || !stoppedJob(item.job), danger: true, action: () => jobAction(item.job, "delete-all") },
     ];
   }
+  // An existing multi-selection gets bulk commands; other cards get file commands.
   function itemMenu(item: MediaItem): ContextMenuItem[] {
     if (!selectedKeysInView.has(item.key) || bulkSelected.length < 2) return mediaMenu(item);
     return [

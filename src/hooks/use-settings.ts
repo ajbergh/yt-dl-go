@@ -1,3 +1,8 @@
+/**
+ * Preference draft editing and persistence. The first edit captures a baseline
+ * for dirty tracking; successful saves adopt server-normalized preferences and
+ * runtime metadata. Folder/notification choices remain drafts until saved.
+ */
 import { useState, type Dispatch, type FormEvent, type SetStateAction } from "react";
 import { api, type AppSettings, type RuntimeSettingSources, type RuntimeSettingValues, type ServiceConnection } from "../lib/downloader";
 import { errorMessage, notificationAPI } from "../components/downloader/view-model";
@@ -45,6 +50,7 @@ export function useSettings({
     }
   }
 
+  // Submit the full draft and clear its baseline only after the server accepts it.
   async function savePreferences(event: FormEvent) {
     event.preventDefault();
     if (!serviceReady) {
@@ -72,6 +78,7 @@ export function useSettings({
     }
   }
 
+  // Ask for system permission only on explicit enable; persist the preference on Save.
   async function toggleNotifications() {
     if (settings.notificationsEnabled) {
       changeSetting("notificationsEnabled", false);

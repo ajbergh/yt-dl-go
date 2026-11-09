@@ -1,3 +1,8 @@
+/**
+ * Service connection, health/settings bootstrap, live job updates, and Vault
+ * pagination. Request generations prevent older queries from replacing newer
+ * views; loaded media pages and whole-Vault metadata are kept separately.
+ */
 import { useCallback, useEffect, useRef, useState } from "react";
 import { desktopBridge, reportDesktopSmokeStage } from "../lib/desktop";
 import {
@@ -21,6 +26,7 @@ function initialLibraryQuery(): LibraryQuery {
   }
 }
 
+/** Serialize the server view and its opaque cursor for a 50-file page. */
 function libraryPagePath(query: LibraryQuery, cursor?: string): string {
   const params = new URLSearchParams({ limit: "50", sort: query.sort || "recent" });
   if (query.q) params.set("q", query.q);
@@ -42,6 +48,11 @@ const emptyLibraryPage: LibraryPageResponse = {
   stats: { files: 0, logicalBytes: 0, managedBytes: 0, publishedBytes: 0 },
 };
 
+/**
+ * Preserve server aggregates and supply defaults for incomplete responses.
+ * Fallback facets/storage stats describe only the supplied jobs; missing global
+ * media counts remain zero rather than being inferred from a filtered page.
+ */
 function normalizeLibraryPage(response: Partial<LibraryPageResponse>): LibraryPageResponse {
   const jobs = response.jobs ?? [];
   const categories = response.categories ?? (() => {
@@ -162,6 +173,8 @@ export function useService() {
     setLibraryQueryState(query);
   }, []);
 
+  // Reload the previously loaded depth, deduplicating job:file identities.
+  // A newer request or changed query invalidates the entire pending refresh.
   const refreshLibrary = useCallback(async () => {
     const requestID = ++libraryRequestSequence.current;
     const query = libraryQueryRef.current;
@@ -198,6 +211,7 @@ export function useService() {
     return jobs;
   }, [connection]);
 
+  // Append one file page only if its request generation and query remain current.
   const loadMoreLibrary = useCallback(async () => {
     const cursor = libraryPage.nextCursor;
     if (!cursor || loadingLibraryMore) return;

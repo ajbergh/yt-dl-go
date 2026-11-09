@@ -1,3 +1,8 @@
+/**
+ * Preference editing, advanced/runtime settings, diagnostics, and Vault transfer.
+ * Collapsing advanced fields preserves edits; Save submits the parent's complete
+ * preferences. Backup/import operations run separately from preference saves.
+ */
 import { useEffect, useRef, useState, type Dispatch, type FormEvent, type SetStateAction } from "react";
 import {
 	Check, Download, ExternalLink, FileText, Folder, FolderTree, HardDrive, LoaderCircle, Plus, RefreshCw, Sparkles, X,
@@ -318,6 +323,7 @@ function CorruptionDiagnosticsRequest({ connection, serviceReady }: Pick<Setting
   </section>;
 }
 
+/** Transfer metadata ZIPs; media bytes are excluded and imports merge portable records. */
 function LibraryTransferPanel({ connection, serviceReady }: Pick<SettingsPageProps, "connection" | "serviceReady">) {
   const importInput = useRef<HTMLInputElement>(null);
   const [exporting, setExporting] = useState(false);
