@@ -37,6 +37,7 @@ function libraryPagePath(query: LibraryQuery, cursor?: string): string {
 }
 
 const emptyLibraryPage: LibraryPageResponse = {
+  mediaCounts: { video: 0, audio: 0, favorites: 0, playlists: 0 },
   jobs: [], totalJobs: 0, totalFiles: 0, categories: [], channels: [],
   stats: { files: 0, logicalBytes: 0, managedBytes: 0, publishedBytes: 0 },
 };

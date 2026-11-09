@@ -21,13 +21,23 @@ type libraryFileCursor struct {
 // This is a separate, additive endpoint. /api/library retains its existing
 // source-job pagination contract for older clients.
 type libraryFilePage struct {
-	Jobs       []Job          `json:"jobs"`
-	NextCursor string         `json:"nextCursor,omitempty"`
-	TotalFiles int            `json:"totalFiles"`
-	TotalJobs  int            `json:"totalJobs"`
-	Categories []libraryFacet `json:"categories"`
-	Channels   []libraryFacet `json:"channels"`
-	Stats      libraryStats   `json:"stats"`
+	Jobs        []Job              `json:"jobs"`
+	NextCursor  string             `json:"nextCursor,omitempty"`
+	TotalFiles  int                `json:"totalFiles"`
+	TotalJobs   int                `json:"totalJobs"`
+	Categories  []libraryFacet     `json:"categories"`
+	Channels    []libraryFacet     `json:"channels"`
+	Stats       libraryStats       `json:"stats"`
+	MediaCounts libraryMediaCounts `json:"mediaCounts"`
+}
+
+// Navigation totals describe the entire Vault, independently of the active
+// search, section, or cursor. Counts are at file grain except for playlists.
+type libraryMediaCounts struct {
+	Video     int `json:"video"`
+	Audio     int `json:"audio"`
+	Favorites int `json:"favorites"`
+	Playlists int `json:"playlists"`
 }
 
 type libraryFileQuery struct {
@@ -205,6 +215,15 @@ func (s *jobStore) loadLibraryFilePage(limit int, cursor libraryFileCursor, quer
 		return libraryFilePage{}, err
 	}
 	page.Categories, page.Channels, page.Stats = metadata.Categories, metadata.Channels, metadata.Stats
+	if err := s.db.QueryRow(`SELECT
+		COALESCE(SUM(CASE WHEN COALESCE(NULLIF(json_extract(li.file_json,'$.mediaType'),''),NULLIF(j.media_type,''),'video')='video' THEN 1 ELSE 0 END),0),
+		COALESCE(SUM(CASE WHEN COALESCE(NULLIF(json_extract(li.file_json,'$.mediaType'),''),NULLIF(j.media_type,''),'video')='audio' THEN 1 ELSE 0 END),0),
+		COALESCE(SUM(CASE WHEN EXISTS (SELECT 1 FROM json_each((SELECT favorites_json FROM library_organization WHERE id=1)) fav WHERE fav.value=j.source_job_id || ':' || li.file_id) THEN 1 ELSE 0 END),0),
+		COUNT(DISTINCT CASE WHEN j.kind='playlist' THEN j.source_job_id END)
+		FROM library_items li JOIN library_sources j ON j.source_job_id=li.source_job_id`).Scan(
+		&page.MediaCounts.Video, &page.MediaCounts.Audio, &page.MediaCounts.Favorites, &page.MediaCounts.Playlists); err != nil {
+		return libraryFilePage{}, err
+	}
 	if hasMore && len(selected) > 0 {
 		last := selected[len(selected)-1]
 		page.NextCursor = encodeLibraryFileCursor(libraryFileCursor{

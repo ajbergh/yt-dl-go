@@ -24,7 +24,7 @@ Design target: media-first, dark, Plex-inspired desktop library.
 
 Favorites and collections are now stored in the **SQLite state database (migration v32)**, using a versioned organization document. A legacy `localStorage` compatibility cache remains, and old local preferences are migrated when the database organization document is empty and at revision zero. They are included in portable Library ZIP v2 metadata exports/imports.
 
-The new Library uses a separate `/api/library/files` endpoint with **50 individual media files per page**, global SQLite sorting, and server-wide type/category/channel/search/favorites/collection filters. The legacy `/api/library` job-grouped endpoint remains available for older clients. Click **Load more** to append the next 50 files. Category/channel facets and total storage statistics remain server aggregates; the sidebar media-type counts and playlist discovery buttons indicate the loaded set.
+The new Library uses a separate `/api/library/files` endpoint with **50 individual media files per page**, global SQLite sorting, and server-wide type/category/channel/search/favorites/collection filters. The legacy `/api/library` job-grouped endpoint remains available for older clients. Click **Load more** to append the next 50 files. Category/channel facets, total storage statistics, and Browse badges are global server aggregates. The `mediaCounts` response field counts videos, audio files, existing favorites, and distinct playlist sources independently of the active filters and cursor; playlist discovery buttons indicate the loaded set.
 
 ## Follow-up implementation (2026-11-08)
 
@@ -46,7 +46,7 @@ The new Library uses a separate `/api/library/files` endpoint with **50 individu
 - Tests cover backend restart persistence and stale/invalid writes, plus frontend hydration across remounts.
 - Browser E2E assertions were updated for redesigned heading and empty-Library text. Confirm latest CI outcomes separately before merging.
 
-**Remaining limitations:** UI membership/count filters remain limited to loaded pages. Revision conflicts require manual reload; automatic multi-window change broadcasting is not implemented.
+**Remaining limitations:** Playlist discovery and bulk selection operate on loaded pages. Revision conflicts require manual reload; automatic multi-window change broadcasting is not implemented.
 
 ## Safe single-file deletion (2026-11-08)
 

@@ -131,6 +131,7 @@ export interface LibraryStats {
 }
 
 export interface LibraryPageResponse {
+  mediaCounts: { video: number; audio: number; favorites: number; playlists: number };
   jobs: DownloadJob[];
   nextCursor?: string;
   totalJobs: number;

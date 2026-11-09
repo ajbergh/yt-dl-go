@@ -208,6 +208,18 @@ beforeEach(async () => {
     if (path === "/api/jobs" && init.method === "POST") return Response.json(job, { status: 202 });
     if (path === "/api/jobs") return Response.json({ jobs: rows });
     if (path === "/api/library/files") {
+      const allItems = rows.flatMap(job => (job.files || []).map(file => ({ ...job, files: [file] })));
+      const mediaCounts = {
+        video: allItems.filter(job => (job.files[0].mediaType || job.mediaType || "video") === "video").length,
+        audio: allItems.filter(job => (job.files[0].mediaType || job.mediaType || "video") === "audio").length,
+        favorites: allItems.filter(job => organizationResponse.favorites.includes(job.id + ":" + job.files[0].id)).length,
+        playlists: new Set(allItems.filter(job => job.kind === "playlist").map(job => job.id)).size,
+      };
+      const facets = valueFor => [...allItems.reduce((values, job) => {
+        const value = valueFor(job);
+        values.set(value, (values.get(value) || 0) + 1);
+        return values;
+      }, new Map())].map(([value, count]) => ({ value, count }));
       const params = new URL(url).searchParams;
       const type = params.get("type");
       const category = params.get("category");
@@ -249,6 +261,10 @@ beforeEach(async () => {
       const offset = Number(params.get("cursor") || 0);
       const paged = items.slice(offset, offset + limit);
       return Response.json({
+        mediaCounts,
+        categories: facets(job => job.category || job.files[0].category || "Uncategorized"),
+        channels: facets(job => job.files[0].author?.trim() || "Unknown channel"),
+        stats: { files: allItems.length, logicalBytes: allItems.reduce((sum, job) => sum + job.files[0].size, 0), managedBytes: 0, publishedBytes: 0 },
         jobs: paged, totalFiles: items.length, totalJobs: new Set(items.map(job => job.id)).size,
         nextCursor: offset + limit < items.length ? String(offset + limit) : undefined,
       });
@@ -406,6 +422,33 @@ async function remount() {
 }
 
 describe("Downloader UI and Go API integration", () => {
+  test("keeps global Browse counts across section changes, filters, and pagination and refreshes favorites", async () => {
+    const files = Array.from({ length: 62 }, (_, index) => ({
+      id: `count-${index}`, title: `Count media ${index}`, name: `${index}.mp4`, size: 100,
+      mediaType: index < 7 ? "video" : "audio", publishedAvailable: true,
+    }));
+    rows = [{ ...job, status: "completed", files }];
+    organizationResponse = { revision: 1, favorites: ["fixture-job:count-0", "missing:stale"], collections: [] };
+    await remount();
+    await click(button("Vault"));
+    const counts = () => [...container.querySelectorAll('nav[aria-label="Media sections"] button')].map(item => item.textContent.trim());
+    const expected = ["All media62", "Videos7", "Audio55", "Favorites1", "Recently added", "Playlists1", "Channels1"];
+    expect(counts()).toEqual(expected);
+    for (const section of ["Videos", "Audio", "Favorites", "Recently added", "Playlists", "All media"]) {
+      const target = [...container.querySelectorAll('nav[aria-label="Media sections"] button')].find(item => item.textContent.startsWith(section));
+      await click(target);
+      await act(async () => new Promise(resolve => setTimeout(resolve, 320)));
+      expect(counts()).toEqual(expected);
+    }
+    await click(button("Load more"));
+    expect(counts()).toEqual(expected);
+    await setInput(container.querySelector('input[aria-label="Search vault"]'), "Count media 0");
+    await act(async () => new Promise(resolve => setTimeout(resolve, 320)));
+    expect(counts().slice(0, 6)).toEqual(expected.slice(0, 6));
+    await click(container.querySelector('button[aria-label="Remove favorite: Count media 0"]'));
+    expect(counts()[3]).toBe("Favorites0");
+  });
+
   test("opens status-aware download menus and runs the existing pause command", async () => {
     rows = [{ ...job, kind: "video", title: "Context clip", url: "https://www.youtube.com/watch?v=abcdefghijk", status: "downloading" }];
     await remount();

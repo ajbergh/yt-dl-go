@@ -4,7 +4,7 @@ import {
   FileText, Film, FolderOpen, Grid2X2, HardDrive, Heart, List, Music2, Plus, Pencil, Layers,
   Play, RefreshCw, Search, SlidersHorizontal, Trash2, Users, X,
 } from "lucide-react";
-import type { DownloadFile, DownloadJob, LibraryQuery, ServiceConnection } from "../lib/downloader";
+import type { DownloadFile, DownloadJob, LibraryPageResponse, LibraryQuery, ServiceConnection } from "../lib/downloader";
 import { userFacingMessage } from "../lib/messages";
 import { confirmAction } from "../lib/desktop";
 import { ContextMenuArea, type ContextMenuItem } from "../components/context-menu";
@@ -43,6 +43,8 @@ type LibraryPageProps = {
   libraryLayout: "grid" | "list";
   setLibraryLayout: (value: "grid" | "list") => void;
   libraryStats: LibraryStats;
+  mediaCounts: LibraryPageResponse["mediaCounts"];
+  onOrganizationSaved: () => void;
   hasMoreLibrary: boolean;
   loadingLibraryMore: boolean;
   loadMoreLibrary: () => void;
@@ -100,11 +102,11 @@ export function LibraryPage({
   serviceReady, libraryJobs, visibleLibraryJobs, libraryTotalJobs, libraryTotalFiles, onViewChange, librarySearch, setLibrarySearch,
   libraryFilter, setLibraryFilter, libraryCategory, setLibraryCategory,
   libraryChannel, setLibraryChannel, libraryCategories, libraryChannels,
-  libraryLayout, setLibraryLayout, libraryStats, hasMoreLibrary, loadingLibraryMore,
+  libraryLayout, setLibraryLayout, libraryStats, mediaCounts: counts, onOrganizationSaved, hasMoreLibrary, loadingLibraryMore,
   loadMoreLibrary, connection, busyAction, previewFile, filesystemAction, jobAction, bulkForgetLibraryItems,
 }: LibraryPageProps) {
   const [section, setSection] = useState<LibrarySection>("all");
-  const { favorites, collections, ready: organizationReady, error: organizationError, toggleFavorite, setFavoritesForKeys, setCollections, reload: reloadOrganization } = useLibraryOrganization(connection);
+  const { favorites, collections, ready: organizationReady, error: organizationError, toggleFavorite, setFavoritesForKeys, setCollections, reload: reloadOrganization } = useLibraryOrganization(connection, onOrganizationSaved);
   const [sort, setSort] = useState<SortMode>(storedSort);
   const [selectedKey, setSelectedKey] = useState("");
   const [selectedKeys, setSelectedKeys] = useState<string[]>([]);
@@ -142,12 +144,6 @@ export function LibraryPage({
   }, []);
 
   const loaded = useMemo(() => mediaItems(visibleLibraryJobs), [visibleLibraryJobs]);
-  const allLoaded = useMemo(() => mediaItems(libraryJobs), [libraryJobs]);
-  const counts = useMemo(() => ({
-    video: allLoaded.filter(item => item.mediaType === "video").length,
-    audio: allLoaded.filter(item => item.mediaType === "audio").length,
-    favorites: allLoaded.filter(item => favorites.includes(item.key)).length,
-  }), [allLoaded, favorites]);
   const activeCollection = collections.find(collection => collection.id === activeCollectionID);
   const playlistJobs = [...new Map(libraryJobs.filter(job => job.kind === "playlist" && job.files.length > 0).map(job => [job.id, job])).values()];
   const playlistLoadedCounts = new Map<string, number>();
@@ -401,7 +397,7 @@ export function LibraryPage({
             {sidebarButton("Audio", Music2, counts.audio, libraryFilter === "audio" && section === "all", () => navigate("audio"))}
             {sidebarButton("Favorites", Heart, counts.favorites, section === "favorites", () => navigate("all", "favorites"))}
             {sidebarButton("Recently added", Clock3, null, section === "recent", () => navigate("all", "recent"))}
-            {sidebarButton("Playlists", Layers, playlistJobs.length, section === "playlists", () => browsePlaylist(""))}
+            {sidebarButton("Playlists", Layers, counts.playlists, section === "playlists", () => browsePlaylist(""))}
             {sidebarButton("Channels", Users, libraryChannels.length, libraryChannel !== "all", () => setShowChannelList(previous => !previous))}
             {showChannelList && <div aria-label="Channel shortcuts" className="max-h-48 space-y-1 overflow-y-auto pl-3">
               {libraryChannels.slice(0, 12).map(([channel, count]) =>

@@ -47,7 +47,7 @@ function mirrorLegacyCache(organization: LibraryOrganization) {
  * window are saved in order. External-window conflicts surface an error rather
  * than silently overwriting another user's collections or favorites.
  */
-export function useLibraryOrganization(connection: ServiceConnection): {
+export function useLibraryOrganization(connection: ServiceConnection, onSaved?: () => void): {
   favorites: string[];
   collections: MediaCollection[];
   ready: boolean;
@@ -132,6 +132,7 @@ export function useLibraryOrganization(connection: ServiceConnection): {
         savedChange.current = change;
         mirrorLegacyCache(snapshot);
         setError("");
+        onSaved?.();
       }
     } catch (reason) {
       if (generation !== requestGeneration.current) return;
@@ -141,7 +142,7 @@ export function useLibraryOrganization(connection: ServiceConnection): {
     } finally {
       saving.current = false;
     }
-  }, [connection]);
+  }, [connection, onSaved]);
 
   const update = useCallback((fn: (previous: LibraryOrganization) => LibraryOrganization) => {
     if (!writable.current) return;

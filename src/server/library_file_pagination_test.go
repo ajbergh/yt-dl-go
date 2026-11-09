@@ -74,6 +74,9 @@ func TestGlobalMediaPaginationReturnsOnlySelectedFilesAndStableSort(t *testing.T
 			if page.TotalFiles != 4 || page.TotalJobs != 2 || len(page.Jobs) != 1 || len(page.Jobs[0].Files) != 1 {
 				t.Fatalf("sort=%s page=%d contains full jobs or wrong count: %+v", test.sort, i, page)
 			}
+			if page.MediaCounts != (libraryMediaCounts{Video: 3, Audio: 1, Playlists: 1}) {
+				t.Fatalf("sort=%s page=%d navigation counts changed: %+v", test.sort, i, page.MediaCounts)
+			}
 			seen = append(seen, filePageIDs(page)...)
 			cursor = page.NextCursor
 			if cursor == "" {
@@ -113,7 +116,7 @@ func TestGlobalMediaFilesFilterAtFileGrainIncludingFavoritesAndCollections(t *te
 	seedFilePages(t, s)
 	_, conflict, err := s.store.saveLibraryOrganization(libraryOrganization{
 		Revision:  0,
-		Favorites: []string{"global-sort-a:global-file-a", "global-sort-b:global-file-b"},
+		Favorites: []string{"global-sort-a:global-file-a", "global-sort-b:global-file-b", "missing:stale-favorite"},
 		Collections: []libraryCollection{{
 			ID: "collection-media", Name: "Playlist", ItemKeys: []string{"global-sort-a:global-file-m", "global-sort-b:global-file-b"},
 		}},
@@ -137,6 +140,9 @@ func TestGlobalMediaFilesFilterAtFileGrainIncludingFavoritesAndCollections(t *te
 	}
 	for _, test := range checks {
 		page := requestLibraryFilesPage(t, s, "/api/library/files?limit=100&"+test.params)
+		if page.MediaCounts != (libraryMediaCounts{Video: 3, Audio: 1, Favorites: 2, Playlists: 1}) {
+			t.Errorf("%s navigation counts must ignore view filters and stale favorites: %+v", test.params, page.MediaCounts)
+		}
 		if got := strings.Join(filePageIDs(page), ","); got != strings.Join(test.want, ",") {
 			t.Errorf("%s got [%s], want %v", test.params, got, test.want)
 		}

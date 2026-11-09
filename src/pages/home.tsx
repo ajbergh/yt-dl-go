@@ -442,6 +442,8 @@ export function HomePage() {
           libraryLayout={libraryLayout}
           setLibraryLayout={setLibraryLayout}
           libraryStats={libraryStats}
+          mediaCounts={libraryPage.mediaCounts}
+          onOrganizationSaved={() => { void refreshLibrary().catch(error => setServiceError(errorMessage(error))); }}
           libraryTotalFiles={libraryPage.totalFiles ?? 0}
           onViewChange={setLibraryView}
           hasMoreLibrary={Boolean(libraryPage.nextCursor)}
