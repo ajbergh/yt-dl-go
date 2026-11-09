@@ -1517,7 +1517,7 @@ describe("Downloader UI and Go API integration", () => {
     expect(document.activeElement).toBe(previewButton);
   });
 
-  test("buffers MP3 preview bytes locally, supports seeking, and releases the buffer on close", async () => {
+  test("plays server-decoded WAV preview bytes locally, supports seeking, and releases the buffer on close", async () => {
     const originalCreate = URL.createObjectURL;
     const originalRevoke = URL.revokeObjectURL;
     const created = [];
@@ -1529,7 +1529,7 @@ describe("Downloader UI and Go API integration", () => {
     globalThis.fetch = async (url, init = {}) => {
       if (new URL(url).pathname === "/api/downloads/test-ticket") {
         transfers.push(init);
-        return new Response("ID3 unchanged MP3 bytes", { headers: { "Content-Type": "audio/mpeg" } });
+        return new Response("RIFF decoded PCM preview bytes", { headers: { "Content-Type": "audio/wav" } });
       }
       return mockedFetch(url, init);
     };
@@ -1543,8 +1543,8 @@ describe("Downloader UI and Go API integration", () => {
       expect(audio.src).toBe("blob:mp3-preview");
       expect(audio.autoplay).toBe(false);
       expect(created).toHaveLength(1);
-      expect(created[0].type).toBe("audio/mpeg");
-      expect(await created[0].text()).toBe("ID3 unchanged MP3 bytes");
+      expect(created[0].type).toBe("audio/wav");
+      expect(await created[0].text()).toBe("RIFF decoded PCM preview bytes");
       expect(transfers).toHaveLength(1);
       expect(transfers[0].credentials).toBe("omit");
       await click([...container.querySelectorAll("button")].find(item => item.textContent.includes("Verse")));

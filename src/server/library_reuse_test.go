@@ -167,8 +167,15 @@ func TestRepeatedAudioJobPublishesInChangedLibraryFolder(t *testing.T) {
 			for _, job := range []Job{first, second} {
 				path := ticketPath(t, s, job.ID, `{"fileId":"`+job.Files[0].ID+`","inline":true}`)
 				response := request(s, "GET", path, "", nil)
-				if response.Code != 200 || int64(response.Body.Len()) != job.Files[0].Size {
-					t.Fatalf("published audio cannot be played: %d %s", response.Code, response.Body.String())
+				if response.Code != 200 {
+					t.Fatalf("published audio cannot be played: status=%d", response.Code)
+				}
+				if job.Files[0].MimeType == "audio/mpeg" {
+					if response.Header().Get("Content-Type") != "audio/wav" || response.Body.Len() <= 44 || !bytes.HasPrefix(response.Body.Bytes(), []byte("RIFF")) {
+						t.Fatal("MP3 preview did not contain decoded WAV audio")
+					}
+				} else if int64(response.Body.Len()) != job.Files[0].Size {
+					t.Fatal("original M4A preview length changed")
 				}
 			}
 		})

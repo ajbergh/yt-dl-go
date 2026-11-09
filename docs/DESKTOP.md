@@ -198,7 +198,7 @@ browser/server edition retains browser confirmations.
 
 File → Exit follows the normal shutdown path; Help → About displays version,
 commit, and build date. macOS also retains its application and Edit menus.
-Library playback reads the user-selected download folder directly. MP3 previews fetch one complete file into a temporary browser Blob before enabling playback, bypassing cross-origin HTTP range playback in the embedded player. Closing the preview cancels a pending fetch and releases its Blob. MP3 playback waits for this local transfer; videos and M4A retain streamed previews. Library
+Library playback reads the user-selected download folder directly. For MP3 previews the service decodes the saved file with its Go decoder into a private temporary PCM/WAV file, avoiding silent gaps in Chromium MP3 decoding. The temporary WAV is deleted after the response; the saved MP3 remains unchanged. The player buffers this WAV before enabling the standard playback controls. Closing the preview cancels a pending fetch and releases its Blob. Videos and M4A retain streamed previews. Library
 cards provide Reveal, Copy path, Preview, and a single Delete files action;
 Queue saves and Settings Library exports remain available.
 

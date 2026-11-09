@@ -1,8 +1,8 @@
 import { useEffect, useState, type Ref } from "react";
 
 /**
- * Give the embedded player one complete local MP3. This avoids the WebView's
- * cross-origin HTTP/range playback path, while leaving the saved file intact.
+ * The service decodes MP3 previews to PCM/WAV to avoid Chromium MP3 decoder
+ * dropouts. Buffer that response locally, retaining its actual audio/wav MIME.
  * The URL and pending transfer belong to this preview's lifetime.
  */
 export function MP3Preview({ url, mediaRef }: { url: string; mediaRef: Ref<HTMLAudioElement> }) {
@@ -23,7 +23,7 @@ export function MP3Preview({ url, mediaRef }: { url: string; mediaRef: Ref<HTMLA
         const data = await response.blob();
         if (!data.size) throw new Error("This audio file is empty.");
         if (disposed) return;
-        objectURL = URL.createObjectURL(new Blob([data], { type: "audio/mpeg" }));
+        objectURL = URL.createObjectURL(data);
         setSource(objectURL);
       } catch (failure) {
         if (!disposed) setError(failure instanceof Error ? failure.message : "Audio preview could not be loaded.");
