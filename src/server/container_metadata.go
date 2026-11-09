@@ -17,8 +17,6 @@ import (
 	"github.com/at-wat/ebml-go/webm"
 )
 
-const containerMetadataHeadroom int64 = maxEmbeddedArtworkBytes + 80*1024
-
 type containerTagMetadata struct {
 	Title       string
 	Artist      string

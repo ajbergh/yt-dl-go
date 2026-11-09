@@ -48,7 +48,7 @@ var (
 	errLength            = errors.New("media stream is empty or does not match its declared size")
 	errMux               = errors.New("video and audio streams could not be combined into a complete file")
 	errStorage           = errors.New("private media storage could not be safely written or cleaned")
-	errLimit             = errors.New("Media exceeds the supported file size")
+	errLimit             = errors.New("media exceeds the supported file size")
 	errItemReservation   = errors.New("selected media exceeded its reserved item size; retry the item")
 	errNative            = errors.New("native engine failed unexpectedly; completeness could not be verified")
 	errNoAudio           = errors.New("no compatible standalone audio stream is available")
