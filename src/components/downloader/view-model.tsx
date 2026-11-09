@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type HTMLAttributes, type ReactNode } from "react";
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { Activity, Film, GripVertical } from "lucide-react";
@@ -148,9 +148,9 @@ export function statusClass(status: DownloadJob["status"]): string {
   return "border-neutral-700 bg-neutral-800 text-neutral-300";
 }
 
-export function SortableQueueOrderRow({ id, label, detail, children, below }: { id: string; label: string; detail?: string; children?: ReactNode; below?: ReactNode }) {
+export function SortableQueueOrderRow({ id, label, detail, children, below, onContextMenu, onKeyDown }: { id: string; label: string; detail?: string; children?: ReactNode; below?: ReactNode } & Pick<HTMLAttributes<HTMLDivElement>, "onContextMenu" | "onKeyDown">) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id });
-  return <div ref={setNodeRef} style={{ transform: CSS.Transform.toString(transform), transition }} className={`rounded-lg border border-neutral-800 bg-neutral-950/80 p-2 ${isDragging ? "z-20 opacity-70 shadow-xl" : ""}`}>
+  return <div ref={setNodeRef} onContextMenu={onContextMenu} onKeyDown={onKeyDown} style={{ transform: CSS.Transform.toString(transform), transition }} className={`rounded-lg border border-neutral-800 bg-neutral-950/80 p-2 ${isDragging ? "z-20 opacity-70 shadow-xl" : ""}`}>
     <div className="flex items-center gap-2">
       <button type="button" aria-label={`Drag ${label}`} title="Drag to reorder" className="grid size-8 shrink-0 cursor-grab place-items-center rounded-md border border-neutral-800 bg-neutral-900 text-neutral-500 hover:text-neutral-200 active:cursor-grabbing" {...attributes} {...listeners}><GripVertical className="size-4" aria-hidden="true" /></button>
       <div className="min-w-0 flex-1"><p className="truncate text-[11px] font-semibold text-neutral-200">{label}</p>{detail && <p className="mt-0.5 truncate text-[10px] text-neutral-500">{detail}</p>}</div>

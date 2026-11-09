@@ -366,6 +366,14 @@ async function click(element) {
   expect(element).toBeTruthy();
   await act(async () => { element.click(); });
 }
+async function contextMenu(element) {
+  expect(element).toBeTruthy();
+  await act(async () => { element.dispatchEvent(new testWindow.MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 240, clientY: 180 })); });
+  return document.querySelector('[role="menu"]');
+}
+function menuItem(label) {
+  return [...document.querySelectorAll('[role="menuitem"]')].find(item => item.textContent === label);
+}
 async function setInput(element, value) {
   await act(async () => {
     Object.getOwnPropertyDescriptor(testWindow.HTMLInputElement.prototype, "value").set.call(element, value);
@@ -398,6 +406,93 @@ async function remount() {
 }
 
 describe("Downloader UI and Go API integration", () => {
+  test("opens status-aware download menus and runs the existing pause command", async () => {
+    rows = [{ ...job, kind: "video", title: "Context clip", url: "https://www.youtube.com/watch?v=abcdefghijk", status: "downloading" }];
+    await remount();
+    await contextMenu(container.querySelector('article[aria-label="Context clip"]'));
+    expect(menuItem("Pause")).toBeTruthy();
+    expect(menuItem("Resume")).toBeUndefined();
+    expect(menuItem("Retry")).toBeUndefined();
+    await click(menuItem("Pause"));
+    expect(requests.some(item => item.path === "/api/jobs/fixture-job/pause" && item.method === "POST")).toBe(true);
+    expect(document.querySelector('[role="menu"]')).toBeNull();
+  });
+
+  test("supports menu keyboard navigation, focus restoration, outside dismissal, and native text menus", async () => {
+    rows = [{ ...job, kind: "video", title: "Keyboard clip", status: "paused" }];
+    await remount();
+    const card = container.querySelector('article[aria-label="Keyboard clip"]');
+    card.focus();
+    await act(async () => { card.dispatchEvent(new testWindow.KeyboardEvent("keydown", { key: "F10", shiftKey: true, bubbles: true, cancelable: true })); });
+    expect(document.activeElement).toBe(menuItem("Resume"));
+    await act(async () => { document.activeElement.dispatchEvent(new testWindow.KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true })); });
+    expect(document.activeElement).toBe(menuItem("Cancel"));
+    await act(async () => { document.activeElement.dispatchEvent(new testWindow.KeyboardEvent("keydown", { key: "Escape", bubbles: true })); });
+    expect(document.querySelector('[role="menu"]')).toBeNull();
+    expect(document.activeElement).toBe(card);
+    await contextMenu(card);
+    await act(async () => { document.body.dispatchEvent(new testWindow.Event("pointerdown", { bubbles: true })); });
+    expect(document.querySelector('[role="menu"]')).toBeNull();
+    await contextMenu(container.querySelector('input[aria-label="Search queue"]'));
+    expect(document.querySelector('[role="menu"]')).toBeNull();
+  });
+
+  test("Vault menus target the right-clicked file and keep scoped deletion confirmation", async () => {
+    rows = [{ ...job, status: "completed", files: [
+      { id: "first", title: "First clip", name: "first.mp4", size: 1024, publishedAvailable: true, outputRelativePath: "first.mp4" },
+      { id: "second", title: "Second clip", name: "second.mp4", size: 1024, publishedAvailable: true, outputRelativePath: "second.mp4" },
+    ] }];
+    await remount();
+    await click(button("Vault"));
+    const card = container.querySelector('[data-media-card][aria-label="Select Second clip"]');
+    await contextMenu(card);
+    expect(card.getAttribute("aria-pressed")).toBe("true");
+    await click(menuItem("Reveal"));
+    expect(JSON.parse(requests.find(item => item.path.endsWith("/filesystem")).body)).toEqual({ fileId: "second", action: "reveal" });
+    await contextMenu(card);
+    testWindow.confirm = () => false;
+    await click(menuItem("Delete selected file"));
+    expect(requests.some(item => item.method === "DELETE")).toBe(false);
+    await contextMenu(card);
+    testWindow.confirm = () => true;
+    await click(menuItem("Delete selected file"));
+    expect(requests.some(item => item.path === "/api/jobs/fixture-job/library-files/second" && item.method === "DELETE")).toBe(true);
+    expect(requests.some(item => item.path.endsWith("/all") && item.method === "DELETE")).toBe(false);
+  });
+
+  test("Vault menus preserve multi-selection and disable unavailable file commands", async () => {
+    rows = [{ ...job, status: "completed", files: [
+      { id: "first", title: "First clip", name: "first.mp4", size: 1024, publishedAvailable: true, outputRelativePath: "first.mp4" },
+      { id: "second", title: "Missing clip", name: "missing.mp4", size: 1024, publishedAvailable: false },
+    ] }];
+    await remount();
+    await click(button("Vault"));
+    const first = container.querySelector('[data-media-card][aria-label="Select First clip"]');
+    const second = container.querySelector('[data-media-card][aria-label="Select Missing clip"]');
+    await contextMenu(second);
+    expect(menuItem("Preview").disabled).toBe(true);
+    expect(menuItem("Reveal").disabled).toBe(true);
+    expect(menuItem("Delete selected file").disabled).toBe(true);
+    expect(menuItem("Forget item").disabled).toBe(false);
+    await act(async () => { document.body.dispatchEvent(new testWindow.Event("pointerdown", { bubbles: true })); });
+    await click(first);
+    await act(async () => { second.dispatchEvent(new testWindow.MouseEvent("click", { bubbles: true, ctrlKey: true })); });
+    await contextMenu(first);
+    expect(menuItem("Favorite 2 selected items")).toBeTruthy();
+    expect(menuItem("Delete entire download")).toBeUndefined();
+    await click(menuItem("Favorite 2 selected items"));
+    expect([...organizationResponse.favorites].sort()).toEqual(["fixture-job:first", "fixture-job:second"]);
+  });
+
+  test("Settings context commands reveal advanced settings and leave input editing native", async () => {
+    await click(button("Settings"));
+    await contextMenu(container.querySelector('div[aria-label="Settings"]'));
+    await click(menuItem("Show advanced settings"));
+    expect(container.querySelector('button[aria-label="Advanced settings"]').getAttribute("aria-expanded")).toBe("true");
+    await contextMenu(container.querySelector("#download-location"));
+    expect(document.querySelector('[role="menu"]')).toBeNull();
+  });
+
   test("associates inline link feedback with single and multiple link fields", async () => {
     for (const multiple of [false, true]) {
       if (multiple) await click(button("Multiple links"));

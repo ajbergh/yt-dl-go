@@ -6,6 +6,7 @@ import { api, apiBlob, type AppSettings, type BuildInfo, type CorruptionDiagnost
 import { namingTokenNames, previewFilename, sanitizeFilenameComponent, type NamingValues } from "../lib/naming";
 import { desktopBridge } from "../lib/desktop";
 import { userFacingMessage } from "../lib/messages";
+import { ContextMenuArea } from "../components/context-menu";
 import {
   button, field, notificationAPI, panel, primaryButton, qualityLabels, videoStrategyLabels,
 } from "../components/downloader/view-model";
@@ -43,13 +44,19 @@ export function SettingsPage({
   addCategory, removeCategory, toggleNotifications,
 }: SettingsPageProps) {
   const [advancedSettings, setAdvancedSettings] = useState(false);
+  const preferencesForm = useRef<HTMLFormElement>(null);
 
   return (
-<div className="mx-auto max-w-4xl space-y-5">
+<ContextMenuArea label="Settings" items={[
+  { label: "Save preferences", disabled: !serviceReady || savingSettings, action: () => preferencesForm.current?.requestSubmit() },
+  { label: "Choose download folder", disabled: !serviceReady, action: selectDownloadFolder },
+  { label: advancedSettings ? "Hide advanced settings" : "Show advanced settings", action: () => setAdvancedSettings(value => !value) },
+  { label: "Check for updates", disabled: !serviceReady || checkingUpdates, action: checkForUpdates },
+]}><div tabIndex={0} aria-label="Settings" className="mx-auto max-w-4xl space-y-5">
           <div><p className="mb-1 text-xs font-bold uppercase tracking-[0.16em] text-neutral-400">Configuration</p><h2 className="text-2xl font-bold">Settings</h2><p className="mt-1 text-xs text-neutral-400">Choose where downloads go and how they are organized. Changes apply to new downloads after saving.</p></div>
           {(serviceError || !serviceReady) && <p role={serviceError ? "alert" : "status"} className="rounded-xl border border-amber-800/60 bg-amber-950/30 p-4 text-sm text-amber-200">{serviceError ? userFacingMessage(serviceError) : "Starting the app. Settings will be available shortly."}</p>}
 
-          <form onSubmit={savePreferences} className="space-y-5">
+          <form ref={preferencesForm} onSubmit={savePreferences} className="space-y-5">
             <section className={`${panel} space-y-4 p-5 sm:p-6`}>
               <div className="flex flex-wrap items-start justify-between gap-3 border-b border-neutral-800 pb-4">
                 <div><h3 className="text-sm font-bold">Download preferences</h3><p className="mt-1 text-xs text-neutral-400">Choose where finished files go, how they are named, and how folders are organized.</p></div>
@@ -249,7 +256,7 @@ export function SettingsPage({
               {!mp3Supported && <p className="text-xs text-amber-300">MP3 conversion is unavailable in this version.</p>}
             </div>
           </details>
-        </div>
+        </div></ContextMenuArea>
   );
 }
 

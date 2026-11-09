@@ -13,6 +13,7 @@ import {
 } from "../components/downloader/view-model";
 import type { JobConfigurationPatch } from "../hooks/use-jobs";
 import { userFacingMessage } from "../lib/messages";
+import { ContextMenuArea, type ContextMenuItem } from "../components/context-menu";
 
 type QueueJobAction = "pause" | "resume" | "cancel" | "retry" | "remove" | "forget-history";
 
@@ -88,6 +89,33 @@ export function QueuePage({
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
   );
 
+  function jobMenu(job: DownloadJob, item?: QueueItem): ContextMenuItem[] {
+    const disabled = !serviceReady || Boolean(busyAction);
+    const batch = job.kind === "playlist";
+    const entries: ContextMenuItem[] = [];
+    const command = (label: string, action: QueueJobAction, danger = false) => entries.push({ label, action: () => jobAction(job, action), disabled, danger });
+    if (["queued", "downloading", "processing"].includes(job.status)) command(batch ? "Pause playlist" : "Pause", "pause");
+    if (job.status === "paused") command(batch ? "Resume playlist" : "Resume", "resume");
+    if (isActive(job) || job.status === "paused") command(batch ? "Cancel playlist" : "Cancel", "cancel", true);
+    if (job.status === "queued") entries.push({ label: "Download next", action: () => downloadNext(job), disabled: disabled || queuedJobsOrdered[0]?.id === job.id });
+    if (job.status === "queued" || job.status === "paused") entries.push({ label: "Edit queued settings", disabled, action: () => {
+      setEditingJobID(job.id);
+      window.requestAnimationFrame(() => document.getElementById(`queue-job-${job.id}`)?.scrollIntoView({ block: "nearest" }));
+    } });
+    if (item?.status === "completed" && (item.fileIds?.length || item.fileId)) entries.push({
+      label: (item.fileIds?.length ?? 0) > 1 ? "Save chapters" : "Save file", disabled,
+      action: () => saveFile(job, (item.fileIds?.length ?? 0) > 1 ? item.fileIds : item.fileId),
+    });
+    if (["failed", "cancelled", ...(batch ? ["partial"] : [])].includes(job.status)) command(batch ? "Retry playlist" : "Retry", "retry");
+    if (batch && ["partial", "failed", "cancelled"].includes(job.status)) {
+      if (item && ["failed", "cancelled"].includes(item.status)) entries.push({ label: item.retryRequested ? "Retry queued" : "Retry item", disabled: disabled || item.retryRequested, action: () => retryPlaylistItem(job, item) });
+      if (job.items?.some(value => value.status === "failed" || value.status === "cancelled")) entries.push({ label: "Retry failed items", disabled, action: () => retryAllFailedItems(job) });
+    }
+    if (["completed", "partial", "failed", "cancelled"].includes(job.status)) command("Forget history", "forget-history", true);
+    if (job.status === "failed" && !batch) command("Remove", "remove", true);
+    return entries;
+  }
+
   return (
 <>
             <section id="new-download" className={`${panel} scroll-mt-24 overflow-hidden`} aria-labelledby="new-download-heading">
@@ -150,7 +178,13 @@ export function QueuePage({
                         </select>
                       </div>
                     </div>}
-                    {drafts.map((draft, index) => <article key={`${draft.url}-${index}`} className="grid gap-3 rounded-xl border border-neutral-800 bg-neutral-950/60 p-3 sm:grid-cols-[8rem_1fr_12rem] sm:items-center">
+                    {drafts.map((draft, index) => <ContextMenuArea key={`${draft.url}-${index}`} label={`Download options: ${draft.title}`} items={[
+                      { label: "Remove from new downloads", disabled: submitting, action: () => setDrafts(previous => previous.filter((_, itemIndex) => itemIndex !== index)) },
+                      ...(draft.kind === "playlist" ? [
+                        { label: "Select all available items", disabled: submitting, action: () => updatePlaylistSelection(index, selectablePlaylistEntries(draft).map(entry => entry.index!)) },
+                        { label: "Deselect all items", disabled: submitting, action: () => updatePlaylistSelection(index, []) },
+                      ] : []),
+                    ]}><article tabIndex={0} className="grid gap-3 rounded-xl border border-neutral-800 bg-neutral-950/60 p-3 sm:grid-cols-[8rem_1fr_12rem] sm:items-center">
                       {draft.thumbnailUrl ? <img src={draft.thumbnailUrl} alt="" referrerPolicy="no-referrer" className="aspect-video w-full rounded-lg bg-neutral-900 object-cover sm:w-32" />
                         : <div className="grid aspect-video w-full place-items-center rounded-lg bg-neutral-900 text-neutral-400 sm:w-32">{draft.kind === "playlist" ? <ListVideo className="size-7" aria-hidden="true" /> : <Film className="size-7" aria-hidden="true" />}</div>}
                       <div className="min-w-0">
@@ -237,7 +271,7 @@ export function QueuePage({
                           </>;
                         })()}
                       </div>}
-                    </article>)}
+                    </article></ContextMenuArea>)}
                     <label className="flex cursor-pointer items-start gap-2.5 border-t border-neutral-800 pt-3 text-xs text-neutral-300">
                       <input type="checkbox" aria-label="Confirm download rights" checked={rightsConfirmed} onChange={event => setRightsConfirmed(event.target.checked)} className="mt-0.5 size-4 shrink-0 accent-rose-600" />
                       <span>I own this content or have permission to download it.</span>
@@ -258,7 +292,12 @@ export function QueuePage({
               </div>
             </section>
 
-            <section aria-labelledby="queue-heading" className="space-y-3">
+            <ContextMenuArea label="Queue" items={[
+              { label: "Pause all downloads", disabled: !serviceReady || Boolean(busyAction) || !jobs.some(job => isActive(job)), action: () => batchAction("pause") },
+              { label: "Resume all paused downloads", disabled: !serviceReady || Boolean(busyAction) || !jobs.some(job => job.status === "paused"), action: () => batchAction("resume") },
+              { label: "Clear completed", disabled: !serviceReady || Boolean(busyAction) || !completedQueueCount, action: clearCompleted },
+              { label: "Clear queue filters", disabled: !search && queueFilter === "all", action: () => { setSearch(""); setQueueFilter("all"); } },
+            ]}><section aria-labelledby="queue-heading" className="space-y-3" tabIndex={0}>
               <div className="flex flex-wrap items-end justify-between gap-3">
                  <div><h2 id="queue-heading" className="text-xl font-bold">Downloads <span className="ml-1 text-sm font-medium text-neutral-400">({visibleQueueRows.length})</span></h2><p className="mt-1 text-xs text-neutral-400">{activeCount} / {settings.maxConcurrentDownloads} active · {formatBytes(totalCurrentSpeed)}/s combined</p></div>
                 <div className="flex flex-wrap gap-2">
@@ -298,9 +337,9 @@ export function QueuePage({
                               </SortableContext>
                             </DndContext>
                           : undefined;
-                        return <SortableQueueOrderRow key={job.id} id={`job:${job.id}`} label={job.title} detail={`Queue #${jobIndex + 1} · ${job.kind === "playlist" ? `${job.items?.length ?? 0} selected items` : "single video"}`} below={nested}>
+                        return <ContextMenuArea key={job.id} label={`Queue order: ${job.title}`} items={jobMenu(job)}><SortableQueueOrderRow id={`job:${job.id}`} label={job.title} detail={`Queue #${jobIndex + 1} · ${job.kind === "playlist" ? `${job.items?.length ?? 0} selected items` : "single video"}`} below={nested}>
                           <button type="button" className={button} disabled={jobIndex === 0 || busyAction === `${job.id}:next`} onClick={() => void downloadNext(job)}>Download next</button>
-                        </SortableQueueOrderRow>;
+                        </SortableQueueOrderRow></ContextMenuArea>;
                       })}
                     </div>
                   </SortableContext>
@@ -329,7 +368,7 @@ export function QueuePage({
                   const batchControls = job.kind === "playlist" && item.index === 1;
                   const itemError = item.error || ((job.kind === "video" || !job.items?.length) ? job.error : "");
                   const label = job.mediaType === "audio" ? (job.audioFormat === "m4a" ? "M4A · original AAC" : `MP3 ${job.audioBitrate ?? "192k"}`) : `${qualityLabels[job.quality]} · ${videoStrategyLabels[job.videoStrategy ?? "best"]}`;
-                  return <article key={`${job.id}:${item.index}`} className={`rounded-2xl border bg-neutral-900/80 p-4 sm:p-5 ${itemActive ? "border-rose-800/70" : "border-neutral-800"}`}>
+                  return <ContextMenuArea key={`${job.id}:${item.index}`} label={`Download: ${item.title}`} items={jobMenu(job, item)}><article id={item.index === 1 ? `queue-job-${job.id}` : undefined} tabIndex={0} aria-label={item.title} className={`rounded-2xl border bg-neutral-900/80 p-4 sm:p-5 focus-visible:outline-2 focus-visible:outline-rose-400 ${itemActive ? "border-rose-800/70" : "border-neutral-800"}`}>
                     <div className="flex flex-wrap items-center gap-4">
                       {item.thumbnailUrl ? <img src={item.thumbnailUrl} alt="" referrerPolicy="no-referrer" className="hidden aspect-video w-40 shrink-0 rounded-lg bg-neutral-950 object-cover sm:block" />
                         : <div className="hidden aspect-video w-40 shrink-0 place-items-center rounded-lg bg-neutral-950 text-neutral-400 sm:grid"><Film className="size-6" aria-hidden="true" /></div>}
@@ -368,10 +407,10 @@ export function QueuePage({
                     {item.index === 1 && editingJobID === job.id && <JobConfigurationEditor key={job.id} job={job} categories={settings.userCategories} busy={busyAction === `${job.id}:configuration`} onSave={patch => void updateJobConfiguration(job, patch)} />}
                     {itemError && item.status === "failed" && <p className="mt-3 flex items-start gap-1.5 text-xs text-red-300"><AlertCircle className="mt-0.5 size-3 shrink-0" aria-hidden="true" />{userFacingMessage(itemError)}</p>}
                     {jobNote && item.index === 1 && <p className="mt-3 text-xs leading-relaxed text-amber-300/80">{userFacingMessage(jobNote)}</p>}
-                  </article>;
+                  </article></ContextMenuArea>;
                 })}
               </div>}
-            </section>
+            </section></ContextMenuArea>
           </>
   );
 }

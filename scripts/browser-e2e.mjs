@@ -214,6 +214,24 @@ async function clickSelector(cdp, selector) {
   assert.equal(result, true, `enabled element not found: ${selector}`);
 }
 
+async function rightClickSelector(cdp, selector) {
+  const point = await cdp.evaluate(`(() => {
+    const element = document.querySelector(${JSON.stringify(selector)});
+    if (!element) return null;
+    element.scrollIntoView({ block: "center" });
+    const bounds = element.getBoundingClientRect();
+    return { x: bounds.left + bounds.width / 2, y: bounds.top + bounds.height / 2 };
+  })()`);
+  assert.ok(point, `context-menu surface not found: ${selector}`);
+  await cdp.send("Input.dispatchMouseEvent", { type: "mousePressed", ...point, button: "right", buttons: 2, clickCount: 1 });
+  await cdp.send("Input.dispatchMouseEvent", { type: "mouseReleased", ...point, button: "right", buttons: 0, clickCount: 1 });
+  await waitFor(cdp, `Boolean(document.querySelector('[role="menu"]'))`, "context menu");
+  assert.equal(await cdp.evaluate(`(() => {
+    const bounds = document.querySelector('[role="menu"]').getBoundingClientRect();
+    return bounds.left >= 0 && bounds.top >= 0 && bounds.right <= innerWidth && bounds.bottom <= innerHeight;
+  })()`), true, "context menu extends outside the viewport");
+}
+
 async function waitForEnabledSelector(cdp, selector, label, timeoutMs = 15000) {
   return waitFor(
     cdp,
@@ -393,7 +411,8 @@ async function main() {
     await clickButton(cdp, "Add 1 to queue");
     await waitForBackendJobStatus(baseURL, "paused");
     await waitForEnabledSelector(cdp, '[aria-label^="Edit queued settings for "]', "paused configuration editor");
-    await clickSelector(cdp, '[aria-label^="Edit queued settings for "]');
+    await rightClickSelector(cdp, 'article[id^="queue-job-"]');
+    await clickButton(cdp, "Edit queued settings");
     await setValue(cdp, 'select[aria-label^="Quality for "]', "480");
     await captureScreenshot(cdp, "queue-editor");
     await captureScreenshot(cdp, "queue-editor-mobile", 390, 844);
@@ -424,7 +443,8 @@ async function main() {
       params => params?.response?.url?.endsWith("/pause") === true,
       15000,
     );
-    await clickSelector(cdp, pauseSelector);
+    await rightClickSelector(cdp, 'article[id^="queue-job-"]');
+    await clickSelector(cdp, '[role="menuitem"]');
     const pauseRequest = await pauseRequestPromise;
     assert.equal(pauseRequest.request.method, "POST", `pause request used ${pauseRequest.request.method}`);
     const pauseResponse = await pauseResponsePromise;
@@ -442,6 +462,15 @@ async function main() {
     await captureScreenshot(cdp, "library-desktop");
     await captureScreenshot(cdp, "library-mobile", 390, 844);
     await captureScreenshot(cdp, "library-narrow", 320, 720);
+    await rightClickSelector(cdp, '[data-media-card]');
+    if (process.env.E2E_SCREENSHOT_DIR) {
+      // Capture the current viewport without the layout helper's resize/scroll,
+      // which intentionally dismisses an open context menu.
+      const { data } = await cdp.send("Page.captureScreenshot", { format: "png", captureBeyondViewport: false });
+      await writeFile(path.join(process.env.E2E_SCREENSHOT_DIR, "library-context-menu.png"), Buffer.from(data, "base64"));
+    }
+    await clickButton(cdp, "Add favorite");
+    await waitFor(cdp, `Boolean(document.querySelector('[data-media-card] button[aria-label^="Remove favorite:"]'))`, "favorite from context menu");
 
     const beforeRestart = await getJSON(`${baseURL}/api/library`);
     assert.equal(beforeRestart.jobs.length, 1, "completed Vault item was not persisted");

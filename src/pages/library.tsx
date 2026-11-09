@@ -7,6 +7,7 @@ import {
 import type { DownloadFile, DownloadJob, LibraryQuery, ServiceConnection } from "../lib/downloader";
 import { userFacingMessage } from "../lib/messages";
 import { confirmAction } from "../lib/desktop";
+import { ContextMenuArea, type ContextMenuItem } from "../components/context-menu";
 import { addCollection, collectionNameIsAvailable, removeCollection, renameCollection, toggleCollectionItem, type MediaCollection } from "../lib/library-collections";
 import { useLibraryOrganization } from "../hooks/use-library-organization";
 import { chooseMediaKeys, setCollectionBatch } from "../lib/library-selection";
@@ -323,6 +324,43 @@ export function LibraryPage({
     void filesystemAction(item.job, item.file.id, action);
   }
 
+  function mediaMenu(item: MediaItem): ContextMenuItem[] {
+    const busy = !serviceReady || Boolean(busyAction);
+    return [
+      { label: "Preview", disabled: busy || !item.available, action: () => openItem(item) },
+      ...([ ["Reveal", "reveal"], ["Copy path", "copy-path"], ["Open folder", "open-folder"] ] as const).map(([label, action]) => ({
+        label, disabled: busy || !item.available || !item.file.outputRelativePath, action: () => fileAction(item, action),
+      })),
+      { label: "Show details", action: () => { setSelectedKey(item.key); setInspectorOpen(true); } },
+      { label: favorites.includes(item.key) ? "Remove favorite" : "Add favorite", disabled: !organizationReady,
+        action: () => toggleFavorite(item.key) },
+      ...collections.map(collection => ({
+        label: `${collection.itemKeys.includes(item.key) ? "Remove from" : "Add to"} collection: ${collection.name}`,
+        disabled: !organizationReady || (!collection.itemKeys.includes(item.key) && collection.itemKeys.length >= 10000),
+        action: () => setCollections(previous => toggleCollectionItem(previous, collection.id, item.key, !collection.itemKeys.includes(item.key))),
+      })),
+      ...(["partial", "failed", "cancelled"].includes(item.job.status)
+        ? [{ label: "Retry job", disabled: busy, action: () => jobAction(item.job, "retry") }] : []),
+      { label: "Forget item", disabled: busy || !stoppedJob(item.job), danger: true, action: () => jobAction(item.job, "remove-library-item", item.file.id) },
+      { label: "Delete selected file", disabled: busy || !stoppedJob(item.job) || !item.available || !item.file.outputRelativePath, danger: true, action: () => jobAction(item.job, "delete-library-file", item.file.id) },
+      { label: "Delete entire download", disabled: busy || !stoppedJob(item.job), danger: true, action: () => jobAction(item.job, "delete-all") },
+    ];
+  }
+  function itemMenu(item: MediaItem): ContextMenuItem[] {
+    if (!selectedKeysInView.has(item.key) || bulkSelected.length < 2) return mediaMenu(item);
+    return [
+      { label: `Favorite ${bulkSelected.length} selected items`, disabled: !canFavoriteBulk, action: () => setFavoritesForKeys(bulkKeys, true) },
+      { label: "Remove selected favorites", disabled: !organizationReady, action: () => setFavoritesForKeys(bulkKeys, false) },
+      ...collections.flatMap(collection => ([true, false] as const).map(add => ({
+        label: `${add ? "Add selection to" : "Remove selection from"}: ${collection.name}`,
+        disabled: !organizationReady || (add && collection.itemKeys.length + bulkKeys.filter(key => !collection.itemKeys.includes(key)).length > 10000),
+        action: () => setCollections(previous => previous.map(value => value.id === collection.id ? { ...value, itemKeys: setCollectionBatch(value.itemKeys, bulkKeys, add) } : value)),
+      }))),
+      { label: `Forget ${bulkSelected.length} selected items`, disabled: Boolean(busyAction) || !canForgetBulk, danger: true, action: forgetSelectedMedia },
+      { label: "Clear selection", action: clearSelection },
+    ];
+  }
+
   const sidebarButton = (label: string, Icon: typeof Film, count: number | null, active: boolean, onClick: () => void) => (
     <button type="button" onClick={onClick} aria-current={active ? "page" : undefined}
       className={"flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm transition-colors " +
@@ -347,7 +385,12 @@ export function LibraryPage({
   );
 
   return (
-    <section aria-labelledby="library-heading" className="min-w-0">
+    <ContextMenuArea label="Vault" items={[
+      { label: libraryLayout === "grid" ? "Switch to list view" : "Switch to grid view", action: () => setLibraryLayout(libraryLayout === "grid" ? "list" : "grid") },
+      { label: "Clear filters", disabled: !filtersActive, action: resetFilters },
+      { label: "Select all visible media", disabled: !filtered.length, action: () => { setSelectedKeys(visibleKeys); setSelectionAnchor(visibleKeys[0] || ""); setSelectedKey(visibleKeys[0] || ""); } },
+      { label: "New collection", disabled: !organizationReady, action: () => { setShowCollectionForm(true); setCollectionError(""); } },
+    ]}><section aria-labelledby="library-heading" className="min-w-0" tabIndex={0}>
       <div className={"grid items-start gap-4 lg:grid-cols-[188px_minmax(0,1fr)] " +
         (inspectorOpen && selected ? "xl:grid-cols-[188px_minmax(0,1fr)_310px]" : "")}>
         <aside aria-label="Vault navigation" className="hidden rounded-2xl border border-neutral-800/80 bg-[#111216] p-3 lg:block">
@@ -375,7 +418,11 @@ export function LibraryPage({
               <button type="button" title="New collection" aria-label="New collection" onClick={() => { setShowCollectionForm(previous => !previous); setCollectionError(""); }}
                 className="rounded-md p-1.5 text-rose-400 hover:bg-neutral-800"><Plus className="size-4" /></button>
             </div>
-            {collections.map(collection => <div key={collection.id} className="group flex items-center gap-0.5">
+            {collections.map(collection => <ContextMenuArea key={collection.id} label={`Collection: ${collection.name}`} items={[
+              { label: "Open collection", action: () => browseCollection(collection.id) },
+              { label: "Rename collection", disabled: !organizationReady, action: () => { setRenameCollectionID(collection.id); setRenamedCollectionName(collection.name); setCollectionError(""); } },
+              { label: "Delete collection", disabled: !organizationReady, danger: true, action: () => deleteCollection(collection) },
+            ]}><div className="group flex items-center gap-0.5">
               <button type="button" aria-pressed={activeCollectionID === collection.id} onClick={() => browseCollection(collection.id)}
                 title={collection.name} className={"min-w-0 flex-1 truncate rounded-lg px-3 py-2 text-left text-xs " + (activeCollectionID === collection.id ? "bg-rose-600/20 text-rose-200" : "text-neutral-400 hover:bg-neutral-800")}>
                 {collection.name}
@@ -386,7 +433,7 @@ export function LibraryPage({
               <button type="button" aria-label={"Delete collection " + collection.name} title="Delete collection"
                 onClick={() => void deleteCollection(collection)}
                 className="rounded-md p-1 text-neutral-500 hover:bg-red-900/40 hover:text-rose-300"><Trash2 className="size-3.5" /></button>
-            </div>)}
+            </div></ContextMenuArea>)}
             {collections.length === 0 && <p className="px-3 text-xs text-neutral-500">Create a personal collection.</p>}
             {showCollectionForm && <form onSubmit={createCollection} className="mt-2 space-y-2 px-2">
               <input aria-label="Collection name" autoFocus maxLength={80} value={newCollectionName} onChange={event => setNewCollectionName(event.target.value)}
@@ -592,7 +639,9 @@ export function LibraryPage({
               : "flex flex-col gap-2"}>
               {filtered.map((item, index) => {
                 const active = selectedKeys.length ? selectedKeysInView.has(item.key) : selected?.key === item.key;
-                return <article key={item.key} data-media-card role="button" tabIndex={0} aria-pressed={active}
+                return <ContextMenuArea key={item.key} label={`Media: ${item.title}`} items={itemMenu(item)} onOpen={() => {
+                  if (!selectedKeysInView.has(item.key)) chooseItem(item.key, false, false);
+                }}><article data-media-card role="button" tabIndex={0} aria-pressed={active}
                   aria-label={"Select " + item.title}
                   onClick={event => chooseItem(item.key, event.shiftKey, event.ctrlKey || event.metaKey)}
                   onDoubleClick={() => openItem(item)}
@@ -634,7 +683,7 @@ export function LibraryPage({
                       (libraryLayout === "grid" ? "right-4 top-4 " : "") + (favorites.includes(item.key) ? "text-rose-400" : "")}>
                     <Heart className="size-4" fill={favorites.includes(item.key) ? "currentColor" : "none"} />
                   </button>
-                </article>;
+                </article></ContextMenuArea>;
               })}
             </div>
           )}
@@ -645,7 +694,7 @@ export function LibraryPage({
           </div>}
         </div>
 
-        {inspectorOpen && selected && <aside aria-label="Selected media details" className="min-w-0 rounded-2xl border border-neutral-800 bg-[#141519] p-4 lg:col-start-2 xl:col-start-3 xl:row-start-1">
+        {inspectorOpen && selected && <ContextMenuArea label={`Media details: ${selected.title}`} items={mediaMenu(selected)}><aside tabIndex={0} aria-label="Selected media details" className="min-w-0 rounded-2xl border border-neutral-800 bg-[#141519] p-4 lg:col-start-2 xl:col-start-3 xl:row-start-1">
           <div className="mb-3 flex items-center justify-between">
             <p className="text-xs font-bold uppercase tracking-widest text-neutral-400">Media details</p>
             <button type="button" onClick={() => setInspectorOpen(false)} aria-label="Close media details" className="rounded-lg p-2 text-neutral-400 hover:bg-neutral-800 hover:text-white"><X className="size-4" /></button>
@@ -724,12 +773,12 @@ export function LibraryPage({
                 <RefreshCw className="size-4" />Retry job
               </button>}
           </div>
-        </aside>}
+        </aside></ContextMenuArea>}
       </div>
       {!inspectorOpen && selected && <button type="button" className={button + " fixed bottom-5 right-5 z-20 shadow-xl"} onClick={() => setInspectorOpen(true)}>
         <Activity className="size-4" />Show details
       </button>}
       <p className="sr-only">Vault shortcuts: Control or Command F to search. Control or Command A selects all visible media. Shift selects ranges, Control or Command toggles individual items, arrows navigate, Enter previews, and Escape clears selection.</p>
-    </section>
+    </section></ContextMenuArea>
   );
 }
