@@ -80,8 +80,9 @@ cover each OS family and the architectures intended for publication.
 - [ ] Install and open through the normal OS entry point; also test the portable package.
 - [ ] Inspect a permitted video/playlist; exercise queue events, pause/resume, and retry.
 - [ ] Complete a permitted download and verify actual quality and file playback.
-- [ ] Verify Library previews/seeking, Reveal/file selection, Copy path, and the
-      single Delete files confirmation; verify the files are deleted only after approval.
+- [ ] Verify Vault previews/seeking, Reveal/file selection, Copy path, and both
+      Delete selected file and Delete entire download confirmations. Verify each
+      action deletes only its stated scope after approval; Forget item preserves media.
 - [ ] Verify native confirmations for history removal, retries, and bulk operations;
       decline each operation and verify that nothing is changed.
 - [ ] Verify File → Exit and Help → About. Test Queue save/cancel, Settings Library
@@ -91,7 +92,8 @@ cover each OS family and the architectures intended for publication.
 - [ ] Delete one file outside the app, restart, and verify only that Library entry
       disappears. Disconnect/reconnect the Library folder and verify entries survive.
 - [ ] Retry a permitted large adaptive download that previously exceeded its item
-      reservation; verify actual quality and the configured job limit.
+      reservation; verify actual quality and that the retired job-size cap does not apply.
+      Verify low-disk-space warnings remain advisory.
 - [ ] Refresh the native documentation screenshots using disposable data; include
       the updated Library controls and a native confirmation in the PR evidence.
 - [ ] Close/restart and verify queue, Library, preferences, and output locations.

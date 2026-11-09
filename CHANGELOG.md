@@ -4,11 +4,33 @@ This file summarizes notable user-facing changes. Version **v0.1.0** was publicl
 
 ## [Unreleased]
 
+## [0.4.0] — 2026-11-09
+
+### Added
+
+- Media-first Vault browsing with grid/list views, per-file details, server-side search/filtering/sorting, and 50-file pagination. Favorites and collections persist in SQLite and travel with metadata exports/imports.
+- Right-click commands for Queue downloads, work-order rows, inspected download options, Vault media/collections, and Settings. Menus support keyboard navigation and preserve native text-editing menus and existing confirmations.
+- Advisory low-disk-space warnings below 5% available capacity, without pausing or rejecting downloads.
+- File-scoped Vault removal and permanent deletion, distinct from deleting every file belonging to a download. Multi-selection supports bulk organization and index removal while preserving unrelated files.
+
 ### Changed
 
-- Audio downloads reuse matching tracks within the selected Library folder and queue MP3 conversion separately from downloading. Finished playlist tracks appear in the Library immediately and can be previewed or revealed while the remaining items download.
+- Audio downloads reuse matching tracks within the selected Vault folder and queue MP3 conversion separately from downloading. Finished playlist tracks appear in the Vault immediately and can be previewed or revealed while the remaining items download.
 - Faster native downloads: range requests now run as a continuous pipeline instead of waiting on the slowest request in each 32 MiB window, range buffers are reused, and the HTTP client keeps all parallel connections warm. A failed range keeps already-downloaded contiguous progress. Offline benchmark throughput improved about 50%.
 - MP4 downloads whose preferred audio is multichannel AAC now probe that track first and, if it is rejected, capture the video and stereo fallback audio together in one browser pass instead of two serial passes (about 40% faster on affected videos).
+- Downloads no longer have a per-job byte cap. The retired `MAX_JOB_BYTES` and saved `max_job_bytes` values are ignored; `maxJobBytes` is removed from the settings API, with legacy database columns retained for upgrades.
+- MP3 previews are decoded to temporary WAV audio by the service and buffered locally before playback. Closing a preview cancels pending transfers and releases its local buffer; videos and M4A retain streamed playback.
+- Use Vault terminology consistently and keep Windows development data under the per-user application-data directory.
+
+### Fixed
+
+- Vault Browse counts now describe the whole library and remain stable across section navigation, filtering, search, and pagination. Favorite totals refresh after saved organization changes.
+- MP3 preview playback avoids silent gaps caused by Chromium's MP3 decoder.
+
+### Distribution notes
+
+- Windows packages are not Authenticode-signed. macOS packages use ad-hoc signing for execution and are not Developer ID-signed or notarized. SHA-256 checksums and GitHub build provenance remain the release-integrity baseline.
+- Manual macOS/Linux acceptance and credentialed signing verification remain pending. Automated build, installer, persistence, and smoke checks cover all six desktop targets. Automatic self-update remains disabled.
 
 ## [0.3.0] — 2026-11-06
 
