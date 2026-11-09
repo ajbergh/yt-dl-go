@@ -57,7 +57,7 @@ $scriptDir = if ($PSScriptRoot) {
 $repoRoot = (Resolve-Path (Join-Path $scriptDir '..')).Path
 $serverDir = Join-Path $repoRoot 'src\server'
 $frontendDir = $repoRoot
-$dataDir = Join-Path $repoRoot 'downloads'
+$dataDir = Join-Path $env:LOCALAPPDATA 'yt-dl-go'
 
 # Helper: Test for required commands
 function Test-RequiredCommand {
