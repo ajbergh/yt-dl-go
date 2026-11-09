@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"strings"
 	"testing"
+	"unicode/utf16"
 )
 
 func id3Frames(t *testing.T, tag []byte) map[string][]byte {
@@ -92,5 +93,36 @@ func TestMP3MetadataForPlaylist(t *testing.T) {
 	}
 	if !strings.HasSuffix(metadata.SourceURL, "dQw4w9WgXcQ") || metadata.PublishDate != "2026-09-20" {
 		t.Fatalf("source/date metadata = %+v", metadata)
+	}
+}
+
+// Each UTF-16 string in a TXXX frame needs a BOM. A frame-wide encoding
+// marker does not supply the byte order for the value after the terminator.
+func TestID3UserTextIncludesByteOrderForBothStrings(t *testing.T) {
+	var frames bytes.Buffer
+	appendID3UserTextFrame(&frames, "Publish Date", "2026-09-20")
+	data := frames.Bytes()
+	size := int(binary.BigEndian.Uint32(data[4:8]))
+	if string(data[:4]) != "TXXX" || size != len(data)-10 {
+		t.Fatal("invalid user-text frame")
+	}
+	payload := data[10:]
+	if len(payload) < 3 || payload[0] != 1 || !bytes.Equal(payload[1:3], []byte{0xff, 0xfe}) {
+		t.Fatal("missing description byte order")
+	}
+	end := 3
+	for end+1 < len(payload) && (payload[end] != 0 || payload[end+1] != 0) {
+		end += 2
+	}
+	value := payload[end+2:]
+	if len(value) < 2 || !bytes.Equal(value[:2], []byte{0xff, 0xfe}) {
+		t.Fatal("missing value byte order; strict MP3 readers reject this tag")
+	}
+	var units []uint16
+	for i := 2; i+1 < len(value); i += 2 {
+		units = append(units, binary.LittleEndian.Uint16(value[i:i+2]))
+	}
+	if got := string(utf16.Decode(units)); got != "2026-09-20" {
+		t.Fatalf("date value = %q", got)
 	}
 }

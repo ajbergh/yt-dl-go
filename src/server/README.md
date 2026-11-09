@@ -229,6 +229,8 @@ go vet ./...
 
 The unit suite uses fake metadata and streams to cover format selection, download completion, limits, cancellation, playlist selection/reordering, single-item retry, restart persistence, caption inspection/conversion/publishing/archives, API validation, authenticated SSE framing/lifetime/event delivery, tickets, ranges, retention, and browser-assisted fallback logic.
 
+When FFmpeg is available, `TestMP3PreviewPreservesAudioSignal` also converts non-silent stereo sources at 44.1 and 48 kHz and independently decodes the MP3, checking channel fidelity and rejecting metadata parser errors. This optional test skips if FFmpeg is absent; the app does not require it.
+
 The live test is opt-in, downloads real media, and requires working internet access plus a Chrome-compatible browser for the adaptive-HD case. Replace the sample URL with an accessible video you are authorized to download:
 
 ~~~

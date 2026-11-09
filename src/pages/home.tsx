@@ -3,6 +3,7 @@
  * by the same executable, then uses that API for jobs and SQLite preferences.
  */
 import { useEffect, useMemo, useRef, useState } from "react";
+import { MP3Preview } from "../components/downloader/mp3-preview";
 import { LibraryPage } from "./library";
 import { QueuePage } from "./queue";
 import { SettingsPage } from "./settings";
@@ -484,7 +485,8 @@ export function HomePage() {
         <div className="w-full max-w-4xl overflow-hidden rounded-2xl border border-neutral-700 bg-neutral-950 shadow-2xl">
           <div className="flex items-center justify-between gap-3 border-b border-neutral-800 px-4 py-3"><div className="min-w-0"><p className="text-xs font-bold uppercase tracking-wider text-rose-400">Local preview</p><h2 id="media-preview-title" className="truncate text-sm font-semibold text-white">{preview.title}</h2></div><button type="button" className={button} onClick={() => setPreview(null)} aria-label="Close media preview"><X className="size-4" aria-hidden="true" />Close</button></div>
           <div className="bg-black p-3 sm:p-5">
-            {preview.mimeType.startsWith("audio/") ? <audio ref={element => { previewMedia.current = element; }} controls preload="metadata" src={preview.url} className="w-full">This audio format cannot be played here.</audio>
+            {preview.mimeType === "audio/mpeg" ? <MP3Preview key={preview.url} url={preview.url} mediaRef={element => { previewMedia.current = element; }} />
+              : preview.mimeType.startsWith("audio/") ? <audio ref={element => { previewMedia.current = element; }} controls preload="metadata" src={preview.url} className="w-full">This audio format cannot be played here.</audio>
               : <video ref={element => { previewMedia.current = element; }} controls preload="metadata" src={preview.url} className="max-h-[70vh] w-full rounded-lg bg-black">This video format cannot be played here.</video>}
             {preview.chapters.length > 0 && <div className="mt-4 max-h-48 overflow-y-auto rounded-lg border border-neutral-800 p-2">
               <h3 className="px-2 pb-2 text-xs font-semibold text-neutral-300">Chapters</h3>

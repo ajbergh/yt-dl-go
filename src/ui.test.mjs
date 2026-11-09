@@ -1517,6 +1517,102 @@ describe("Downloader UI and Go API integration", () => {
     expect(document.activeElement).toBe(previewButton);
   });
 
+  test("buffers MP3 preview bytes locally, supports seeking, and releases the buffer on close", async () => {
+    const originalCreate = URL.createObjectURL;
+    const originalRevoke = URL.revokeObjectURL;
+    const created = [];
+    const revoked = [];
+    URL.createObjectURL = blob => { created.push(blob); return "blob:mp3-preview"; };
+    URL.revokeObjectURL = url => revoked.push(url);
+    const mockedFetch = globalThis.fetch;
+    const transfers = [];
+    globalThis.fetch = async (url, init = {}) => {
+      if (new URL(url).pathname === "/api/downloads/test-ticket") {
+        transfers.push(init);
+        return new Response("ID3 unchanged MP3 bytes", { headers: { "Content-Type": "audio/mpeg" } });
+      }
+      return mockedFetch(url, init);
+    };
+    try {
+      rows = [{ ...job, mediaType: "audio", status: "completed", files: [{ id: "mp3-file", name: "song.mp3", title: "Song", size: 22, mimeType: "audio/mpeg", publishedAvailable: true, managedAvailable: false, chapters: [{ title: "Verse", startMs: 30000, endMs: 60000 }] }] }];
+      await remount();
+      await click(button("Library"));
+      await click(button("Preview"));
+      const audio = container.querySelector('[role="dialog"] audio');
+      expect(audio).toBeTruthy();
+      expect(audio.src).toBe("blob:mp3-preview");
+      expect(audio.autoplay).toBe(false);
+      expect(created).toHaveLength(1);
+      expect(created[0].type).toBe("audio/mpeg");
+      expect(await created[0].text()).toBe("ID3 unchanged MP3 bytes");
+      expect(transfers).toHaveLength(1);
+      expect(transfers[0].credentials).toBe("omit");
+      await click([...container.querySelectorAll("button")].find(item => item.textContent.includes("Verse")));
+      expect(audio.currentTime).toBe(30);
+      await click(button("Close"));
+      expect(revoked).toEqual(["blob:mp3-preview"]);
+      expect(transfers[0].signal.aborted).toBe(true);
+    } finally {
+      URL.createObjectURL = originalCreate;
+      URL.revokeObjectURL = originalRevoke;
+    }
+  });
+
+  test("cancels a pending MP3 preview when closed and ignores late responses", async () => {
+    const mockedFetch = globalThis.fetch;
+    const originalCreate = URL.createObjectURL;
+    let release;
+    let signal;
+    let created = 0;
+    URL.createObjectURL = () => { created++; return "blob:late-mp3"; };
+    globalThis.fetch = async (url, init = {}) => {
+      if (new URL(url).pathname === "/api/downloads/test-ticket") {
+        signal = init.signal;
+        return new Promise(resolve => { release = resolve; });
+      }
+      return mockedFetch(url, init);
+    };
+    try {
+      rows = [{ ...job, mediaType: "audio", status: "completed", files: [{ id: "mp3-file", name: "song.mp3", size: 22, mimeType: "audio/mpeg", publishedAvailable: true, managedAvailable: false }] }];
+      await remount();
+      await click(button("Library"));
+      await click(button("Preview"));
+      expect(container.textContent).toContain("Preparing audio preview");
+      await click(button("Close"));
+      expect(signal.aborted).toBe(true);
+      await act(async () => { release(new Response("late MP3 bytes")); });
+      expect(created).toBe(0);
+      expect(container.querySelector('[role="dialog"]')).toBeNull();
+    } finally { URL.createObjectURL = originalCreate; }
+  });
+
+  test("offers a retry after an MP3 preview transfer fails", async () => {
+    const mockedFetch = globalThis.fetch;
+    const originalCreate = URL.createObjectURL;
+    const originalRevoke = URL.revokeObjectURL;
+    let attempts = 0;
+    URL.createObjectURL = () => "blob:retried-mp3";
+    URL.revokeObjectURL = () => {};
+    globalThis.fetch = async (url, init = {}) => {
+      if (new URL(url).pathname === "/api/downloads/test-ticket") {
+        if (++attempts === 1) return Response.json({ error: "busy" }, { status: 429 });
+        return new Response("MP3 bytes", { headers: { "Content-Type": "audio/mpeg" } });
+      }
+      return mockedFetch(url, init);
+    };
+    try {
+      rows = [{ ...job, mediaType: "audio", status: "completed", files: [{ id: "mp3-file", name: "song.mp3", size: 9, mimeType: "audio/mpeg", publishedAvailable: true, managedAvailable: false }] }];
+      await remount();
+      await click(button("Library"));
+      await click(button("Preview"));
+      expect(container.textContent).toContain("Audio preview could not be loaded");
+      await click(button("Retry audio preview"));
+      expect(container.querySelector('[role="dialog"] audio')?.src).toBe("blob:retried-mp3");
+      await click(button("Close"));
+      expect(attempts).toBe(2);
+    } finally { URL.createObjectURL = originalCreate; URL.revokeObjectURL = originalRevoke; }
+  });
+
   test("does not offer extra saves for a playlist already on disk", async () => {
     rows = [{ ...job, status: "completed", completedCount: 2, totalCount: 2, files: [
       { id: "file-1", name: "001-test.mp4", size: 1024, publishedAvailable: true },
