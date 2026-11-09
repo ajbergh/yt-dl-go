@@ -342,7 +342,7 @@ export function HomePage() {
 
           <nav aria-label="Main navigation" className="order-3 flex w-full items-center gap-1 rounded-xl border border-neutral-800 bg-neutral-900 p-1 sm:order-none sm:w-auto">
             {([
-              ["queue", Layers, "Queue"], ["library", Film, "Library"], ["settings", Settings, "Settings"],
+              ["queue", Layers, "Queue"], ["library", Film, "Vault"], ["settings", Settings, "Settings"],
             ] as const).map(([value, Icon, label]) => (
               <button key={value} type="button" onClick={() => setTab(value)} aria-current={tab === value ? "page" : undefined}
                 className={`flex min-w-0 flex-1 items-center justify-center gap-1.5 rounded-lg px-2 py-2 sm:px-3 text-xs font-semibold transition-colors sm:flex-none ${tab === value ? "bg-neutral-800 text-white shadow-sm" : "text-neutral-400 hover:text-neutral-200"}`}>

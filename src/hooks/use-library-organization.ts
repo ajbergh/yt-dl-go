@@ -1,3 +1,4 @@
+import { userFacingMessage } from "../lib/messages";
 import { useCallback, useEffect, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import { api, type ServiceConnection } from "../lib/downloader";
 import { libraryCollectionsKey, normalizeCollections, readCollections, type MediaCollection } from "../lib/library-collections";
@@ -102,7 +103,7 @@ export function useLibraryOrganization(connection: ServiceConnection): {
     } catch (reason) {
       if (generation !== requestGeneration.current) return;
       setReady(false);
-      setError(reason instanceof Error ? reason.message : "Could not load library organization.");
+      setError(reason instanceof Error ? userFacingMessage(reason.message) : "Could not load vault organization.");
     }
   }, [connection]);
 
@@ -136,7 +137,7 @@ export function useLibraryOrganization(connection: ServiceConnection): {
       if (generation !== requestGeneration.current) return;
       writable.current = false;
       setReady(false);
-      setError(reason instanceof Error ? reason.message : "Could not save library organization.");
+      setError(reason instanceof Error ? userFacingMessage(reason.message) : "Could not save vault organization.");
     } finally {
       saving.current = false;
     }

@@ -80,27 +80,27 @@ export function useJobs({
   async function jobAction(job: DownloadJob, action: JobAction, fileId?: string) {
     if (!serviceReady) return;
     if (action === "retry" && !(await confirmJobAction("Retry this URL? Confirm that you own the content or have permission to download it."))) return;
-    if (action === "remove" && !(await confirmJobAction("Remove this item from the Library? History will be removed. Files in your download folder will be preserved."))) return;
-    if (action === "remove-library-item" && !(await confirmJobAction("Remove this file from the Library? The file in your download folder and the job history will remain."))) return;
+    if (action === "remove" && !(await confirmJobAction("Remove this item from the Vault? History will be removed. Files in your download folder will be preserved."))) return;
+    if (action === "remove-library-item" && !(await confirmJobAction("Remove this file from the Vault? The file in your download folder and the job history will remain."))) return;
     if (action === "delete-library-file") {
       const item = job.files.find(file => file.id === fileId);
       if (!item || !(await confirmJobAction(`Permanently delete ONLY "${item.title || item.outputName || item.name}" from your download folder? Other files in this download and the job history will be preserved. This cannot be undone.`))) return;
     }
-    if (action === "forget-history" && !(await confirmJobAction("Remove finished job history from the Queue? Library items and media files will remain available."))) return;
-    if (action === "delete-all" && !(await confirmJobAction("Permanently delete ALL files belonging to this download, including media on Library pages you have not loaded? Files and Library history will be removed. This cannot be undone."))) return;
+    if (action === "forget-history" && !(await confirmJobAction("Remove finished job history from the Queue? Vault items and media files will remain available."))) return;
+    if (action === "delete-all" && !(await confirmJobAction("Permanently delete ALL files belonging to this download, including media on Vault pages you have not loaded? Files and Vault history will be removed. This cannot be undone."))) return;
 
     setBusyAction(job.id);
     setActionError("");
     try {
       if (action === "remove-library-item" || action === "delete-library-file") {
-        if (!fileId) throw new Error("A Library file ID is required.");
+        if (!fileId) throw new Error("A Vault file ID is required.");
         await api<void>(connection, `/api/jobs/${encodeURIComponent(job.id)}/${action === "delete-library-file" ? "library-files" : "library-items"}/${encodeURIComponent(fileId)}`, {
           method: "DELETE",
           signal: AbortSignal.timeout(15000),
         });
         setNotice(action === "delete-library-file"
           ? "Selected file permanently deleted. Other media in this download and job history were preserved."
-          : "Removed this file from the Library. Job history and downloaded files were preserved.");
+          : "Removed this file from the Vault. Job history and downloaded files were preserved.");
       } else if (action === "remove" || action === "forget-history" || action === "delete-all") {
         const suffix = action === "delete-all" ? "/all" : action === "forget-history" ? "/history" : "";
         await api<void>(connection, `/api/jobs/${encodeURIComponent(job.id)}${suffix}`, {
@@ -109,10 +109,10 @@ export function useJobs({
         });
         setJobs(previous => previous.filter(item => item.id !== job.id));
         setNotice(action === "delete-all"
-          ? "Files and Library history deleted."
+          ? "Files and Vault history deleted."
           : action === "forget-history"
-            ? "Job history removed. Library items and media remain available."
-            : "Removed from Library. Downloaded files were preserved.");
+            ? "Job history removed. Vault items and media remain available."
+            : "Removed from Vault. Downloaded files were preserved.");
       } else {
         const result = await api<DownloadJob>(connection, `/api/jobs/${encodeURIComponent(job.id)}/${action}`, {
           method: "POST",
@@ -138,7 +138,7 @@ export function useJobs({
       item.jobId + ":" + item.fileId, item,
     ])).values()];
     if (!serviceReady || busyAction || unique.length === 0 || unique.length > 100) return null;
-    if (!(await confirmJobAction(`Forget ${unique.length} selected Library file${unique.length === 1 ? "" : "s"}? Only their Library index entries will be removed. Downloaded files and job history remain on disk. This cannot be undone in the Library without reimporting.`))) return null;
+    if (!(await confirmJobAction(`Forget ${unique.length} selected Vault file${unique.length === 1 ? "" : "s"}? Only their Vault index entries will be removed. Downloaded files and job history remain on disk. This cannot be undone in the Vault without reimporting.`))) return null;
     setBusyAction("bulk-library");
     setActionError("");
     const removed: string[] = [];
@@ -156,7 +156,7 @@ export function useJobs({
           failed.push(`${key}: ${errorMessage(error)}`);
         }
       }
-      setNotice(`Removed ${removed.length} selected Library entr${removed.length === 1 ? "y" : "ies"}; downloaded files and job history were preserved.` +
+      setNotice(`Removed ${removed.length} selected Vault entr${removed.length === 1 ? "y" : "ies"}; downloaded files and job history were preserved.` +
         (failed.length ? ` ${failed.length} could not be removed.` : ""));
       if (failed.length) setActionError(failed.map(message => userFacingMessage(message)).join("; "));
       try {
@@ -236,7 +236,7 @@ export function useJobs({
     const uniqueIDs = [...new Set(jobIds)];
     if (!serviceReady || uniqueIDs.length === 0) return null;
     if (action === "cancel" && !(await confirmJobAction(`Cancel ${uniqueIDs.length} selected job${uniqueIDs.length === 1 ? "" : "s"}?`))) return null;
-    if (action === "delete" && !(await confirmJobAction(`Remove ${uniqueIDs.length} selected job${uniqueIDs.length === 1 ? "" : "s"} from the Library? History will be removed; downloaded files will remain.`))) return null;
+    if (action === "delete" && !(await confirmJobAction(`Remove ${uniqueIDs.length} selected job${uniqueIDs.length === 1 ? "" : "s"} from the Vault? History will be removed; downloaded files will remain.`))) return null;
     setBusyAction("bulk");
     setActionError("");
     try {
@@ -266,7 +266,7 @@ export function useJobs({
         }
       }
       setNotice(action === "delete"
-        ? `Removed ${deleted.size} job${deleted.size === 1 ? "" : "s"} from the Library${failures.length ? `; ${failures.length} could not be removed` : ""}.`
+        ? `Removed ${deleted.size} job${deleted.size === 1 ? "" : "s"} from the Vault${failures.length ? `; ${failures.length} could not be removed` : ""}.`
         : failures.length
           ? `${uniqueIDs.length - failures.length} selected jobs updated; ${failures.length} could not be changed.`
           : `Updated ${updatedCount} selected jobs.`);
@@ -354,12 +354,12 @@ export function useJobs({
       if (action === "copy-path") {
         try {
           await navigator.clipboard.writeText(result.path);
-          setNotice("Library file path copied to the clipboard.");
+          setNotice("Vault file path copied to the clipboard.");
         } catch {
-          setNotice(`Library file path: ${result.path}`);
+          setNotice(`Vault file path: ${result.path}`);
         }
       } else {
-        setNotice(action === "reveal" ? "Opened the library file location." : "Opened the library folder.");
+        setNotice(action === "reveal" ? "Opened the vault file location." : "Opened the vault folder.");
       }
     } catch (error) {
       setActionError(errorMessage(error));
@@ -459,7 +459,7 @@ export function useJobs({
     } catch {
       // Keep the current queue cleared for this session.
     }
-    setNotice("Completed downloads cleared from the queue. Your files remain in the library.");
+    setNotice("Completed downloads cleared from the queue. Your files remain in the vault.");
   }
 
   return {

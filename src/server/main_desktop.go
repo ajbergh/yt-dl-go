@@ -133,7 +133,7 @@ func main() {
 		info := currentBuildInfo()
 		_, dialogErr := wruntime.MessageDialog(app.ctx, wruntime.MessageDialogOptions{
 			Type: wruntime.InfoDialog, Title: "About YouTube Vault",
-			Message: fmt.Sprintf("YouTube Vault\nVideo and playlist downloads\n\nVersion: %s\nCommit: %s\nBuilt: %s\n\nYour download folder is your library.", info.Version, info.Commit, info.Date),
+			Message: fmt.Sprintf("YouTube Vault\nVideo and playlist downloads\n\nVersion: %s\nCommit: %s\nBuilt: %s\n\nYour download folder is your vault.", info.Version, info.Commit, info.Date),
 			Buttons: []string{"OK"}, DefaultButton: "OK",
 		})
 		if dialogErr != nil {

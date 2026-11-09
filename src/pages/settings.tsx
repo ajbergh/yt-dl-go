@@ -56,7 +56,7 @@ export function SettingsPage({
               </div>
 
               <div className="rounded-xl border border-neutral-800 bg-neutral-950/60 p-4">
-                <div className="mb-3 flex items-center gap-3"><span className="grid size-9 place-items-center rounded-lg border border-amber-700/40 bg-amber-950/30 text-amber-300"><Folder className="size-4" aria-hidden="true" /></span><div><h4 className="text-xs font-bold">Download folder</h4><p className="mt-0.5 text-xs text-neutral-400">This folder is your library. Play and preview files directly from here.</p></div></div>
+                <div className="mb-3 flex items-center gap-3"><span className="grid size-9 place-items-center rounded-lg border border-amber-700/40 bg-amber-950/30 text-amber-300"><Folder className="size-4" aria-hidden="true" /></span><div><h4 className="text-xs font-bold">Download folder</h4><p className="mt-0.5 text-xs text-neutral-400">This folder is your vault. Play and preview files directly from here.</p></div></div>
                 <label className="block text-xs font-medium text-neutral-300" htmlFor="download-location">Folder path</label>
                 <div className="mt-1 flex gap-2"><input id="download-location" type="text" title={settings.downloadLocation} autoComplete="off" className={`${field} min-w-0 font-mono text-xs`} value={settings.downloadLocation} onChange={event => changeSetting("downloadLocation", event.target.value)} placeholder="C:\\Users\\you\\Downloads\\YouTube_Vault" /><button type="button" className={button} onClick={() => void selectDownloadFolder()} disabled={!serviceReady} title="Choose a folder with the operating system picker"><Folder className="size-3.5 text-amber-400" aria-hidden="true" />Browse</button></div>
                 <p className="mt-2 text-xs text-neutral-400">Enter the full folder path. The app creates the folder when a download is queued. Existing files stay in their original locations.</p>
@@ -161,8 +161,8 @@ export function SettingsPage({
                 <p className="mt-1 max-w-3xl text-xs leading-relaxed text-neutral-400">Save changes, then restart the app to apply these limits. Settings managed by your system may override your choices.</p>
               </div>
               <div className="grid gap-3 sm:grid-cols-2">
-                <label className="block text-xs font-medium text-neutral-300">Finished Library retention
-                  <input aria-label="Library retention" type="text" className={`${field} mt-1.5`} value={settings.retention} onChange={event => changeSetting("retention", event.target.value)} placeholder="never or 720h" />
+                <label className="block text-xs font-medium text-neutral-300">Finished Vault retention
+                  <input aria-label="Vault retention" type="text" className={`${field} mt-1.5`} value={settings.retention} onChange={event => changeSetting("retention", event.target.value)} placeholder="never or 720h" />
                   <span className="mt-1 block text-xs leading-relaxed text-neutral-400">Use “never” to keep finished downloads in your history, or enter a duration such as 720h (30 days). The minimum is 5m (5 minutes).</span>
                   <RuntimeSettingSource source={runtimeSettingSources.retention} activeValue={runtimeSettingValues.retention} />
                 </label>
@@ -222,9 +222,9 @@ export function SettingsPage({
           </form>
 
           <section className={`${panel} p-5 sm:p-6`} aria-labelledby="service-heading">
-            <div className="mb-4 flex items-start justify-between gap-3"><div><h3 id="service-heading" className="text-sm font-bold">App status</h3><p className="mt-1 max-w-2xl text-xs leading-relaxed text-neutral-400">Your downloads and saved library are available when the app is ready.</p></div><span className={`rounded-full border px-2.5 py-1 text-xs font-semibold ${serviceReady ? "border-emerald-700/60 bg-emerald-950/40 text-emerald-300" : "border-amber-700/60 bg-amber-950/40 text-amber-200"}`}>{serviceReady ? "Ready" : serviceError ? "Retrying" : "Starting"}</span></div>
+            <div className="mb-4 flex items-start justify-between gap-3"><div><h3 id="service-heading" className="text-sm font-bold">App status</h3><p className="mt-1 max-w-2xl text-xs leading-relaxed text-neutral-400">Your downloads and saved vault are available when the app is ready.</p></div><span className={`rounded-full border px-2.5 py-1 text-xs font-semibold ${serviceReady ? "border-emerald-700/60 bg-emerald-950/40 text-emerald-300" : "border-amber-700/60 bg-amber-950/40 text-amber-200"}`}>{serviceReady ? "Ready" : serviceError ? "Retrying" : "Starting"}</span></div>
             {serviceError && <p role="alert" className="mt-3 text-xs text-red-300">{userFacingMessage(serviceError)}</p>}
-            {!serviceReady && <p className="mt-2 text-xs text-neutral-400">The app will retry automatically while your library loads.</p>}
+            {!serviceReady && <p className="mt-2 text-xs text-neutral-400">The app will retry automatically while your vault loads.</p>}
           </section>
 
           <LibraryTransferPanel connection={connection} serviceReady={serviceReady} />
@@ -247,10 +247,10 @@ export function SettingsPage({
               <p className="mt-2 text-xs leading-relaxed text-blue-200/80">Download and install the update to replace this version.</p>
             </div>}
             {updateStatus && !updateStatus.developmentBuild && !updateStatus.updateAvailable && updateStatus.latestVersion && <p className="mt-3 text-xs text-emerald-300">You are on the latest stable release ({updateStatus.latestVersion}).</p>}
-            <p className="mt-3 text-xs leading-relaxed text-neutral-400">Updates are installed manually. Your saved library and preferences stay on this device.</p>
+            <p className="mt-3 text-xs leading-relaxed text-neutral-400">Updates are installed manually. Your saved vault and preferences stay on this device.</p>
           </section>
 
-            <section className={`${panel} p-5`}><div className="flex items-start gap-3"><div className="grid size-9 shrink-0 place-items-center rounded-xl border border-blue-800/50 bg-blue-950/30 text-blue-300"><Gauge className="size-4" aria-hidden="true" /></div><div><h3 className="text-xs font-bold">Download features</h3><ul className="mt-2 space-y-1.5 text-xs leading-relaxed text-neutral-400"><li>Download videos and playlists as MP4 or WebM, convert supported audio to MP3, or save original M4A audio.</li><li>Download up to six items at once, set a shared speed limit, pause and resume downloads, and see progress and time remaining.</li><li>Quality ceilings: best, 2160p (4K), 1440p, 1080p, 720p, or 480p, plus Best/Compatibility MP4/VP9/AV1 video strategies. Actual output quality and container are reported after completion.</li><li>Finished files are saved to your chosen folder and listed in your library.</li></ul>{!mp3Supported && <p className="mt-3 flex items-start gap-1.5 text-xs leading-relaxed text-amber-300"><ShieldCheck className="mt-0.5 size-3 shrink-0" aria-hidden="true" />MP3 conversion is unavailable in this version.</p>}</div></div></section>
+            <section className={`${panel} p-5`}><div className="flex items-start gap-3"><div className="grid size-9 shrink-0 place-items-center rounded-xl border border-blue-800/50 bg-blue-950/30 text-blue-300"><Gauge className="size-4" aria-hidden="true" /></div><div><h3 className="text-xs font-bold">Download features</h3><ul className="mt-2 space-y-1.5 text-xs leading-relaxed text-neutral-400"><li>Download videos and playlists as MP4 or WebM, convert supported audio to MP3, or save original M4A audio.</li><li>Download up to six items at once, set a shared speed limit, pause and resume downloads, and see progress and time remaining.</li><li>Quality ceilings: best, 2160p (4K), 1440p, 1080p, 720p, or 480p, plus Best/Compatibility MP4/VP9/AV1 video strategies. Actual output quality and container are reported after completion.</li><li>Finished files are saved to your chosen folder and listed in your vault.</li></ul>{!mp3Supported && <p className="mt-3 flex items-start gap-1.5 text-xs leading-relaxed text-amber-300"><ShieldCheck className="mt-0.5 size-3 shrink-0" aria-hidden="true" />MP3 conversion is unavailable in this version.</p>}</div></div></section>
         </div>
   );
 }
@@ -275,7 +275,7 @@ function CorruptionDiagnosticsRequest({ connection, serviceReady }: Pick<Setting
     void api<CorruptionDiagnostics>(connection, "/api/diagnostics", { signal: controller.signal })
       .then(result => { if (!controller.signal.aborted) setDiagnostics(result); })
       .catch(reason => {
-        if (!controller.signal.aborted) setError(reason instanceof Error ? reason.message : "Could not load diagnostics.");
+        if (!controller.signal.aborted) setError(reason instanceof Error ? userFacingMessage(reason.message) : "Could not load diagnostics.");
       })
       .finally(() => {
         if (!controller.signal.aborted) setLoading(false);
@@ -301,7 +301,7 @@ function CorruptionDiagnosticsRequest({ connection, serviceReady }: Pick<Setting
       <ul className="mt-3 space-y-2">
         {diagnostics.issues.map(issue => <li key={issue.id} className="rounded-lg border border-neutral-800 bg-neutral-950/60 p-3">
           <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
-            <span className="text-neutral-200">{issue.sourceTable === "settings" ? "Preferences" : "Library entry"}</span>
+            <span className="text-neutral-200">{issue.sourceTable === "settings" ? "Preferences" : "Vault entry"}</span>
             <time className="text-neutral-400" dateTime={issue.detectedAt}>{new Date(issue.detectedAt).toLocaleString()}</time>
           </div>
           <p className="mt-2 text-xs leading-relaxed text-neutral-300">Saved information was repaired. An original copy was kept for recovery.</p>
@@ -328,7 +328,7 @@ function LibraryTransferPanel({ connection, serviceReady }: Pick<SettingsPagePro
       const desktop = desktopBridge();
       if (desktop) {
         const saved = await desktop.Save("/api/library/export");
-        setMessage(saved ? "Library export saved." : "Export cancelled.");
+        setMessage(saved ? "Vault export saved." : "Export cancelled.");
         return;
       }
       const blob = await apiBlob(connection, "/api/library/export", { signal: AbortSignal.timeout(5 * 60 * 1000) });
@@ -341,9 +341,9 @@ function LibraryTransferPanel({ connection, serviceReady }: Pick<SettingsPagePro
       anchor.click();
       anchor.remove();
       window.setTimeout(() => URL.revokeObjectURL(url), 1000);
-      setMessage("Library export downloaded.");
+      setMessage("Vault export downloaded.");
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Could not export the Library.");
+      setError(reason instanceof Error ? userFacingMessage(reason.message) : "Could not export the Vault.");
     } finally {
       setExporting(false);
     }
@@ -359,12 +359,12 @@ function LibraryTransferPanel({ connection, serviceReady }: Pick<SettingsPagePro
         signal: AbortSignal.timeout(5 * 60 * 1000),
       });
       setMessage(result.idempotent
-        ? "This Library archive is already imported."
+        ? "This Vault archive is already imported."
         : result.organizationUpdated
-          ? `Imported ${result.imported} Library file${result.imported === 1 ? "" : "s"} and restored favorites and collections.`
-          : `Imported ${result.imported} Library file${result.imported === 1 ? "" : "s"}.`);
+          ? `Imported ${result.imported} Vault file${result.imported === 1 ? "" : "s"} and restored favorites and collections.`
+          : `Imported ${result.imported} Vault file${result.imported === 1 ? "" : "s"}.`);
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Could not import the Library.");
+      setError(reason instanceof Error ? userFacingMessage(reason.message) : "Could not import the Vault.");
     } finally {
       setImporting(false);
       if (importInput.current) importInput.current.value = "";
@@ -374,19 +374,19 @@ function LibraryTransferPanel({ connection, serviceReady }: Pick<SettingsPagePro
   return <section className={`${panel} p-5 sm:p-6`} aria-labelledby="library-export-heading">
     <div className="flex flex-wrap items-start justify-between gap-3">
       <div>
-        <h3 id="library-export-heading" className="text-sm font-bold">Library backup and import</h3>
-        <p className="mt-1 max-w-2xl text-xs leading-relaxed text-neutral-400">Export library metadata, favorites, and collections as a ZIP. Media files are not included. Import adds missing items and merges favorites and collections without replacing your existing ones; settings, queues, and history stay on this device. Imported files must be downloaded again to play or save them.</p>
-        <p className="mt-2 max-w-2xl text-xs leading-relaxed text-amber-200">The ZIP also includes a private database snapshot containing saved app settings and diagnostics. Store exports securely. Import uses portable Library metadata only; it does not restore the private database.</p>
+        <h3 id="library-export-heading" className="text-sm font-bold">Vault backup and import</h3>
+        <p className="mt-1 max-w-2xl text-xs leading-relaxed text-neutral-400">Export vault metadata, favorites, and collections as a ZIP. Media files are not included. Import adds missing items and merges favorites and collections without replacing your existing ones; settings, queues, and history stay on this device. Imported files must be downloaded again to play or save them.</p>
+        <p className="mt-2 max-w-2xl text-xs leading-relaxed text-amber-200">The ZIP also includes a private database snapshot containing saved app settings and diagnostics. Store exports securely. Import uses portable Vault metadata only; it does not restore the private database.</p>
       </div>
       <div className="flex flex-wrap gap-2">
         <button type="button" className={button} onClick={() => void exportLibrary()} disabled={!serviceReady || exporting || importing}>
           {exporting ? <LoaderCircle className="size-3.5 animate-spin" aria-hidden="true" /> : <Download className="size-3.5" aria-hidden="true" />}
-          {exporting ? "Preparing export…" : "Export Library"}
+          {exporting ? "Preparing export…" : "Export Vault"}
         </button>
-        <input ref={importInput} type="file" accept=".zip,application/zip" className="sr-only" aria-label="Choose Library export ZIP" onChange={event => { const file = event.currentTarget.files?.[0]; if (file) void importLibrary(file); }} />
+        <input ref={importInput} type="file" accept=".zip,application/zip" className="sr-only" aria-label="Choose Vault export ZIP" onChange={event => { const file = event.currentTarget.files?.[0]; if (file) void importLibrary(file); }} />
         <button type="button" className={button} onClick={() => importInput.current?.click()} disabled={!serviceReady || exporting || importing}>
           {importing ? <LoaderCircle className="size-3.5 animate-spin" aria-hidden="true" /> : <Folder className="size-3.5" aria-hidden="true" />}
-          {importing ? "Importing…" : "Import Library ZIP"}
+          {importing ? "Importing…" : "Import Vault ZIP"}
         </button>
       </div>
     </div>

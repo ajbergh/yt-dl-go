@@ -318,7 +318,7 @@ export function QueuePage({
               {filteredQueue.length === 0 ? <div className={`${panel} px-5 py-12 text-center`}>
                 <div className="mx-auto mb-3 grid size-12 place-items-center rounded-2xl bg-neutral-800 text-neutral-400"><Layers className="size-5" aria-hidden="true" /></div>
                 <h3 className="text-sm font-semibold text-neutral-200">{jobs.length === 0 ? "No downloads yet" : visibleQueueRows.length === 0 ? "Queue is clear" : "No videos match this filter"}</h3>
-                <p className="mx-auto mt-1 max-w-md text-xs leading-relaxed text-neutral-400">{visibleQueueRows.length === 0 && jobs.length > 0 ? "Cleared downloads remain in your library. Paste another YouTube link above to start a download." : serviceReady ? "Paste a YouTube link above to add a download. Progress will appear here." : "Your saved history is loading. Downloads will be available shortly."}</p>
+                <p className="mx-auto mt-1 max-w-md text-xs leading-relaxed text-neutral-400">{visibleQueueRows.length === 0 && jobs.length > 0 ? "Cleared downloads remain in your vault. Paste another YouTube link above to start a download." : serviceReady ? "Paste a YouTube link above to add a download. Progress will appear here." : "Your saved history is loading. Downloads will be available shortly."}</p>
                 {jobs.length === 0 && <p className="mt-2 text-xs text-neutral-400">Download videos, convert to MP3, or save original M4A audio.</p>}
               </div> : <div className="space-y-2.5">
                 {filteredQueue.map(({ job, item }) => {

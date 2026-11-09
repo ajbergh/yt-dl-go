@@ -349,7 +349,7 @@ export function LibraryPage({
     <section aria-labelledby="library-heading" className="min-w-0">
       <div className={"grid items-start gap-4 lg:grid-cols-[188px_minmax(0,1fr)] " +
         (inspectorOpen && selected ? "xl:grid-cols-[188px_minmax(0,1fr)_310px]" : "")}>
-        <aside aria-label="Library navigation" className="hidden rounded-2xl border border-neutral-800/80 bg-[#111216] p-3 lg:block">
+        <aside aria-label="Vault navigation" className="hidden rounded-2xl border border-neutral-800/80 bg-[#111216] p-3 lg:block">
           <p className="px-3 pb-3 pt-2 text-[10px] font-bold uppercase tracking-[.2em] text-neutral-500">Browse</p>
           <nav className="space-y-1" aria-label="Media sections">
             {sidebarButton("All media", Grid2X2, libraryStats.files, libraryFilter === "all" && section === "all", () => navigate("all"))}
@@ -401,7 +401,7 @@ export function LibraryPage({
             <p className="mt-3 px-3 text-[10px] leading-4 text-neutral-500">Personal collections are stored on this device. Files are never moved.</p>
           </div>
           <div className="mt-6 border-t border-neutral-800 px-3 pt-5">
-            <p className="flex items-center gap-2 text-xs font-semibold text-neutral-200"><HardDrive className="size-4 text-rose-400" />Library storage</p>
+            <p className="flex items-center gap-2 text-xs font-semibold text-neutral-200"><HardDrive className="size-4 text-rose-400" />Vault storage</p>
             <p className="mt-2 text-lg font-bold tabular-nums">{formatBytes(libraryStats.publishedBytes)}</p>
             <p className="mt-1 text-xs text-neutral-500">Published local media · no quota assumed</p>
           </div>
@@ -442,8 +442,8 @@ export function LibraryPage({
             {collectionError && <p role="alert" className="w-full text-xs text-rose-300">{collectionError}</p>}
           </div>
           <div className="overflow-hidden rounded-2xl border border-neutral-800/80 bg-[radial-gradient(ellipse_at_top_right,rgba(224,28,79,.22),transparent_65%),linear-gradient(120deg,#1c1922,#101114_70%)] p-5 sm:p-6">
-            <p className="text-[11px] font-bold uppercase tracking-[.22em] text-rose-300">Your library</p>
-            <h2 id="library-heading" className="mt-1 text-2xl font-bold tracking-tight sm:text-3xl">Media Library</h2>
+            <p className="text-[11px] font-bold uppercase tracking-[.22em] text-rose-300">Your vault</p>
+            <h2 id="library-heading" className="mt-1 text-2xl font-bold tracking-tight sm:text-3xl">Media Vault</h2>
             <p className="mt-2 text-sm text-neutral-400">Browse, preview, and manage your downloaded videos and audio.</p>
             {activeCollection && <p className="mt-2 text-xs text-rose-300">Collection: {activeCollection.name}</p>}
             {libraryChannel !== "all" && <p className="mt-2 text-xs text-rose-300">Channel: {libraryChannel}</p>}
@@ -454,7 +454,7 @@ export function LibraryPage({
                 <p className="mt-1 text-xl font-bold tabular-nums">{libraryStats.files}</p>
               </div>
               <div className="rounded-xl border border-white/10 bg-black/20 p-3">
-                <p className="flex items-center gap-2 text-xs text-neutral-400"><HardDrive className="size-4 text-rose-400" /> Library size</p>
+                <p className="flex items-center gap-2 text-xs text-neutral-400"><HardDrive className="size-4 text-rose-400" /> Vault size</p>
                 <p className="mt-1 text-xl font-bold tabular-nums">{formatBytes(libraryStats.publishedBytes)}</p>
               </div>
             </div>
@@ -464,7 +464,7 @@ export function LibraryPage({
             <div className="flex flex-wrap items-center gap-2">
               <label className="relative min-w-[180px] flex-1">
                 <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-neutral-500" aria-hidden="true" />
-                <input ref={searchRef} aria-label="Search library" className={field + " py-2.5 pl-10"}
+                <input ref={searchRef} aria-label="Search vault" className={field + " py-2.5 pl-10"}
                   value={librarySearch} onChange={event => setLibrarySearch(event.target.value)}
                   placeholder="Search titles, channels, or filenames" />
               </label>
@@ -472,7 +472,7 @@ export function LibraryPage({
                 className={button + (showFilters ? " border-rose-500/60" : "")}>
                 <SlidersHorizontal className="size-4" aria-hidden="true" /> Filters
               </button>
-              <div role="group" aria-label="Library view" className="flex rounded-lg border border-neutral-700 bg-neutral-950 p-1">
+              <div role="group" aria-label="Vault view" className="flex rounded-lg border border-neutral-700 bg-neutral-950 p-1">
                 <button type="button" aria-label="Grid" aria-pressed={libraryLayout === "grid"} onClick={() => setLibraryLayout("grid")}
                   className={"flex items-center gap-1 rounded-md px-2.5 py-1.5 text-xs " + (libraryLayout === "grid" ? "bg-rose-700 text-white" : "text-neutral-400")}>
                   <Grid2X2 className="size-4" /> <span className="hidden sm:inline">Grid</span>
@@ -505,7 +505,7 @@ export function LibraryPage({
               <label className="ml-auto flex items-center gap-2 text-xs text-neutral-400">
                 <ArrowDownAZ className="size-4" aria-hidden="true" />
                 <span className="sr-only">Sort media</span>
-                <select aria-label="Sort library" value={sort} onChange={event => { const nextSort = event.target.value as SortMode; setSort(nextSort); updateServerView(section, activeCollectionID, selectedPlaylistID, nextSort); }}
+                <select aria-label="Sort vault" value={sort} onChange={event => { const nextSort = event.target.value as SortMode; setSort(nextSort); updateServerView(section, activeCollectionID, selectedPlaylistID, nextSort); }}
                   className="min-h-8 rounded-lg border border-neutral-700 bg-neutral-950 px-2 text-xs text-neutral-200">
                   <option value="recent">Recently added</option><option value="oldest">Oldest first</option>
                   <option value="title">Title A–Z</option><option value="size">Largest first</option>
@@ -514,11 +514,11 @@ export function LibraryPage({
               </label>
             </div>
             <div className={"grid gap-2 border-t border-neutral-800 pt-3 sm:grid-cols-2 " + (showFilters ? "" : "hidden")}>
-              <select aria-label="Filter library by category" value={libraryCategory} onChange={event => setLibraryCategory(event.target.value)} className={field + " py-2 text-xs"}>
+              <select aria-label="Filter vault by category" value={libraryCategory} onChange={event => setLibraryCategory(event.target.value)} className={field + " py-2 text-xs"}>
                 <option value="all">All categories ({libraryStats.files})</option>
                 {libraryCategories.map(([category, count]) => <option key={category} value={category}>{category} ({count})</option>)}
               </select>
-              <select aria-label="Filter library by channel" value={libraryChannel} onChange={event => setLibraryChannel(event.target.value)} className={field + " py-2 text-xs"}>
+              <select aria-label="Filter vault by channel" value={libraryChannel} onChange={event => setLibraryChannel(event.target.value)} className={field + " py-2 text-xs"}>
                 <option value="all">All channels</option>
                 {libraryChannels.map(([channel, count]) => <option key={channel} value={channel}>{channel} ({count})</option>)}
               </select>
@@ -562,7 +562,7 @@ export function LibraryPage({
                 onClick={() => updateSelectedCollection(false)}>Remove from collection</button>
               <button type="button" className={button + " border-red-900/70 text-red-300 hover:bg-red-950/40"}
                 disabled={Boolean(busyAction) || !canForgetBulk}
-                title="Only removes Library index entries. Downloaded files and download history remain intact."
+                title="Only removes Vault index entries. Downloaded files and download history remain intact."
                 onClick={() => void forgetSelectedMedia()}><X className="size-3.5" />Forget selected (keep files)</button>
             </div>
             <p className="text-[11px] text-neutral-400">Operations affect only the {bulkSelected.length} loaded, visible selected items. Bulk forgetting is limited to 100 items per operation and never deletes files from disk.</p>
@@ -570,7 +570,7 @@ export function LibraryPage({
           {libraryStats.files === 0 && !filtersActive ? (
             <div className="rounded-2xl border border-neutral-800 bg-neutral-900/60 px-6 py-16 text-center">
               <Film className="mx-auto size-9 text-rose-400" aria-hidden="true" />
-              <h3 className="mt-3 font-semibold">Your media library is empty</h3>
+              <h3 className="mt-3 font-semibold">Your media vault is empty</h3>
               <p className="mt-1 text-sm text-neutral-400">Finished downloads appear here automatically.</p>
             </div>
           ) : filtered.length === 0 ? (
@@ -670,7 +670,7 @@ export function LibraryPage({
           <div className="mt-4 border-t border-neutral-800 pt-4">
             <p className="flex items-center gap-2 text-xs font-semibold"><Layers className="size-4 text-rose-400" />Collections</p>
             {collections.length === 0
-              ? <p className="mt-2 text-xs text-neutral-500">Create a collection from the Library sidebar to organize downloaded media.</p>
+              ? <p className="mt-2 text-xs text-neutral-500">Create a collection from the Vault sidebar to organize downloaded media.</p>
               : <div className="mt-2 max-h-36 space-y-1 overflow-y-auto">
                 {collections.map(collection => <label key={collection.id} className="flex cursor-pointer items-center gap-2 rounded-lg px-2 py-2 text-xs text-neutral-300 hover:bg-neutral-800">
                   <input type="checkbox" aria-label={"Add " + selected.title + " to " + collection.name} checked={collection.itemKeys.includes(selected.key)}
@@ -693,7 +693,7 @@ export function LibraryPage({
               <button type="button" className={button} disabled={actionDisabled(selected, busyAction, "open-folder") || !selected.file.outputRelativePath}
                 onClick={() => fileAction(selected, "open-folder")}><FolderOpen className="size-3.5" />Open folder</button>
               <button type="button" className={button} disabled={busyAction === selected.job.id || !stoppedJob(selected.job)}
-                title="Remove only this file from the library index; keep the downloaded file"
+                title="Remove only this file from the vault index; keep the downloaded file"
                 onClick={() => void jobAction(selected.job, "remove-library-item", selected.file.id)}><X className="size-3.5" />Forget item</button>
             </div>
             <button type="button" className={button + " w-full border-red-900/70 text-red-300 hover:border-red-700 hover:bg-red-950/40"}
@@ -707,7 +707,7 @@ export function LibraryPage({
               disabled={busyAction === selected.job.id || !stoppedJob(selected.job)} onClick={() => void jobAction(selected.job, "delete-all")}>
               <Trash2 className="size-4" />Delete entire download
             </button>
-            <p className="text-xs text-amber-300">Deletes every file from the entire source download, including other media on unloaded Library pages. This cannot be undone.</p>
+            <p className="text-xs text-amber-300">Deletes every file from the entire source download, including other media on unloaded Vault pages. This cannot be undone.</p>
             {!stoppedJob(selected.job) && <p className="text-xs text-neutral-400">Finished files are ready to preview. Stop the download before deleting or forgetting files.</p>}
             {(selected.job.status === "partial" || selected.job.status === "failed" || selected.job.status === "cancelled") &&
               <button type="button" className={button + " w-full"} disabled={busyAction === selected.job.id} onClick={() => void jobAction(selected.job, "retry")}>
@@ -719,7 +719,7 @@ export function LibraryPage({
       {!inspectorOpen && selected && <button type="button" className={button + " fixed bottom-5 right-5 z-20 shadow-xl"} onClick={() => setInspectorOpen(true)}>
         <Activity className="size-4" />Show details
       </button>}
-      <p className="sr-only">Library shortcuts: Control or Command F to search. Control or Command A selects all visible media. Shift selects ranges, Control or Command toggles individual items, arrows navigate, Enter previews, and Escape clears selection.</p>
+      <p className="sr-only">Vault shortcuts: Control or Command F to search. Control or Command A selects all visible media. Shift selects ranges, Control or Command toggles individual items, arrows navigate, Enter previews, and Escape clears selection.</p>
     </section>
   );
 }

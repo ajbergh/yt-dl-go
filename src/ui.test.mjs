@@ -26,7 +26,7 @@ describe("filename naming preview", () => {
 });
 
 
-describe("Media Library collection model", () => {
+describe("Media Vault collection model", () => {
   test("rejects corrupt or duplicate collection entries while preserving valid memberships", () => {
     const value = [
       { id: "c_a", name: "  Watch Later  ", itemKeys: ["job:file", "job:file", "job:other"] },
@@ -53,7 +53,7 @@ describe("Media Library collection model", () => {
   });
 });
 
-describe("Media Library multi-selection", () => {
+describe("Media Vault multi-selection", () => {
   test("handles single-click, additive toggle, range, and additive range within the visible result order", () => {
     const keys = ["a", "b", "c", "d"];
     expect(chooseMediaKeys(keys, [], "b", "", {})).toEqual(["b"]);
@@ -172,7 +172,7 @@ beforeEach(async () => {
       if (init.method === "PUT") {
         const body = JSON.parse(init.body);
         if (body.revision !== organizationResponse.revision) {
-          return Response.json({ error: "Library organization was changed in another window. Reload before editing." }, { status: 409 });
+          return Response.json({ error: "Vault organization was changed in another window. Reload before editing." }, { status: 409 });
         }
         organizationResponse = { revision: organizationResponse.revision + 1, favorites: body.favorites, collections: body.collections };
       }
@@ -333,7 +333,7 @@ beforeEach(async () => {
     if (init.method === "DELETE" && path.includes("/library-items/")) {
       const parts = path.split("/");
       const itemKey = parts[3] + ":" + parts[5];
-      if (rejectedLibraryFileKeys.has(itemKey)) return Response.json({ error: "Library item is in use" }, { status: 409 });
+      if (rejectedLibraryFileKeys.has(itemKey)) return Response.json({ error: "Vault item is in use" }, { status: 409 });
       rows = rows.map(item => item.id === parts[3]
         ? { ...item, files: (item.files ?? []).filter(file => file.id !== parts[5]) }
         : item);
@@ -407,7 +407,7 @@ describe("Downloader UI and Go API integration", () => {
     await setInput(container.querySelector("#video-url"), "https://www.youtube.com/playlist?list=PL_example");
     await click(button("View options"));
     assertProductCopy();
-    await click(button("Library"));
+    await click(button("Vault"));
     assertProductCopy();
     await click(button("Settings"));
     assertProductCopy();
@@ -451,11 +451,11 @@ describe("Downloader UI and Go API integration", () => {
     await act(async () => new Promise(resolve => setTimeout(resolve, 0)));
     expect(requests.some(item => item.path === "/api/diagnostics")).toBe(true);
     expect(container.textContent).toContain("Saved data diagnostics");
-    expect(container.textContent).toContain("Library entry");
+    expect(container.textContent).toContain("Vault entry");
     expect(container.textContent).toContain("Saved information was repaired");
     expect(container.textContent).not.toContain("private-raw-payload");
   });
-  test("downloads the Library export archive from Settings", async () => {
+  test("downloads the Vault export archive from Settings", async () => {
     const originalCreate = URL.createObjectURL;
     const originalRevoke = URL.revokeObjectURL;
     const originalClick = testWindow.HTMLAnchorElement.prototype.click;
@@ -466,10 +466,10 @@ describe("Downloader UI and Go API integration", () => {
     try {
       await remount();
       await click(button("Settings"));
-      await click(button("Export Library"));
+      await click(button("Export Vault"));
       expect(requests.some(item => item.path === "/api/library/export" && item.method === undefined)).toBe(true);
       expect(target).toBe("blob:library-export");
-      expect(container.textContent).toContain("Library export downloaded.");
+      expect(container.textContent).toContain("Vault export downloaded.");
       expect(container.textContent).toContain("Media files are not included.");
       expect(container.textContent).toContain("The ZIP also includes a private database snapshot");
     } finally {
@@ -478,12 +478,12 @@ describe("Downloader UI and Go API integration", () => {
       testWindow.HTMLAnchorElement.prototype.click = originalClick;
     }
   });
-  test("uploads a Library export ZIP from Settings", async () => {
+  test("uploads a Vault export ZIP from Settings", async () => {
     await remount();
     await click(button("Settings"));
-    const input = container.querySelector('input[type="file"][aria-label="Choose Library export ZIP"]');
+    const input = container.querySelector('input[type="file"][aria-label="Choose Vault export ZIP"]');
     expect(input).toBeTruthy();
-    const archive = new testWindow.File(["zip archive bytes"], "library.zip", { type: "application/zip" });
+    const archive = new testWindow.File(["zip archive bytes"], "vault.zip", { type: "application/zip" });
     Object.defineProperty(input, "files", { configurable: true, value: [archive] });
     await act(async () => { input.dispatchEvent(new testWindow.Event("change", { bubbles: true })); });
     await act(async () => new Promise(resolve => setTimeout(resolve, 0)));
@@ -491,7 +491,7 @@ describe("Downloader UI and Go API integration", () => {
     expect(request?.method).toBe("POST");
     expect(new Headers(request?.headers).get("Content-Type")).toBe("application/zip");
     expect(request?.body).toBe(archive);
-    expect(container.textContent).toContain("Imported 3 Library files and restored favorites and collections.");
+    expect(container.textContent).toContain("Imported 3 Vault files and restored favorites and collections.");
     expect(container.textContent).toContain("settings, queues, and history stay on this device");
   });
   test("rejects an incompatible backend without manual setup", async () => {
@@ -810,11 +810,11 @@ describe("Downloader UI and Go API integration", () => {
     expect(container.querySelector("#download-location").value).toBe("C:\\Media\\YouTube");
     expect(container.textContent).toContain("Download folder selected");
   });
-  test("uses the download folder as the only library location", async () => {
+  test("uses the download folder as the only vault location", async () => {
     await click(button("Settings"));
     await click(container.querySelector('button[aria-label="Advanced settings"]'));
     expect(container.querySelector('input[name="storage-mode"]')).toBeNull();
-    expect(container.textContent).toContain("This folder is your library");
+    expect(container.textContent).toContain("This folder is your vault");
     await click(button("Save preferences"));
     const saves = requests.filter(item => item.path === "/api/settings" && item.method === "PUT");
     expect(JSON.parse(saves.at(-1).body).storageMode).toBeUndefined();
@@ -1024,7 +1024,7 @@ describe("Downloader UI and Go API integration", () => {
     await click(button("Pause batch"));
     expect(requests.some(item => item.path.endsWith("/pause") && item.method === "POST")).toBe(true);
   });
-  test("filters the Library by category and channel and persists layout preference", async () => {
+  test("filters the Vault by category and channel and persists layout preference", async () => {
     rows = [
       { ...job, id: "music-job", status: "completed", title: "Road Trip", category: "Music", mediaType: "audio", audioFormat: "m4a", completedCount: 1, totalCount: 1, files: [
         { id: "music-file", name: "001-song.m4a", title: "Song", author: "Channel A", category: "Music", size: 1024, managedAvailable: true, publishedAvailable: true, outputRelativePath: "Channel A/Song.m4a" },
@@ -1035,22 +1035,22 @@ describe("Downloader UI and Go API integration", () => {
     ];
     await remount();
     await connect();
-    await click(button("Library"));
+    await click(button("Vault"));
     expect(container.textContent).toContain("2 of 2 matching media loaded");
     expect(container.textContent).not.toContain("App storage");
-    expect(container.textContent).toContain("Library size");
+    expect(container.textContent).toContain("Vault size");
 
-    await setSelect(container.querySelector('select[aria-label="Filter library by category"]'), "Music");
+    await setSelect(container.querySelector('select[aria-label="Filter vault by category"]'), "Music");
     expect(container.querySelectorAll('section[aria-labelledby="library-heading"] article')).toHaveLength(1);
     expect(container.textContent).toContain("Road Trip");
 
-    await setSelect(container.querySelector('select[aria-label="Filter library by channel"]'), "Channel A");
+    await setSelect(container.querySelector('select[aria-label="Filter vault by channel"]'), "Channel A");
     expect(container.querySelectorAll('section[aria-labelledby="library-heading"] article')).toHaveLength(1);
 
     await click(button("List"));
     expect(window.localStorage.getItem("yt-dl-go:library-layout")).toBe("list");
     await remount();
-    await click(button("Library"));
+    await click(button("Vault"));
     expect(button("List").getAttribute("aria-pressed")).toBe("true");
     window.localStorage.removeItem("yt-dl-go:library-layout");
   });
@@ -1064,7 +1064,7 @@ describe("Downloader UI and Go API integration", () => {
     testWindow.localStorage.removeItem("yt-dl-go:library-collections-v2");
     await remount();
     await connect();
-    await click(button("Library"));
+    await click(button("Vault"));
     await click(container.querySelector('button[aria-label="New collection"]'));
     await setInput(container.querySelector('input[aria-label="Collection name"]'), "Travel");
     await click(button("Create collection"));
@@ -1109,14 +1109,14 @@ describe("Downloader UI and Go API integration", () => {
     ] }];
     await remount();
     await connect();
-    await click(button("Library"));
+    await click(button("Vault"));
     expect(container.querySelector('button[title="Saved"]')).toBeTruthy();
     expect(container.querySelector('button[aria-label="Remove favorite: Saved track"]')).toBeTruthy();
     await click(container.querySelector('button[aria-label="Remove favorite: Saved track"]'));
     expect(organizationResponse.revision).toBe(6);
     expect(organizationResponse.favorites).toEqual([]);
     await remount();
-    await click(button("Library"));
+    await click(button("Vault"));
     expect(container.querySelector('button[title="Saved"]')).toBeTruthy();
     expect(container.querySelector('button[aria-label="Add favorite: Saved track"]')).toBeTruthy();
     expect(requests.some(item => item.path === "/api/library/organization")).toBe(true);
@@ -1133,7 +1133,7 @@ describe("Downloader UI and Go API integration", () => {
     ];
     await remount();
     await connect();
-    await click(button("Library"));
+    await click(button("Vault"));
     expect(container.querySelectorAll('section[aria-labelledby="library-heading"] article')).toHaveLength(2);
     await click(button("Playlists"));
     expect(container.querySelectorAll('section[aria-labelledby="library-heading"] article')).toHaveLength(1);
@@ -1147,7 +1147,7 @@ describe("Downloader UI and Go API integration", () => {
     ] }];
     await remount();
     await connect();
-    await click(button("Library"));
+    await click(button("Vault"));
     expect(container.querySelectorAll('section[aria-labelledby="library-heading"] article')).toHaveLength(2);
     expect(container.textContent).toContain("First clip");
     expect(container.textContent).toContain("Second clip");
@@ -1170,7 +1170,7 @@ describe("Downloader UI and Go API integration", () => {
     organizationResponse = { revision: 1, favorites: [], collections: [{ id: "c_media", name: "Watch Later", itemKeys: [] }] };
     await remount();
     await connect();
-    await click(button("Library"));
+    await click(button("Vault"));
     const card = name => container.querySelector('[role="button"][aria-label="Select ' + name + '"]');
     await click(card("Alpha"));
     await act(async () => card("Gamma").dispatchEvent(new testWindow.MouseEvent("click", { bubbles: true, shiftKey: true })));
@@ -1199,7 +1199,7 @@ describe("Downloader UI and Go API integration", () => {
     ] }];
     await remount();
     await connect();
-    await click(button("Library"));
+    await click(button("Vault"));
     const first = container.querySelector('[role="button"][aria-label="Select Alpha"]');
     await act(async () => {
       first.focus();
@@ -1210,7 +1210,7 @@ describe("Downloader UI and Go API integration", () => {
       testWindow.dispatchEvent(new testWindow.KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
     });
     expect(container.querySelector('[role="group"][aria-label="Bulk media actions"]')).toBeNull();
-    const search = container.querySelector('input[aria-label="Search library"]');
+    const search = container.querySelector('input[aria-label="Search vault"]');
     await act(async () => {
       search.focus();
       testWindow.dispatchEvent(new testWindow.KeyboardEvent("keydown", { key: "a", ctrlKey: true, bubbles: true, cancelable: true }));
@@ -1227,7 +1227,7 @@ describe("Downloader UI and Go API integration", () => {
     rejectedLibraryFileKeys.add("bulk-forget-job:two");
     await remount();
     await connect();
-    await click(button("Library"));
+    await click(button("Vault"));
     await click(button("Select all loaded"));
     const prompts = [];
     const originalConfirm = testWindow.confirm;
@@ -1243,7 +1243,7 @@ describe("Downloader UI and Go API integration", () => {
       expect(deleted).toHaveLength(3);
       expect(deleted.every(item => item.path.includes("/library-items/"))).toBe(true);
       expect(deleted.some(item => item.path.endsWith("/all") || item.path.includes("/library-files/"))).toBe(false);
-      expect(container.textContent).toContain("Removed 2 selected Library entries");
+      expect(container.textContent).toContain("Removed 2 selected Vault entries");
       expect(container.textContent).toContain("1 could not be removed");
       expect(container.querySelector('[role="group"][aria-label="Bulk media actions"]').textContent).toContain("1 loaded media item selected");
     } finally {
@@ -1259,7 +1259,7 @@ describe("Downloader UI and Go API integration", () => {
     rows = [{ ...job, id: "one-large-playlist", status: "completed", completedCount: 102, totalCount: 102, files }];
     await remount();
     await connect();
-    await click(button("Library"));
+    await click(button("Vault"));
     const cards = () => container.querySelectorAll('[data-media-card]');
     expect(cards()).toHaveLength(50);
     expect(container.textContent).toContain("50 of 102 matching media loaded");
@@ -1271,7 +1271,7 @@ describe("Downloader UI and Go API integration", () => {
     expect(cards()).toHaveLength(102);
     expect(button("Load more")).toBeUndefined();
     expect(new Set([...cards()].map(card => card.getAttribute("aria-label"))).size).toBe(102);
-    await setSelect(container.querySelector('select[aria-label="Sort library"]'), "title");
+    await setSelect(container.querySelector('select[aria-label="Sort vault"]'), "title");
     await act(async () => { await new Promise(resolve => setTimeout(resolve, 320)); });
     expect(cards()).toHaveLength(50);
     expect(cards()[0].getAttribute("aria-label")).toBe("Select Media 000");
@@ -1287,8 +1287,8 @@ describe("Downloader UI and Go API integration", () => {
     })) }];
     await remount();
     await connect();
-    await click(button("Library"));
-    await setSelect(container.querySelector('select[aria-label="Sort library"]'), "title");
+    await click(button("Vault"));
+    await setSelect(container.querySelector('select[aria-label="Sort vault"]'), "title");
     await act(async () => { await new Promise(resolve => setTimeout(resolve, 320)); });
     await click(button("Load more"));
     await click(button("Load more"));
@@ -1302,7 +1302,7 @@ describe("Downloader UI and Go API integration", () => {
     expect(cards).toHaveLength(103);
     expect(new Set(cards.map(card => card.getAttribute("aria-label"))).size).toBe(103);
     expect(cards.at(-1).getAttribute("aria-label")).toBe("Select Track 103");
-    expect(container.querySelector('select[aria-label="Sort library"]').value).toBe("title");
+    expect(container.querySelector('select[aria-label="Sort vault"]').value).toBe("title");
     expect(button("Load more")).toBeUndefined();
   });
 
@@ -1314,7 +1314,7 @@ describe("Downloader UI and Go API integration", () => {
     ];
     await remount();
     await connect();
-    await click(button("Library"));
+    await click(button("Vault"));
     await click(container.querySelector('[data-media-card][aria-label="Select Active file"]'));
     for (const label of ["Preview", "Reveal", "Copy path", "Open folder"]) expect(button(label).disabled).toBe(false);
     for (const label of ["Forget item", "Delete selected file", "Delete entire download"]) expect(button(label).disabled).toBe(true);
@@ -1334,7 +1334,7 @@ describe("Downloader UI and Go API integration", () => {
     };
     await remount();
     await connect();
-    await click(button("Library"));
+    await click(button("Vault"));
     await click(button("Favorites"));
     await act(async () => { await new Promise(resolve => setTimeout(resolve, 320)); });
     const cards = container.querySelectorAll('[data-media-card]');
@@ -1349,7 +1349,7 @@ describe("Downloader UI and Go API integration", () => {
     ] }];
     await remount();
     await connect();
-    await click(button("Library"));
+    await click(button("Vault"));
     await act(async () => { await new Promise(resolve => setTimeout(resolve, 10)); });
     expect(requests.some(item => item.path.endsWith("/thumbnail") && item.url.includes("fileId=file-thumb"))).toBe(true);
     expect(container.querySelector('img[data-local-thumbnail="preferred"]')).toBeTruthy();
@@ -1374,7 +1374,7 @@ describe("Downloader UI and Go API integration", () => {
     try {
       await remount();
       await connect();
-      await click(button("Library"));
+      await click(button("Vault"));
       expect(observers.length).toBeGreaterThan(0);
       expect(observers[0].options.rootMargin).toBe("400px 0px");
       expect(requests.filter(item => item.path.endsWith("/thumbnail"))).toHaveLength(0);
@@ -1404,7 +1404,7 @@ describe("Downloader UI and Go API integration", () => {
     await click(button("Forget history"));
     expect(prompts).toHaveLength(1);
     expect(prompts[0][0]).toBe("YouTube Vault");
-    expect(prompts[0][1]).toContain("Library items and media files will remain available");
+    expect(prompts[0][1]).toContain("Vault items and media files will remain available");
     expect(requests.some(item => item.method === "DELETE")).toBe(false);
     await act(async () => { resolveConfirmation(false); });
     expect(requests.some(item => item.method === "DELETE")).toBe(false);
@@ -1429,7 +1429,7 @@ describe("Downloader UI and Go API integration", () => {
     ] }];
     await remount();
     await connect();
-    await click(button("Library"));
+    await click(button("Vault"));
     expect(button("Remove")).toBeUndefined();
     expect(button("Remove file")).toBeUndefined();
     expect(button("Folder")).toBeUndefined();
@@ -1449,7 +1449,7 @@ describe("Downloader UI and Go API integration", () => {
     try {
       await click(button("Delete entire download"));
       expect(requests.some(item => item.path.endsWith("/all") && item.method === "DELETE")).toBe(true);
-      expect(container.textContent).toContain("Files and Library history deleted");
+      expect(container.textContent).toContain("Files and Vault history deleted");
     } finally { testWindow.confirm = originalConfirm; }
   });
 
@@ -1460,7 +1460,7 @@ describe("Downloader UI and Go API integration", () => {
     ] }];
     await remount();
     await connect();
-    await click(button("Library"));
+    await click(button("Vault"));
     await click(container.querySelector('[role="button"][aria-label="Select First video"]'));
     const originalConfirm = testWindow.confirm;
     const prompts = [];
@@ -1488,7 +1488,7 @@ describe("Downloader UI and Go API integration", () => {
     ] }];
     await remount();
     await connect();
-    await click(button("Library"));
+    await click(button("Vault"));
     const previewButton = button("Preview");
     previewButton.focus();
     await click(previewButton);
@@ -1536,7 +1536,7 @@ describe("Downloader UI and Go API integration", () => {
     try {
       rows = [{ ...job, mediaType: "audio", status: "completed", files: [{ id: "mp3-file", name: "song.mp3", title: "Song", size: 22, mimeType: "audio/mpeg", publishedAvailable: true, managedAvailable: false, chapters: [{ title: "Verse", startMs: 30000, endMs: 60000 }] }] }];
       await remount();
-      await click(button("Library"));
+      await click(button("Vault"));
       await click(button("Preview"));
       const audio = container.querySelector('[role="dialog"] audio');
       expect(audio).toBeTruthy();
@@ -1575,7 +1575,7 @@ describe("Downloader UI and Go API integration", () => {
     try {
       rows = [{ ...job, mediaType: "audio", status: "completed", files: [{ id: "mp3-file", name: "song.mp3", size: 22, mimeType: "audio/mpeg", publishedAvailable: true, managedAvailable: false }] }];
       await remount();
-      await click(button("Library"));
+      await click(button("Vault"));
       await click(button("Preview"));
       expect(container.textContent).toContain("Preparing audio preview");
       await click(button("Close"));
@@ -1603,7 +1603,7 @@ describe("Downloader UI and Go API integration", () => {
     try {
       rows = [{ ...job, mediaType: "audio", status: "completed", files: [{ id: "mp3-file", name: "song.mp3", size: 9, mimeType: "audio/mpeg", publishedAvailable: true, managedAvailable: false }] }];
       await remount();
-      await click(button("Library"));
+      await click(button("Vault"));
       await click(button("Preview"));
       expect(container.textContent).toContain("Audio preview could not be loaded");
       await click(button("Retry audio preview"));
@@ -1620,7 +1620,7 @@ describe("Downloader UI and Go API integration", () => {
     ] }];
     await remount();
     await connect();
-    await click(button("Library"));
+    await click(button("Vault"));
     expect(button("Save all as ZIP")).toBeUndefined();
     expect(button("Save")).toBeUndefined();
     expect(button("Remove file")).toBeUndefined();
