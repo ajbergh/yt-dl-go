@@ -17,15 +17,22 @@ for (const generator of ["generate-go-notices.mjs", "generate-npm-notices.mjs"])
   });
 }
 
-const changed = execFileSync("git", ["status", "--porcelain", "--", ...generatedPaths], {
+// Generators recreate files. On Windows this can leave stat-only changes in
+// porcelain status even when Git's normalized contents are identical to HEAD.
+const trackedChanges = execFileSync("git", ["diff", "--name-only", "HEAD", "--", ...generatedPaths], {
   cwd: repoRoot,
   encoding: "utf8",
 });
+const untrackedChanges = execFileSync("git", ["ls-files", "--others", "--exclude-standard", "--", ...generatedPaths], {
+  cwd: repoRoot,
+  encoding: "utf8",
+});
+const changed = trackedChanges + untrackedChanges;
 if (changed.trim()) {
   process.stderr.write("Third-party notice files are out of date. Regenerate them with `npm run licenses:generate:go` and `npm run licenses:generate`.\n");
   process.stderr.write(changed);
   // Include a focused diff so CI logs show exactly how generated notice metadata drifted.
-  const noticeDiff = execFileSync("git", ["diff", "--", "src/server/NPM_THIRD_PARTY_NOTICES.md"], {
+  const noticeDiff = execFileSync("git", ["diff", "HEAD", "--", "src/server/NPM_THIRD_PARTY_NOTICES.md"], {
     cwd: repoRoot,
     encoding: "utf8",
   });

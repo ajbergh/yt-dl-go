@@ -74,6 +74,9 @@ jobs:
       - name: Run frontend integration tests
         run: bun test src/downloader.test.mjs src/ui.test.mjs
 
+      - name: Run review regression tests
+        run: npm run test:review
+
       - name: Run Go tests
         working-directory: src/server
         run: go test ./...

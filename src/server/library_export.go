@@ -89,7 +89,7 @@ type libraryExportSubtitle struct {
 	PublishedAvailable bool   `json:"publishedAvailable"`
 }
 
-var errLibraryExportLimit = errors.New("Library export exceeds portable import limits")
+var errLibraryExportLimit = errors.New("library export exceeds portable import limits")
 
 func (s *server) handleLibraryExport(w http.ResponseWriter, r *http.Request) {
 	archivePath, cleanup, err := s.createLibraryExport()

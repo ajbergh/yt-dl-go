@@ -1999,7 +1999,7 @@ func (s *jobStore) deleteLibraryItem(j *jobState, fileID string) error {
 			return err
 		}
 		if updated > 1 {
-			return errors.New("Library deletion updated more than one history group")
+			return errors.New("library deletion updated more than one history group")
 		}
 	}
 	result, err := tx.Exec(`DELETE FROM library_items WHERE source_job_id=? AND file_id=?`, j.ID, fileID)

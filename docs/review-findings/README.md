@@ -57,3 +57,13 @@ All 31 findings are resolved in code. RF-007 was addressed by separating process
 - PowerShell dev-script parsing, quoted ADDR assignment, build-script syntax and `git diff --check` pass.
 
 Regression sources: [backend](../../src/server/review_open_test.go), [initial batch](../../src/server/review_regression_test.go), [Unix publication](../../src/server/durable_unix_test.go), [frontend](../../scripts/review-findings.test.mjs).
+
+## Pre-PR checks (2026-11-10)
+
+- CI explicitly runs `npm run test:review` alongside the existing integration suite.
+- Bun 1.4.2 integration tests: 111 passed. Browser-path guidance now uses product language.
+- Browser E2E passes, including preservation of unavailable metadata and explicit forget. Its harness waits for scroll events before opening context menus and handles early event timeouts without losing diagnostics.
+- Go lint (CI-pinned v2.14.0): zero issues after correcting two error strings. Vulnerability scan (v1.6.0): no vulnerabilities.
+- Go vet (standard/E2E tags), development-origin policy check, and license checks pass.
+- License drift detection now compares normalized Git contents and separately checks untracked generated files; no license contents or dependency versions changed.
+- Native-range HTTP fixture writes now have a five-second deadline so cancelled-peer cleanup remains bounded; three race-enabled repetitions passed. The complete race run is recorded in the PR validation results.

@@ -138,7 +138,7 @@ class CDP {
   }
 
   waitEvent(method, predicate = null, timeoutMs = 15000) {
-    return new Promise((resolve, reject) => {
+    const result = new Promise((resolve, reject) => {
       const waiter = {
         predicate,
         resolve,
@@ -154,6 +154,11 @@ class CDP {
       listeners.push(waiter);
       this.waiters.set(method, listeners);
     });
+    // Callers register before clicking and await after the interaction. Keep an
+    // early timeout from becoming an unhandled rejection before diagnostics run;
+    // awaiting the original promise still propagates the failure.
+    void result.catch(() => {});
+    return result;
   }
 
   async evaluate(expression, timeoutMs = 15000) {
@@ -169,6 +174,13 @@ class CDP {
   }
 
   close() {
+    for (const listeners of this.waiters.values()) {
+      for (const waiter of listeners) {
+        clearTimeout(waiter.timer);
+        waiter.reject(new Error("Chrome DevTools connection closed"));
+      }
+    }
+    this.waiters.clear();
     this.ws?.close();
   }
 }
@@ -215,10 +227,13 @@ async function clickSelector(cdp, selector) {
 }
 
 async function rightClickSelector(cdp, selector) {
-  const point = await cdp.evaluate(`(() => {
+  const point = await cdp.evaluate(`(async () => {
     const element = document.querySelector(${JSON.stringify(selector)});
     if (!element) return null;
-    element.scrollIntoView({ block: "center" });
+    element.scrollIntoView({ block: "center", behavior: "instant" });
+    // Context menus close on scroll. Deliver the scroll/layout events before
+    // opening the menu so a pending event cannot dismiss it before the click.
+    await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
     const bounds = element.getBoundingClientRect();
     return { x: bounds.left + bounds.width / 2, y: bounds.top + bounds.height / 2 };
   })()`);
@@ -518,8 +533,8 @@ async function main() {
     assert.equal(afterRestart.jobs.length, 1);
     assert.equal(afterRestart.jobs[0].status, "completed");
 
-    // Prove that deleting a file outside the app removes only its Library
-    // entry at startup, while the first downloaded file remains playable.
+    // Missing files keep their Library metadata because an unavailable volume
+    // can look empty. Only explicit forget removes that metadata.
     const addedResponse = await fetch(`${baseURL}/api/jobs`, {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ url: fixtureURL, quality: "best", rightsConfirmed: true }),
@@ -537,7 +552,15 @@ async function main() {
     await stopProcess(service);
     await startService();
     const reconciled = await getJSON(`${baseURL}/api/library`);
-    assert.deepEqual(reconciled.jobs.map(job => job.id), [beforeRestart.jobs[0].id]);
+    assert.deepEqual(new Set(reconciled.jobs.map(job => job.id)), new Set([beforeRestart.jobs[0].id, secondJob.id]));
+    const unavailable = reconciled.jobs.find(job => job.id === secondJob.id);
+    const surviving = reconciled.jobs.find(job => job.id === beforeRestart.jobs[0].id);
+    assert.equal(unavailable.files[0].publishedAvailable, false, "missing file should be reported unavailable");
+    assert.equal(surviving.files[0].publishedAvailable, true, "surviving file should remain available");
+    const forgetResponse = await fetch(`${baseURL}/api/jobs/${secondJob.id}/library-items/${secondJob.files[0].id}`, { method: "DELETE" });
+    assert.equal(forgetResponse.status, 204, "missing metadata should remain explicitly removable");
+    const afterForget = await getJSON(`${baseURL}/api/library`);
+    assert.deepEqual(afterForget.jobs.map(job => job.id), [beforeRestart.jobs[0].id]);
     await cdp.send("Page.reload", { ignoreCache: true });
     await waitFor(cdp, bodyIncludes("Ready"), "service reconnect after reconciliation", 30000);
     await clickButton(cdp, "Vault");

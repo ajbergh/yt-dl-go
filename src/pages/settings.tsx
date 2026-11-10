@@ -186,7 +186,7 @@ export function SettingsPage({
                 </label>
                 <label className="block text-xs font-medium text-neutral-300">Browser application path
                   <input aria-label="Chrome executable path" disabled={!connection.token} type="text" className={`${field} mt-1.5 font-mono text-xs`} value={settings.chromePath} onChange={event => changeSetting("chromePath", event.target.value)} placeholder="Find automatically" />
-                  <span className="mt-1 block text-xs leading-relaxed text-neutral-400">{connection.token ? "Optional. Leave blank to find Chrome, Chromium, or Edge automatically." : "Set CHROME_PATH before starting the service to choose a browser application."}</span>
+                  <span className="mt-1 block text-xs leading-relaxed text-neutral-400">{connection.token ? "Optional. Leave blank to find Chrome, Chromium, or Edge automatically." : "Browser selection is managed at startup in this mode."}</span>
                   <RuntimeSettingSource source={runtimeSettingSources.chromePath} activeValue={runtimeSettingValues.chromePath} />
                 </label>
                 <label className="block text-xs font-medium text-neutral-300 sm:col-span-2">Simultaneous saves and exports <span className="float-right font-mono text-rose-300">{settings.downloadSlots}</span>
