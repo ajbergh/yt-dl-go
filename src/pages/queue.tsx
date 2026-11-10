@@ -5,7 +5,7 @@
  */
 import { useSensor, useSensors, KeyboardSensor, PointerSensor, DndContext, closestCenter, type DragEndEvent } from "@dnd-kit/core";
 import { SortableContext, sortableKeyboardCoordinates, verticalListSortingStrategy } from "@dnd-kit/sortable";
-import { useState, type Dispatch, type FormEvent, type SetStateAction } from "react";
+import { memo, useCallback, useLayoutEffect, useRef, useState, type Dispatch, type FormEvent, type SetStateAction } from "react";
 import {
   AlertCircle, ArrowDownToLine, ChevronDown, CircleHelp, DownloadCloud, Film, Layers, ListVideo,
   LoaderCircle, Pause, Play, RefreshCw, Search, Trash2, X,
@@ -82,13 +82,23 @@ export function QueuePage({
   applyAudioBitrateToAll, applyCategoryToAll, updatePlaylistSelection, togglePlaylistEntry,
   rightsConfirmed, setRightsConfirmed, startPaused, setStartPaused, submitting, addDownloads, visibleQueueRows, activeCount,
   totalCurrentSpeed, completedQueueCount, queuedCount, jobs, batchAction, clearCompleted,
-  queuedJobsOrdered, reorderQueuedJobs, reorderPlaylistItems, busyAction, downloadNext, queueFilter,
-  setQueueFilter, search, setSearch, filteredQueue, retryPlaylistItem, retryAllFailedItems, updateJobConfiguration,
-  bulkJobAction, saveFile, jobAction,
+  queuedJobsOrdered, reorderQueuedJobs, reorderPlaylistItems, busyAction, downloadNext: downloadNextInput, queueFilter,
+  setQueueFilter, search, setSearch, filteredQueue, retryPlaylistItem: retryPlaylistItemInput, retryAllFailedItems: retryAllFailedItemsInput, updateJobConfiguration: updateJobConfigurationInput,
+  bulkJobAction, saveFile: saveFileInput, jobAction: jobActionInput,
 }: QueuePageProps) {
+  const jobAction = useQueueCommand(jobActionInput);
+  const saveFile = useQueueCommand(saveFileInput);
+  const retryPlaylistItem = useQueueCommand(retryPlaylistItemInput);
+  const retryAllFailedItems = useQueueCommand(retryAllFailedItemsInput);
+  const updateJobConfiguration = useQueueCommand(updateJobConfigurationInput);
+  const downloadNext = useQueueCommand(downloadNextInput);
   const draftTaskCount = drafts.reduce((count, draft) => count + (draft.kind === "playlist" ? selectedPlaylistEntries(draft).length : 1), 0);
   const [selectedJobIDs, setSelectedJobIDs] = useState<string[]>([]);
+  const visibleJobIDs = new Set(filteredQueue.map(row => row.job.id));
+  const selectedVisibleJobIDs = selectedJobIDs.filter(id => visibleJobIDs.has(id));
   const [editingJobID, setEditingJobID] = useState("");
+  const firstVisibleItems = new Map<string, number>();
+  for (const { job, item } of filteredQueue) if (!firstVisibleItems.has(job.id)) firstVisibleItems.set(job.id, item.index);
   const queueSensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
@@ -314,12 +324,12 @@ export function QueuePage({
                 </div>
               </div>
 
-              {selectedJobIDs.length > 0 && <div className={`${panel} flex flex-wrap items-center gap-2 p-3`}>
-                <span className="mr-auto text-xs text-neutral-300">{selectedJobIDs.length} job{selectedJobIDs.length === 1 ? "" : "s"} selected</span>
-                <button type="button" className={button} aria-label="Pause selected jobs" disabled={!serviceReady || busyAction === "bulk"} onClick={() => void bulkJobAction("pause", selectedJobIDs)}><Pause className="size-3.5" aria-hidden="true" />Pause</button>
-                <button type="button" className={button} aria-label="Resume selected jobs" disabled={!serviceReady || busyAction === "bulk"} onClick={() => void bulkJobAction("resume", selectedJobIDs)}><Play className="size-3.5" aria-hidden="true" />Resume</button>
-                <button type="button" className={button} aria-label="Cancel selected jobs" disabled={!serviceReady || busyAction === "bulk"} onClick={() => void bulkJobAction("cancel", selectedJobIDs)}><X className="size-3.5" aria-hidden="true" />Cancel</button>
-                <button type="button" className={button} aria-label="Delete selected jobs" disabled={!serviceReady || busyAction === "bulk"} onClick={async () => { const deleted = await bulkJobAction("delete", selectedJobIDs); if (deleted) setSelectedJobIDs(previous => previous.filter(id => !deleted.includes(id))); }}><Trash2 className="size-3.5" aria-hidden="true" />Delete</button>
+              {selectedVisibleJobIDs.length > 0 && <div className={`${panel} flex flex-wrap items-center gap-2 p-3`}>
+                <span className="mr-auto text-xs text-neutral-300">{selectedVisibleJobIDs.length} job{selectedVisibleJobIDs.length === 1 ? "" : "s"} selected</span>
+                <button type="button" className={button} aria-label="Pause selected jobs" disabled={!serviceReady || busyAction === "bulk"} onClick={() => void bulkJobAction("pause", selectedVisibleJobIDs)}><Pause className="size-3.5" aria-hidden="true" />Pause</button>
+                <button type="button" className={button} aria-label="Resume selected jobs" disabled={!serviceReady || busyAction === "bulk"} onClick={() => void bulkJobAction("resume", selectedVisibleJobIDs)}><Play className="size-3.5" aria-hidden="true" />Resume</button>
+                <button type="button" className={button} aria-label="Cancel selected jobs" disabled={!serviceReady || busyAction === "bulk"} onClick={() => void bulkJobAction("cancel", selectedVisibleJobIDs)}><X className="size-3.5" aria-hidden="true" />Cancel</button>
+                <button type="button" className={button} aria-label="Delete selected jobs" disabled={!serviceReady || busyAction === "bulk"} onClick={async () => { const deleted = await bulkJobAction("delete", selectedVisibleJobIDs); if (deleted) setSelectedJobIDs(previous => previous.filter(id => !deleted.includes(id))); }}><Trash2 className="size-3.5" aria-hidden="true" />Delete</button>
                 <button type="button" className="px-2 py-1 text-xs text-neutral-400 hover:text-white" onClick={() => setSelectedJobIDs([])}>Clear selection</button>
               </div>}
 
@@ -369,13 +379,31 @@ export function QueuePage({
                 <p className="mx-auto mt-1 max-w-md text-xs leading-relaxed text-neutral-400">{visibleQueueRows.length === 0 && jobs.length > 0 ? "Cleared downloads remain in your vault. Add another link to start a download." : serviceReady ? "Add a link to start downloading. Progress will appear here." : "Your saved history is loading. Downloads will be available shortly."}</p>
               </div> : <div className="space-y-2.5">
                 {filteredQueue.map(({ job, item }) => {
+                  const firstVisible = firstVisibleItems.get(job.id) === item.index;
+                  const menu = jobMenu(job, item);
+                  const metadata = Object.fromEntries(Object.entries(job).filter(([key]) => !["items", "files", "failures", "progress", "downloadedBytes", "totalBytes", "speedBytesPerSec", "etaSeconds", "currentItem"].includes(key)));
+                  const rowVersion = JSON.stringify([metadata, item, firstVisible, busyAction, firstVisible && editingJobID === job.id, selectedJobIDs.includes(job.id), settings.userCategories, job.items?.length, job.items?.some(value => value.status === "failed" || value.status === "cancelled"), menu.map(entry => [entry.label, entry.disabled, entry.danger])]);
+                  return <QueueDownloadRow key={`${job.id}:${item.index}`} rowVersion={rowVersion} job={job} item={item} firstVisible={firstVisible} menu={menu} busyAction={busyAction} editingJobID={editingJobID} setEditingJobID={setEditingJobID} selectedJobIDs={selectedJobIDs} setSelectedJobIDs={setSelectedJobIDs} settings={settings} jobAction={jobAction} saveFile={saveFile} retryPlaylistItem={retryPlaylistItem} retryAllFailedItems={retryAllFailedItems} updateJobConfiguration={updateJobConfiguration} />;
+                })}
+              </div>}
+            </section></ContextMenuArea>
+          </>
+  );
+}
+
+type QueueDownloadRowProps = Pick<QueuePageProps, "settings" | "busyAction" | "jobAction" | "saveFile" | "retryPlaylistItem" | "retryAllFailedItems" | "updateJobConfiguration"> & {
+ rowVersion: string; job: DownloadJob; item: QueueItem; firstVisible: boolean; menu: ContextMenuItem[];
+ editingJobID: string; setEditingJobID: Dispatch<SetStateAction<string>>;
+ selectedJobIDs: string[]; setSelectedJobIDs: Dispatch<SetStateAction<string[]>>;
+};
+const QueueDownloadRow = memo(function QueueDownloadRow({ job, item, firstVisible, menu, busyAction, editingJobID, setEditingJobID, selectedJobIDs, setSelectedJobIDs, settings, jobAction, saveFile, retryPlaylistItem, retryAllFailedItems, updateJobConfiguration }: QueueDownloadRowProps) {
                   const itemActive = item.status === "downloading" || item.status === "processing";
                   // Older saved jobs may still contain the retired format explainer.
                   const jobNote = job.note?.replace(/^Download videos as MP4 or WebM[\s\S]*?Live streams and streaming-only sources are not supported\.\s*/, "").trim();
-                  const batchControls = job.kind === "playlist" && item.index === 1;
+                  const batchControls = job.kind === "playlist" && firstVisible;
                   const itemError = item.error || ((job.kind === "video" || !job.items?.length) ? job.error : "");
                   const label = job.mediaType === "audio" ? (job.audioFormat === "m4a" ? "M4A · original AAC" : `MP3 ${job.audioBitrate ?? "192k"}`) : `${qualityLabels[job.quality]} · ${videoStrategyLabels[job.videoStrategy ?? "best"]}`;
-                  return <ContextMenuArea key={`${job.id}:${item.index}`} label={`Download: ${item.title}`} items={jobMenu(job, item)}><article id={item.index === 1 ? `queue-job-${job.id}` : undefined} tabIndex={0} aria-label={item.title} className={`rounded-2xl border bg-neutral-900/80 p-4 sm:p-5 focus-visible:outline-2 focus-visible:outline-rose-400 ${itemActive ? "border-rose-800/70" : "border-neutral-800"}`}>
+                  return <ContextMenuArea label={`Download: ${item.title}`} items={menu}><article id={firstVisible ? `queue-job-${job.id}` : undefined} tabIndex={0} aria-label={item.title} className={`rounded-2xl border bg-neutral-900/80 p-4 sm:p-5 focus-visible:outline-2 focus-visible:outline-rose-400 ${itemActive ? "border-rose-800/70" : "border-neutral-800"}`}>
                     <div className="flex flex-wrap items-center gap-4">
                       {item.thumbnailUrl ? <img src={item.thumbnailUrl} alt="" referrerPolicy="no-referrer" className="hidden aspect-video w-40 shrink-0 rounded-lg bg-neutral-950 object-cover sm:block" />
                         : <div className="hidden aspect-video w-40 shrink-0 place-items-center rounded-lg bg-neutral-950 text-neutral-400 sm:grid"><Film className="size-6" aria-hidden="true" /></div>}
@@ -394,7 +422,7 @@ export function QueuePage({
                         {(itemActive || item.status === "paused" || item.status === "completed") && <div className="mt-2 h-2 overflow-hidden rounded-full bg-neutral-800"><div className={`h-full rounded-full transition-[width] ${item.status === "completed" ? "bg-emerald-500" : "bg-rose-500"} ${item.waitingToConvert ? "opacity-60" : ""} ${itemActive && item.progress === null ? "w-1/3 animate-pulse" : ""}`} style={itemActive && item.progress === null ? undefined : { width: `${Math.max(0, Math.min(100, item.progress ?? 0))}%` }} /></div>}
                       </div>
                       <div className="flex w-full shrink-0 flex-wrap items-center gap-2 border-t border-neutral-800 pt-3 sm:w-auto sm:border-0 sm:pt-0">
-                        {item.index === 1 && <input type="checkbox" aria-label={`Select ${job.title}`} checked={selectedJobIDs.includes(job.id)} onChange={event => setSelectedJobIDs(previous => event.target.checked ? [...new Set([...previous, job.id])] : previous.filter(id => id !== job.id))} className="size-4 accent-rose-600" />}
+                        {firstVisible && <input type="checkbox" aria-label={`Select ${job.title}`} checked={selectedJobIDs.includes(job.id)} onChange={event => setSelectedJobIDs(previous => event.target.checked ? [...new Set([...previous, job.id])] : previous.filter(id => id !== job.id))} className="size-4 accent-rose-600" />}
                         {job.kind === "video" && (job.status === "downloading" || job.status === "processing" || job.status === "queued") && <button type="button" className={button} disabled={busyAction === job.id} onClick={() => void jobAction(job, "pause")} aria-label={`Pause ${item.title}`}><Pause className="size-3.5" aria-hidden="true" /><span>Pause</span></button>}
                         {job.kind === "video" && job.status === "paused" && <button type="button" className={button} disabled={busyAction === job.id} onClick={() => void jobAction(job, "resume")} aria-label={`Resume ${item.title}`}><Play className="size-3.5" aria-hidden="true" /><span>Resume</span></button>}
                         {job.kind === "video" && (isActive(job) || job.status === "paused") && <button type="button" className={button} disabled={busyAction === job.id} onClick={() => void jobAction(job, "cancel")} aria-label={`Cancel ${item.title}`}><X className="size-3.5" aria-hidden="true" /><span>Cancel</span></button>}
@@ -406,20 +434,21 @@ export function QueuePage({
                         {batchControls && (job.status === "failed" || job.status === "partial" || job.status === "cancelled") && <button type="button" className={button} disabled={busyAction === job.id} onClick={() => void jobAction(job, "retry")} aria-label={`Retry playlist ${job.title}`}><RefreshCw className="size-3.5" aria-hidden="true" /><span>Retry batch</span></button>}
                         {job.kind === "playlist" && (job.status === "partial" || job.status === "failed" || job.status === "cancelled") && (item.status === "failed" || item.status === "cancelled") && <button type="button" className={button} disabled={busyAction === `${job.id}:retry-item:${item.index}` || item.retryRequested === true} onClick={() => void retryPlaylistItem(job, item)} aria-label={`Retry item ${item.title}`}><RefreshCw className="size-3.5" aria-hidden="true" /><span>{item.retryRequested ? "Retry queued" : "Retry item"}</span></button>}
                         {batchControls && job.kind === "playlist" && ["partial", "failed", "cancelled"].includes(job.status) && (job.items ?? []).some(value => value.status === "failed" || value.status === "cancelled") && <button type="button" className={button} disabled={busyAction === `${job.id}:retry-failed`} onClick={() => void retryAllFailedItems(job)} aria-label={`Retry all failed items in ${job.title}`}><RefreshCw className="size-3.5" aria-hidden="true" /><span>Retry failed</span></button>}
-                        {item.index === 1 && (job.status === "queued" || job.status === "paused") && <button type="button" className={button} onClick={() => setEditingJobID(current => current === job.id ? "" : job.id)} aria-expanded={editingJobID === job.id} aria-label={`Edit queued settings for ${job.title}`}>Edit</button>}
-                        {item.index === 1 && ["completed", "partial", "failed", "cancelled"].includes(job.status) && <button type="button" className={button} disabled={busyAction === job.id} onClick={() => void jobAction(job, "forget-history")} aria-label={`Forget history for ${job.title}`}><Trash2 className="size-3.5" aria-hidden="true" /><span>Forget history</span></button>}
+                        {firstVisible && (job.status === "queued" || job.status === "paused") && <button type="button" className={button} onClick={() => setEditingJobID(current => current === job.id ? "" : job.id)} aria-expanded={editingJobID === job.id} aria-label={`Edit queued settings for ${job.title}`}>Edit</button>}
+                        {firstVisible && ["completed", "partial", "failed", "cancelled"].includes(job.status) && <button type="button" className={button} disabled={busyAction === job.id} onClick={() => void jobAction(job, "forget-history")} aria-label={`Forget history for ${job.title}`}><Trash2 className="size-3.5" aria-hidden="true" /><span>Forget history</span></button>}
                         {item.status === "failed" && job.kind === "video" && <button type="button" className={button} disabled={busyAction === job.id} onClick={() => void jobAction(job, "remove")} aria-label={`Remove ${item.title}`}><Trash2 className="size-3.5" aria-hidden="true" /></button>}
                       </div>
                     </div>
-                    {item.index === 1 && editingJobID === job.id && <JobConfigurationEditor key={job.id} job={job} categories={settings.userCategories} busy={busyAction === `${job.id}:configuration`} onSave={patch => void updateJobConfiguration(job, patch)} />}
+                    {firstVisible && editingJobID === job.id && <JobConfigurationEditor key={job.id} job={job} categories={settings.userCategories} busy={busyAction === `${job.id}:configuration`} onSave={patch => void updateJobConfiguration(job, patch)} />}
                     {itemError && item.status === "failed" && <p className="mt-3 flex items-start gap-1.5 text-xs text-red-300"><AlertCircle className="mt-0.5 size-3 shrink-0" aria-hidden="true" />{userFacingMessage(itemError)}</p>}
-                    {jobNote && item.index === 1 && <p className="mt-3 text-xs leading-relaxed text-amber-300/80">{userFacingMessage(jobNote)}</p>}
+                    {jobNote && firstVisible && <p className="mt-3 text-xs leading-relaxed text-amber-300/80">{userFacingMessage(jobNote)}</p>}
                   </article></ContextMenuArea>;
-                })}
-              </div>}
-            </section></ContextMenuArea>
-          </>
-  );
+}, (previous, next) => previous.rowVersion === next.rowVersion);
+
+function useQueueCommand<Args extends unknown[], Result>(command: (...args: Args) => Result): (...args: Args) => Result {
+ const latest = useRef(command);
+ useLayoutEffect(() => { latest.current = command; }, [command]);
+ return useCallback((...args: Args) => latest.current(...args), []);
 }
 
 function JobConfigurationEditor({

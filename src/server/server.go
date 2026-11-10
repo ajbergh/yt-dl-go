@@ -664,6 +664,9 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			if err == nil && job == nil && libraryJobRoute(parts, r.Method) {
 				job, _, err = s.hydrateLibraryJobLocked(parts[0])
 			}
+			if job != nil && err == nil && terminal(job.Status) && !job.deleting && libraryJobRoute(parts, r.Method) {
+				err = s.mergeRetainedLibraryFilesLocked(job)
+			}
 			deleting := job != nil && job.deleting
 			if job != nil && err == nil && !deleting {
 				job.activeRequests++
@@ -1126,6 +1129,7 @@ func (s *server) handleLibraryItemDelete(w http.ResponseWriter, jobID, fileID st
 	s.recordPersistenceSuccess()
 	if j.libraryOnly {
 		j.Files = append(j.Files[:fileIndex], j.Files[fileIndex+1:]...)
+		j.deleting = false
 		s.evictTerminalJobLocked(j)
 	} else {
 		j.deleting = false
@@ -1215,6 +1219,11 @@ func (s *server) handleSettings(w http.ResponseWriter, r *http.Request) {
 			settings.JobTimeout = strings.TrimSpace(*patch.JobTimeout)
 		}
 		if patch.ChromePath != nil {
+			if s.cfg.token == "" && *patch.ChromePath != settings.ChromePath {
+				s.mu.Unlock()
+				fail(w, http.StatusForbidden, "Changing the browser executable requires authenticated access; configure CHROME_PATH at startup")
+				return
+			}
 			settings.ChromePath = *patch.ChromePath
 		}
 		if patch.DownloadSlots != nil {
@@ -1281,6 +1290,9 @@ func (s *server) handleSettings(w http.ResponseWriter, r *http.Request) {
 
 func discardPausedParts(j *jobState) error {
 	entries, err := os.ReadDir(j.dir)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
 	if err != nil {
 		return err
 	}
@@ -1606,4 +1618,45 @@ func (s *server) issueTicket(w http.ResponseWriter, j *jobState, fileID string, 
 	}
 	s.tickets[id] = ticket{jobID: j.ID, fileID: fileID, fileIDs: append([]string(nil), fileIDs...), expires: time.Now().Add(expiresIn), inline: inline}
 	reply(w, 200, map[string]string{"path": "/api/downloads/" + id})
+}
+
+// Library metadata can outlive an interrupted history file group. Include it in
+// explicit Vault operations without marking that missing item downloaded again.
+func (s *server) mergeRetainedLibraryFilesLocked(job *jobState) error {
+	jobs, err := s.store.loadLibraryJobsForIDs([]string{job.ID})
+	if err != nil {
+		return err
+	}
+	revalidateLibraryAvailability(jobs)
+	known := make(map[string]bool, len(job.Files))
+	for _, file := range job.Files {
+		known[file.ID] = true
+	}
+	if job.fileItems == nil {
+		job.fileItems = map[int]mediaFile{}
+	}
+	if job.fileGroups == nil {
+		job.fileGroups = map[int][]mediaFile{}
+	}
+	for _, source := range jobs {
+		for _, file := range source.Files {
+			if known[file.ID] {
+				for i := range job.Files {
+					if job.Files[i].ID == file.ID {
+						job.Files[i].PublishedAvailable = file.PublishedAvailable
+						syncStoredFile(job, job.Files[i])
+						break
+					}
+				}
+				continue
+			}
+			index := max(1, file.SourceItemIndex)
+			group := append(itemFiles(job, index), file)
+			job.fileGroups[index] = group
+			job.fileItems[index] = group[0]
+			job.Files = append(job.Files, file)
+			known[file.ID] = true
+		}
+	}
+	return nil
 }

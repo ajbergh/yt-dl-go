@@ -70,6 +70,10 @@ func validLibraryItemKey(value string) bool {
 // Names must be trimmed and unique ignoring case; keys/IDs and collection sizes
 // must satisfy the limits shared by persistence and portable import.
 func validateLibraryOrganization(org libraryOrganization) error {
+	encoded, err := json.Marshal(org)
+	if err != nil || len(encoded) > maxLibraryOrganizationBytes {
+		return errors.New("library organization exceeds 512 KiB")
+	}
 	if org.Revision < 0 {
 		return errors.New("invalid organization revision")
 	}
@@ -120,6 +124,12 @@ func (s *jobStore) saveLibraryOrganization(org libraryOrganization) (libraryOrga
 	if err := validateLibraryOrganization(org); err != nil {
 		return libraryOrganization{}, false, err
 	}
+	next := org
+	next.Revision++
+	if err := validateLibraryOrganization(next); err != nil {
+		return libraryOrganization{}, false, err
+	}
+
 	favorites, err := json.Marshal(org.Favorites)
 	if err != nil {
 		return libraryOrganization{}, false, err

@@ -13,6 +13,25 @@ import {
   builtInServiceConnection, errorMessage, notificationAPI, queueItemsFor, terminalNotification,
 } from "../components/downloader/view-model";
 
+// The service lists active jobs; keep terminal rows observed in this session
+// until an explicit deletion event or the user's Clear completed action.
+export function reconcileQueueJobs(previous: DownloadJob[], incoming: DownloadJob[]): DownloadJob[] {
+  const ids = new Set(incoming.map(job => job.id));
+  return [...incoming, ...previous.filter(job => !ids.has(job.id) && ["completed", "partial", "failed", "cancelled"].includes(job.status))];
+}
+
+// Preserve locally changed fields while adopting unrelated authoritative updates.
+export function mergeSettingsDraft(current: AppSettings, baseline: AppSettings | null, incoming: AppSettings): AppSettings {
+  if (!baseline) return incoming;
+  const result = { ...incoming };
+  for (const key of Object.keys(current) as (keyof AppSettings)[]) {
+    if (JSON.stringify(current[key]) !== JSON.stringify(baseline[key])) {
+      Object.assign(result, { [key]: current[key] });
+    }
+  }
+  return result;
+}
+
 type StorageWarning = { path: string; freeBytes: number; totalBytes: number; freePercent: number };
 
 const fallbackCategories = ["Tech", "Science", "Coding", "Music", "Education", "Gaming", "Podcasts", "Archival", "General"];
@@ -148,6 +167,13 @@ export function useService() {
   const [libraryQuery, setLibraryQueryState] = useState<LibraryQuery>(initialLibraryQuery);
   const [loadingLibraryMore, setLoadingLibraryMore] = useState(false);
   const [settings, setSettings] = useState<AppSettings>(defaultSettings);
+  const authoritativeSettings = useRef<AppSettings | null>(null);
+  const applyServerSettings = useCallback((incoming: AppSettings) => {
+    const baseline = authoritativeSettings.current;
+    const next = hydratedSettings(incoming);
+    authoritativeSettings.current = next;
+    setSettings(current => mergeSettingsDraft(current, baseline, next));
+  }, []);
   const [runtimeSettingSources, setRuntimeSettingSources] = useState<RuntimeSettingSources>({});
   const [runtimeSettingValues, setRuntimeSettingValues] = useState<RuntimeSettingValues>({});
   const [mp3Supported, setMp3Supported] = useState(false);
@@ -310,7 +336,7 @@ export function useService() {
         knownTaskStatuses.current = new Map(jobResult.jobs.map(job => [
           job.id, new Map(queueItemsFor(job).map(item => [item.index, item.status])),
         ]));
-        setSettings(previous => hydratedSettings(settingResult.settings, previous));
+        applyServerSettings(settingResult.settings);
         setRuntimeSettingSources(settingResult.sources ?? {});
         setRuntimeSettingValues(settingResult.effective ?? {});
         setServiceError("");
@@ -336,7 +362,7 @@ export function useService() {
       controller.abort();
       clearTimeout(retryTimer);
     };
-  }, [connection]);
+  }, [connection, applyServerSettings]);
 
   useEffect(() => {
     if (!serviceReady) return;
@@ -379,11 +405,11 @@ export function useService() {
       if (event.type === "snapshot") {
         if (event.jobs) {
           for (const job of event.jobs) maybeNotifyTerminal(job);
-          setJobs(event.jobs);
+          setJobs(previous => reconcileQueueJobs(previous, event.jobs!));
           void refreshLibrary().catch(error => setPollError(errorMessage(error)));
         }
         if (event.settings) {
-          setSettings(previous => hydratedSettings(event.settings!, previous));
+          applyServerSettings(event.settings);
         }
         if (event.settingsSources) setRuntimeSettingSources(event.settingsSources);
         if (event.settingsEffective) setRuntimeSettingValues(event.settingsEffective);
@@ -392,12 +418,7 @@ export function useService() {
         setJobs(previous => previous.filter(job => job.id !== event.jobId));
         void refreshLibrary().catch(error => setPollError(errorMessage(error)));
       } else if (event.type === "settings-changed" && event.settings) {
-        setSettings(previous => ({
-          ...previous,
-          ...event.settings,
-          bandwidthLimitBytesPerSec: event.settings?.bandwidthLimitBytesPerSec ?? 0,
-          notificationsEnabled: event.settings?.notificationsEnabled ?? false,
-        }));
+        applyServerSettings(event.settings);
         if (event.settingsSources) setRuntimeSettingSources(event.settingsSources);
         if (event.settingsEffective) setRuntimeSettingValues(event.settingsEffective);
       } else if (event.job) {
@@ -420,7 +441,7 @@ export function useService() {
         ]);
         if (!controller.signal.aborted) {
           for (const job of result.jobs) maybeNotifyTerminal(job);
-          setJobs(result.jobs);
+          setJobs(previous => reconcileQueueJobs(previous, result.jobs));
         }
       } catch (error) {
         if (!controller.signal.aborted) setPollError(errorMessage(error));
@@ -445,7 +466,7 @@ export function useService() {
       clearTimeout(reconnectTimer);
       clearInterval(reconcileTimer);
     };
-  }, [connection, refreshLibrary, serviceReady]);
+  }, [connection, refreshLibrary, serviceReady, applyServerSettings]);
 
   useEffect(() => {
     if (!serviceReady) return;

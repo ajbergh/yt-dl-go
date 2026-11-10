@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/csv"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -88,10 +89,16 @@ type libraryExportSubtitle struct {
 	PublishedAvailable bool   `json:"publishedAvailable"`
 }
 
+var errLibraryExportLimit = errors.New("Library export exceeds portable import limits")
+
 func (s *server) handleLibraryExport(w http.ResponseWriter, r *http.Request) {
 	archivePath, cleanup, err := s.createLibraryExport()
 	if err != nil {
-		fail(w, http.StatusInternalServerError, "Could not export the Library")
+		if errors.Is(err, errLibraryExportLimit) {
+			fail(w, http.StatusUnprocessableEntity, err.Error())
+		} else {
+			fail(w, http.StatusInternalServerError, "Could not export the Library")
+		}
 		return
 	}
 	defer cleanup()
@@ -177,6 +184,10 @@ func (s *server) createLibraryExport() (string, func(), error) {
 	records := make([]libraryExportRecord, 0)
 	for _, job := range jobs {
 		for _, file := range job.Files {
+			if len(records) >= maxLibraryImportRecords {
+				cleanup()
+				return "", nil, fmt.Errorf("%w: at most %d files can be exported", errLibraryExportLimit, maxLibraryImportRecords)
+			}
 			records = append(records, libraryExportRecord{
 				JobID: job.ID, URL: job.URL, Kind: job.Kind, MediaType: job.MediaType,
 				Status: job.Status, Title: job.Title, CreatedAt: job.CreatedAt, Category: job.Category,
@@ -214,6 +225,10 @@ func (s *server) createLibraryExport() (string, func(), error) {
 	if writeErr != nil {
 		cleanup()
 		return "", nil, fmt.Errorf("write Library export archive: %w", writeErr)
+	}
+	if err := validateLibraryExportArchive(archivePath); err != nil {
+		cleanup()
+		return "", nil, err
 	}
 	return archivePath, cleanup, nil
 }
@@ -326,4 +341,24 @@ func safeCSVCell(value string) string {
 		return "'" + value
 	}
 	return value
+}
+
+// Validate the actual encoded archive against the same contract as import,
+// including compressed size, individual entries, organization and record limits.
+func validateLibraryExportArchive(path string) error {
+	info, err := os.Stat(path)
+	if err != nil {
+		return err
+	}
+	if info.Size() > maxLibraryImportArchiveBytes {
+		return fmt.Errorf("%w: ZIP exceeds 64 MiB", errLibraryExportLimit)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	if _, _, err := parseLibraryImportArchive(data); err != nil {
+		return fmt.Errorf("%w: %v", errLibraryExportLimit, err)
+	}
+	return nil
 }

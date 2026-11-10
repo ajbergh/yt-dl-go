@@ -177,7 +177,7 @@ jobs:
           LIBGL_ALWAYS_SOFTWARE: "1"
           WEBKIT_DISABLE_DMABUF_RENDERER: "1"
       - name: Attest desktop release artifacts
-        if: github.event_name != 'pull_request' && inputs.artifact_prefix == 'release-desktop'
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') && inputs.artifact_prefix == 'release-desktop'
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-path: |

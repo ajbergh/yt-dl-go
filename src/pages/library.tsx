@@ -34,6 +34,7 @@ type LibraryPageProps = {
   visibleLibraryJobs: DownloadJob[];
   libraryTotalJobs: number;
   libraryTotalFiles: number;
+  view: LibraryQuery;
   onViewChange: (view: LibraryQuery) => void;
   librarySearch: string;
   setLibrarySearch: (value: string) => void;
@@ -108,13 +109,13 @@ function stoppedJob(job: DownloadJob): boolean {
 }
 
 export function LibraryPage({
-  serviceReady, libraryJobs, visibleLibraryJobs, libraryTotalJobs, libraryTotalFiles, onViewChange, librarySearch, setLibrarySearch,
+  serviceReady, libraryJobs, visibleLibraryJobs, libraryTotalJobs, libraryTotalFiles, view, onViewChange, librarySearch, setLibrarySearch,
   libraryFilter, setLibraryFilter, libraryCategory, setLibraryCategory,
   libraryChannel, setLibraryChannel, libraryCategories, libraryChannels,
   libraryLayout, setLibraryLayout, libraryStats, mediaCounts: counts, onOrganizationSaved, hasMoreLibrary, loadingLibraryMore,
   loadMoreLibrary, connection, busyAction, previewFile, filesystemAction, jobAction, bulkForgetLibraryItems,
 }: LibraryPageProps) {
-  const [section, setSection] = useState<LibrarySection>("all");
+  const [section, setSection] = useState<LibrarySection>(() => view.favorites ? "favorites" : view.recent ? "recent" : view.playlists ? "playlists" : "all");
   const { favorites, collections, ready: organizationReady, error: organizationError, toggleFavorite, setFavoritesForKeys, setCollections, reload: reloadOrganization } = useLibraryOrganization(connection, onOrganizationSaved);
   const [sort, setSort] = useState<SortMode>(storedSort);
   const [selectedKey, setSelectedKey] = useState("");
@@ -123,14 +124,14 @@ export function LibraryPage({
   const [bulkCollectionID, setBulkCollectionID] = useState("");
   const [inspectorOpen, setInspectorOpen] = useState(true);
   const [showFilters, setShowFilters] = useState(false);
-  const [activeCollectionID, setActiveCollectionID] = useState("");
+  const [activeCollectionID, setActiveCollectionID] = useState(view.collection || "");
   const [showCollectionForm, setShowCollectionForm] = useState(false);
   const [newCollectionName, setNewCollectionName] = useState("");
   const [renameCollectionID, setRenameCollectionID] = useState("");
   const [renamedCollectionName, setRenamedCollectionName] = useState("");
   const [collectionError, setCollectionError] = useState("");
   const [showChannelList, setShowChannelList] = useState(false);
-  const [selectedPlaylistID, setSelectedPlaylistID] = useState("");
+  const [selectedPlaylistID, setSelectedPlaylistID] = useState(view.source || "");
   const searchRef = useRef<HTMLInputElement>(null);
   const mediaGridRef = useRef<HTMLDivElement>(null);
 

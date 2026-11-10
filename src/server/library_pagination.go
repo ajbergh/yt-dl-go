@@ -130,6 +130,7 @@ func (s *jobStore) loadLibraryPage(limit int, cursor libraryCursor, filters ...l
 	if err != nil {
 		return libraryPage{}, err
 	}
+	revalidateLibraryAvailability(jobs)
 	page := libraryPage{Jobs: jobs, TotalJobs: total, Categories: []libraryFacet{}, Channels: []libraryFacet{}}
 	if err := s.loadLibraryMetadata(&page); err != nil {
 		return libraryPage{}, err
@@ -161,14 +162,15 @@ func libraryFilterClause(filter libraryFilter, itemAlias string) (string, []any)
 		clauses = append(clauses, `COALESCE(NULLIF(TRIM(json_extract(`+itemAlias+`.file_json,'$.author')),''),'Unknown channel')=?`)
 		args = append(args, filter.Channel)
 	}
+	filter.Query = foldLibraryText(filter.Query)
 	if filter.Query != "" {
 		if utf8.RuneCountInString(filter.Query) >= 3 && !strings.ContainsRune(filter.Query, '\x00') {
 			phrase := "\"" + strings.ReplaceAll(filter.Query, "\"", "\"\"") + "\""
 			clauses = append(clauses, `(j.rowid IN (SELECT rowid FROM library_search_jobs WHERE library_search_jobs MATCH ?) OR `+itemAlias+`.rowid IN (SELECT rowid FROM library_search_files WHERE library_search_files MATCH ?))`)
 			args = append(args, phrase, phrase)
 		}
-		clauses = append(clauses, `instr(lower(COALESCE(j.title,'')||' '||COALESCE(j.url,'')||' '||COALESCE(j.category,'')||' '||COALESCE(j.audio_format,'')||' '||COALESCE(j.subtitle_language,'')||' '||`+itemAlias+`.file_json),?)>0`)
-		args = append(args, filter.Query)
+		clauses = append(clauses, `(instr(vault_fold(j.search_text),?)>0 OR instr(vault_file_text(`+itemAlias+`.file_json),?)>0)`)
+		args = append(args, filter.Query, filter.Query)
 	}
 	if len(clauses) == 0 {
 		return "", args

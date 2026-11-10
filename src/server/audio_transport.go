@@ -130,7 +130,7 @@ func (s *server) downloadAudioSource(ctx context.Context, j *jobState, engine na
 			if progress != nil {
 				progress(written)
 			}
-		}, nil, adaptiveRangePolicy{onNativeProgress: func(int64) { stopTimer() }, onNativeFailure: func(err error) {
+		}, nil, adaptiveRangePolicy{onNativeBytes: func(int64) { stopTimer() }, onNativeProgress: func(int64) { stopTimer() }, onNativeFailure: func(err error) {
 			if errors.Is(err, errStreamAuthorization) {
 				authorizationErr = err
 			}

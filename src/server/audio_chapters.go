@@ -273,9 +273,14 @@ func (s *server) transferChapterMP3(ctx context.Context, j *jobState, engine nat
 				return nil, errAudioConvert
 			}
 			for activeChapter < len(chapters) {
-				if decodedSamples < chapterSample(chapters[activeChapter].EndMs, info.SampleRate) {
+				if !chapterEOFComplete(decodedSamples, chapters[activeChapter], activeChapter == len(chapters)-1, info.SampleRate) {
 					_ = closeSource()
 					return nil, errLength
+				}
+				if activeChapter == len(chapters)-1 && decodedSamples < chapterSample(chapters[activeChapter].EndMs, info.SampleRate) {
+					durationMs := decodedSamples*1000/int64(info.SampleRate) - chapters[activeChapter].StartMs
+					outputs[activeChapter].file.DurationSeconds = durationMs / 1000
+					outputs[activeChapter].file.Chapters[0].EndMs = durationMs
 				}
 				if err := flushChapter(&outputs[activeChapter]); err != nil {
 					_ = closeSource()
@@ -321,4 +326,11 @@ finalized:
 
 func chapterSample(milliseconds int64, sampleRate int) int64 {
 	return milliseconds * int64(sampleRate) / 1000
+}
+
+// Container duration may include encoder padding or rounded metadata. Only the
+// final chapter may be up to one second short, and it must contain audio.
+func chapterEOFComplete(samples int64, chapter mediaChapter, last bool, rate int) bool {
+	end := chapterSample(chapter.EndMs, rate)
+	return samples >= end || (last && samples > chapterSample(chapter.StartMs, rate) && end-samples <= int64(rate))
 }

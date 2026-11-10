@@ -1128,6 +1128,9 @@ func (s *server) updateProgress(j *jobState, index int, downloaded, total int64)
 	if total > 0 {
 		item.total = total
 	}
+	if downloaded < item.progressBytes {
+		item.progressAt, item.progressBytes, item.speed = now, downloaded, 0
+	}
 	item.downloaded = downloaded
 	if elapsed := now.Sub(item.progressAt).Seconds(); elapsed > 0.2 && downloaded >= item.progressBytes {
 		item.speed = int64(float64(downloaded-item.progressBytes) / elapsed)
@@ -1227,7 +1230,7 @@ func (s *server) processItem(ctx context.Context, j *jobState, entry *youtube.Pl
 	if s.bandwidth != nil {
 		bandwidthLimit = s.bandwidth.Limit()
 	}
-	transferCtx, cancelTransfer := context.WithTimeout(ctx, itemTransferTimeout(video, requested, bandwidthLimit))
+	transferCtx, cancelTransfer := itemTransferContext(ctx, video, requested, bandwidthLimit)
 	defer cancelTransfer()
 	var files []mediaFile
 	if j.MediaType == "audio" {
@@ -1395,6 +1398,15 @@ func (s *server) reuseLibraryAudio(ctx context.Context, j *jobState, existing me
 	return true
 }
 
+// Capped transfers share a global limiter and can legitimately wait for other
+// items. Their request idle deadlines and optional job timeout bound stalls.
+func itemTransferContext(ctx context.Context, video *youtube.Video, expectedBytes, bandwidthLimit int64) (context.Context, context.CancelFunc) {
+	if bandwidthLimit > 0 {
+		return context.WithCancel(ctx)
+	}
+	return context.WithTimeout(ctx, itemTransferTimeout(video, expectedBytes, 0))
+}
+
 func itemTransferTimeout(video *youtube.Video, expectedBytes, bandwidthLimit int64) time.Duration {
 	rate := int64(defaultTransferRate)
 	if bandwidthLimit > 0 {
@@ -1459,6 +1471,11 @@ func setItemFiles(j *jobState, index int, files []mediaFile) {
 		delete(j.fileItems, index)
 		delete(j.fileGroups, index)
 		return
+	}
+	for i := len(j.Failures) - 1; i >= 0; i-- {
+		if j.Failures[i].Index == index {
+			j.Failures = append(j.Failures[:i], j.Failures[i+1:]...)
+		}
 	}
 	j.fileItems[index] = files[0]
 	j.fileGroups[index] = append([]mediaFile(nil), files...)
@@ -2601,6 +2618,7 @@ type adaptiveRangePolicy struct {
 	nativeFailure    error
 	onNativeFailure  func(error)
 	onNativeProgress func(int64)
+	onNativeBytes    func(int64)
 }
 
 func (s *server) downloadAdaptiveRanges(ctx context.Context, j *jobState, engine nativeClient, video *youtube.Video, format *youtube.Format, path, partKey string, itemIndex int, budget int64, progress func(int64), browserProvider browserMediaProvider, policies ...adaptiveRangePolicy) (result int64, browserUsed bool, err error) {
@@ -2758,7 +2776,7 @@ func (s *server) downloadAdaptiveRanges(ctx context.Context, j *jobState, engine
 	}
 	var observer nativeRangeObserver
 	if len(policies) > 0 {
-		observer = nativeRangeObserver{failure: policies[0].onNativeFailure, progress: policies[0].onNativeProgress}
+		observer = nativeRangeObserver{failure: policies[0].onNativeFailure, progress: policies[0].onNativeProgress, bytesProgress: policies[0].onNativeBytes}
 	}
 	result, err = s.downloadNativeRangeWindows(ctx, engine, video.ID, format, f, start, profileID, func(offset int64) error {
 		if checkpointErr := s.saveDownloadPart(j, video.ID, itemIndex, partKey, path, "native-range", format, offset, profileID); checkpointErr != nil {

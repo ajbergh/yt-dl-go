@@ -1,6 +1,7 @@
 package main
 
 import (
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -71,8 +72,8 @@ func openCompletedMedia(j *jobState, file mediaFile) (*os.File, error) {
 	return openFinal(j.dir, file.Name) // Legacy unfinished jobs only.
 }
 
-// reconcileLibrary runs before accepting requests. Exclusions ensure a missing
-// file cannot be reintroduced by a later history save. Metadata-only imports
+// reconcileLibrary runs before accepting requests. Missing published files keep
+// their metadata until explicitly forgotten; a mount can temporarily appear empty. Metadata-only imports
 // intentionally have no local path and are left alone.
 func (s *server) reconcileLibrary() error {
 	jobs, err := s.store.loadLibraryDiskJobs(nil, true)
@@ -124,7 +125,7 @@ func (s *server) reconcileLibraryJob(job Job) (resultErr error) {
 			if _, statErr := os.Lstat(filepath.Join(j.dir, file.Name)); errors.Is(statErr, os.ErrNotExist) {
 				file.ManagedAvailable = false
 				syncStoredFile(j, file)
-				if err := s.store.deleteLibraryItem(j, file.ID); err != nil {
+				if err := s.store.deleteLibraryItem(j, file.ID); err != nil && !errors.Is(err, sql.ErrNoRows) {
 					return err
 				}
 				continue
@@ -155,9 +156,7 @@ func (s *server) reconcileLibraryJob(job Job) (resultErr error) {
 					j.Files[i] = file
 				}
 			}
-			if err := s.store.deleteLibraryItem(j, file.ID); err != nil {
-				return err
-			}
+			updates = append(updates, file)
 		} else {
 			// Discard an old app copy only after validating the folder file.
 			if file.ManagedAvailable {
@@ -200,10 +199,11 @@ func (s *server) reconcileLibraryJob(job Job) (resultErr error) {
 		}
 	}
 	if loaded != nil {
-		if err := s.store.saveJob(j); err != nil {
+		if err := s.store.saveJobPreservingLibrary(j); err != nil {
 			return err
 		}
-	} else {
+	}
+	{
 		tx, err := s.store.db.Begin()
 		if err != nil {
 			return err
@@ -230,4 +230,22 @@ func (s *server) reconcileLibraryJob(job Job) (resultErr error) {
 		}
 	}
 	return nil
+}
+
+// Availability is checked only for the requested page, never by mutating a
+// snapshot reader. Files and volumes can return later; metadata is retained.
+func revalidateLibraryAvailability(jobs []Job) {
+	for i := range jobs {
+		for k := range jobs[i].Files {
+			file := &jobs[i].Files[k]
+			if file.OutputPath == "" {
+				continue
+			}
+			opened, err := openLibraryMedia(&jobState{Job: jobs[i]}, *file)
+			file.PublishedAvailable = err == nil
+			if opened != nil {
+				_ = opened.Close()
+			}
+		}
+	}
 }

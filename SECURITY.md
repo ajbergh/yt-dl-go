@@ -26,3 +26,7 @@ For a non-loopback listener, configure an `API_TOKEN` of at least 32 characters 
 Completed media is downloaded through short-lived ticket URLs. Archive and file tickets expire after five minutes; inline preview tickets expire after 30 minutes. A ticket URL grants access to its file or archive until it expires or is invalidated with its job, so treat it like a temporary bearer credential and do not share or publish it. API bearer tokens and ticket URLs should be removed from logs and issue reports.
 
 The project does not support importing browser cookies or account credentials, bypassing DRM or paywalls, or circumventing YouTube stream protection. Report security issues in the application itself; do not test against systems or accounts without authorization.
+
+The unauthenticated browser/server API cannot change the Chrome executable path.
+Set `CHROME_PATH` before starting the server, or use authenticated API access to
+change that setting. Desktop access uses its authenticated bridge.

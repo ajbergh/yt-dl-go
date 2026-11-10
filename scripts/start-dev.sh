@@ -63,7 +63,7 @@ export CGO_ENABLED=0
 export ADDR="127.0.0.1:${BACKEND_PORT}"
 export DATA_DIR="${DATA_DIR}"
 export NO_BROWSER=1
-(cd "$SERVER_DIR" && go run .) &
+(cd "$SERVER_DIR" && go run -tags dev .) &
 
 # Start Frontend
 (cd "$REPO_ROOT" && node ./node_modules/vite/bin/vite.js --port "$FRONTEND_PORT" --host) &

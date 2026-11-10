@@ -165,7 +165,7 @@ func putNativeRangeBuffer(buffer []byte) {
 	}
 }
 
-func (s *server) readNativeRange(ctx context.Context, client *http.Client, profile youtubeClientProfile, format *youtube.Format, chunk *nativeRangeChunk) error {
+func (s *server) readNativeRange(ctx context.Context, client *http.Client, profile youtubeClientProfile, format *youtube.Format, chunk *nativeRangeChunk, progress ...func(int64)) error {
 	parsed, err := url.Parse(format.URL)
 	if err != nil {
 		return errRead
@@ -205,7 +205,11 @@ func (s *server) readNativeRange(ctx context.Context, client *http.Client, profi
 	// oversized response rather than silently accepting a valid-looking prefix.
 	expected := chunk.end - chunk.start + 1
 	data := getNativeRangeBuffer(expected + 1)
-	n, err := io.ReadFull(s.bandwidthReader(ctx, reader), data)
+	var notify func(int64)
+	if len(progress) > 0 {
+		notify = progress[0]
+	}
+	n, err := io.ReadFull(nativeByteReader{reader: s.bandwidthReader(ctx, reader), progress: notify}, data)
 	if ctx.Err() != nil {
 		putNativeRangeBuffer(data)
 		return ctx.Err()
@@ -258,7 +262,11 @@ func (s *server) runNativeRangePipeline(ctx context.Context, client *http.Client
 					return
 				}
 				chunk := nativeRangeChunk{start: first, end: min(first+chunkSize, total) - 1}
-				err := s.readNativeRange(ctx, client, profile, format(), &chunk)
+				var bytesProgress func(int64)
+				if len(progress) > 1 {
+					bytesProgress = progress[1]
+				}
+				err := s.readNativeRange(ctx, client, profile, format(), &chunk, bytesProgress)
 				if err == nil {
 					written, writeErr := file.WriteAt(chunk.data, chunk.start)
 					putNativeRangeBuffer(chunk.data)
@@ -344,8 +352,9 @@ func (s *server) runNativeRangePipeline(ctx context.Context, client *http.Client
 }
 
 type nativeRangeObserver struct {
-	failure  func(error)
-	progress func(int64)
+	failure       func(error)
+	progress      func(int64)
+	bytesProgress func(int64)
 }
 
 func (s *server) downloadNativeRangeWindows(ctx context.Context, engine nativeClient, videoID string, selected *youtube.Format, file *os.File, start int64, profileID string, checkpoint func(int64) error, observers ...nativeRangeObserver) (int64, error) {
@@ -391,7 +400,7 @@ func (s *server) downloadNativeRangeWindows(ctx context.Context, engine nativeCl
 		if source, ok := engine.(interface{ RequestProfile() youtubeClientProfile }); ok {
 			profile = source.RequestProfile()
 		}
-		next, err := s.runNativeRangePipeline(ctx, client, profile, currentFormat, onSlow, file, start, selected.ContentLength, checkpoint, observer.progress)
+		next, err := s.runNativeRangePipeline(ctx, client, profile, currentFormat, onSlow, file, start, selected.ContentLength, checkpoint, observer.progress, observer.bytesProgress)
 		if next > start {
 			// Progress was made and checkpointed; retry budget starts over.
 			attempt = 0
@@ -447,4 +456,19 @@ func (s *server) downloadNativeRangeWindows(ctx context.Context, engine nativeCl
 		}
 	}
 	return start, nil
+}
+
+// Byte arrival proves transport liveness before a complete range can be verified.
+// It must never be treated as a durable checkpoint or published media progress.
+type nativeByteReader struct {
+	reader   io.Reader
+	progress func(int64)
+}
+
+func (r nativeByteReader) Read(p []byte) (int, error) {
+	n, err := r.reader.Read(p)
+	if n > 0 && r.progress != nil {
+		r.progress(int64(n))
+	}
+	return n, err
 }
