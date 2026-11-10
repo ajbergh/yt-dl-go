@@ -240,6 +240,7 @@ jobs:
           }
 
       - name: Attest Windows release package
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-path: dist/release/youtube-downloader-windows-${{ steps.platform.outputs.arch }}.zip
@@ -364,6 +365,7 @@ jobs:
           node ./scripts/release-smoke.mjs "$executable"
 
       - name: Attest ${{ matrix.label }} release package
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-path: dist/release/youtube-downloader-${{ matrix.target }}-${{ matrix.arch }}.tar.gz
@@ -433,6 +435,7 @@ jobs:
           printf '%s\n' "${source_archive}" > dist/release/expected-source.txt
 
       - name: Attest release source archive
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-path: dist/release/yt-dl-go-source-${{ env.RELEASE_VERSION }}.tar.gz
@@ -462,6 +465,7 @@ jobs:
           sha256sum *.zip *.tar.gz *.deb *.exe *.pkg | sort > SHA256SUMS.txt
 
       - name: Attest release checksum manifest
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-path: dist/release/SHA256SUMS.txt

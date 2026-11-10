@@ -313,7 +313,12 @@ export function HomePage() {
       setStartPaused(false);
       setTab("queue");
     } catch (error) {
-      if (added.length) setJobs(previous => [...added, ...previous]);
+      if (added.length) {
+        setJobs(previous => [...added, ...previous.filter(item => !added.some(value => value.id === item.id))]);
+        // Accepted links must not be submitted again after a later link fails.
+        setDrafts(previous => previous.slice(added.length));
+        setUrl(drafts.slice(added.length).map(draft => draft.url).join("\n"));
+      }
       setFormError(added.length ? `${errorMessage(error)} ${added.length} earlier link(s) were queued successfully.` : errorMessage(error));
     } finally { setSubmitting(false); }
   }
@@ -448,6 +453,7 @@ export function HomePage() {
           mediaCounts={libraryPage.mediaCounts}
           onOrganizationSaved={() => { void refreshLibrary().catch(error => setServiceError(errorMessage(error))); }}
           libraryTotalFiles={libraryPage.totalFiles ?? 0}
+          view={libraryView}
           onViewChange={setLibraryView}
           hasMoreLibrary={Boolean(libraryPage.nextCursor)}
           loadingLibraryMore={loadingLibraryMore}

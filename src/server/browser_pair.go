@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"os"
 
@@ -24,7 +25,16 @@ func (s *server) captureAdaptivePair(ctx context.Context, j *jobState, engine na
 		spare := budget - selection.video.ContentLength - audioBudget
 		audioBudget += min(spare/2, max(int64(64*1024), audioBudget/20))
 	}
-	for _, part := range []string{videoPart, audioPart} {
+	for key, part := range map[string]string{"video": videoPart, "audio": audioPart} {
+		if s.store != nil {
+			checkpoint, err := s.store.loadPart(j.ID, item, key)
+			if err != nil && !errors.Is(err, sql.ErrNoRows) {
+				return 0, 0, false, errStorage
+			}
+			if err == nil && checkpoint.Method == "native-range" && checkpoint.Path == part && checkpoint.CompletedBytes > 0 {
+				return 0, 0, false, nil
+			}
+		}
 		if _, statErr := os.Stat(part); statErr == nil {
 			if _, checkpointed := provider.(browserCheckpointProvider); !checkpointed || s.store == nil {
 				return 0, 0, false, nil

@@ -380,6 +380,7 @@ func runBrowserApplication() {
 	}
 	s.start()
 	h := &http.Server{Addr: c.addr, Handler: s, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, IdleTimeout: time.Minute, MaxHeaderBytes: 16384}
+	h.RegisterOnShutdown(s.events.close)
 	listener, err := net.Listen("tcp", c.addr)
 	if err != nil {
 		s.stop()

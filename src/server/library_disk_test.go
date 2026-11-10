@@ -42,7 +42,7 @@ func TestStartupReconcilesDeletedFilesAndPreservesSurvivors(t *testing.T) {
 	}
 	restarted := restartLibraryServer(t, s)
 	jobs, err := restarted.store.loadLibraryJobs()
-	if err != nil || len(jobs) != 1 || len(jobs[0].Files) != 1 || jobs[0].Files[0].ID != job.Files[1].ID {
+	if err != nil || len(jobs) != 1 || len(jobs[0].Files) != 2 || jobs[0].Files[0].PublishedAvailable || !jobs[0].Files[1].PublishedAvailable {
 		t.Fatalf("reconciled Library = %+v, err=%v", jobs, err)
 	}
 	loaded, err := restarted.store.loadJob(restarted.cfg.root, job.ID)
@@ -54,8 +54,8 @@ func TestStartupReconcilesDeletedFilesAndPreservesSurvivors(t *testing.T) {
 		t.Fatal(err)
 	}
 	jobs, err = restarted.store.loadLibraryJobs()
-	if err != nil || len(jobs[0].Files) != 1 {
-		t.Fatal("history save resurrected missing media")
+	if err != nil || len(jobs[0].Files) != 2 {
+		t.Fatal("history save removed retained metadata")
 	}
 	path := ticketPath(t, restarted, job.ID, `{"fileId":"`+job.Files[1].ID+`","inline":true}`)
 	response := request(restarted, "GET", path, "", map[string]string{"Range": "bytes=0-6"})
@@ -64,7 +64,7 @@ func TestStartupReconcilesDeletedFilesAndPreservesSurvivors(t *testing.T) {
 	}
 }
 
-func TestStartupDropsEmptyLibraryAndKeepsImports(t *testing.T) {
+func TestStartupPreservesEmptyLibraryAndImports(t *testing.T) {
 	s := testServer(t, fixtureClient(1), nil)
 	job := waitTerminal(t, s, createJob(t, s, testVideo).ID)
 	waitPersistedTerminalJob(t, s, job.ID)
@@ -77,7 +77,7 @@ func TestStartupDropsEmptyLibraryAndKeepsImports(t *testing.T) {
 	}
 	restarted := restartLibraryServer(t, s)
 	jobs, err := restarted.store.loadLibraryJobs()
-	if err != nil || len(jobs) != 1 || jobs[0].ID == job.ID || len(jobs[0].Files) != 2 {
+	if err != nil || len(jobs) != 2 || jobs[0].ID != job.ID || len(jobs[0].Files) != 1 || jobs[0].Files[0].PublishedAvailable {
 		t.Fatalf("Library after restart: %+v %v", jobs, err)
 	}
 }

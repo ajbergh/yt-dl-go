@@ -220,6 +220,7 @@ func (s *server) handleSingleLibraryFileDelete(w http.ResponseWriter, jobID, fil
 	s.recordPersistenceSuccess()
 	if j.libraryOnly {
 		j.Files = append(j.Files[:fileIndex], j.Files[fileIndex+1:]...)
+		j.deleting = false
 		s.evictTerminalJobLocked(j)
 	} else {
 		j.deleting = false

@@ -181,12 +181,12 @@ export function SettingsPage({
                 </label>
                 <label className="block text-xs font-medium text-neutral-300">Overall job timeout
                   <input aria-label="Overall job timeout" type="text" className={`${field} mt-1.5`} value={settings.jobTimeout} onChange={event => changeSetting("jobTimeout", event.target.value)} placeholder="none or 2h" />
-                  <span className="mt-1 block text-xs leading-relaxed text-neutral-400">Use “none” or “0” to disable the overall deadline, or enter at least 1s. Item transfers keep their own deadlines.</span>
+                  <span className="mt-1 block text-xs leading-relaxed text-neutral-400">Use “none” or “0” to disable the overall deadline, or enter at least 1s. Uncapped item transfers also have individual deadlines.</span>
                   <RuntimeSettingSource source={runtimeSettingSources.jobTimeout} activeValue={runtimeSettingValues.jobTimeout} />
                 </label>
                 <label className="block text-xs font-medium text-neutral-300">Browser application path
-                  <input aria-label="Chrome executable path" type="text" className={`${field} mt-1.5 font-mono text-xs`} value={settings.chromePath} onChange={event => changeSetting("chromePath", event.target.value)} placeholder="Find automatically" />
-                  <span className="mt-1 block text-xs leading-relaxed text-neutral-400">Optional. Leave blank to find Chrome, Chromium, or Edge automatically.</span>
+                  <input aria-label="Chrome executable path" disabled={!connection.token} type="text" className={`${field} mt-1.5 font-mono text-xs`} value={settings.chromePath} onChange={event => changeSetting("chromePath", event.target.value)} placeholder="Find automatically" />
+                  <span className="mt-1 block text-xs leading-relaxed text-neutral-400">{connection.token ? "Optional. Leave blank to find Chrome, Chromium, or Edge automatically." : "Browser selection is managed at startup in this mode."}</span>
                   <RuntimeSettingSource source={runtimeSettingSources.chromePath} activeValue={runtimeSettingValues.chromePath} />
                 </label>
                 <label className="block text-xs font-medium text-neutral-300 sm:col-span-2">Simultaneous saves and exports <span className="float-right font-mono text-rose-300">{settings.downloadSlots}</span>

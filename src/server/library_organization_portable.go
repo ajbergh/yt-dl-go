@@ -197,7 +197,9 @@ func mergePortableLibraryOrganization(tx *sql.Tx, incoming *libraryExportOrganiz
 	if !changed {
 		return false, nil
 	}
-	if err := validateLibraryOrganization(current); err != nil {
+	next := current
+	next.Revision++
+	if err := validateLibraryOrganization(next); err != nil {
 		return false, &libraryImportConflictError{detail: "Merged Library organization exceeds supported limits"}
 	}
 	newFavorites, err := json.Marshal(current.Favorites)

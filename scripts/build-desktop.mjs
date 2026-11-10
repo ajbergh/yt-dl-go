@@ -29,8 +29,12 @@ function run(command, args, options = {}) {
 
 run(process.execPath, [path.join(root, "scripts/generate-app-icons.mjs"), "--check"], { cwd: root });
 const goRoot = run("go", ["env", "GOROOT"], { stdio: ["ignore", "pipe", "inherit"] });
-const tools = path.join(os.tmpdir(), "yt-dl-go-desktop-tools-v2.17.1");
-mkdirSync(tools, { recursive: true });
+const tools = mkdtempSync(path.join(os.tmpdir(), "yt-dl-go-desktop-tools-"));
+process.on("exit", () => {
+  const relative = path.relative(os.tmpdir(), tools);
+  if (!relative.startsWith("yt-dl-go-desktop-tools-") || relative.includes(path.sep)) return;
+  rmSync(tools, { recursive: true, force: true });
+});
 const env = {
   ...process.env, GOROOT: goRoot, GOTOOLCHAIN: "local", GOBIN: tools,
   GOOS: goos, GOARCH: hostArch, CGO_ENABLED: "1",

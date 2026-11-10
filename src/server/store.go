@@ -441,6 +441,10 @@ func openJobStore(root string) (*jobStore, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("migrate state database: %w", err)
 	}
+	if err := runMigration(33, store.migrateV33); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("migrate state database: %w", err)
+	}
 	store.queueItemsReady = true
 	return store, nil
 }
@@ -1098,7 +1102,8 @@ func (s *jobStore) migrateV20(root string) error {
 
 	// Reuse the canonical row loader so the migration includes every finalized
 	// primary and grouped file, including chapter outputs stored in JSON.
-	loaded, err := s.loadJobs(root)
+	// Backfill must not normalize interrupted jobs before later schema tables exist.
+	loaded, err := s.loadJobsFiltered(root, "", "migration")
 	if err != nil {
 		return err
 	}
@@ -1151,6 +1156,9 @@ func restoreLibraryItemsSchema(tx *sql.Tx, version int) error {
 				return err
 			}
 		}
+	}
+	if version >= 33 {
+		return configureLibrarySearch(tx)
 	}
 	if version < 25 {
 		return nil
@@ -1427,7 +1435,12 @@ func groupedJobFiles(j *jobState) map[int][]mediaFile {
 	return groups
 }
 
-func (s *jobStore) saveJob(j *jobState) error {
+func (s *jobStore) saveJob(j *jobState) error { return s.saveJobWithLibrary(j, false) }
+
+// Interrupted history normalization must not prune durable Vault metadata.
+func (s *jobStore) saveJobPreservingLibrary(j *jobState) error { return s.saveJobWithLibrary(j, true) }
+
+func (s *jobStore) saveJobWithLibrary(j *jobState, preserveLibrary bool) error {
 	if s == nil {
 		return nil
 	}
@@ -1607,7 +1620,10 @@ func (s *jobStore) saveJob(j *jobState) error {
 	if libraryState.librarySignatures == nil {
 		libraryState.librarySignatures = j.librarySignatures
 	}
-	newLibrarySignatures, err := syncLibraryItems(tx, &libraryState, groups, libraryCreatedAt)
+	newLibrarySignatures := libraryState.librarySignatures
+	if !preserveLibrary {
+		newLibrarySignatures, err = syncLibraryItems(tx, &libraryState, groups, libraryCreatedAt)
+	}
 	if err != nil {
 		return err
 	}
@@ -1770,10 +1786,26 @@ func syncLibraryItems(tx *sql.Tx, j *jobState, groups map[int][]mediaFile, creat
 			}
 		}
 	}
+	retained := false
 	for _, fileID := range stale {
+		var itemIndex int
+		if err := tx.QueryRow(`SELECT source_item_index FROM library_items WHERE file_id=? AND source_job_id=?`, fileID, j.ID).Scan(&itemIndex); errors.Is(err, sql.ErrNoRows) {
+			continue
+		} else if err != nil {
+			return nil, err
+		}
+		// Missing items are absent from resumed history, not explicitly removed
+		// from the Vault. Only a finalized replacement group supersedes them.
+		if len(groups[itemIndex]) == 0 {
+			retained = true
+			continue
+		}
 		if _, err := tx.Exec(`DELETE FROM library_items WHERE file_id=? AND source_job_id=?`, fileID, j.ID); err != nil {
 			return nil, err
 		}
+	}
+	if retained {
+		return nil, nil
 	}
 	return current, nil
 }
@@ -1966,8 +1998,8 @@ func (s *jobStore) deleteLibraryItem(j *jobState, fileID string) error {
 		if err != nil {
 			return err
 		}
-		if updated != 1 {
-			return sql.ErrNoRows
+		if updated > 1 {
+			return errors.New("library deletion updated more than one history group")
 		}
 	}
 	result, err := tx.Exec(`DELETE FROM library_items WHERE source_job_id=? AND file_id=?`, j.ID, fileID)
@@ -2217,7 +2249,7 @@ func (s *jobStore) loadJobsFiltered(root, jobID, selection string) ([]*storedJob
 		if !filepath.IsAbs(dir) || (filepath.Clean(dir) != filepath.Join(root, j.ID) && filepath.Clean(dir) != libraryWorkDir(j)) {
 			return nil, errors.New("state database contains an unsafe job directory")
 		}
-		if j.Status != "paused" && !terminal(j.Status) {
+		if selection != "migration" && j.Status != "paused" && !terminal(j.Status) {
 			loaded.resuming = true
 			loaded.cancelled = false
 			loaded.job.Status = "queued"
@@ -2455,6 +2487,7 @@ func (s *jobStore) loadLibraryDiskJobs(jobIDs []string, includeActive bool, sele
 	if result == nil {
 		result = []Job{}
 	}
+
 	return result, nil
 }
 
@@ -2534,7 +2567,7 @@ func (s *jobStore) normalizeResumingJob(loaded *storedJob) error {
 	}
 	loaded.job.Files = validFiles
 	loaded.job.CompletedCount = len(loaded.items)
-	if err := s.saveJob(&jobState{Job: loaded.job, dir: loaded.dir, fileItems: fileIndexes(loaded.items), fileGroups: fileGroupIndexes(loaded.items)}); err != nil {
+	if err := s.saveJobPreservingLibrary(&jobState{Job: loaded.job, dir: loaded.dir, fileItems: fileIndexes(loaded.items), fileGroups: fileGroupIndexes(loaded.items)}); err != nil {
 		return err
 	}
 	return nil

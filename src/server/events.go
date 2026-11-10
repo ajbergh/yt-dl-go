@@ -20,14 +20,18 @@ type serviceEvent struct {
 }
 
 type eventBroker struct {
-	mu      sync.Mutex
-	nextID  int64
-	clients map[chan serviceEvent]struct{}
+	mu        sync.Mutex
+	nextID    int64
+	clients   map[chan serviceEvent]struct{}
+	done      chan struct{}
+	closeOnce sync.Once
 }
 
 func newEventBroker() *eventBroker {
-	return &eventBroker{clients: make(map[chan serviceEvent]struct{})}
+	return &eventBroker{clients: make(map[chan serviceEvent]struct{}), done: make(chan struct{})}
 }
+
+func (b *eventBroker) close() { b.closeOnce.Do(func() { close(b.done) }) }
 
 func (b *eventBroker) subscribe() chan serviceEvent {
 	ch := make(chan serviceEvent, 128)
@@ -160,6 +164,8 @@ func (s *server) serveEvents(w http.ResponseWriter, r *http.Request) {
 	defer heartbeat.Stop()
 	for {
 		select {
+		case <-s.events.done:
+			return
 		case <-r.Context().Done():
 			return
 		case event := <-ch:

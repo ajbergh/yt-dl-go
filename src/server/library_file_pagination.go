@@ -206,6 +206,7 @@ func (s *jobStore) loadLibraryFilePage(limit int, cursor libraryFileCursor, quer
 	if err != nil {
 		return libraryFilePage{}, err
 	}
+	revalidateLibraryAvailability(grouped)
 	byID := make(map[string]Job, len(selected))
 	for _, job := range grouped {
 		for _, file := range job.Files {

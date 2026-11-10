@@ -104,6 +104,14 @@ func openTrackedOutput(ctx context.Context, action, path string) error {
 		return errors.New("library file is unavailable")
 	}
 	return runTrackedOutput(ctx, runtime.GOOS, action, path, filepath.Dir(path), func(ctx context.Context, command string, args ...string) error {
+		if runtime.GOOS == "windows" {
+			// Explorer brokers requests to an existing shell. Its later exit
+			// status is not a reliable acknowledgement of the shell operation.
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			return launchTrackedCommand(exec.Command(command, args...))
+		}
 		return exec.CommandContext(ctx, command, args...).Run()
 	})
 }
@@ -246,4 +254,14 @@ func (s *server) handleFolderSelection(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	reply(w, 200, map[string]string{"path": path})
+}
+
+// Wait in the background to release process resources, reporting only launch
+// failures. The HTTP request lifetime must not terminate the user's Explorer.
+func launchTrackedCommand(command *exec.Cmd) error {
+	if err := command.Start(); err != nil {
+		return err
+	}
+	go func() { _ = command.Wait() }()
+	return nil
 }

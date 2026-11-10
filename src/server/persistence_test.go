@@ -115,11 +115,14 @@ func TestRuntimeSettingsPersistAndReportEffectiveSource(t *testing.T) {
 		t.Fatalf("default effective runtime settings = %+v", response.Effective)
 	}
 
+	s.cfg.token = strings.Repeat("r", 32)
 	body := `{"retention":"720h","jobTimeout":"2h","chromePath":"C:\\Tools\\Chrome\\chrome.exe","downloadSlots":8}`
 	put := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPut, "http://127.0.0.1:8080/api/settings", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+s.cfg.token)
 	s.ServeHTTP(put, req)
+	s.cfg.token = ""
 	if put.Code != http.StatusOK {
 		t.Fatalf("save runtime settings: %d %s", put.Code, put.Body.String())
 	}

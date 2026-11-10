@@ -30,7 +30,7 @@ func pipelinePayload(size int64) []byte {
 // out of order. failChunk, when non-nil, decides whether a range start gets a
 // 503.
 func rangeFixture(payload []byte, failChunk func(start int64) bool) *httptest.Server {
-	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	fixture := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var start, end int64
 		if _, err := fmt.Sscanf(r.Header.Get("Range"), "bytes=%d-%d", &start, &end); err != nil || start < 0 || end >= int64(len(payload)) || end < start {
 			http.Error(w, "invalid range", http.StatusBadRequest)
@@ -49,6 +49,11 @@ func rangeFixture(payload []byte, failChunk func(start int64) bool) *httptest.Se
 		w.WriteHeader(http.StatusPartialContent)
 		_, _ = w.Write(payload[start : end+1])
 	}))
+	// A cancelled pipeline may leave a peer that no longer reads the response.
+	// Bound the fixture's writes so Server.Close cannot hang during race tests.
+	fixture.Config.WriteTimeout = 5 * time.Second
+	fixture.Start()
+	return fixture
 }
 
 func TestNativeRangePipelineWritesOutOfOrderChunksContiguously(t *testing.T) {

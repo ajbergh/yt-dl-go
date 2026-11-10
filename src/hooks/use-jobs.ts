@@ -128,7 +128,7 @@ export function useJobs({
           signal: AbortSignal.timeout(15000),
         });
         setJobs(previous => action === "retry"
-          ? [result, ...previous]
+          ? [result, ...previous.filter(item => item.id !== result.id)]
           : previous.map(item => item.id === job.id ? mergeJobActionResult(item, result, action) : item));
       }
       void refreshLibrary().catch(error => setActionError(errorMessage(error)));
