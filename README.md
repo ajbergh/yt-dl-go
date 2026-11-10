@@ -4,43 +4,56 @@
 
 # YouTube Vault
 
-A local desktop app for Windows, macOS, and Linux. Save permitted YouTube videos
-and playlists, manage a persistent queue, and organize your media in a searchable
-Vault. The Wails desktop edition opens in its own native window and uses native
-save, folder, and confirmation dialogs.
+**Your ultimate YouTube downloader.**
 
-Download only content you own or have permission to save, in accordance with
-YouTube's terms. DRM, private-account credentials, cookie imports, paywall bypasses,
-and live-stream recording are unsupported.
+Save the videos you love. Build a collection worth keeping. YouTube Vault brings
+powerful video and playlist downloads, flexible audio options, and a searchable
+media library together in one desktop app for **Windows, macOS, and Linux**.
 
-## Screenshots
+From a single clip to a full playlist, take control of quality, format, and every
+step of your queue. Then watch, listen, and find your favorites in a Vault that
+keeps your media close at hand.
 
-### Download queue
+**[Download v0.4.0](#get-the-app)** · **[See what's new](https://github.com/ajbergh/yt-dl-go/releases/tag/v0.4.0)** · **[Get started](#from-link-to-library)**
 
-Track each selected playlist entry as an individual download, with progress,
-transfer speed, and time remaining.
+## Built for your collection
+
+- **Great video. Great audio.** Choose available video quality up to 4K, save MP3 or M4A audio, and include available captions.
+- **Playlists, your way.** Download a whole playlist or hand-pick the entries you want. Inspect multiple links and set up a batch in one place.
+- **Stay in control.** Follow live progress, speed, and time remaining. Pause, resume, reorder, and retry with a queue that remembers your work.
+- **A Vault you'll want to use.** Browse in a grid or list, search across saved media, and filter by type, category, or creator. Favorites and personal collections make it easy to find what matters.
+- **Press play, right here.** Preview saved video and audio inside the app, seek through supported media, and jump straight to its location on disk.
+- **Fast where it counts.** Parallel downloads, reusable audio tracks, and separate MP3 conversion queues keep your collection growing. Finished playlist tracks are ready while the rest continue.
+- **Your files, under your control.** Choose your download folder and naming rules. Organize your Vault without moving your files, and manage individual files with clear confirmation dialogs.
+
+## See it in action
+
+### Your queue, at a glance
+
+Every playlist entry gets its own progress, speed, and status. See what's moving,
+what's next, and what's ready to enjoy.
 
 ![Download queue showing individual playlist downloads, active and queued counts, and per-download progress](docs/assets/screenshots/Queue-screenshot1.png)
 
-### Media Vault
+### A home for every download
 
-Browse saved videos and audio, filter your collection, and select a file to view
-its details, preview it, or find it on disk.
+Turn a folder of files into a collection you can browse. Find a favorite, explore
+a creator's videos, or open a file's details without losing your place.
 
 ![Media Vault showing the media grid, navigation sidebar, filters, and selected-file details](docs/assets/screenshots/Vault-screenshot1.png)
 
-### Local preview
+### Ready when you are
 
-Play saved media inside the app without leaving your Vault.
+Watch and listen to saved media inside your Vault. Your downloaded files are
+available for offline playback.
 
 ![Local video preview open over the Media Vault](docs/assets/screenshots/Preview-screenshot1.png)
 
 ## Get the app
 
 Choose **AMD64** for Intel/AMD computers or **ARM64** for Windows on ARM and Apple
-Silicon. Download [v0.4.0](https://github.com/ajbergh/yt-dl-go/releases/tag/v0.4.0)
-using the direct links below. Each target has both a no-install portable package
-and an installer:
+Silicon. Download **v0.4.0** directly below, with both portable packages and
+installers available:
 
 | Platform | Portable package | Installer |
 | --- | --- | --- |
@@ -51,166 +64,57 @@ and an installer:
 | Linux — AMD64 | [Portable archive (.tar.gz)](https://github.com/ajbergh/yt-dl-go/releases/download/v0.4.0/youtube-vault-linux-amd64.tar.gz) | [DEB](https://github.com/ajbergh/yt-dl-go/releases/download/v0.4.0/youtube-vault-linux-amd64.deb) |
 | Linux — ARM64 | [Portable archive (.tar.gz)](https://github.com/ajbergh/yt-dl-go/releases/download/v0.4.0/youtube-vault-linux-arm64.tar.gz) | [DEB](https://github.com/ajbergh/yt-dl-go/releases/download/v0.4.0/youtube-vault-linux-arm64.deb) |
 
-The [release page](https://github.com/ajbergh/yt-dl-go/releases/tag/v0.4.0) also
-includes the separate browser/server edition (`youtube-downloader-*`), source,
-checksums, and release notes. CI artifacts and release dry runs are validation
-builds, not published releases.
+- **Windows:** choose Setup for an installer with shortcuts and an uninstaller, or use the portable EXE. Keep the companion ZIP with its notices when sharing the portable app. Setup installs the required WebView2 runtime when missing and needs internet access for that step.
+- **macOS:** use the PKG to install into Applications, or extract the app archive and open YouTube Vault.
+- **Linux:** use the DEB on supported Debian/Ubuntu systems, or choose the portable archive. See the [installation and runtime requirements](docs/DESKTOP.md) for compatible system libraries.
 
-- **Windows:** run the setup EXE for Start menu/desktop shortcuts and an uninstaller,
-  or run the standalone portable EXE. WebView2 is required; setup provisions it
-  when missing and needs internet access for that step. Distribute the companion
-  notices ZIP with the portable EXE.
-- **macOS:** open the PKG to install into `/Applications`, or extract the tarball
-  and open `YouTube Vault.app`. Ordinary validation builds have no Developer ID
-  signature or notarization. See the [signing policy](docs/RELEASES.md#native-platform-signing).
-- **Linux:** on compatible Debian/Ubuntu systems, run
-  `sudo apt install ./youtube-vault-linux-amd64.deb` (use `arm64` when appropriate).
-  The portable tarball also needs compatible GTK3, WebKitGTK 4.1, and system
-  libraries; it is not a self-contained AppImage. See [runtime requirements](docs/DESKTOP.md).
+Every download has a SHA-256 checksum. Verify files with the
+[checksum manifest](https://github.com/ajbergh/yt-dl-go/releases/download/v0.4.0/SHA256SUMS.txt),
+and read the [release notes](https://github.com/ajbergh/yt-dl-go/releases/tag/v0.4.0)
+for verification instructions and platform support. Windows packages are not
+Authenticode-signed; macOS packages are not Developer ID-signed or notarized.
 
-All distributables have SHA-256 sidecars. The release pipeline also produces a
-combined [checksum manifest](https://github.com/ajbergh/yt-dl-go/releases/download/v0.4.0/SHA256SUMS.txt) and build provenance. These do not replace native OS
-signing. Windows Authenticode and credentialed macOS signing verification remain
-release work.
+The release page also includes the browser/server edition and source archives.
 
-## Use YouTube Vault
+## From link to library
 
-1. Paste an authorized video or playlist URL and choose **View options**. Use
-   **Multiple links** to inspect several links at once.
-2. Choose video or audio, a maximum quality, and any available captions. For a
-   playlist, select the entries you want to download.
-3. Confirm your rights and add the downloads to **Queue**. Each selected playlist
-   entry is an individual download task with its own progress, speed, and status.
-   Pause, resume, reorder, or retry downloads as needed.
-4. Open **Vault** to browse saved media in a grid or list. Search and filter by
-   media type, category, or channel; use favorites and personal collections to
-   organize files without moving them.
-5. Select a media card to open its details. **Preview** plays the saved local
-   video or audio inside the app. **Reveal**, **Copy path**, and **Open folder**
-   help you find the file on disk.
+1. **Paste a link.** Add a video or playlist URL and choose **View options**. Use **Multiple links** to prepare a batch.
+2. **Make it yours.** Choose video or audio, your maximum quality, available captions, and the playlist entries you want.
+3. **Start your queue.** Confirm you have permission to download the content, then add it to **Queue**. Pause, resume, reorder, or retry as needed.
+4. **Enjoy your Vault.** Browse, search, favorite, and organize your saved media. Select a card for details, preview it, or reveal the file on disk.
 
-The Queue badge counts visible download tasks, including individual playlist
-entries. **Clear completed** hides finished tasks from Queue while keeping their
-files in the Vault. Enable **System notifications** in Settings and grant permission
-to receive completion or failure alerts for individual downloads.
+Right-click downloads, media cards, or collections for useful shortcuts. Enable
+system notifications in Settings to get alerts when downloads finish or fail.
+Your queue, preferences, and Vault are saved between launches.
 
-The Vault's **Forget item** action removes the selected entry from the Vault while
-keeping its file on disk. **Delete selected file** permanently removes that file;
-**Delete entire download** removes every file from the source download, including
-playlist files on unloaded Vault pages. Both deletion actions require confirmation.
-**Forget history** in Queue keeps Vault files and entries. Desktop confirmations
-use native Yes/No dialogs, with No selected by default.
+## Your media, your space
 
-Use **Settings** to choose the download folder, naming rules, and defaults.
-An **Unsaved changes** indicator tracks edits; choose **Save preferences** to apply
-them. Format, transfer, and naming controls are under **Advanced settings**;
-version information and update checks are under **About & updates**.
-Use **File → Exit** to close the desktop app and **Help → About** for build details.
+Your download folder is your Vault. By default, files are saved to
+`~/Downloads/YouTube_Vault` and organized by channel. Choose another folder,
+customize file names, and set your preferred formats in Settings.
 
-Quality choices are ceilings, not upscaling requests or guarantees. **Compatibility
-MP4** selects H.264/AAC; **Best quality**, **Prefer VP9**, and **Prefer AV1** may
-produce WebM when appropriate. The completed file shows its actual quality and
-format, and fallback notes explain changes. M4A preserves a compatible source
-AAC track; MP3 conversion is built in. Captions are optional VTT/SRT sidecars and
-may fail independently of the media download.
+Favorites and collections help you organize files in place. **Clear completed**
+tidies the queue while preserving your media. **Forget item** removes a Vault
+entry while keeping its file. **Delete selected file** and **Delete entire
+download** show confirmations for their respective deletion scopes.
 
-For browser-assisted adaptive HD/4K delivery, install Chrome, Chromium, or Microsoft
-Edge. Browser discovery is automatic; advanced settings or `CHROME_PATH` can select
-an executable. The embedded desktop WebView does not replace that dependency.
-Temporary capture sessions do not import your normal browser's cookies or credentials.
-YouTube delivery changes can affect availability and completion.
+Video quality follows the available source streams and your selected maximum
+resolution. For browser-assisted HD/4K downloads, install Chrome, Chromium, or
+Microsoft Edge. See the [format and runtime guide](docs/TECHNICAL_GUIDE.md#media-formats-and-browser-assisted-capture)
+for details.
 
-Closing the desktop window stops the app and its workers. The queue and Vault
-persist for the next launch. No login item, background service, or tray process is installed.
+## Use responsibly
 
-## Your files and saved data
+Download only content you own or have permission to save, in accordance with
+YouTube's terms. DRM, private-account credentials, cookie imports, paywall
+bypasses, and live-stream recording are unsupported.
 
-Your download folder is your Vault. Downloads default to
-`~/Downloads/YouTube_Vault`, organized by channel; change this in Settings.
-The app keeps one media file and plays/previews it directly from that folder.
-At startup, missing files are removed from the Vault. An unavailable download
-folder (for example, a disconnected drive) preserves its entries. Existing
-app-only media is moved into its recorded download folder when upgrading.
+## Explore the project
 
-Saved preferences and history live separately from the executable:
-
-| Platform | Default application-data directory |
-| --- | --- |
-| Windows | `%LOCALAPPDATA%\yt-dl-go` |
-| macOS | `~/Library/Application Support/yt-dl-go` |
-| Linux | `$XDG_DATA_HOME/yt-dl-go`, or `~/.local/share/yt-dl-go` |
-
-Set `DATA_DIR` before launch to choose another private location. Back up both
-this data directory and your download folder with the app closed before migration
-or rollback. Installers retain saved data and downloads when removed. Both
-editions share this data; run one edition at a time.
-Never store application data under the repository's generated `dist` directory.
-
-For startup problems, set `DESKTOP_LOG_FILE` to a writable path before launching.
-If an error reports an incompatible data schema, preserve the data and restore a
-compatible backup; do not delete the database or add columns manually. Legacy
-`./downloads` data can be copied with `youtube-vault --migrate-legacy-data` after
-closing the app. See the [engine guide](src/server/README.md) for recovery details.
-
-## Build from source
-
-Install the Node version in [`.nvmrc`](.nvmrc), npm, and the Go version in
-[`src/server/go.mod`](src/server/go.mod), then:
-
-```sh
-npm ci
-npm run build:desktop
-```
-
-Build on the target OS. Linux and macOS also require matching native architecture;
-Windows can build AMD64 and ARM64 from one host. Install NSIS 3.11 for Windows,
-Xcode command-line tools for macOS, or the GTK/WebKit development libraries and
-Debian packaging tools for Linux. The script installs pinned Wails tooling.
-
-On Windows, build both architectures with:
-
-```powershell
-./scripts/build-desktop-windows.ps1
-# Or only one:
-./scripts/build-desktop-windows.ps1 -Architecture amd64
-```
-
-Outputs are under `dist/desktop/<os>-<arch>/`. See the
-[desktop build guide](docs/DESKTOP.md) for prerequisites, explicit targets,
-checksums, icons, native tests, and protected signing.
-
-## Browser/server edition
-
-The alternate `youtube-downloader` executable serves the same interface in your
-browser. It defaults to `http://127.0.0.1:8080`; keep its process running while
-using it. `--no-browser` and `--background` suppress browser opening but do not
-detach the process. Stop it with Ctrl+C.
-
-The [packaging guide](docs/PACKAGING.md) covers its scripts and platform
-integration. Network/API configuration belongs to the [engine guide](src/server/README.md)
-and [security policy](SECURITY.md). The desktop edition uses private per-launch
-authentication and does not expose a configurable network listener.
-
-## Development and verification
-
-See [Contributing](CONTRIBUTING.md) for setup and checks, the
-[frontend guide](src/README.md) for UI development, and the
-[engine/API guide](src/server/README.md) for configuration and media behavior.
-Native CI runs on all six OS/architecture targets and checks portable packages,
-installer integration, native launch, removal, and saved-data preservation.
-
-Windows manual acceptance passed for the Wails candidate on 2026-11-05, as
-reported by the maintainer. macOS/Linux manual acceptance and credentialed signing
-verification remain pending. See the [release checklist](docs/RELEASE_CHECKLIST.md)
-for current evidence and the remaining publication gates.
-
-## Documentation
-
-- [Desktop builds and runtime](docs/DESKTOP.md)
-- [Packaging and artifact names](docs/PACKAGING.md)
-- [Release/update policy](docs/RELEASES.md) and [release checklist](docs/RELEASE_CHECKLIST.md)
-- [Contributing](CONTRIBUTING.md), [security](SECURITY.md), and [changelog](CHANGELOG.md)
-- [Roadmap](roadmap.md)
+- [Architecture, source builds, and troubleshooting](docs/TECHNICAL_GUIDE.md)
+- [Desktop installation and platform requirements](docs/DESKTOP.md)
+- [What's new](CHANGELOG.md) and [release notes](https://github.com/ajbergh/yt-dl-go/releases/tag/v0.4.0)
+- [Contributing](CONTRIBUTING.md), [security](SECURITY.md), and [roadmap](roadmap.md)
 
 ## License
 
