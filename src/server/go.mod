@@ -14,8 +14,8 @@ require (
 	github.com/tphakala/go-mp3 v0.2.0
 	github.com/wailsapp/wails/v2 v2.17.1
 	github.com/yapingcat/gomedia v0.0.0-20240906162731-17feea57090c
+	golang.org/x/sys v0.50.0
 	golang.org/x/text v0.42.0
-	golang.org/x/sys v0.49.0
 	modernc.org/sqlite v1.61.1
 )
 
