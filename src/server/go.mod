@@ -2,7 +2,7 @@ module youtube-downloader
 
 replace github.com/kkdai/youtube/v2 => ./third_party/youtube
 
-go 1.27.3
+go 1.27.4
 
 require (
 	github.com/at-wat/ebml-go v0.19.4
