@@ -28,7 +28,7 @@ const temporary = mkdtempSync(path.join(os.tmpdir(), "yt-dl-go-desktop-package-"
 try {
   const archive = path.join(output, name + (goos === "windows" ? ".zip" : ".tar.gz"));
   if (goos === "windows") {
-    run("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", "$ErrorActionPreference='Stop'; Expand-Archive -LiteralPath $env:DESKTOP_PACKAGE_ARCHIVE -DestinationPath $env:DESKTOP_PACKAGE_STAGE"], {
+    run("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", "$ErrorActionPreference='Stop'; [System.IO.Compression.ZipFile]::ExtractToDirectory($env:DESKTOP_PACKAGE_ARCHIVE, $env:DESKTOP_PACKAGE_STAGE)"], {
       env: { ...process.env, DESKTOP_PACKAGE_ARCHIVE: archive, DESKTOP_PACKAGE_STAGE: temporary },
     });
   } else {
