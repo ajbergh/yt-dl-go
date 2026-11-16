@@ -23,7 +23,7 @@ The kkdai/youtube v2.10.6 entry includes a local MIT-licensed compatibility patc
 | `github.com/tphakala/go-aac` | `v0.7.1` | LGPL-2.1 | [source](https://pkg.go.dev/github.com/tphakala/go-aac@v0.7.1) | [license files](licenses/go/github.com/tphakala/go-aac) |
 | `github.com/tphakala/go-m4a` | `v0.8.0` | MIT | [source](https://pkg.go.dev/github.com/tphakala/go-m4a@v0.8.0) | [license files](licenses/go/github.com/tphakala/go-m4a) |
 | `github.com/tphakala/go-mp3` | `v0.3.0` | MIT | [source](https://pkg.go.dev/github.com/tphakala/go-mp3@v0.3.0) | [license files](licenses/go/github.com/tphakala/go-mp3) |
-| `github.com/tphakala/simd` | `v1.14.0` | MIT | [source](https://pkg.go.dev/github.com/tphakala/simd@v1.14.0) | [license files](licenses/go/github.com/tphakala/simd) |
+| `github.com/tphakala/simd` | `v1.16.0` | MIT | [source](https://pkg.go.dev/github.com/tphakala/simd@v1.16.0) | [license files](licenses/go/github.com/tphakala/simd) |
 | `github.com/yapingcat/gomedia` | `v0.0.0-20240906162731-17feea57090c` | MIT | [source](https://pkg.go.dev/github.com/yapingcat/gomedia@v0.0.0-20240906162731-17feea57090c) | [license files](licenses/go/github.com/yapingcat/gomedia) |
 | `golang.org/x/sys` | `v0.49.0` | BSD-3-Clause | [source](https://pkg.go.dev/golang.org/x/sys@v0.49.0) | [license files](licenses/go/golang.org/x/sys) |
 | `golang.org/x/text` | `v0.42.0` | BSD-3-Clause | [source](https://pkg.go.dev/golang.org/x/text@v0.42.0) | [license files](licenses/go/golang.org/x/text) |
