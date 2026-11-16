@@ -12,7 +12,7 @@ Generated from production dependencies in the root `package-lock.json` with `lic
 | `@types/react@19.3.0` | `19.3.0` | MIT | [repository](https://github.com/DefinitelyTyped/DefinitelyTyped) | [text](licenses/npm/-types-react-19.3.0-04c98f24.txt) |
 | `cookie@1.1.1` | `1.1.1` | MIT | [repository](https://github.com/jshttp/cookie) | [text](licenses/npm/cookie-1.1.1-51314e74.txt) |
 | `csstype@3.2.3` | `3.2.3` | MIT | [repository](https://github.com/frenic/csstype) | [text](licenses/npm/csstype-3.2.3-d7516620.txt) |
-| `lucide-react@1.66.0` | `1.66.0` | ISC | [repository](https://github.com/lucide-icons/lucide) | [text](licenses/npm/lucide-react-1.66.0-d3e27ab9.txt) |
+| `lucide-react@1.70.0` | `1.70.0` | ISC | [repository](https://github.com/lucide-icons/lucide) | [text](licenses/npm/lucide-react-1.70.0-f45f33b2.txt) |
 | `react-dom@19.3.1` | `19.3.1` | MIT | [repository](https://github.com/react/react) | [text](licenses/npm/react-dom-19.3.1-7e691db2.txt) |
 | `react-router-dom@7.18.5` | `7.18.5` | MIT | [repository](https://github.com/remix-run/react-router) | [text](licenses/npm/react-router-dom-7.18.5-db749446.txt) |
 | `react-router@7.18.5` | `7.18.5` | MIT | [repository](https://github.com/remix-run/react-router) | [text](licenses/npm/react-router-7.18.5-f4b60b05.txt) |
