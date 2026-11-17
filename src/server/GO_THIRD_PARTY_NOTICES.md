@@ -8,8 +8,8 @@ The kkdai/youtube v2.10.6 entry includes a local MIT-licensed compatibility patc
 | --- | --- | --- | --- | --- |
 | `github.com/at-wat/ebml-go` | `v0.19.4` | Apache-2.0 | [source](https://pkg.go.dev/github.com/at-wat/ebml-go@v0.19.4) | [license files](licenses/go/github.com/at-wat/ebml-go) |
 | `github.com/bitly/go-simplejson` | `v0.5.1` | MIT | [source](https://pkg.go.dev/github.com/bitly/go-simplejson@v0.5.1) | [license files](licenses/go/github.com/bitly/go-simplejson) |
-| `github.com/chromedp/cdproto` | `v0.159.0` | MIT | [source](https://pkg.go.dev/github.com/chromedp/cdproto@v0.159.0) | [license files](licenses/go/github.com/chromedp/cdproto) |
-| `github.com/chromedp/chromedp` | `v0.21.1` | MIT | [source](https://pkg.go.dev/github.com/chromedp/chromedp@v0.21.1) | [license files](licenses/go/github.com/chromedp/chromedp) |
+| `github.com/chromedp/cdproto` | `v0.159.2` | MIT | [source](https://pkg.go.dev/github.com/chromedp/cdproto@v0.159.2) | [license files](licenses/go/github.com/chromedp/cdproto) |
+| `github.com/chromedp/chromedp` | `v0.23.0` | MIT | [source](https://pkg.go.dev/github.com/chromedp/chromedp@v0.23.0) | [license files](licenses/go/github.com/chromedp/chromedp) |
 | `github.com/dlclark/regexp2` | `v1.11.5` | MIT | [source](https://pkg.go.dev/github.com/dlclark/regexp2@v1.11.5) | [license files](licenses/go/github.com/dlclark/regexp2) |
 | `github.com/dop251/goja` | `v0.0.0-20260311135729-065cd970411c` | MIT | [source](https://pkg.go.dev/github.com/dop251/goja@v0.0.0-20260311135729-065cd970411c) | [license files](licenses/go/github.com/dop251/goja) |
 | `github.com/dustin/go-humanize` | `v1.1.0` | MIT | [source](https://pkg.go.dev/github.com/dustin/go-humanize@v1.1.0) | [license files](licenses/go/github.com/dustin/go-humanize) |
@@ -22,11 +22,11 @@ The kkdai/youtube v2.10.6 entry includes a local MIT-licensed compatibility patc
 | `github.com/remyoudompheng/bigfft` | `v0.0.0-20230129092748-24d4a6f8daec` | BSD-3-Clause | [source](https://pkg.go.dev/github.com/remyoudompheng/bigfft@v0.0.0-20230129092748-24d4a6f8daec) | [license files](licenses/go/github.com/remyoudompheng/bigfft) |
 | `github.com/tphakala/go-aac` | `v0.7.1` | LGPL-2.1 | [source](https://pkg.go.dev/github.com/tphakala/go-aac@v0.7.1) | [license files](licenses/go/github.com/tphakala/go-aac) |
 | `github.com/tphakala/go-m4a` | `v0.8.0` | MIT | [source](https://pkg.go.dev/github.com/tphakala/go-m4a@v0.8.0) | [license files](licenses/go/github.com/tphakala/go-m4a) |
-| `github.com/tphakala/go-mp3` | `v0.2.0` | MIT | [source](https://pkg.go.dev/github.com/tphakala/go-mp3@v0.2.0) | [license files](licenses/go/github.com/tphakala/go-mp3) |
-| `github.com/tphakala/simd` | `v1.14.0` | MIT | [source](https://pkg.go.dev/github.com/tphakala/simd@v1.14.0) | [license files](licenses/go/github.com/tphakala/simd) |
+| `github.com/tphakala/go-mp3` | `v0.3.0` | MIT | [source](https://pkg.go.dev/github.com/tphakala/go-mp3@v0.3.0) | [license files](licenses/go/github.com/tphakala/go-mp3) |
+| `github.com/tphakala/simd` | `v1.16.0` | MIT | [source](https://pkg.go.dev/github.com/tphakala/simd@v1.16.0) | [license files](licenses/go/github.com/tphakala/simd) |
 | `github.com/yapingcat/gomedia` | `v0.0.0-20240906162731-17feea57090c` | MIT | [source](https://pkg.go.dev/github.com/yapingcat/gomedia@v0.0.0-20240906162731-17feea57090c) | [license files](licenses/go/github.com/yapingcat/gomedia) |
-| `golang.org/x/sys` | `v0.49.0` | BSD-3-Clause | [source](https://pkg.go.dev/golang.org/x/sys@v0.49.0) | [license files](licenses/go/golang.org/x/sys) |
-| `golang.org/x/text` | `v0.42.0` | BSD-3-Clause | [source](https://pkg.go.dev/golang.org/x/text@v0.42.0) | [license files](licenses/go/golang.org/x/text) |
+| `golang.org/x/sys` | `v0.50.0` | BSD-3-Clause | [source](https://pkg.go.dev/golang.org/x/sys@v0.50.0) | [license files](licenses/go/golang.org/x/sys) |
+| `golang.org/x/text` | `v0.44.0` | BSD-3-Clause | [source](https://pkg.go.dev/golang.org/x/text@v0.44.0) | [license files](licenses/go/golang.org/x/text) |
 | `modernc.org/libc` | `v1.80.1` | BSD-3-Clause | [source](https://pkg.go.dev/modernc.org/libc@v1.80.1) | [license files](licenses/go/modernc.org/libc) |
 | `modernc.org/mathutil` | `v1.7.1` | BSD-3-Clause | [source](https://pkg.go.dev/modernc.org/mathutil@v1.7.1) | [license files](licenses/go/modernc.org/mathutil) |
 | `modernc.org/memory` | `v1.12.1` | BSD-3-Clause | [source](https://pkg.go.dev/modernc.org/memory@v1.12.1) | [license files](licenses/go/modernc.org/memory) |
