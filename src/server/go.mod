@@ -10,7 +10,7 @@ require (
 	github.com/chromedp/chromedp v0.23.0
 	github.com/dop251/goja v0.0.0-20260311135729-065cd970411c
 	github.com/kkdai/youtube/v2 v2.10.6
-	github.com/tphakala/go-m4a v0.8.0
+	github.com/tphakala/go-m4a v0.9.0
 	github.com/tphakala/go-mp3 v0.3.0
 	github.com/wailsapp/wails/v2 v2.17.1
 	github.com/yapingcat/gomedia v0.0.0-20240906162731-17feea57090c
@@ -49,7 +49,7 @@ require (
 	github.com/rivo/uniseg v0.4.7 // indirect
 	github.com/samber/lo v1.49.1 // indirect
 	github.com/tkrajina/go-reflector v0.5.8 // indirect
-	github.com/tphakala/go-aac v0.7.1 // indirect
+	github.com/tphakala/go-aac v0.7.2 // indirect
 	github.com/tphakala/simd v1.16.0 // indirect
 	github.com/valyala/bytebufferpool v1.0.0 // indirect
 	github.com/valyala/fasttemplate v1.2.2 // indirect
