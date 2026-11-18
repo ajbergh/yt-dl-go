@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"net/url"
+	"os/exec"
+	"path/filepath"
 	"sync"
 	"testing"
 	"time"
@@ -11,6 +13,38 @@ import (
 	"github.com/dop251/goja"
 	"github.com/kkdai/youtube/v2"
 )
+
+func TestFindMacOSBrowserIncludesEdgeAndPreservesChromePriority(t *testing.T) {
+	home := t.TempDir()
+	applications := filepath.Join(home, "Applications")
+	userEdge := filepath.Join(applications, "Microsoft Edge.app", "Contents", "MacOS", "Microsoft Edge")
+	systemEdge := filepath.Join("/Applications", "Microsoft Edge.app", "Contents", "MacOS", "Microsoft Edge")
+	systemChrome := filepath.Join("/Applications", "Google Chrome.app", "Contents", "MacOS", "Google Chrome")
+	for _, fixture := range []struct {
+		name  string
+		found []string
+		want  string
+	}{
+		{name: "no browser"},
+		{name: "per-user Edge", found: []string{userEdge}, want: userEdge},
+		{name: "system Edge", found: []string{systemEdge}, want: systemEdge},
+		{name: "Chrome takes precedence", found: []string{systemEdge, systemChrome}, want: systemChrome},
+	} {
+		t.Run(fixture.name, func(t *testing.T) {
+			lookup := func(candidate string) (string, error) {
+				for _, executable := range fixture.found {
+					if candidate == executable {
+						return executable, nil
+					}
+				}
+				return "", exec.ErrNotFound
+			}
+			if got := findMacOSBrowser(home, lookup); got != fixture.want {
+				t.Errorf("findMacOSBrowser() = %q, want %q", got, fixture.want)
+			}
+		})
+	}
+}
 
 func TestBrowserPrerollProgressDoesNotRequireRequestedMediaBytes(t *testing.T) {
 	var progress browserPrerollProgress

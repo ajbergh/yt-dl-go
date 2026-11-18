@@ -102,13 +102,18 @@ cover each OS family and the architectures intended for publication.
 
 ## 4. Signing and publication
 
-- [ ] Configure protected signing credentials if signed distribution is intended.
-      Verify Windows executable/setup signatures and macOS app/PKG Developer ID,
-      notarization, stapling, and clean-machine acceptance.
+- [ ] Configure the protected `macos-signing` environment and credentials before
+      pushing a stable tag. Verify Developer ID signatures and stapled notarization
+      in CI for the extracted app and final PKG. Check Windows signing status.
 - [ ] Hash and attest final bytes after signing; do not reuse pre-signing hashes.
 - [ ] Preserve a trusted prior build and a compatible complete data backup for rollback.
 - [ ] Push the approved new stable tag only after source/version review. The tag
       workflow creates a draft, not a published release.
+- [ ] On a clean Apple Silicon Mac with Gatekeeper enabled, download both ARM64
+      draft assets through a browser. Open the PKG in Installer, then launch the
+      installed app from Finder. In a separate clean session, extract the portable
+      archive with Archive Utility and open its app from Finder. Confirm each
+      app launches with the default security settings.
 - [ ] Review final assets, checksums, provenance, notes, manual acceptance, and signing
       status. Explicitly disclose unsigned packages and any accepted limitations.
 - [ ] Publish only after maintainer sign-off. Keep automatic self-update disabled.

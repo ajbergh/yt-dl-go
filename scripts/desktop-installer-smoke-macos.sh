@@ -13,6 +13,9 @@ printf '%s\n' 'saved application data' > "$data/installer-preservation-test.txt"
 sudo installer -pkg "$package" -target /
 test -x "$app/Contents/MacOS/youtube-vault"
 test -s "$app/Contents/Resources/notices/THIRD_PARTY_NOTICES.md"
+if [[ "${DESKTOP_MACOS_SIGN:-}" == true ]]; then
+  codesign --verify --deep --strict --verbose=2 "$app"
+fi
 portable="$(mktemp -d)"
 tar -xzf "dist/desktop/darwin-$arch/youtube-vault-darwin-$arch.tar.gz" -C "$portable"
 cmp "$app/Contents/MacOS/youtube-vault" "$portable/youtube-vault-darwin-$arch/YouTube Vault.app/Contents/MacOS/youtube-vault"

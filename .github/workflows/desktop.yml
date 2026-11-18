@@ -121,6 +121,7 @@ jobs:
         env:
           VERSION: ${{ inputs.version || 'dev' }}
           COMMIT: ${{ github.sha }}
+          DESKTOP_MACOS_SIGN: ${{ inputs.sign_macos && runner.os == 'macOS' }}
       - name: Verify Linux desktop package under Xvfb
         if: runner.os == 'Linux'
         run: dbus-run-session -- xvfb-run -a node scripts/desktop-package-smoke.mjs
@@ -167,6 +168,7 @@ jobs:
         env:
           VERSION: ${{ inputs.version || 'dev' }}
           COMMIT: ${{ github.sha }}
+          DESKTOP_MACOS_SIGN: ${{ inputs.sign_macos }}
       - name: Smoke-test native desktop window
         if: runner.os != 'Linux'
         run: npm run test:desktop

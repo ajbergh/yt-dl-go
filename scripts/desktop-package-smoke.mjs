@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { Resvg } from "@resvg/resvg-js";
+import { macOSMinimumVersion, verifyMacOSArchitecture } from "./desktop-build-support.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const goos = { win32: "windows", darwin: "darwin", linux: "linux" }[process.platform];
@@ -13,9 +14,10 @@ const arch = { x64: "amd64", arm64: "arm64" }[process.arch];
 const name = `youtube-vault-${goos}-${arch}`;
 const output = path.join(path.resolve(root, process.env.DESKTOP_OUTPUT_ROOT || "dist/desktop"), `${goos}-${arch}`);
 function run(command, args, options = {}) {
-  const result = spawnSync(command, args, { stdio: "inherit", ...options });
+  const result = spawnSync(command, args, { stdio: "inherit", encoding: "utf8", ...options });
   if (result.error) throw result.error;
   assert.equal(result.status, 0, `${command} failed (${result.status})`);
+  return result.stdout?.trim();
 }
 const expected = goos === "windows" ? [name + ".zip", name + ".exe", name + "-setup.exe"] : [name + ".tar.gz", name + (goos === "darwin" ? ".pkg" : ".deb")];
 assert.deepEqual(readFileSync(path.join(output, `expected-desktop-${goos}-${arch}.txt`), "utf8").trim().split(/\r?\n/).sort(), expected.sort());
@@ -66,7 +68,18 @@ try {
     }
   }
   if (goos === "darwin") {
-    const icon = readFileSync(path.join(contents, "YouTube Vault.app/Contents/Resources/iconfile.icns"));
+    const app = path.join(contents, "YouTube Vault.app");
+    verifyMacOSArchitecture(executable, arch, run);
+    assert.equal(run("/usr/libexec/PlistBuddy", ["-c", "Print :LSMinimumSystemVersion", path.join(app, "Contents/Info.plist")],
+      { stdio: ["ignore", "pipe", "inherit"] }), macOSMinimumVersion);
+    if (process.env.DESKTOP_MACOS_SIGN === "true") {
+      const installer = path.join(output, name + ".pkg");
+      run("xcrun", ["stapler", "validate", app]);
+      run("syspolicy_check", ["distribution", app]);
+      run("xcrun", ["stapler", "validate", installer]);
+      run("spctl", ["--assess", "--type", "install", installer]);
+    }
+    const icon = readFileSync(path.join(app, "Contents/Resources/iconfile.icns"));
     assert.equal(icon.toString("ascii", 0, 4), "icns");
     let largest;
     for (let position = 8; position < icon.length;) {

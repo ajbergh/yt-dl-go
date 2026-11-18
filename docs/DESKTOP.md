@@ -27,6 +27,8 @@ npm run build:desktop
 An explicit target can be supplied with `npm run build:desktop -- windows/arm64`,
 `darwin/arm64`, or `linux/amd64`. Windows supports both architectures from a Windows
 host. Linux and macOS builds require matching native OS/architecture runners.
+On Apple Silicon, use ARM64 Node.js and Go, then run `npm ci` with that Node.js
+installation. The build reports an error if Intel Node.js is running under Rosetta.
 
 Every desktop target produces both a portable package and an installer, for
 AMD64 and ARM64:
@@ -84,8 +86,9 @@ the EXE.
 
 - **Windows 10/11:** WebView2 Runtime is required. Wails uses its runtime-download
   bootstrap strategy if it is missing. The output is a native `youtube-vault.exe`.
-- **macOS:** install Xcode command-line tools (`xcode-select --install`). The
-  output is a `.app` bundle, packaged in a `.tar.gz` archive.
+- **macOS 13.3 or later:** install Xcode command-line tools
+  (`xcode-select --install`) to build. The minimum OS version covers the
+  Safari 16.4 WebKit baseline used by the embedded interface.
 - **Linux:** install GCC, pkg-config, GTK3, WebKitGTK 4.1 and development headers.
   Ubuntu 24.04 build dependencies: `sudo apt-get install build-essential pkg-config
   libgtk-3-dev libwebkit2gtk-4.1-dev`. Packages require GTK3/WebKitGTK 4.1 at runtime.
@@ -166,13 +169,15 @@ a protected GitHub environment named `macos-signing` with these secrets:
 - `APPLE_INSTALLER_SIGNING_IDENTITY`: Developer ID Installer certificate identity.
 - `APPLE_ID`, `APPLE_TEAM_ID`, `APPLE_APP_PASSWORD`: notarization credentials.
 
-Set repository variable `MACOS_SIGNING_ENABLED=true` after configuring the
-environment's approval and tag restrictions. PRs and dry runs stay unsigned.
-Enabled tag builds fail if credentials are missing. The signing script imports
+Configure the environment's approval and tag restrictions before pushing a stable
+tag. The job requires signing credentials to assemble a stable release draft.
+PRs and dry runs use an ad-hoc app signature. The signing script imports
 the identity into a temporary keychain, signs with hardened runtime and a
 timestamp, submits to Apple's notary service, staples and validates the ticket,
 and checks Gatekeeper acceptance. Packaging, checksums and provenance happen
-after signing/stapling both the app and the PKG. The keychain and temporary certificate are removed.
+after signing/stapling both the app and the PKG. CI checks the executable architecture
+and assesses the extracted app and final installer with Gatekeeper tools. The keychain
+and temporary certificate are removed.
 See [Apple's notarization workflow](https://developer.apple.com/documentation/security/customizing-the-notarization-workflow).
 Credentialed signing and clean-Mac acceptance must be verified before claiming
 that public packages are signed/notarized. Windows Authenticode remains a

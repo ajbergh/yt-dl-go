@@ -12,6 +12,9 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -133,8 +136,28 @@ func (metrics *browserCaptureMetrics) log(mode string, videoBytes, audioBytes in
 		mode, time.Since(metrics.started).Round(time.Millisecond), metrics.fetchSetup.Round(time.Millisecond), metrics.identity.Round(time.Millisecond), metrics.codec.Round(time.Millisecond), metrics.prepare.Round(time.Millisecond), metrics.wait.Round(time.Millisecond), metrics.body.Round(time.Millisecond), metrics.parse.Round(time.Millisecond), metrics.resume.Round(time.Millisecond), metrics.finish.Round(time.Millisecond), metrics.responses, metrics.responseBytes, videoBytes, audioBytes, err)
 }
 
+func findMacOSBrowser(home string, lookPath func(string) (string, error)) string {
+	directories := []string{"/Applications"}
+	if home != "" {
+		directories = append(directories, filepath.Join(home, "Applications"))
+	}
+	for _, directory := range directories {
+		for _, name := range []string{"Chromium", "Google Chrome", "Microsoft Edge"} {
+			candidate := filepath.Join(directory, name+".app", "Contents", "MacOS", name)
+			if executable, err := lookPath(candidate); err == nil {
+				return executable
+			}
+		}
+	}
+	return ""
+}
+
 func chromeBrowserOptions(executable string) []chromedp.ExecAllocatorOption {
 	options := append([]chromedp.ExecAllocatorOption{}, chromedp.DefaultExecAllocatorOptions[:]...)
+	if executable == "" && runtime.GOOS == "darwin" {
+		home, _ := os.UserHomeDir()
+		executable = findMacOSBrowser(home, exec.LookPath)
+	}
 	if executable != "" {
 		options = append(options, chromedp.ExecPath(executable))
 	}

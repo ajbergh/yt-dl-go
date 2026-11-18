@@ -5,9 +5,9 @@ import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { packageLinux } from "./package-desktop-linux.mjs";
-import { embedMacOSNotices } from "./package-desktop-installers.mjs";
+import { embedMacOSNotices, packageMacOS } from "./package-desktop-installers.mjs";
 import { verifyDesktopCoverage } from "./release-desktop-coverage.mjs";
-import { completeDesktopLicenseReport, resolveNSIS } from "./desktop-build-support.mjs";
+import { completeDesktopLicenseReport, macOSDeploymentFlags, macOSMinimumVersion, resolveNSIS, verifyMacOSArchitecture } from "./desktop-build-support.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -65,6 +65,38 @@ test("Release assembly requires portable and installer artifacts for every platf
       writeFileSync(path.join(directory, missing), "artifact");
     }
   } finally { rmSync(directory, { recursive: true, force: true }); }
+});
+
+test("macOS installer and app require the deployment target", () => {
+  const stage = mkdtempSync(path.join(os.tmpdir(), "desktop-macos-test-"));
+  try {
+    const plist = readFileSync(path.join(root, "src/server/build/darwin/Info.plist"), "utf8");
+    assert.equal(/<key>LSMinimumSystemVersion<\/key>\s*<string>([^<]+)<\/string>/.exec(plist)?.[1], macOSMinimumVersion);
+    assert.equal(macOSDeploymentFlags("-O2"), `-O2 -mmacosx-version-min=${macOSMinimumVersion}`);
+    const installer = packageMacOS({
+      stage, contents: path.join(stage, "contents"), output: stage, name: "youtube-vault-darwin-arm64", arch: "arm64", version: "1.0.0",
+      run(command, args) {
+        if (command === "productbuild") {
+          const distribution = readFileSync(args[1], "utf8");
+          assert.match(distribution, /hostArchitectures="arm64"/);
+          const volumeCheck = /<volume-check>\s*<allowed-os-versions><os-version min="([^"]+)"\/><\/allowed-os-versions>\s*<\/volume-check>/.exec(distribution);
+          assert.equal(volumeCheck?.[1], macOSMinimumVersion);
+          writeFileSync(args.at(-1), "installer");
+        }
+      },
+    });
+    assert.ok(existsSync(installer));
+  } finally { rmSync(stage, { recursive: true, force: true }); }
+});
+
+test("macOS architecture checks reject an Intel executable in an arm64 package", () => {
+  verifyMacOSArchitecture("youtube-vault", "arm64", (command, args) => {
+    assert.equal(command, "lipo");
+    assert.deepEqual(args, ["-archs", "youtube-vault"]);
+    return "arm64";
+  });
+  verifyMacOSArchitecture("youtube-vault", "amd64", () => "x86_64");
+  assert.throws(() => verifyMacOSArchitecture("youtube-vault", "arm64", () => "x86_64"), /Expected arm64 Mach-O.*got x86_64/);
 });
 
 test("macOS installer app carries all required notices inside its signed bundle", () => {
