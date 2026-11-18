@@ -1,6 +1,6 @@
 import { chmodSync, cpSync, existsSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import { resolveNSIS } from "./desktop-build-support.mjs";
+import { macOSMinimumVersion, resolveNSIS } from "./desktop-build-support.mjs";
 
 export function packageWindows({ root, contents, output, name, arch, version, run }) {
   const compiler = resolveNSIS();
@@ -27,7 +27,8 @@ export function packageWindows({ root, contents, output, name, arch, version, ru
 export function packageMacOS({ stage, contents, output, name, arch, version, run }) {
   const payload = path.join(stage, "pkg-root");
   mkdirSync(path.join(payload, "Applications"), { recursive: true });
-  cpSync(path.join(contents, "YouTube Vault.app"), path.join(payload, "Applications/YouTube Vault.app"), { recursive: true });
+  // Preserve bundle metadata when copying the signed app into the installer.
+  run("ditto", [path.join(contents, "YouTube Vault.app"), path.join(payload, "Applications/YouTube Vault.app")]);
   const components = path.join(stage, "components.plist");
   run("pkgbuild", ["--analyze", "--root", payload, components]);
   // Never relocate an upgrade into a build checkout or an extracted portable app.
@@ -40,6 +41,9 @@ export function packageMacOS({ stage, contents, output, name, arch, version, run
   <title>YouTube Vault</title>
   <options customize="never" require-scripts="false" hostArchitectures="${arch === "arm64" ? "arm64" : "x86_64"}"/>
   <domains enable_anywhere="false" enable_currentUserHome="false" enable_localSystem="true"/>
+  <volume-check>
+    <allowed-os-versions><os-version min="${macOSMinimumVersion}"/></allowed-os-versions>
+  </volume-check>
   <choices-outline><line choice="app"/></choices-outline>
   <choice id="app" visible="false"><pkg-ref id="io.github.ajbergh.ytdlgo.desktop"/></choice>
   <pkg-ref id="io.github.ajbergh.ytdlgo.desktop" version="${version}">application.pkg</pkg-ref>

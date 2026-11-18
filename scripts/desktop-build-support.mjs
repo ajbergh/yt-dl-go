@@ -2,6 +2,19 @@ import { statSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+// macOS 13.3 ships the Safari 16.4 WebKit baseline used by Vite.
+export const macOSMinimumVersion = "13.3";
+
+export function macOSDeploymentFlags(flags = "") {
+  return `${flags} -mmacosx-version-min=${macOSMinimumVersion}`.trim();
+}
+
+export function verifyMacOSArchitecture(executable, arch, run) {
+  const expected = arch === "arm64" ? "arm64" : "x86_64";
+  const actual = run("lipo", ["-archs", executable], { stdio: ["ignore", "pipe", "inherit"] });
+  if (actual !== expected) throw new Error(`Expected ${expected} Mach-O for ${executable}, got ${actual || "(none)"}`);
+}
+
 const isFile = file => {
   try { return statSync(file).isFile(); } catch { return false; }
 };

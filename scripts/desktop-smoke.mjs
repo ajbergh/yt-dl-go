@@ -4,6 +4,7 @@ import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync } f
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { macOSDeploymentFlags } from "./desktop-build-support.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const server = path.join(root, "src/server");
@@ -47,7 +48,8 @@ if (!packaged) {
   const nativeEnv = { ...process.env, CGO_ENABLED: "1" };
   if (process.platform === "darwin") {
     // Match the native frameworks added by the Wails CLI to production builds.
-    nativeEnv.CGO_LDFLAGS = `${process.env.CGO_LDFLAGS || ""} -framework UniformTypeIdentifiers -mmacosx-version-min=10.13`;
+    nativeEnv.CGO_CFLAGS = macOSDeploymentFlags(nativeEnv.CGO_CFLAGS);
+    nativeEnv.CGO_LDFLAGS = `${macOSDeploymentFlags(nativeEnv.CGO_LDFLAGS)} -framework UniformTypeIdentifiers`;
   }
   run("go", ["build", "-tags", tags, "-o", compiled, "."], { env: nativeEnv });
   executable = compiled;

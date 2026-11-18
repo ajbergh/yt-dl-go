@@ -65,14 +65,14 @@ installers available:
 | Linux — ARM64 | [Portable archive (.tar.gz)](https://github.com/ajbergh/yt-dl-go/releases/download/v0.4.0/youtube-vault-linux-arm64.tar.gz) | [DEB](https://github.com/ajbergh/yt-dl-go/releases/download/v0.4.0/youtube-vault-linux-arm64.deb) |
 
 - **Windows:** choose Setup for an installer with shortcuts and an uninstaller, or use the portable EXE. Keep the companion ZIP with its notices when sharing the portable app. Setup installs the required WebView2 runtime when missing and needs internet access for that step.
-- **macOS:** use the PKG to install into Applications, or extract the app archive and open YouTube Vault.
+- **macOS:** new desktop builds require macOS 13.3 or later. Use the PKG to install into Applications, or extract the app archive and open YouTube Vault.
 - **Linux:** use the DEB on supported Debian/Ubuntu systems, or choose the portable archive. See the [installation and runtime requirements](docs/DESKTOP.md) for compatible system libraries.
 
 Every download has a SHA-256 checksum. Verify files with the
 [checksum manifest](https://github.com/ajbergh/yt-dl-go/releases/download/v0.4.0/SHA256SUMS.txt),
 and read the [release notes](https://github.com/ajbergh/yt-dl-go/releases/tag/v0.4.0)
-for verification instructions and platform support. Windows packages are not
-Authenticode-signed; macOS packages are not Developer ID-signed or notarized.
+for verification instructions, platform support, and signing status. Stable macOS
+desktop tag builds require Developer ID signing and notarization.
 
 The release page also includes the browser/server edition and source archives.
 

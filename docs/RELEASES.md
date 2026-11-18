@@ -107,7 +107,13 @@ The standalone executable, packaged application executable, and setup EXE should
 
 ### macOS
 
-A public macOS package should use Apple Developer ID signing and the appropriate notarization/stapling flow for its final distribution shape. The protected Wails path signs the `.app` with Developer ID Application, notarizes/staples it, and packages it. The final PKG uses a separate Developer ID Installer identity and is notarized/stapled before hashing and attestation. See [protected signing setup](DESKTOP.md#protected-macos-signing). Ordinary validation builds use an ad-hoc app signature for execution, not Developer ID signing or notarization.
+Stable tag builds require Apple Developer ID signing and notarization for both
+macOS desktop packages. The protected Wails path signs the `.app` with Developer ID
+Application and staples the notarization ticket before archiving. The final PKG
+uses a separate Developer ID Installer identity and is notarized and stapled
+before hashing and attestation. CI assesses the extracted app and final PKG with
+Gatekeeper tools before assembling the release draft. Ordinary validation builds
+use an ad-hoc app signature. See [protected signing setup](DESKTOP.md#protected-macos-signing).
 
 ### Linux
 
@@ -128,7 +134,7 @@ Before changing a generated draft to a normal published release:
 3. run the packaged executable with `--version` and confirm version, commit, and build timestamp;
 4. verify every package checksum and `SHA256SUMS.txt`;
 5. verify GitHub/Sigstore provenance;
-6. perform Windows signing and macOS signing/notarization when those protected release stages are available;
+6. require macOS signing and notarization for stable tag builds, and record Windows signing status;
 7. rebuild/repackage/re-attest whenever signing changes artifact bytes;
 8. install and smoke-test the final packages on the target operating systems;
 9. review generated release notes and asset names;

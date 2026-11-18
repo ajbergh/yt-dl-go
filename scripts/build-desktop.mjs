@@ -1,12 +1,12 @@
 import { spawnSync } from "node:child_process";
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { packageLinux } from "./package-desktop-linux.mjs";
 import { embedMacOSNotices, packageMacOS, packageWindows } from "./package-desktop-installers.mjs";
-import { completeDesktopLicenseReport, resolveNSIS } from "./desktop-build-support.mjs";
+import { completeDesktopLicenseReport, macOSDeploymentFlags, resolveNSIS, verifyMacOSArchitecture } from "./desktop-build-support.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const server = path.join(root, "src/server");
@@ -17,8 +17,6 @@ const [targetOS, arch] = target.split("/");
 if (!goos || targetOS !== goos || !["amd64", "arm64"].includes(arch) || target !== `${targetOS}/${arch}`) {
   throw new Error("Build on the target OS. Supported targets: windows, darwin, linux / amd64, arm64.");
 }
-if (goos !== "windows" && arch !== hostArch) throw new Error("Build Linux and macOS packages on a runner with the target architecture.");
-if (goos === "windows") process.env.NSIS_PATH = resolveNSIS();
 
 function run(command, args, options = {}) {
   const result = spawnSync(command, args, { cwd: server, stdio: "inherit", ...options });
@@ -27,8 +25,17 @@ function run(command, args, options = {}) {
   return result.stdout?.toString().trim();
 }
 
+// Ask an x86_64 process so sysctl reports whether that architecture is translated.
+if (goos === "darwin" && hostArch === "amd64" &&
+    run("/usr/bin/arch", ["-x86_64", "/usr/sbin/sysctl", "-in", "sysctl.proc_translated"], { stdio: ["ignore", "pipe", "inherit"] }) === "1") {
+  throw new Error("Intel Node.js is running under Rosetta. Use native ARM64 Node.js and Go, then reinstall dependencies with npm ci.");
+}
+if (goos !== "windows" && arch !== hostArch) throw new Error("Build Linux and macOS packages on a runner with the target architecture.");
+if (goos === "windows") process.env.NSIS_PATH = resolveNSIS();
+
 run(process.execPath, [path.join(root, "scripts/generate-app-icons.mjs"), "--check"], { cwd: root });
-const goRoot = run("go", ["env", "GOROOT"], { stdio: ["ignore", "pipe", "inherit"] });
+const [goRoot, goHostArch] = run("go", ["env", "GOROOT", "GOHOSTARCH"], { stdio: ["ignore", "pipe", "inherit"] }).split(/\r?\n/);
+if (goos === "darwin" && goHostArch !== arch) throw new Error(`Install native ${arch} Go for the ${target} desktop build.`);
 const tools = mkdtempSync(path.join(os.tmpdir(), "yt-dl-go-desktop-tools-"));
 process.on("exit", () => {
   const relative = path.relative(os.tmpdir(), tools);
@@ -40,6 +47,10 @@ const env = {
   GOOS: goos, GOARCH: hostArch, CGO_ENABLED: "1",
   PATH: [path.join(goRoot, "bin"), tools, process.env.PATH].join(path.delimiter),
 };
+if (goos === "darwin") {
+  env.CGO_CFLAGS = macOSDeploymentFlags(env.CGO_CFLAGS);
+  env.CGO_LDFLAGS = macOSDeploymentFlags(env.CGO_LDFLAGS);
+}
 const exe = name => path.join(tools, name + (goos === "windows" ? ".exe" : ""));
 for (const [name, module] of [
   ["wails", "github.com/wailsapp/wails/v2/cmd/wails@v2.17.1"],
@@ -83,9 +94,9 @@ mkdirSync(contents);
 try {
   const buildBin = path.join(server, "build/bin");
   if (goos === "darwin") {
-    const app = readdirSync(buildBin).find(name => name.endsWith(".app"));
-    if (!app) throw new Error("Wails did not produce a macOS app bundle");
-    cpSync(path.join(buildBin, app), path.join(contents, app), { recursive: true });
+    const app = path.join(buildBin, "YouTube Vault.app");
+    verifyMacOSArchitecture(path.join(app, "Contents/MacOS/youtube-vault"), arch, run);
+    run("ditto", [app, path.join(contents, "YouTube Vault.app")], { env });
   } else {
     const binary = "youtube-vault" + (goos === "windows" ? ".exe" : "");
     cpSync(path.join(buildBin, binary), path.join(contents, binary));
