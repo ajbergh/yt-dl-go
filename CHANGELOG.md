@@ -4,6 +4,23 @@ This file summarizes notable user-facing changes. Version **v0.1.0** was publicl
 
 ## [Unreleased]
 
+## [0.4.1]
+
+### Fixed
+
+- Build native Apple Silicon desktop packages and verify the architecture of the packaged executable. Discover Microsoft Edge in system and per-user Applications folders on macOS.
+- Preserve Vault metadata when the download folder is unavailable, improve search and file availability, and keep portable exports within import limits.
+- Keep completed downloads visible in the Queue, scope bulk actions to visible selections, and preserve unsaved Settings edits after reconnecting.
+- Improve interrupted download recovery, audio startup and chapter conversion, and speed and ETA reporting after progress resets.
+
+### Security
+
+- Require startup configuration to select a browser executable when API authentication is disabled.
+
+### Distribution
+
+- The macOS desktop app and installer require macOS 13.3 or later. The stable release workflow requires Developer ID signing and notarization for both the portable app and the installer.
+
 ## [0.4.0] — 2026-11-09
 
 ### Added
