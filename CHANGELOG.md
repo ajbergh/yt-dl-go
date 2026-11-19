@@ -19,7 +19,7 @@ This file summarizes notable user-facing changes. Version **v0.1.0** was publicl
 
 ### Distribution
 
-- The macOS desktop app and installer require macOS 13.3 or later. The stable release workflow requires Developer ID signing and notarization for both the portable app and the installer.
+- The macOS desktop app and installer require macOS 13.3 or later. The app is ad-hoc signed and the PKG installer is unsigned. Neither package is notarized, so Gatekeeper may block installation or first launch. Windows packages are unsigned.
 
 ## [0.4.0] — 2026-11-09
 

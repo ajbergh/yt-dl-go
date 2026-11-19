@@ -396,7 +396,8 @@ jobs:
     with:
       version: ${{ needs.validate.outputs.release_version }}
       artifact_prefix: release-desktop
-      sign_macos: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') }}
+      # v0.4.1 is approved for ad-hoc signing. Other stable tags require Developer ID.
+      sign_macos: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') && github.ref != 'refs/tags/v0.4.1' }}
 
   publish:
     name: Assemble release artifacts

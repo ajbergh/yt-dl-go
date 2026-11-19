@@ -115,6 +115,9 @@ before hashing and attestation. CI assesses the extracted app and final PKG with
 Gatekeeper tools before assembling the release draft. Ordinary validation builds
 use an ad-hoc app signature. See [protected signing setup](DESKTOP.md#protected-macos-signing).
 
+Version v0.4.1 has a one-time exception. Its macOS app is ad-hoc signed and the
+PKG is unsigned, with no notarization for either package.
+
 ### Linux
 
 There is no single OS-native application-signing standard. SHA-256 plus GitHub/Sigstore provenance is the current release-integrity baseline. A future release can add a detached-signature policy if distribution requirements demand it.
