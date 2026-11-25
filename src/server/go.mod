@@ -6,8 +6,8 @@ go 1.27.4
 
 require (
 	github.com/at-wat/ebml-go v0.19.4
-	github.com/chromedp/cdproto v0.159.2
-	github.com/chromedp/chromedp v0.23.0
+	github.com/chromedp/cdproto v0.160.8
+	github.com/chromedp/chromedp v0.24.0
 	github.com/dop251/goja v0.0.0-20260311135729-065cd970411c
 	github.com/kkdai/youtube/v2 v2.10.6
 	github.com/tphakala/go-m4a v0.8.0
